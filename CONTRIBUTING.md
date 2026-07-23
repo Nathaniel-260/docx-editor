@@ -5,6 +5,7 @@ Thank you for your interest in contributing to SuperDoc! Whether you're fixing a
 ## Table of Contents
 
 - [Ways to Contribute](#ways-to-contribute)
+- [Contributor License Agreement](#contributor-license-agreement)
 - [Architecture Overview](#architecture-overview)
 - [Contribution Areas](#contribution-areas)
 - [Your First PR](#your-first-pr)
@@ -35,6 +36,14 @@ Check our [good first issues](https://github.com/superdoc-dev/superdoc/issues?q=
 
 **Help the community**
 Answer questions on [Discord](https://discord.gg/wjMccuygvy).
+
+## Contributor License Agreement
+
+Before we can merge your first pull request, you'll need to agree to the SuperDoc [Contributor License Agreement](CLA.md) (CLA). It applies to any contribution to a SuperDoc repository, including code, documentation, and examples. You keep ownership of your work; the CLA gives SuperDoc the rights it needs to include, maintain, and distribute your contribution under the project's open source and commercial licenses. You only sign once, and it then covers every future contribution from the same GitHub account.
+
+**How to sign.** We're rolling out an automated GitHub CLA assistant that will post instructions on your first pull request. Review the agreement, then reply to the pull request with the acceptance phrase shown by the assistant. Until it's available, email [legal@superdoc.dev](mailto:legal@superdoc.dev) and we'll arrange a way for you to sign.
+
+**Contributing for your employer.** If your employer may own work you create, make sure you have permission to contribute, or ask your employer to sign a Corporate CLA with us. Contact [legal@superdoc.dev](mailto:legal@superdoc.dev) to arrange it. See Section 4 of the [CLA](CLA.md).
 
 ## Architecture Overview
 
@@ -199,7 +208,7 @@ Open a PR against the `main` branch. In the description:
 - Include screenshots for visual changes
 - Add a test plan if applicable
 
-CI will run automatically. A maintainer will review your PR and provide feedback.
+CI will run automatically. A maintainer will review your PR and provide feedback. On your first pull request you'll also need to sign the [Contributor License Agreement](#contributor-license-agreement) before it can be merged.
 
 ## Development Setup
 
