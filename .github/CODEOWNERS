@@ -1,4 +1,4 @@
-* @superdoc-dev/reviewers
+* @superdoc/reviewers
 
 # Contributor License Agreement.
 # AIDEV-NOTE: A change to CLA.md is a legal change, not a docs edit. Any change
@@ -6,4 +6,4 @@
 # an in-place edit that keeps accepting prior signatures. Reassign these paths to
 # a dedicated Legal / designated-maintainer team once one exists; the interim
 # owner below matches the repository-wide default above.
-/CLA.md @superdoc-dev/reviewers
+/CLA.md @superdoc/reviewers
