@@ -12,6 +12,11 @@ on:
       - 'examples/manifest.json'
       - 'scripts/validate-examples-demos.ts'
       - 'scripts/__tests__/validate-examples-demos-slug.test.mjs'
+      # The published-slug baseline is half of the permanence check. Without it
+      # here, a PR editing only the baseline runs no catalog validation at all,
+      # and a later PR could drop the matching manifest slug against an already
+      # weakened baseline.
+      - 'go-links/published-slugs.json'
   workflow_dispatch:
 
 jobs:

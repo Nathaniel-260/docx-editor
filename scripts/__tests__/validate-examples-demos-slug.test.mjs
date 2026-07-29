@@ -134,6 +134,20 @@ test('renaming a published slug fails, even though the count is unchanged', () =
   });
 });
 
+test('the catalog workflow watches every file the slug check depends on', () => {
+  // A check that never runs is not a check. The baseline is half the permanence
+  // rule, so a PR touching only it must still trigger validation.
+  const workflow = readFileSync(path.join(REPO_ROOT, '.github/workflows/ci-catalog.yml'), 'utf8');
+  for (const dependency of [
+    'demos/manifest.json',
+    'examples/manifest.json',
+    'go-links/published-slugs.json',
+    'scripts/validate-examples-demos.ts',
+  ]) {
+    assert.ok(workflow.includes(`'${dependency}'`), `ci-catalog.yml must trigger on ${dependency}`);
+  }
+});
+
 test('an entry without a slug is valid', () => {
   // Moves a slug rather than removing one: this is about an unpublished entry
   // being allowed, not about the published-slug floor, which has its own test.
