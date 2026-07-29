@@ -81,6 +81,79 @@ const ALLOWED_KINDS = new Set(['minimal-example', 'integration-example', 'workfl
 const ALLOWED_STATUSES = new Set(['active', 'hidden', 'archived', 'shim']);
 const ALLOWED_SOURCE_KINDS = new Set(['local', 'external']);
 
+// AIDEV-NOTE: `slug` is the published identity at go.superdoc.dev and is
+// permanent once shipped. `id` is the internal catalog key and stays free to
+// follow section renames; a slug cannot, because external links depend on it.
+// Renaming or removing a published slug breaks every link already in the wild,
+// so treat a slug change as an API break, not a rename.
+// Slugs are opt-in: an entry without one is simply not published.
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+// Reserved for service-level routes so a slug can never shadow one. `docs`,
+// `live`, and `source` are held back for the per-entry variants that v1 does
+// not generate yet, so adding them later cannot collide with a published slug.
+const RESERVED_SLUGS = new Set(['docs', 'live', 'source', 'health', 'index', 'api', 'assets', '404']);
+
+// AIDEV-NOTE: a published slug must outlive the entry's usefulness. Restricting
+// it to `active` would mean archiving an example forces removing its slug,
+// breaking the very URL we promised was permanent. `hidden` and `archived` say
+// "stop advertising this", not "stop answering links people already hold", so
+// both keep their slug. `shim` cannot claim one: a shim stands in for an old
+// path and is not a thing deserving a permanent public name.
+const SLUGGABLE_STATUSES = new Set(['active', 'hidden', 'archived']);
+
+// Claimed across both manifests: the published namespace is flat, so a slug in
+// demos.json and one in examples.json would collide at the same URL.
+const seenSlugs = new Map<string, string>();
+
+function validateSlug(e: Record<string, unknown>, eid: string, relPath: string): void {
+  if (e.slug === undefined || e.slug === null) return;
+  if (typeof e.slug !== 'string' || e.slug.length === 0) {
+    issues.push({
+      file: relPath,
+      line: 0,
+      kind: 'manifest-schema',
+      detail: `${eid}: slug must be a non-empty string; omit the field when the entry is not published`,
+    });
+    return;
+  }
+  if (!SLUG_PATTERN.test(e.slug)) {
+    issues.push({
+      file: relPath,
+      line: 0,
+      kind: 'manifest-slug',
+      detail: `${eid}: slug '${e.slug}' must be lowercase kebab-case (letters, digits, single hyphens)`,
+    });
+  }
+  if (RESERVED_SLUGS.has(e.slug)) {
+    issues.push({
+      file: relPath,
+      line: 0,
+      kind: 'manifest-slug',
+      detail: `${eid}: slug '${e.slug}' is reserved for a service route`,
+    });
+  }
+  const owner = seenSlugs.get(e.slug);
+  if (owner !== undefined) {
+    issues.push({
+      file: relPath,
+      line: 0,
+      kind: 'manifest-duplicate-slug',
+      detail: `${eid}: slug '${e.slug}' is already claimed by '${owner}'`,
+    });
+  } else {
+    seenSlugs.set(e.slug, eid);
+  }
+  if (typeof e.status === 'string' && !SLUGGABLE_STATUSES.has(e.status)) {
+    issues.push({
+      file: relPath,
+      line: 0,
+      kind: 'manifest-slug',
+      detail: `${eid}: status '${e.status}' cannot hold a slug (allowed: ${[...SLUGGABLE_STATUSES].join(', ')})`,
+    });
+  }
+}
+
 function validateManifest(manifestPath: string, relPath: string): void {
   let entries: unknown;
   try {
@@ -158,6 +231,7 @@ function validateManifest(manifestPath: string, relPath: string): void {
         });
       }
     }
+    validateSlug(e, eid, relPath);
   }
 }
 
@@ -227,6 +301,30 @@ for (const target of TARGETS) {
       }
     }
   }
+}
+
+// AIDEV-NOTE: a published slug is a live URL at go.superdoc.dev, and dropping
+// one breaks every link to it that already exists in docs, posts, and other
+// people's writing. That is easy to do by accident: a long-lived branch that
+// predates slugs resolves a manifest conflict in its own favour and the field
+// simply vanishes, with no test failing and nothing obvious to review. This
+// floor makes that a build failure instead.
+//
+// Raise it when slugs are added. Lowering it is a deliberate act that needs an
+// explanation, because it means retiring public URLs.
+const MINIMUM_PUBLISHED_SLUGS = 26;
+
+if (seenSlugs.size < MINIMUM_PUBLISHED_SLUGS) {
+  issues.push({
+    file: 'demos/manifest.json, examples/manifest.json',
+    line: 0,
+    kind: 'manifest-slug-regression',
+    detail:
+      `${seenSlugs.size} published slugs, expected at least ${MINIMUM_PUBLISHED_SLUGS}. ` +
+      `Slugs are live URLs; losing one breaks every link already published to it. ` +
+      `If this is a merge from a branch that predates slugs, restore them. ` +
+      `If URLs are being retired on purpose, lower MINIMUM_PUBLISHED_SLUGS in the same change.`,
+  });
 }
 
 if (issues.length === 0) {
