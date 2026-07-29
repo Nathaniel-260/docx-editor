@@ -46,9 +46,10 @@ Treat naming a slug as naming a public API. Specifically:
 - `id` is the internal catalog key and is free to change with section renames.
   That is the reason the two fields are separate.
 
-The validator checks the catalog as it stands now, so it enforces uniqueness and
-format but cannot know a slug used to be spelled differently. Not renaming one
-is a rule we keep, not a rule it enforces.
+`go-links/published-slugs.json` records every slug that has shipped. The
+validator compares the manifests against it, so removing or renaming a published
+slug is a build failure rather than something noticed after the links break.
+Publishing a new one means adding a line to that file in the same change.
 
 ## Choosing a slug
 

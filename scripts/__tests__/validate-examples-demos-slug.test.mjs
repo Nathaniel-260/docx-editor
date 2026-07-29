@@ -113,12 +113,24 @@ test('a slug on a shim is rejected', () => {
 test('losing a published slug fails, so a stale branch cannot drop URLs', () => {
   // The realistic way this happens is a long-lived branch that predates slugs
   // resolving a manifest conflict in its own favour. Nothing else would catch
-  // it: the file stays valid, and the URLs just stop being published.
+  // it: the file stays valid and the URLs just stop being published.
   const entries = readEntries().map(({ slug, ...rest }) => rest);
   withManifest(entries, ({ failed, output }) => {
     assert.equal(failed, true, 'expected dropping every slug to fail validation');
     assert.match(output, /manifest-slug-regression/);
-    assert.match(output, /expected at least/);
+    assert.match(output, /no longer published/);
+  });
+});
+
+test('renaming a published slug fails, even though the count is unchanged', () => {
+  // A count-only check passes here, which is why the baseline is an exact set.
+  // The old URL stops resolving the moment this deploys.
+  const entries = readEntries();
+  entryById(entries, 'getting-started-react').slug = 'renamed-react';
+  withManifest(entries, ({ failed, output }) => {
+    assert.equal(failed, true, 'expected renaming a published slug to fail');
+    assert.match(output, /no longer published: react/);
+    assert.match(output, /newly published: renamed-react/);
   });
 });
 

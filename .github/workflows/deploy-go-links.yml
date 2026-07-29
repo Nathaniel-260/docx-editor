@@ -45,6 +45,10 @@ env:
 
 jobs:
   deploy:
+    # Fail-closed on the ref. `workflow_dispatch` lets a caller pick any branch,
+    # and this job holds the credentials that publish go.superdoc.dev, so an
+    # unmerged branch must not be able to deploy redirects.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:

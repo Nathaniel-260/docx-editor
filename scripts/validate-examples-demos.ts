@@ -303,28 +303,65 @@ for (const target of TARGETS) {
   }
 }
 
-// AIDEV-NOTE: a published slug is a live URL at go.superdoc.dev, and dropping
-// one breaks every link to it that already exists in docs, posts, and other
-// people's writing. That is easy to do by accident: a long-lived branch that
-// predates slugs resolves a manifest conflict in its own favour and the field
-// simply vanishes, with no test failing and nothing obvious to review. This
-// floor makes that a build failure instead.
+// AIDEV-NOTE: a published slug is a live URL at go.superdoc.dev. Removing one
+// breaks every link to it that already exists in docs, posts, and other
+// people's writing; renaming one does the same thing while leaving the count
+// unchanged, so a count check would pass. Both are compared against a committed
+// baseline instead.
 //
-// Raise it when slugs are added. Lowering it is a deliberate act that needs an
-// explanation, because it means retiring public URLs.
-const MINIMUM_PUBLISHED_SLUGS = 26;
+// Publishing a new slug adds a line to go-links/published-slugs.json in the
+// same change. Removing one is a deliberate act that retires a public URL, and
+// should be reviewed as such rather than slipping through a merge.
+const PUBLISHED_SLUGS_FILE = 'go-links/published-slugs.json';
 
-if (seenSlugs.size < MINIMUM_PUBLISHED_SLUGS) {
+let publishedBaseline: string[] | null = null;
+try {
+  const raw = readFileSync(join(REPO_ROOT, PUBLISHED_SLUGS_FILE), 'utf8');
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed) || parsed.some((slug) => typeof slug !== 'string')) {
+    issues.push({
+      file: PUBLISHED_SLUGS_FILE,
+      line: 0,
+      kind: 'manifest-slug-baseline',
+      detail: 'must be a JSON array of slug strings',
+    });
+  } else {
+    publishedBaseline = parsed as string[];
+  }
+} catch (err) {
   issues.push({
-    file: 'demos/manifest.json, examples/manifest.json',
+    file: PUBLISHED_SLUGS_FILE,
     line: 0,
-    kind: 'manifest-slug-regression',
-    detail:
-      `${seenSlugs.size} published slugs, expected at least ${MINIMUM_PUBLISHED_SLUGS}. ` +
-      `Slugs are live URLs; losing one breaks every link already published to it. ` +
-      `If this is a merge from a branch that predates slugs, restore them. ` +
-      `If URLs are being retired on purpose, lower MINIMUM_PUBLISHED_SLUGS in the same change.`,
+    kind: 'manifest-slug-baseline',
+    detail: `cannot read the published slug baseline: ${String(err).split('\n')[0]}`,
   });
+}
+
+if (publishedBaseline) {
+  const current = new Set(seenSlugs.keys());
+  const missing = publishedBaseline.filter((slug) => !current.has(slug));
+  const added = [...current].filter((slug) => !publishedBaseline.includes(slug));
+
+  if (missing.length > 0) {
+    issues.push({
+      file: PUBLISHED_SLUGS_FILE,
+      line: 0,
+      kind: 'manifest-slug-regression',
+      detail:
+        `no longer published: ${missing.join(', ')}. ` +
+        `These are live URLs at go.superdoc.dev and links to them already exist. ` +
+        `Restore the slug, or remove it from ${PUBLISHED_SLUGS_FILE} in the same change if the URL is being retired on purpose.`,
+    });
+  }
+
+  if (added.length > 0) {
+    issues.push({
+      file: PUBLISHED_SLUGS_FILE,
+      line: 0,
+      kind: 'manifest-slug-baseline',
+      detail: `newly published: ${added.join(', ')}. Add them to ${PUBLISHED_SLUGS_FILE} so future changes cannot drop them silently.`,
+    });
+  }
 }
 
 if (issues.length === 0) {
