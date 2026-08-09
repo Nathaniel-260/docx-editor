@@ -2,7 +2,7 @@
  * Tests for DebouncedPassManager
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vite-plus/test';
 import { DebouncedPassManager, type DebouncedPass } from '../src/debounced-passes';
 
 describe('DebouncedPassManager', () => {

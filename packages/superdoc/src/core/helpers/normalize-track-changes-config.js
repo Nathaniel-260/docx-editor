@@ -4,7 +4,10 @@
  * @typedef {'review' | 'original' | 'final' | 'off'} TrackChangesMode
  * @typedef {'paired' | 'independent'} TrackChangesReplacements
  * @typedef {{ enabled?: boolean, overrides?: Record<string, string>, resolve?: (author: { name?: string, email?: string, image?: string }) => (string | undefined) }} AuthorColorsConfig
- * @typedef {{ visible: boolean, mode: TrackChangesMode, enabled: boolean, replacements: TrackChangesReplacements, authorColors?: AuthorColorsConfig }} NormalizedTrackChangesConfig
+ * @typedef {import('../types/index.js').TrackedChangeSemanticColorKey} TrackedChangeSemanticColorKey
+ * @typedef {{ key: TrackedChangeSemanticColorKey, author?: { name?: string, email?: string, image?: string }, type?: string, subtype?: string, targetKind?: string, semanticAnchorScope?: string }} SemanticColorResolverInput
+ * @typedef {{ enabled?: boolean, overrides?: Partial<Record<TrackedChangeSemanticColorKey, string>>, resolve?: (input: SemanticColorResolverInput) => (string | undefined) }} SemanticColorsConfig
+ * @typedef {{ visible: boolean, mode: TrackChangesMode, enabled: boolean, replacements: TrackChangesReplacements, authorColors?: AuthorColorsConfig, semanticColors?: SemanticColorsConfig }} NormalizedTrackChangesConfig
  */
 
 /** @type {ReadonlyArray<TrackChangesMode>} */
@@ -131,6 +134,14 @@ export function normalizeTrackChangesConfig(config) {
     ? /** @type {AuthorColorsConfig} */ (/** @type {Record<string, unknown>} */ (fromCanonical).authorColors)
     : undefined;
 
+  // Semantic (structural) colors live only on the canonical path; there is no
+  // legacy alias for this knob. Preserve the object by reference (it may carry a
+  // `resolve` function) like authorColors, so SuperDoc's composed semantic
+  // resolver keeps the host's callback intact.
+  const semanticColors = pickObject(fromCanonical?.semanticColors)
+    ? /** @type {SemanticColorsConfig} */ (/** @type {Record<string, unknown>} */ (fromCanonical).semanticColors)
+    : undefined;
+
   // Default mode derives from documentMode + visibility so a viewing-mode
   // document without an explicit mode falls back to 'original' unless the
   // consumer asked for tracked changes to be visible.
@@ -143,6 +154,9 @@ export function normalizeTrackChangesConfig(config) {
   const normalized = { visible, mode, enabled, replacements };
   if (authorColors) {
     normalized.authorColors = authorColors;
+  }
+  if (semanticColors) {
+    normalized.semanticColors = semanticColors;
   }
 
   // Write-through to every path so all existing internal reads see the same

@@ -70,11 +70,15 @@ export function buildDispatchTable(api: DocumentApi): TypedDispatchTable {
     'blocks.list': (input) => api.blocks.list(input),
     'blocks.delete': (input, options) => api.blocks.delete(input, options),
     'blocks.deleteRange': (input, options) => api.blocks.deleteRange(input, options),
+    'blocks.split': (input, options) => api.blocks.split(input, options),
+    'blocks.merge': (input, options) => api.blocks.merge(input, options),
+    'blocks.move': (input, options) => api.blocks.move(input, options),
     // --- format.* ---
     'format.apply': (input, options) => api.format.apply(input, options),
     ...formatInlineAliasDispatch,
     // --- styles.paragraph.* ---
     'styles.paragraph.setStyle': (input, options) => api.styles.paragraph.setStyle(input, options),
+    'styles.paragraph.setStyleRef': (input, options) => api.styles.paragraph.setStyleRef(input, options),
     'styles.paragraph.clearStyle': (input, options) => api.styles.paragraph.clearStyle(input, options),
     // --- format.paragraph.* ---
     'format.paragraph.resetDirectFormatting': (input, options) =>
@@ -95,11 +99,13 @@ export function buildDispatchTable(api: DocumentApi): TypedDispatchTable {
     'format.paragraph.clearBorder': (input, options) => api.format.paragraph.clearBorder(input, options),
     'format.paragraph.setShading': (input, options) => api.format.paragraph.setShading(input, options),
     'format.paragraph.clearShading': (input, options) => api.format.paragraph.clearShading(input, options),
+    'format.paragraph.setMarkRunProps': (input, options) => api.format.paragraph.setMarkRunProps(input, options),
     'format.paragraph.setDirection': (input, options) => api.format.paragraph.setDirection(input, options),
     'format.paragraph.clearDirection': (input, options) => api.format.paragraph.clearDirection(input, options),
     'format.paragraph.setNumbering': (input, options) => api.format.paragraph.setNumbering(input, options),
     // --- styles.* ---
     'styles.apply': (input, options) => api.styles.apply(input, options),
+    'styles.getCatalog': (input) => api.styles.getCatalog(input),
     // --- templates.* ---
     'templates.apply': (input, options) => api.templates.apply(input, options),
     // --- create.* ---
@@ -148,6 +154,12 @@ export function buildDispatchTable(api: DocumentApi): TypedDispatchTable {
     'lists.setLevelText': (input, options) => api.lists.setLevelText(input, options),
     'lists.setLevelStart': (input, options) => api.lists.setLevelStart(input, options),
     'lists.setLevelLayout': (input, options) => api.lists.setLevelLayout(input, options),
+    // --- lists.* (v2 numbering-aware) ---
+    'lists.getState': (input) => api.lists.getState(input),
+    'lists.apply': (input, options) => api.lists.apply(input, options),
+    'lists.continue': (input, options) => api.lists.continue(input, options),
+    'lists.restart': (input, options) => api.lists.restart(input, options),
+    'lists.remove': (input, options) => api.lists.remove(input, options),
     // --- sections.* ---
     'sections.list': (input) => api.sections.list(input),
     'sections.get': (input) => api.sections.get(input),
@@ -205,6 +217,7 @@ export function buildDispatchTable(api: DocumentApi): TypedDispatchTable {
     'tables.setLayout': (input, options) => api.tables.setLayout(input, options),
     'tables.insertRow': (input, options) => api.tables.insertRow(input, options),
     'tables.deleteRow': (input, options) => api.tables.deleteRow(input, options),
+    'tables.moveRow': (input, options) => api.tables.moveRow(input, options),
     'tables.setRowHeight': (input, options) => api.tables.setRowHeight(input, options),
     'tables.distributeRows': (input, options) => api.tables.distributeRows(input, options),
     'tables.setRowOptions': (input, options) => api.tables.setRowOptions(input, options),
@@ -345,6 +358,10 @@ export function buildDispatchTable(api: DocumentApi): TypedDispatchTable {
     'contentControls.normalizeWordCompatibility': (input, options) =>
       api.contentControls.normalizeWordCompatibility(input, options),
     'contentControls.normalizeTagPayload': (input, options) => api.contentControls.normalizeTagPayload(input, options),
+    // --- clipboard.* ---
+    'clipboard.parse': (input, options) => api.clipboard.parse(input, options),
+    'clipboard.insert': (input, options) => api.clipboard.insert(input, options),
+    'clipboard.serializeSelection': (input) => api.clipboard.serializeSelection(input),
     // --- contentControls.text.* ---
     'contentControls.text.setMultiline': (input, options) => api.contentControls.text.setMultiline(input, options),
     'contentControls.text.setValue': (input, options) => api.contentControls.text.setValue(input, options),
@@ -465,6 +482,8 @@ export function buildDispatchTable(api: DocumentApi): TypedDispatchTable {
     'diff.capture': () => api.diff.capture(),
     'diff.compare': (input) => api.diff.compare(input),
     'diff.apply': (input, options) => api.diff.apply(input, options),
+    // --- export.* ---
+    'export.toDocx': (input) => api.export.toDocx(input),
     // --- protection.* ---
     'protection.get': (input) => api.protection.get(input),
     'protection.setEditingRestriction': (input, options) => api.protection.setEditingRestriction(input, options),

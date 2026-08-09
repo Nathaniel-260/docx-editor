@@ -7,7 +7,7 @@
  * @module toolbar-integration.test
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { toFlowBlocks } from './test-helpers/to-flow-blocks.js';
 import type { FlowBlock, PMNode } from '@superdoc/contracts';
 import fs from 'fs';

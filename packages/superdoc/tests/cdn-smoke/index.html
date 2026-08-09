@@ -3,8 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <title>CDN Smoke Test</title>
-    <link href="/dist/style.css" rel="stylesheet" />
-    <script src="/dist/superdoc.min.js"></script>
+    <link href="/dist-cdn/superdoc.min.css" rel="stylesheet" />
+    <script>
+      window.SUPERDOC_ENGINE_CDN_BASE_URL = '/node_modules/@superdoc/docx-engine';
+    </script>
+    <script src="/dist-cdn/superdoc.min.js"></script>
   </head>
   <body>
     <div id="editor" style="height: 100vh"></div>

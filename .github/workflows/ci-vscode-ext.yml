@@ -28,6 +28,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      - name: pnpm config ownership
+        run: pnpm run check:pnpm-config
+
       - name: Install dependencies
         run: pnpm install
 

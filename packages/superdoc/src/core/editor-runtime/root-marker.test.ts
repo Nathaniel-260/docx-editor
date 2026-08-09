@@ -1,6 +1,6 @@
 // Root marker unit tests.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { RUNTIME_ROOT_ATTRIBUTE, markRuntimeRoot, readRuntimeRootId, unmarkRuntimeRoot } from './root-marker.js';
 
 describe('editor-runtime root marker', () => {

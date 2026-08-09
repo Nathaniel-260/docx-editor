@@ -6,13 +6,13 @@
 // `proxy.$superdoc`; a Vue computed observes field writes only when the host is
 // reactive, so we wrap it in `shallowReactive` and install the SAME one-writer
 // bridge SuperDoc installs (registry active-change → assign the legacy editor
-// projection). This proves the registry → projection → activeEditor → computed
+// projection). This proves the registry -> projection -> activeEditor -> computed
 // chain is observable to Vue.
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { computed, shallowReactive } from 'vue';
 import { EditorRuntimeRegistry } from './editor-runtime-registry.js';
-import { createFakeV1Runtime } from './conformance/fake-v1-runtime.js';
+import { createFakeV2Runtime } from './conformance/fake-v2-runtime.js';
 
 describe('EditorRuntimeRegistry  -  Vue computed projection reactivity', () => {
   it('a computed reading host.activeEditor re-fires after a registry-driven projection assignment', () => {
@@ -35,12 +35,12 @@ describe('EditorRuntimeRegistry  -  Vue computed projection reactivity', () => {
     expect(activeEditorRef.value).toBeNull();
     expect(evaluations).toHaveBeenCalledTimes(1);
 
-    const v1 = createFakeV1Runtime({ id: 'v1-a' });
-    registry.register(v1);
-    registry.setActive('v1-a', 'focus');
+    const v2 = createFakeV2Runtime({ id: 'v2-a' });
+    registry.register(v2);
+    registry.setActive('v2-a', 'focus');
 
-    // The computed re-fires and returns the projected legacy editor.
-    expect(activeEditorRef.value).toMatchObject({ legacy: 'v1-editor' });
+    // The computed re-fires and returns the projected v2 facade.
+    expect(activeEditorRef.value).toMatchObject({ editorVersion: 2, documentId: 'doc-v2' });
     expect(evaluations).toHaveBeenCalledTimes(2);
   });
 
@@ -56,15 +56,15 @@ describe('EditorRuntimeRegistry  -  Vue computed projection reactivity', () => {
       evaluations();
       return host.activeEditor;
     });
-    registry.register(createFakeV1Runtime({ id: 'v1-a' }));
+    registry.register(createFakeV2Runtime({ id: 'v2-a' }));
 
-    registry.setActive('v1-a', 'focus');
-    expect(activeEditorRef.value).toMatchObject({ legacy: 'v1-editor' });
+    registry.setActive('v2-a', 'focus');
+    expect(activeEditorRef.value).toMatchObject({ editorVersion: 2, documentId: 'doc-v2' });
     const callsAfterFirst = evaluations.mock.calls.length;
 
     // Re-selecting the same active runtime emits nothing → no reassignment.
-    registry.setActive('v1-a', 'focus-again');
-    expect(activeEditorRef.value).toMatchObject({ legacy: 'v1-editor' });
+    registry.setActive('v2-a', 'focus-again');
+    expect(activeEditorRef.value).toMatchObject({ editorVersion: 2, documentId: 'doc-v2' });
     expect(evaluations).toHaveBeenCalledTimes(callsAfterFirst);
   });
 });

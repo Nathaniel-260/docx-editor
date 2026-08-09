@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { FootnotePageLedger, Layout } from '@superdoc/contracts';
 import {
   getPreferredReserveCandidates,
   getPreferredReserveTrialTargets,
   scoreFootnoteWindow,
+  shouldAbsorbOneLineFootnoteWidow,
   summarizeFootnoteWindow,
 } from '../src/footnote-scorer';
 
@@ -42,6 +43,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
       }),
       makeLedger(1, {
         anchorIds: ['2'],
@@ -72,10 +74,38 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
     ]);
   });
 
-  it('also flags pages where the last anchor partially rendered but spilled (Vivienne feedback)', () => {
+  it('does not trial a fully rendered one-line anchor without a continuation', () => {
+    const ledger = makeLedger(0, {
+      anchorIds: ['1'],
+      mandatoryReservePx: 36,
+      preferredReservePx: 121,
+      actualBandHeightPx: 36,
+      lastAnchorRenderedLines: 1,
+      continuationOut: [],
+    });
+
+    expect(getPreferredReserveCandidates([ledger])).toEqual([]);
+    expect(summarizeFootnoteWindow(makeLayout(1, [ledger]), [ledger], 0, 0).mandatoryOnlyCount).toBe(0);
+  });
+
+  it('does not treat a continuation from a different anchor as a last-anchor spill', () => {
+    const ledger = makeLedger(0, {
+      anchorIds: ['1', '2'],
+      mandatoryReservePx: 36,
+      preferredReservePx: 121,
+      actualBandHeightPx: 36,
+      lastAnchorRenderedLines: 1,
+      continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
+    });
+
+    expect(getPreferredReserveCandidates([ledger])).toEqual([]);
+    expect(summarizeFootnoteWindow(makeLayout(1, [ledger]), [ledger], 0, 0).mandatoryOnlyCount).toBe(0);
+  });
+
+  it('also flags pages where the last anchor partially rendered but spilled', () => {
     // SD-2656: a page is also a candidate when the last anchor rendered >1 line
     // yet still spilled to the next page. The legacy filter (lastAnchorRenderedLines<=1)
-    // missed these "partial split" cases reported by Vivienne — footnotes splitting
+    // missed these "partial split" cases — footnotes splitting
     // across pages even when preferred reserve would fit them on the anchor page.
     const ledgers = [
       // mandatory-only first-line case (legacy candidate) — should still match.
@@ -87,7 +117,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         lastAnchorRenderedLines: 1,
         continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 80 }],
       }),
-      // Vivienne b89cc7aa page 16 pattern: single anchor [4], mand=36, pref=82,
+      // Partial-split regression: single anchor [4], mand=36, pref=82,
       // actual=51, lastL=2, fn4 spilled. Old filter missed this (lastL>1).
       makeLedger(1, {
         anchorIds: ['4'],
@@ -97,7 +127,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         lastAnchorRenderedLines: 2,
         continuationOut: [{ id: '4', remainingRangeCount: 1, remainingHeightPx: 30 }],
       }),
-      // Carlsbad page 26 pattern: single anchor [24], mand=42, pref=150, actual=116,
+      // Second partial-split regression: single anchor [24], mand=42, pref=150, actual=116,
       // lastL=5, fn24 spilled. Old filter missed this.
       makeLedger(2, {
         anchorIds: ['24'],
@@ -131,6 +161,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         actualBandHeightPx: 36,
         deadReservePx: 0,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
       }),
       makeLedger(4, {
         anchorIds: ['9'],
@@ -139,6 +170,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         actualBandHeightPx: 36,
         deadReservePx: 50,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '9', remainingRangeCount: 1, remainingHeightPx: 104 }],
       }),
     ];
 
@@ -146,7 +178,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
       totalPages: 5,
       mandatoryOnlyCount: 1,
       deadReserveSum: 0,
-      clusterSplitCount: 0,
+      clusterSplitCount: 1,
     });
   });
 
@@ -158,6 +190,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 601,
         actualBandHeightPx: 133,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '19', remainingRangeCount: 1, remainingHeightPx: 468 }],
       }),
     ]);
 
@@ -169,6 +202,38 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
     expect(targets.every((target) => target > 133 && target <= 601)).toBe(true);
   });
 
+  it('absorbs one-line widows only for single-anchor pages', () => {
+    expect(
+      shouldAbsorbOneLineFootnoteWidow(
+        makeLedger(0, {
+          anchorIds: ['7'],
+          continuationOut: [{ id: '7', remainingRangeCount: 1, remainingHeightPx: 15 }],
+        }),
+        15,
+      ),
+    ).toBe(true);
+
+    expect(
+      shouldAbsorbOneLineFootnoteWidow(
+        makeLedger(0, {
+          anchorIds: ['5', '6', '7'],
+          continuationOut: [{ id: '7', remainingRangeCount: 1, remainingHeightPx: 15 }],
+        }),
+        15,
+      ),
+    ).toBe(false);
+
+    expect(
+      shouldAbsorbOneLineFootnoteWidow(
+        makeLedger(0, {
+          anchorIds: ['7'],
+          continuationOut: [{ id: '7', remainingRangeCount: 1, remainingHeightPx: 30 }],
+        }),
+        30,
+      ),
+    ).toBe(false);
+  });
+
   it('accepts a trial only when it reduces mandatory-only pages without growing pages or slack', () => {
     const beforeLedger = [
       makeLedger(0, {
@@ -177,6 +242,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
       }),
     ];
     const afterLedger = [
@@ -203,7 +269,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
     expect(result.after.mandatoryOnlyCount).toBe(0);
   });
 
-  it('rejects a trial that grows page count even if the candidate page improves', () => {
+  it('rejects a trial that grows by more than one page even if the candidate page improves', () => {
     const beforeLedger = [
       makeLedger(0, {
         anchorIds: ['1'],
@@ -211,6 +277,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
       }),
     ];
     const afterLedger = [
@@ -225,7 +292,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
 
     const result = scoreFootnoteWindow({
       beforeLayout: makeLayout(1, beforeLedger),
-      afterLayout: makeLayout(2, afterLedger),
+      afterLayout: makeLayout(3, afterLedger),
       candidatePageIndex: 0,
       beforeLedger,
       afterLedger,
@@ -235,11 +302,11 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
     expect(result.reason).toBe('page-count-grew');
   });
 
-  it('allows extra dead-reserve growth when the trial eliminates a cluster split (Vivienne feedback)', () => {
+  it('allows extra dead-reserve growth when the trial eliminates a cluster split', () => {
     // SD-2656: a trial that removes a footnote-spanning split is a direct
     // user-visible win, so the scorer trades up to 2x the normal dead-reserve
     // growth allowance. Without this, the scorer rejected the full preferred
-    // bump on b89cc7aa page 9 (148 px doc-wide dead-reserve > 128 threshold)
+    // bump in the regression case (148 px doc-wide dead-reserve > 128 threshold)
     // and accepted a smaller partial bump that left the split intact.
     const beforeLedger = [
       makeLedger(0, {
@@ -295,6 +362,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
       }),
       makeLedger(1, {
         anchorIds: ['2'],
@@ -302,6 +370,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 75,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '2', remainingRangeCount: 1, remainingHeightPx: 39 }],
       }),
     ];
     const afterLedger = [
@@ -318,6 +387,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 75,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '2', remainingRangeCount: 1, remainingHeightPx: 39 }],
       }),
     ];
 
@@ -344,6 +414,15 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
+      }),
+      makeLedger(1, {
+        anchorIds: ['2'],
+        mandatoryReservePx: 36,
+        preferredReservePx: 75,
+        actualBandHeightPx: 50,
+        lastAnchorRenderedLines: 2,
+        continuationOut: [{ id: '2', remainingRangeCount: 1, remainingHeightPx: 25 }],
       }),
     ];
     const afterLedger = [
@@ -360,6 +439,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 75,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '2', remainingRangeCount: 1, remainingHeightPx: 39 }],
       }),
     ];
 
@@ -384,6 +464,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
       }),
     ];
     const afterLedger = [
@@ -393,6 +474,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 64,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 57 }],
       }),
     ];
 
@@ -418,6 +500,15 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
+      }),
+      makeLedger(4, {
+        anchorIds: ['9'],
+        mandatoryReservePx: 36,
+        preferredReservePx: 96,
+        actualBandHeightPx: 50,
+        lastAnchorRenderedLines: 2,
+        continuationOut: [{ id: '9', remainingRangeCount: 1, remainingHeightPx: 46 }],
       }),
     ];
     const afterLedger = [
@@ -434,6 +525,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 96,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '9', remainingRangeCount: 1, remainingHeightPx: 60 }],
       }),
     ];
 
@@ -459,6 +551,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 36,
         lastAnchorRenderedLines: 1,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 85 }],
       }),
       makeLedger(4, {
         deadReservePx: 0,
@@ -471,6 +564,7 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
         preferredReservePx: 121,
         actualBandHeightPx: 75,
         lastAnchorRenderedLines: 4,
+        continuationOut: [{ id: '1', remainingRangeCount: 1, remainingHeightPx: 46 }],
       }),
       makeLedger(4, {
         deadReservePx: 256,

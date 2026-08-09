@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 
 // Use a lightweight mock of Y.js for unit tests — these helpers only need
 // getArray/getMap, transact, and basic CRDT operations.

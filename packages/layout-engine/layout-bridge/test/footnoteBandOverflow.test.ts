@@ -5,7 +5,7 @@
  * no footnote fragment's bottom-Y exceeds the top of the physical bottom margin.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure, Fragment } from '@superdoc/contracts';
 import { incrementalLayout } from '../src/incrementalLayout';
 

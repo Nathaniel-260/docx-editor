@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import SuperDoc from './cdn-entry.js';
 import * as namespace from './index.js';
+import { resolveDocxEngineCdnBaseUrl } from './core/v2-integration/cdn-engine-loader.js';
 
 describe('cdn-entry', () => {
   it('exposes the SuperDoc class as the default export', () => {
@@ -26,5 +27,15 @@ describe('cdn-entry', () => {
     expect(SuperDoc.name).toBe('SuperDoc');
     expect(typeof SuperDoc.prototype).toBe('object');
     expect(SuperDoc.prototype.constructor).toBe(SuperDoc);
+  });
+
+  it('loads the exact engine version from jsDelivr by default', () => {
+    expect(resolveDocxEngineCdnBaseUrl({}, '0.1.0')).toBe('https://cdn.jsdelivr.net/npm/@superdoc/docx-engine@0.1.0');
+  });
+
+  it('accepts a runtime CDN base override', () => {
+    expect(
+      resolveDocxEngineCdnBaseUrl({ SUPERDOC_ENGINE_CDN_BASE_URL: 'https://cdn.example.test/engine/' }, '0.1.0'),
+    ).toBe('https://cdn.example.test/engine');
   });
 });

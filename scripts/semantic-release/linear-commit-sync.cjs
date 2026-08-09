@@ -1,5 +1,3 @@
-/* eslint-env node */
-
 const { spawnSync } = require('node:child_process');
 
 const LINEAR_API_URL = 'https://api.linear.app/graphql';
@@ -266,7 +264,7 @@ function getLabelColor(releaseType) {
   return colors[releaseType] || '#4752C4';
 }
 
-function buildReleaseUrl(repositoryUrl, gitTag, channel) {
+function buildReleaseUrl(repositoryUrl, gitTag) {
   if (!repositoryUrl || !gitTag) {
     return '';
   }
@@ -274,14 +272,13 @@ function buildReleaseUrl(repositoryUrl, gitTag, channel) {
   if (!match) {
     return '';
   }
-  const tagPath = channel === 'next' ? 'tree' : 'releases/tag';
-  return `https://github.com/${match[1]}/${match[2]}/${tagPath}/${gitTag}`;
+  return `https://github.com/${match[1]}/${match[2]}/releases/tag/${gitTag}`;
 }
 
 function formatComment(template, version, channel, packageName, gitTag, repositoryUrl) {
   const channelText = channel ? `(${channel} channel)` : '';
   const packageText = packageName ? `**${packageName}**` : '';
-  const releaseUrl = buildReleaseUrl(repositoryUrl, gitTag, channel);
+  const releaseUrl = buildReleaseUrl(repositoryUrl, gitTag);
   const releaseLink = releaseUrl ? `[${version}](${releaseUrl})` : version;
   const tpl = template || 'Released in {package} v{releaseLink} {channel}';
   return tpl

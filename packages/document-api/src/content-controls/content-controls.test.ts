@@ -258,8 +258,40 @@ describe('copy validates both target and destination', () => {
 describe('move validates both target and destination', () => {
   it('rejects null destination', () => {
     expect(() => executeContentControlsMove(stubAdapter(), { target: validTarget, destination: null } as any)).toThrow(
-      /requires a valid target/,
+      /requires a valid destination/,
     );
+  });
+
+  it('accepts document boundary destinations', () => {
+    const adapter = stubAdapter();
+    executeContentControlsMove(adapter, { target: validTarget, destination: { kind: 'documentStart' } });
+    executeContentControlsMove(adapter, { target: validTarget, destination: { kind: 'documentEnd' } });
+    expect(adapter.move).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts before and after destinations with valid SDT targets', () => {
+    const adapter = stubAdapter();
+    executeContentControlsMove(adapter, { target: validTarget, destination: { kind: 'before', target: validTarget } });
+    executeContentControlsMove(adapter, { target: validTarget, destination: { kind: 'after', target: validTarget } });
+    expect(adapter.move).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects before and after destinations without targets', () => {
+    expect(() =>
+      executeContentControlsMove(stubAdapter(), { target: validTarget, destination: { kind: 'before' } } as any),
+    ).toThrow(/requires a valid target/);
+    expect(() =>
+      executeContentControlsMove(stubAdapter(), { target: validTarget, destination: { kind: 'after' } } as any),
+    ).toThrow(/requires a valid target/);
+  });
+
+  it('still rejects invalid legacy SDT destinations', () => {
+    expect(() =>
+      executeContentControlsMove(stubAdapter(), {
+        target: validTarget,
+        destination: { kind: 'block', nodeType: 'paragraph', nodeId: 'p1' },
+      } as any),
+    ).toThrow(/nodeType must be 'sdt'/);
   });
 });
 
@@ -647,6 +679,38 @@ describe('create.contentControl validation', () => {
     );
   });
 
+  it('rejects non-string html', () => {
+    expect(() => executeCreateContentControl(createAdapter, { kind: 'block', html: 42 } as any)).toThrow(
+      /html must be a string/,
+    );
+  });
+
+  it('rejects multiple preset payload shapes together', () => {
+    expect(() =>
+      executeCreateContentControl(createAdapter, {
+        kind: 'block',
+        content: 'plain',
+        html: '<p>html</p>',
+      } as any),
+    ).toThrow(/mutually exclusive/);
+    expect(() =>
+      executeCreateContentControl(createAdapter, {
+        kind: 'block',
+        html: '<p>html</p>',
+        json: { type: 'paragraph', content: [{ type: 'text', text: 'json' }] },
+      } as any),
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('rejects html/json presets for inline content controls', () => {
+    expect(() =>
+      executeCreateContentControl(createAdapter, {
+        kind: 'inline',
+        html: '<p>Block only</p>',
+      } as any),
+    ).toThrow(/supported only for block content controls/);
+  });
+
   it('accepts valid input with target and content', () => {
     const adapter = { create: mock(noop) } as any;
     executeCreateContentControl(adapter, {
@@ -654,6 +718,25 @@ describe('create.contentControl validation', () => {
       controlType: 'text',
       target: validTarget,
       content: 'hello',
+    });
+    expect(adapter.create).toHaveBeenCalled();
+  });
+
+  it('accepts structured block presets from html', () => {
+    const adapter = { create: mock(noop) } as any;
+    executeCreateContentControl(adapter, {
+      kind: 'block',
+      alias: 'Preset',
+      html: '<p>Preset block</p>',
+    });
+    expect(adapter.create).toHaveBeenCalled();
+  });
+
+  it('accepts structured block presets from json', () => {
+    const adapter = { create: mock(noop) } as any;
+    executeCreateContentControl(adapter, {
+      kind: 'block',
+      json: { type: 'paragraph', content: [{ type: 'text', text: 'Preset block' }] },
     });
     expect(adapter.create).toHaveBeenCalled();
   });

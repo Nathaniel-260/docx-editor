@@ -11,12 +11,14 @@ import { useSuperdocStore } from '@superdoc/stores/superdoc-store';
 import CommentDialog from '@superdoc/components/CommentsLayer/CommentDialog.vue';
 import {
   normalizeFloatingAnchorTop,
+  resolveRemovedReviewCardContinuityTarget,
   resolvePersistentReviewCardTop,
   shouldMountFloatingCommentDialog,
 } from './floating-comment-positioning.js';
 
 const ESTIMATED_HEIGHT = 110;
 const OBSERVER_MARGIN = 600;
+const SCROLL_OWNER_OVERFLOW_VALUES = new Set(['auto', 'scroll', 'hidden', 'clip']);
 
 // Layout algorithm: positions comments in a single column with collision avoidance.
 // When a comment is active it pins at its anchor; neighbors push up/down to avoid overlap.
@@ -88,15 +90,25 @@ const { activeZoom } = storeToRefs(superdocStore);
 // Access the Pinia getter directly instead of storeToRefs(). In this component
 // the getter-backed ref can lag behind the live store array during rapid
 // tracked-change updates, which collapses the virtualized sidebar to a stale subset.
+// Instances are scoped to the document this FloatingComments instance renders so
+// a multi-document session (e.g. a PDF plus a DOCX) does not paint another
+// document's comment cards into the wrong lane.
 const floatingCommentInstances = computed(() => {
   const currentFloatingCommentInstances = commentsStore.getFloatingCommentInstances;
-  return Array.isArray(currentFloatingCommentInstances) ? currentFloatingCommentInstances : [];
+  if (!Array.isArray(currentFloatingCommentInstances)) return [];
+  const documentId = props.currentDocument?.id;
+  if (documentId == null) return currentFloatingCommentInstances;
+  return currentFloatingCommentInstances.filter((instance) =>
+    commentsStore.belongsToDocument(instance.comment, String(documentId), { allowSingleDocumentMismatch: true }),
+  );
 });
 
 const floatingCommentsContainer = ref(null);
 const commentsRenderKey = ref(0);
 const sidebarOffsetY = ref(0);
 const disableInstantLayoutTransitions = ref(false);
+const directDecisionContinuityTargetId = ref(null);
+const viewportRevision = ref(0);
 
 const isPendingThread = (commentOrId) => {
   const pendingId = pendingComment.value?.commentId;
@@ -109,15 +121,28 @@ const getThreadId = (comment) => {
   return comment?.commentId ?? comment?.importedId ?? null;
 };
 
+const floatingInstanceIndex = computed(() => {
+  const byId = new Map();
+  const byThreadId = new Map();
+  for (const instance of floatingCommentInstances.value) {
+    if (instance?.id != null) byId.set(String(instance.id), instance);
+    const threadId = getThreadId(instance?.comment);
+    if (threadId == null) continue;
+    const key = String(threadId);
+    const threadInstances = byThreadId.get(key) ?? [];
+    threadInstances.push(instance);
+    byThreadId.set(key, threadInstances);
+  }
+  return { byId, byThreadId };
+});
+
 const findPrimaryInstanceIdForThread = (threadId) => {
   if (threadId == null) {
     return null;
   }
 
   const normalizedThreadId = String(threadId);
-  const matchingInstances = floatingCommentInstances.value.filter(
-    (instance) => String(getThreadId(instance.comment)) === normalizedThreadId,
-  );
+  const matchingInstances = floatingInstanceIndex.value.byThreadId.get(normalizedThreadId) ?? [];
   if (!matchingInstances.length) {
     return null;
   }
@@ -131,9 +156,7 @@ const resolveFloatingInstanceId = (threadId, preferredInstanceId = null) => {
   }
 
   const normalizedThreadId = String(threadId);
-  const matchingInstances = floatingCommentInstances.value.filter(
-    (instance) => String(getThreadId(instance.comment)) === normalizedThreadId,
-  );
+  const matchingInstances = floatingInstanceIndex.value.byThreadId.get(normalizedThreadId) ?? [];
   if (!matchingInstances.length) {
     return null;
   }
@@ -153,6 +176,13 @@ const activeCommentInstanceId = computed(() => {
   return resolveFloatingInstanceId(activeComment.value, activeFloatingCommentInstanceId.value);
 });
 
+const toFinitePdfCoordinate = (value) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
 // Heights: measured (actual) or estimated. Seeded from module-level cache to
 // survive remounts triggered by hasInitializedLocations toggle in SuperDoc.vue.
 const measuredHeights = ref({ ..._heightsCache });
@@ -166,12 +196,21 @@ const placeholderRefs = ref({});
 let observer = null;
 // Track which DOM elements are currently being observed (avoids disconnect/re-observe cycle)
 const observedElements = new Set();
+let viewportFrame = null;
+const refreshViewportWindow = () => {
+  if (viewportFrame != null) return;
+  viewportFrame = requestAnimationFrame(() => {
+    viewportFrame = null;
+    viewportRevision.value += 1;
+  });
+};
 
 // Compute anchor position for a floating comment instance.
 const getAnchorTop = (instance) => {
   if (props.currentDocument.type === 'application/pdf') {
     const zoom = (activeZoom.value ?? 100) / 100;
-    return Number(instance?.comment?.selection?.selectionBounds?.top) * zoom;
+    const top = toFinitePdfCoordinate(instance?.comment?.selection?.selectionBounds?.top);
+    return top == null ? null : top * zoom;
   }
 
   return instance?.positionEntry?.bounds?.top;
@@ -180,13 +219,35 @@ const getAnchorTop = (instance) => {
 const getAnchorBottom = (instance, anchorTop) => {
   if (props.currentDocument.type === 'application/pdf') {
     const zoom = (activeZoom.value ?? 100) / 100;
-    const bottom = Number(instance?.comment?.selection?.selectionBounds?.bottom);
-    return Number.isFinite(bottom) ? bottom * zoom : anchorTop;
+    const bottom = toFinitePdfCoordinate(instance?.comment?.selection?.selectionBounds?.bottom);
+    return bottom != null ? bottom * zoom : anchorTop;
   }
 
   const bottom = instance?.positionEntry?.bounds?.bottom;
   return Number.isFinite(bottom) ? bottom : anchorTop;
 };
+
+// Geometry changes are less frequent than scroll events. Cache the small set
+// of geometry-bearing rows so viewport refreshes never rescan the complete
+// logical tracked-change catalog.
+const geometryBearingInstances = computed(() => {
+  const positioned = [];
+  for (const instance of floatingCommentInstances.value) {
+    const id = instance?.id;
+    const threadId = getThreadId(instance?.comment);
+    const anchorTop = getAnchorTop(instance);
+    if (id == null || threadId == null || !Number.isFinite(anchorTop)) continue;
+    const top = normalizeFloatingAnchorTop(anchorTop, instance.comment);
+    positioned.push({
+      id,
+      threadId,
+      instance,
+      top,
+      anchorBottom: getAnchorBottom(instance, top),
+    });
+  }
+  return positioned;
+});
 
 // Compute anchor position for the pending (new) comment.
 // For editor docs, uses the 'pending' mark position from editorCommentPositions.
@@ -198,8 +259,8 @@ const getPendingAnchorTop = () => {
   }
 
   const zoom = props.currentDocument.type === 'application/pdf' ? (activeZoom.value ?? 100) / 100 : 1;
-  const top = Number(pendingComment.value?.selection?.selectionBounds?.top);
-  return isNaN(top) ? null : top * zoom;
+  const top = toFinitePdfCoordinate(pendingComment.value?.selection?.selectionBounds?.top);
+  return top == null ? null : top * zoom;
 };
 
 const shouldRenderDialog = (position) => {
@@ -213,23 +274,46 @@ const shouldRenderDialog = (position) => {
 
 const getFloatingViewportRange = () => {
   const container = floatingCommentsContainer.value;
-  const viewportRect = props.parent?.getBoundingClientRect?.();
-  if (!container || !viewportRect) {
+  if (!container) {
     return null;
   }
 
   const containerRect = container.getBoundingClientRect();
-  if (
-    !Number.isFinite(containerRect.top) ||
-    !Number.isFinite(viewportRect.top) ||
-    !Number.isFinite(viewportRect.bottom)
-  ) {
+  if (!Number.isFinite(containerRect.top) || !Number.isFinite(window.innerHeight)) {
     return null;
   }
 
-  const top = viewportRect.top - containerRect.top;
-  const bottom = viewportRect.bottom - containerRect.top;
-  return bottom >= top ? { top, bottom } : null;
+  let visibleClientTop = 0;
+  let visibleClientBottom = window.innerHeight;
+  for (let ancestor = container.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const overflowY = window.getComputedStyle(ancestor).overflowY;
+    if (!['auto', 'scroll', 'hidden', 'clip'].includes(overflowY)) continue;
+    const ancestorRect = ancestor.getBoundingClientRect();
+    if (!Number.isFinite(ancestorRect.top) || !Number.isFinite(ancestorRect.bottom)) continue;
+    visibleClientTop = Math.max(visibleClientTop, ancestorRect.top);
+    visibleClientBottom = Math.min(visibleClientBottom, ancestorRect.bottom);
+  }
+  if (visibleClientBottom <= visibleClientTop) return null;
+
+  // In the ordinary layout, the document layers define the visible vertical
+  // extent. During a deep outer scroll they move offscreen with the sidebar;
+  // intersect only when they actually overlap the client clip, otherwise the
+  // outer scroll viewport is the authoritative range for both row filtering
+  // and geometry-free transitional placement.
+  const parentRect = props.parent?.getBoundingClientRect?.();
+  if (parentRect && Number.isFinite(parentRect.top) && Number.isFinite(parentRect.bottom)) {
+    const intersectedTop = Math.max(visibleClientTop, parentRect.top);
+    const intersectedBottom = Math.min(visibleClientBottom, parentRect.bottom);
+    if (intersectedBottom > intersectedTop) {
+      visibleClientTop = intersectedTop;
+      visibleClientBottom = intersectedBottom;
+    }
+  }
+
+  return {
+    top: visibleClientTop - containerRect.top,
+    bottom: visibleClientBottom - containerRect.top,
+  };
 };
 
 const instantAlignmentInstanceKey = computed(() => {
@@ -242,29 +326,74 @@ const instantAlignmentInstanceKey = computed(() => {
 
 // Pre-compute all positions with collision avoidance
 const allPositions = computed(() => {
-  const instances = floatingCommentInstances.value;
+  viewportRevision.value;
+  const positionedInstances = geometryBearingInstances.value;
   const hasPending = pendingComment.value && pendingComment.value.fileId === props.currentDocument.id;
-  if (!instances.length && !hasPending) return [];
+  if (!positionedInstances.length && !floatingCommentInstances.value.length && !hasPending) return [];
 
   const positions = [];
-  for (const instance of instances) {
-    const key = instance?.id;
-    const anchorTop = getAnchorTop(instance);
-    const threadId = getThreadId(instance?.comment);
-    if (!key || !threadId || typeof anchorTop !== 'number' || isNaN(anchorTop)) continue;
-
-    const top = normalizeFloatingAnchorTop(anchorTop, instance.comment);
-
+  const viewportRange = getFloatingViewportRange() ?? {
+    top: 0,
+    bottom: Math.max(0, props.parent?.clientHeight || window.innerHeight || 0),
+  };
+  const renderTop = viewportRange.top - OBSERVER_MARGIN;
+  const renderBottom = viewportRange.bottom + OBSERVER_MARGIN;
+  const activeKey = hasPending ? 'pending' : activeCommentInstanceId.value;
+  const positionIds = new Set();
+  const pushPosition = ({ id, threadId, instance, top, anchorBottom, hasAnchorGeometry }) => {
+    const key = String(id);
+    if (positionIds.has(key)) return;
+    positionIds.add(key);
     positions.push({
-      id: key,
+      id,
       threadId,
       pageIndex: instance?.pageIndex ?? null,
       anchorTop: top,
-      anchorBottom: getAnchorBottom(instance, top),
+      anchorBottom,
+      hasAnchorGeometry,
       top,
-      height: measuredHeights.value[key] || ESTIMATED_HEIGHT,
+      height: measuredHeights.value[id] || ESTIMATED_HEIGHT,
       commentRef: instance.comment,
       instanceRef: instance,
+    });
+  };
+
+  for (const positioned of positionedInstances) {
+    const { id, threadId, instance, top, anchorBottom } = positioned;
+    const isActive = activeKey != null && String(id) === String(activeKey);
+    const isEditing = editingCommentId.value != null && String(threadId) === String(editingCommentId.value);
+    if (!isActive && !isEditing && (anchorBottom < renderTop || top > renderBottom)) continue;
+    pushPosition({
+      id,
+      threadId,
+      instance,
+      top,
+      anchorBottom,
+      hasAnchorGeometry: true,
+    });
+  }
+
+  const transitionalInstances = [];
+  if (activeKey && activeKey !== 'pending') {
+    const activeInstance = floatingInstanceIndex.value.byId.get(String(activeKey));
+    if (activeInstance) transitionalInstances.push(activeInstance);
+  }
+  if (editingCommentId.value != null) {
+    const editingInstances = floatingInstanceIndex.value.byThreadId.get(String(editingCommentId.value)) ?? [];
+    const editingInstance = editingInstances.find((instance) => instance.isPrimary) ?? editingInstances[0];
+    if (editingInstance) transitionalInstances.push(editingInstance);
+  }
+  for (const instance of transitionalInstances) {
+    const id = instance.id;
+    const threadId = getThreadId(instance.comment);
+    if (id == null || threadId == null || positionIds.has(String(id))) continue;
+    pushPosition({
+      id,
+      threadId,
+      instance,
+      top: viewportRange.top,
+      anchorBottom: viewportRange.top,
+      hasAnchorGeometry: false,
     });
   }
 
@@ -276,6 +405,7 @@ const allPositions = computed(() => {
         id: 'pending',
         anchorTop: pendingTop,
         anchorBottom: pendingTop,
+        hasAnchorGeometry: true,
         top: pendingTop,
         height: measuredHeights.value['pending'] || ESTIMATED_HEIGHT,
         commentRef: pendingComment.value,
@@ -285,47 +415,41 @@ const allPositions = computed(() => {
 
   positions.sort((a, b) => a.anchorTop - b.anchorTop);
 
-  // Pending comment is always treated as active for collision avoidance
-  const activeKey = hasPending ? 'pending' : activeCommentInstanceId.value;
-  const activeIndex = activeKey ? positions.findIndex((p) => p.id === activeKey) : -1;
-  resolveCollisions(positions, activeIndex, 15);
-
-  const viewportRange = getFloatingViewportRange();
-  if (viewportRange) {
-    for (const position of positions) {
-      const persistentReviewTop = resolvePersistentReviewCardTop({
-        comment: position.commentRef,
-        anchorTop: position.anchorTop,
-        anchorBottom: position.anchorBottom,
-        cardHeight: position.height,
-        viewportTop: viewportRange.top,
-        viewportBottom: viewportRange.bottom,
-      });
-      if (persistentReviewTop != null) {
-        position.top = persistentReviewTop;
-      }
+  // Persistent review cards whose anchors are outside the viewport remain in
+  // the bounded output, but they cannot participate in visible-card collision
+  // layout. Otherwise they advance the collision cursor and are then restored
+  // offscreen, leaving downstream visible cards displaced by rows that no
+  // longer occupy those packed positions.
+  const collisionPositions = [];
+  for (const position of positions) {
+    const offscreenTop = position.hasAnchorGeometry
+      ? resolvePersistentReviewCardTop({
+          comment: position.commentRef,
+          anchorTop: position.anchorTop,
+          anchorBottom: position.anchorBottom,
+          cardHeight: position.height,
+          viewportTop: viewportRange.top,
+          viewportBottom: viewportRange.bottom,
+        })
+      : null;
+    if (offscreenTop == null) {
+      collisionPositions.push(position);
+    } else {
+      position.top = offscreenTop;
     }
   }
 
+  // Pending comment is always treated as active for collision avoidance
+  const activeIndex = activeKey ? collisionPositions.findIndex((p) => p.id === activeKey) : -1;
+  resolveCollisions(collisionPositions, activeIndex, 15);
   return positions;
 });
 
-// Total height so the sidebar container gets proper scroll height
-const totalHeight = computed(() => {
-  if (!allPositions.value.length) return 0;
-  let max = 0;
-  for (const p of allPositions.value) {
-    const bottom = p.top + p.height;
-    if (bottom > max) max = bottom;
-  }
-  return max + 50;
-});
-
-// The inner sidebar is translated by sidebarOffsetY. When shifted down, the
-// rendered bottom edge can exceed totalHeight and get clipped by parent scroll
-// containers. Expand wrapper height to include positive translate offset.
+// The page surface, not review-card stacking, owns document height. Cards are
+// absolutely positioned and clipped/materialized by the bounded render window.
 const wrapperMinHeight = computed(() => {
-  return totalHeight.value + Math.max(0, sidebarOffsetY.value);
+  viewportRevision.value;
+  return Math.max(0, props.parent?.clientHeight || 0, props.parent?.scrollHeight || 0);
 });
 
 // Set up IntersectionObserver to track which placeholders are near the viewport
@@ -428,6 +552,7 @@ const handleResize = (position) => {
 };
 
 const setInstantLayoutTransitionsDisabled = (disabled) => {
+  if (!disabled && directDecisionContinuityTargetId.value != null) return;
   disableInstantLayoutTransitions.value = disabled;
 };
 
@@ -468,6 +593,38 @@ const setPlaceholderRef = (id, el) => {
 // Timer IDs for cancellation on rapid active-comment switching
 let remeasureTimers = [];
 let scrollTimer = null;
+// A decision removes the active row before clearing activeComment. Keep one
+// surviving row as a visual anchor so subsequent list reconciliation cannot
+// translate the entire review rail back to its unshifted origin.
+let renderedPositionOrder = [];
+let sidebarContinuityAnchor = null;
+let continuityAlignmentScheduled = false;
+let continuityAlignmentGeneration = 0;
+let continuityTransitionFrame = null;
+let activeLayoutContinuityFrame = null;
+let directDecisionContinuity = null;
+let directDecisionSourceId = null;
+let ownerScrollContinuityResetFrame = null;
+const ownerScrollTargets = new Set();
+
+const releaseDirectDecisionContinuity = () => {
+  directDecisionContinuity = null;
+  directDecisionSourceId = null;
+  directDecisionContinuityTargetId.value = null;
+  setInstantLayoutTransitionsDisabled(false);
+};
+
+const releaseDirectDecisionContinuityForUnrelatedPointer = (event) => {
+  if (!directDecisionContinuity) return;
+  const target = event?.target instanceof Element ? event.target : null;
+  const actionElement = target?.closest?.('[data-comment-action]');
+  const action = actionElement?.getAttribute?.('data-comment-action');
+  const continuesReviewSequence =
+    (action === 'resolve' || action === 'reject') && floatingCommentsContainer.value?.contains?.(actionElement);
+  if (!continuesReviewSequence) {
+    releaseDirectDecisionContinuity();
+  }
+};
 
 const clearDeferredRemeasureTimers = () => {
   remeasureTimers.forEach(clearTimeout);
@@ -522,10 +679,190 @@ const applyInstantSidebarAlignment = (key, targetY) => {
   });
 };
 
+const clearSidebarContinuityAnchor = () => {
+  sidebarContinuityAnchor = null;
+  continuityAlignmentGeneration += 1;
+  if (continuityTransitionFrame != null) {
+    cancelAnimationFrame(continuityTransitionFrame);
+    continuityTransitionFrame = null;
+  }
+  setInstantLayoutTransitionsDisabled(false);
+};
+
+const releaseDecisionContinuityForOwnerScroll = () => {
+  if (!directDecisionContinuity && !sidebarContinuityAnchor) return;
+
+  releaseDirectDecisionContinuity();
+  clearSidebarContinuityAnchor();
+
+  // The continuity transform is screen-space state used only to keep the next
+  // review action stationary after a decision. Once the document owner moves,
+  // restore document-space ownership before the next paint. This is an O(1)
+  // state reset and deliberately performs no layout reads on the scroll path.
+  setInstantLayoutTransitionsDisabled(true);
+  sidebarOffsetY.value = 0;
+  if (ownerScrollContinuityResetFrame != null) cancelAnimationFrame(ownerScrollContinuityResetFrame);
+  ownerScrollContinuityResetFrame = requestAnimationFrame(() => {
+    ownerScrollContinuityResetFrame = null;
+    if (!directDecisionContinuity && !sidebarContinuityAnchor) {
+      setInstantLayoutTransitionsDisabled(false);
+    }
+  });
+};
+
+const handleOwnerScroll = () => {
+  releaseDecisionContinuityForOwnerScroll();
+  refreshViewportWindow();
+};
+
+const registerOwnerScrollListeners = () => {
+  const addTarget = (target) => {
+    if (!target?.addEventListener || ownerScrollTargets.has(target)) return;
+    target.addEventListener('scroll', handleOwnerScroll, { passive: true });
+    ownerScrollTargets.add(target);
+  };
+
+  // `parent` is not necessarily the element that owns scrolling. Hosts often
+  // place SuperDoc inside an outer overflow container, so subscribe to the
+  // clipping ancestors that can move this rail as well as the page viewport.
+  addTarget(props.parent);
+  for (let ancestor = floatingCommentsContainer.value?.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (SCROLL_OWNER_OVERFLOW_VALUES.has(window.getComputedStyle(ancestor).overflowY)) {
+      addTarget(ancestor);
+    }
+  }
+  addTarget(window);
+};
+
+const unregisterOwnerScrollListeners = () => {
+  for (const target of ownerScrollTargets) {
+    target.removeEventListener?.('scroll', handleOwnerScroll);
+  }
+  ownerScrollTargets.clear();
+};
+
+const scheduleSidebarContinuityAlignment = () => {
+  if (!sidebarContinuityAnchor || continuityAlignmentScheduled) return;
+
+  continuityAlignmentScheduled = true;
+  const generation = continuityAlignmentGeneration;
+  if (continuityTransitionFrame != null) {
+    cancelAnimationFrame(continuityTransitionFrame);
+    continuityTransitionFrame = null;
+  }
+  setInstantLayoutTransitionsDisabled(true);
+
+  nextTick(() => {
+    continuityAlignmentScheduled = false;
+    if (generation !== continuityAlignmentGeneration) {
+      scheduleSidebarContinuityAlignment();
+      return;
+    }
+
+    const { key, targetClientY } = sidebarContinuityAnchor;
+    remeasureCommentKeys([key]);
+    alignCommentKeyToClientY(key, targetClientY, (didAlign) => {
+      if (generation !== continuityAlignmentGeneration) return;
+      if (!didAlign) {
+        setInstantLayoutTransitionsDisabled(false);
+        return;
+      }
+      continuityTransitionFrame = requestAnimationFrame(() => {
+        continuityTransitionFrame = null;
+        if (generation === continuityAlignmentGeneration) {
+          setInstantLayoutTransitionsDisabled(false);
+        }
+      });
+    });
+  });
+};
+
+const preserveSidebarContinuityAfterRemoval = (removedKey, currentIds) => {
+  const targetKey = resolveRemovedReviewCardContinuityTarget({
+    previousIds: renderedPositionOrder,
+    currentIds,
+    removedId: removedKey,
+  });
+  const targetElement = targetKey ? placeholderRefs.value[targetKey] : null;
+  const targetClientY = targetElement?.getBoundingClientRect?.().top;
+
+  if (!targetKey || !Number.isFinite(targetClientY)) {
+    clearSidebarContinuityAnchor();
+    return false;
+  }
+
+  sidebarContinuityAnchor = { key: targetKey, targetClientY };
+  continuityAlignmentGeneration += 1;
+  scheduleSidebarContinuityAlignment();
+  return true;
+};
+
+// A direct accept/reject click stops propagation before the card becomes
+// active. Capture the next card's client position before the async decision
+// removes the clicked row so the same continuity path used by active-card
+// decisions can keep the next visible action target stationary (SD-3855).
+const prepareSidebarContinuityForDirectDecision = (event) => {
+  const actionElement = event?.target?.closest?.('[data-comment-action]');
+  const action = actionElement?.getAttribute?.('data-comment-action');
+  if (action !== 'resolve' && action !== 'reject') return;
+
+  // The pointer already reached this action, so any previous target no longer
+  // needs its temporary hit area. A disabled action must not arm new state.
+  releaseDirectDecisionContinuity();
+  if (actionElement.getAttribute?.('aria-disabled') === 'true') return;
+
+  const removedElement = actionElement.closest?.('[data-comment-id]');
+  const removedKey = removedElement?.getAttribute?.('data-comment-id');
+  if (!removedKey || String(activeCommentInstanceId.value ?? '') === String(removedKey)) return;
+
+  const previousIds = allPositions.value
+    .filter((position) => position.commentRef?.trackedChange)
+    .map((position, index) => ({
+      id: position.id,
+      index,
+      top: position.top,
+    }))
+    .filter((position) => Number.isFinite(position.top))
+    .sort((left, right) => left.top - right.top || left.index - right.index)
+    .map((position) => position.id);
+  const targetKey = resolveRemovedReviewCardContinuityTarget({
+    previousIds,
+    currentIds: new Set(previousIds),
+    removedId: removedKey,
+  });
+  const targetElement = targetKey ? placeholderRefs.value[targetKey] : null;
+  const targetClientY = targetElement?.getBoundingClientRect?.().top;
+  if (!targetKey || !Number.isFinite(targetClientY)) return;
+
+  directDecisionContinuity = { removedKey, targetKey, targetClientY, applied: false };
+  directDecisionSourceId = removedKey;
+  directDecisionContinuityTargetId.value = targetKey;
+  setInstantLayoutTransitionsDisabled(true);
+};
+
 // Re-measure when active comment changes. The active dialog expands (reply input, thread)
 // and the previously active one collapses — both change height.
 watch(activeCommentInstanceId, (newKey, oldKey) => {
   clearDeferredRemeasureTimers();
+  const directDecisionOwnsTransition =
+    directDecisionContinuity != null &&
+    directDecisionSourceId != null &&
+    [newKey, oldKey].some((key) => key != null && String(key) === String(directDecisionSourceId));
+  if (!directDecisionOwnsTransition) {
+    directDecisionSourceId = null;
+    if (newKey) {
+      releaseDirectDecisionContinuity();
+      clearSidebarContinuityAnchor();
+    } else if (oldKey) {
+      const currentIds = new Set(allPositions.value.map((position) => position.id));
+      if (!currentIds.has(oldKey)) {
+        preserveSidebarContinuityAfterRemoval(oldKey, currentIds);
+      } else {
+        clearSidebarContinuityAnchor();
+      }
+    }
+  }
+
   const keysToRemeasure = [newKey, oldKey];
   const hasPendingInstantAlignment =
     newKey && newKey === instantAlignmentInstanceKey.value && Number.isFinite(instantSidebarAlignmentTargetY.value);
@@ -567,6 +904,10 @@ watch(activeComment, () => {
 
   if (!activeComment.value) {
     clearInstantSidebarAlignment();
+    if (sidebarContinuityAnchor) {
+      scheduleSidebarContinuityAlignment();
+      return;
+    }
     setInstantLayoutTransitionsDisabled(false);
     sidebarOffsetY.value = 0;
     return;
@@ -617,6 +958,7 @@ watch(activeZoom, () => {
 // Track positioned IDs so we can detect additions/removals
 let prevPositionIds = new Set();
 let prevActiveAnchorTop = null;
+let prevActiveLayoutTop = null;
 
 // Re-observe when positions change; clean up stale heights and remeasure on add/remove
 watch(allPositions, (positions) => {
@@ -629,13 +971,68 @@ watch(allPositions, (positions) => {
       : null;
   const activeAnchorMoved =
     activeAnchorTop != null && prevActiveAnchorTop != null && Math.abs(activeAnchorTop - prevActiveAnchorTop) > 1;
+  const activeLayoutTop =
+    typeof activePosition?.top === 'number' && Number.isFinite(activePosition.top) ? activePosition.top : null;
+  const activeLayoutMoved =
+    activeLayoutTop != null && prevActiveLayoutTop != null && Math.abs(activeLayoutTop - prevActiveLayoutTop) > 1;
   if (activeAnchorMoved && sidebarOffsetY.value !== 0 && !Number.isFinite(instantSidebarAlignmentTargetY.value)) {
     sidebarOffsetY.value = 0;
     setInstantLayoutTransitionsDisabled(false);
+  } else if (
+    activeLayoutMoved &&
+    sidebarOffsetY.value !== 0 &&
+    !Number.isFinite(instantSidebarAlignmentTargetY.value) &&
+    !sidebarContinuityAnchor
+  ) {
+    // Windowed geometry can add or remove offscreen comment positions while
+    // the active anchor itself stays put. Collision-floor normalization then
+    // changes the active placeholder's document-space top. Preserve its
+    // client-space position by applying the inverse delta to the translated
+    // rail; otherwise the one-shot activation offset becomes stale and sends
+    // an already-visible card offscreen.
+    setInstantLayoutTransitionsDisabled(true);
+    sidebarOffsetY.value += prevActiveLayoutTop - activeLayoutTop;
+    if (activeLayoutContinuityFrame != null) cancelAnimationFrame(activeLayoutContinuityFrame);
+    activeLayoutContinuityFrame = requestAnimationFrame(() => {
+      activeLayoutContinuityFrame = null;
+      if (!sidebarContinuityAnchor && !Number.isFinite(instantSidebarAlignmentTargetY.value)) {
+        setInstantLayoutTransitionsDisabled(false);
+      }
+    });
   }
   prevActiveAnchorTop = activeAnchorTop;
+  prevActiveLayoutTop = activeLayoutTop;
 
-  const currentIds = new Set(positions.map((p) => p.id));
+  const positionOrder = positions.map((position) => position.id);
+  const currentIds = new Set(positionOrder);
+
+  if (
+    directDecisionContinuity &&
+    !directDecisionContinuity.applied &&
+    !currentIds.has(directDecisionContinuity.removedKey)
+  ) {
+    const { targetKey, targetClientY } = directDecisionContinuity;
+    directDecisionContinuity.applied = true;
+    if (currentIds.has(targetKey) && Number.isFinite(targetClientY)) {
+      sidebarContinuityAnchor = { key: targetKey, targetClientY };
+      continuityAlignmentGeneration += 1;
+      scheduleSidebarContinuityAlignment();
+    } else {
+      releaseDirectDecisionContinuity();
+    }
+  }
+
+  if (directDecisionContinuity?.applied && !currentIds.has(directDecisionContinuity.targetKey)) {
+    releaseDirectDecisionContinuity();
+  }
+
+  if (sidebarContinuityAnchor && !currentIds.has(sidebarContinuityAnchor.key)) {
+    const removedContinuityKey = sidebarContinuityAnchor.key;
+    if (!preserveSidebarContinuityAfterRemoval(removedContinuityKey, currentIds)) {
+      setInstantLayoutTransitionsDisabled(false);
+      sidebarOffsetY.value = 0;
+    }
+  }
 
   // Eagerly add new IDs near the viewport so they render immediately.
   // The IntersectionObserver will asynchronously confirm/prune them.
@@ -686,6 +1083,9 @@ watch(allPositions, (positions) => {
   // remaining comments — their heights may have changed (e.g. parent card after
   // a child reply was deleted becomes shorter).
   const setChanged = prevPositionIds.size !== currentIds.size || [...prevPositionIds].some((id) => !currentIds.has(id));
+  const orderChanged =
+    renderedPositionOrder.length !== positionOrder.length ||
+    renderedPositionOrder.some((id, index) => id !== positionOrder[index]);
   if (setChanged) {
     // Remove stale heights so allPositions recomputes with ESTIMATED_HEIGHT
     // for the next cycle, then measure actual heights after DOM settles.
@@ -706,16 +1106,45 @@ watch(allPositions, (positions) => {
     });
   }
 
+  if (sidebarContinuityAnchor && (setChanged || orderChanged)) {
+    scheduleSidebarContinuityAlignment();
+  }
+
   prevPositionIds = currentIds;
-  nextTick(observePlaceholders);
+  nextTick(() => {
+    renderedPositionOrder = positionOrder;
+    observePlaceholders();
+  });
 });
 
 onMounted(() => {
   setupObserver();
+  registerOwnerScrollListeners();
+  window.addEventListener('resize', refreshViewportWindow, { passive: true });
+  document.addEventListener('pointerdown', releaseDirectDecisionContinuityForUnrelatedPointer, true);
   nextTick(observePlaceholders);
 });
 
 onBeforeUnmount(() => {
+  clearDeferredRemeasureTimers();
+  if (scrollTimer) clearTimeout(scrollTimer);
+  releaseDirectDecisionContinuity();
+  clearSidebarContinuityAnchor();
+  if (activeLayoutContinuityFrame != null) {
+    cancelAnimationFrame(activeLayoutContinuityFrame);
+    activeLayoutContinuityFrame = null;
+  }
+  if (ownerScrollContinuityResetFrame != null) {
+    cancelAnimationFrame(ownerScrollContinuityResetFrame);
+    ownerScrollContinuityResetFrame = null;
+  }
+  unregisterOwnerScrollListeners();
+  window.removeEventListener('resize', refreshViewportWindow);
+  document.removeEventListener('pointerdown', releaseDirectDecisionContinuityForUnrelatedPointer, true);
+  if (viewportFrame != null) {
+    cancelAnimationFrame(viewportFrame);
+    viewportFrame = null;
+  }
   if (observer) {
     observer.disconnect();
     observer = null;
@@ -731,6 +1160,7 @@ onBeforeUnmount(() => {
   <div
     class="section-wrapper"
     ref="floatingCommentsContainer"
+    @click.capture="prepareSidebarContinuityForDirectDecision"
     :style="{
       minHeight: wrapperMinHeight + 'px',
       transition: disableInstantLayoutTransitions ? 'none' : undefined,
@@ -743,7 +1173,7 @@ onBeforeUnmount(() => {
         transition: disableInstantLayoutTransitions ? 'none' : undefined,
       }"
     >
-      <!-- Lightweight placeholders for ALL comments (observed for viewport proximity) -->
+      <!-- Only the bounded viewport window owns placeholders and dialogs. -->
       <div
         v-for="pos in allPositions"
         :key="pos.id"
@@ -753,6 +1183,9 @@ onBeforeUnmount(() => {
         :data-comment-thread-id="pos.threadId"
         :data-comment-position-key="pos.instanceRef?.positionKey ?? ''"
         :data-comment-page-index="pos.pageIndex ?? ''"
+        :class="{
+          'is-direct-decision-continuity-target': pos.id === directDecisionContinuityTargetId,
+        }"
         :style="{
           top: pos.top + 'px',
           height: pos.height + 'px',
@@ -784,6 +1217,11 @@ onBeforeUnmount(() => {
   position: absolute;
   width: 300px;
   transition: top 0.3s ease;
+}
+
+.comment-placeholder.is-direct-decision-continuity-target :deep(.overflow-menu) {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .floating-comment {

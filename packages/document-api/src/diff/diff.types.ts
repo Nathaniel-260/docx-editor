@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 /** Identifier for the engine adapter that produced the opaque payload. */
-export type DiffEngineId = 'super-editor';
+export type DiffEngineId = 'superdoc-v2';
 
 // ---------------------------------------------------------------------------
 // Coverage
@@ -99,7 +99,7 @@ export interface DiffApplyInput {
 /** How body content changes are applied. */
 export type DiffChangeMode = 'direct' | 'tracked';
 
-/** Options for `diff.apply`. */
+/** Options for `diff.apply`. Omitted `changeMode` applies story content directly. */
 export interface DiffApplyOptions {
   changeMode?: DiffChangeMode;
 }

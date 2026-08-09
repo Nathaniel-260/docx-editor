@@ -1,4 +1,4 @@
-import type { LineSegment, ParagraphAttrs, ParagraphBlock, Run, TextRun } from '@superdoc/contracts';
+import type { ImageRun, Line, LineSegment, ParagraphAttrs, ParagraphBlock, Run, TextRun } from '@superdoc/contracts';
 import {
   calculateJustifySpacing,
   computeLinePmRange,
@@ -19,7 +19,9 @@ import { applyRtlStyles, shouldUseSegmentPositioning } from '../features/inline-
 import { applyTooltipAccessibility } from './links.js';
 import { appendFormattingParagraphMark } from './formatting-marks.js';
 import { textRunMergeSignature } from './hash.js';
+import { inlineBoxAdvanceBeforeOffset, markInlineBoxRun, paintInlineBoxes, splitInlineBoxRuns } from './inline-box.js';
 import { isBreakRun, isFieldAnnotationRun, isImageRun, isLineBreakRun, isMathRun, renderRun } from './render-run.js';
+import { applyRunTypographyStyles } from './text-run.js';
 import {
   canPaintUnderlineOverlay,
   renderInlineTabRun,
@@ -61,8 +63,33 @@ const isWhitespaceOnly = (text: string): boolean => {
   return true;
 };
 
-const alignNormalTextBesideInlineImage = (element: HTMLElement, run: Run, lineContainsInlineImage: boolean): void => {
-  if (!lineContainsInlineImage) return;
+const hasTabBoundaryGeometry = (segment: LineSegment): boolean =>
+  segment.x !== undefined || segment.precedingTabEndX !== undefined;
+
+const isVanishedTextRun = (run: Run | undefined): run is TextRun =>
+  Boolean(run && (run.kind === 'text' || run.kind === undefined) && (run as TextRun).vanish === true);
+
+const isParagraphMarkDeletionAnchorRun = (run: Run | undefined): run is TextRun =>
+  isVanishedTextRun(run) && (run as TextRun).dataAttrs?.['data-paragraph-mark-deletion-anchor'] === 'true';
+
+const isTransparentVanishedSegment = (run: Run | undefined, segment: LineSegment): boolean =>
+  isVanishedTextRun(run) && segment.width === 0 && !hasTabBoundaryGeometry(segment);
+
+/**
+ * Word's workaround for a top-aligned, line-expanding inline image: normal text
+ * beside it is dropped to the bottom of the (expanded) line box so the text
+ * baseline sits below the tall image instead of being centered against it.
+ *
+ * Scoped to lines that actually contain a line-expanding (top-aligned) image.
+ * Glyph-like baseline images do NOT trigger this — their line height matches the
+ * text, so the surrounding text must keep its natural baseline alignment.
+ */
+const alignNormalTextBesideLineExpandingImage = (
+  element: HTMLElement,
+  run: Run,
+  lineContainsLineExpandingImage: boolean,
+): void => {
+  if (!lineContainsLineExpandingImage) return;
   if ((run.kind !== 'text' && run.kind !== undefined) || !('text' in run)) return;
 
   const textRun = run as TextRun;
@@ -70,6 +97,49 @@ const alignNormalTextBesideInlineImage = (element: HTMLElement, run: Run, lineCo
 
   element.style.lineHeight = 'normal';
   element.style.verticalAlign = 'bottom';
+};
+
+const LINE_EXPANDING_IMAGE_TOLERANCE_PX = 0.5;
+
+/**
+ * Copy the measured per-line inline-image vertical alignment onto the image runs
+ * of a paragraph block, returning a shallow-cloned block when anything changed.
+ *
+ * Effective alignment order (highest first): an authored `run.verticalAlign`,
+ * then the measured `line.inlineImageAlignments` entry, then the painter's
+ * legacy `'top'` default. Resolving here (once per line, before the branch
+ * split) keeps the inline-flow and segment-positioned branches consistent and
+ * is pure data shaping — no DOM measurement.
+ */
+const resolveLineInlineImageRuns = (block: ParagraphBlock, line: Line): ParagraphBlock => {
+  const alignments = line.inlineImageAlignments;
+  if (!alignments || alignments.length === 0) return block;
+  let runs: Run[] | null = null;
+  for (const { runIndex, verticalAlign } of alignments) {
+    const run = block.runs[runIndex];
+    if (!run || !isImageRun(run)) continue;
+    // An authored alignment is the source of truth and always wins.
+    if ((run as ImageRun).verticalAlign != null) continue;
+    if (!runs) runs = [...block.runs];
+    runs[runIndex] = { ...(run as ImageRun), verticalAlign };
+  }
+  return runs ? { ...block, runs } : block;
+};
+
+/** True when a resolved image run is top/default aligned and expands the line box. */
+const isLineExpandingImageRun = (run: Run, line: Line): boolean => {
+  if (!isImageRun(run)) return false;
+  const va = (run as ImageRun).verticalAlign;
+  if (va != null && va !== 'top') return false;
+  const imageOuterHeight =
+    (run as ImageRun).height + ((run as ImageRun).distTop ?? 0) + ((run as ImageRun).distBottom ?? 0);
+  if (imageOuterHeight <= 0) return false;
+  return imageOuterHeight >= line.lineHeight - LINE_EXPANDING_IMAGE_TOLERANCE_PX;
+};
+
+const baselineImageTopFromLine = (line: Line, imageHeight: number): number => {
+  const halfLeading = Math.max(0, (line.lineHeight - line.ascent - line.descent) / 2);
+  return Math.max(0, halfLeading + line.ascent - imageHeight);
 };
 
 const cloneTextRun = (run: TextRun): TextRun => ({
@@ -213,9 +283,10 @@ const runInlinePaintWidth = (
   runIndex: number,
   segmentsByRun: Map<number, LineSegment[]>,
   spacingPerSpace: number,
+  tabWidths?: Record<number, number>,
 ): number => {
   if (run.kind === 'tab') {
-    return run.width ?? 48;
+    return tabWidths?.[runIndex] ?? run.width ?? 48;
   }
 
   const segments = segmentsByRun.get(runIndex);
@@ -231,6 +302,84 @@ const runInlinePaintWidth = (
   }
 
   return 0;
+};
+
+/**
+ * Resolve the measured advance for one sliced inline text run without reading
+ * DOM geometry. Production runs carry PM ranges, which let us intersect the
+ * rendered slice with the line's measured segments. The text/signature fallback
+ * keeps synthetic tests and legacy producers deterministic when PM ranges are
+ * absent.
+ */
+const measuredInlineTextAdvance = (
+  run: TextRun,
+  block: ParagraphBlock,
+  line: Line,
+  segmentsByRun: Map<number, LineSegment[]>,
+  spacingPerSpace: number,
+): number | null => {
+  const runStart = run.pmStart;
+  const runEnd = run.pmEnd;
+  if (runStart != null && runEnd != null) {
+    let width = 0;
+    let matched = false;
+    for (const [runIndex, segments] of segmentsByRun) {
+      const sourceRun = block.runs[runIndex];
+      if (!sourceRun || !isTextRun(sourceRun) || sourceRun.pmStart == null) continue;
+      for (const segment of segments) {
+        const segmentStart = sourceRun.pmStart + segment.fromChar;
+        const segmentEnd = sourceRun.pmStart + segment.toChar;
+        const overlapStart = Math.max(runStart, segmentStart);
+        const overlapEnd = Math.min(runEnd, segmentEnd);
+        if (overlapEnd <= overlapStart) continue;
+
+        matched = true;
+        const segmentLength = Math.max(1, segmentEnd - segmentStart);
+        const overlapLength = overlapEnd - overlapStart;
+        const sourceFrom = segment.fromChar + (overlapStart - segmentStart);
+        const sourceTo = sourceFrom + overlapLength;
+        const overlapText = sourceRun.text.slice(sourceFrom, sourceTo);
+        width += (segment.width * overlapLength) / segmentLength + spacingPerSpace * countSpaces(overlapText);
+      }
+    }
+    if (matched) return width;
+  }
+
+  for (let runIndex = line.fromRun; runIndex <= line.toRun; runIndex += 1) {
+    const sourceRun = block.runs[runIndex];
+    if (!sourceRun || !isTextRun(sourceRun)) continue;
+    const fromChar = runIndex === line.fromRun ? line.fromChar : 0;
+    const toChar = runIndex === line.toRun ? line.toChar : sourceRun.text.length;
+    if (sourceRun.text.slice(fromChar, toChar) !== run.text) continue;
+    if (textRunMergeSignature(sourceRun) !== textRunMergeSignature(run)) continue;
+    return runInlinePaintWidth(sourceRun, runIndex, segmentsByRun, spacingPerSpace, line.tabWidths);
+  }
+
+  return null;
+};
+
+/**
+ * CSS transforms change glyph geometry but not inline advance. RTL lines must
+ * remain in browser bidi flow, so a measured-width outer box owns the advance
+ * while the existing run element paints the transformed glyphs inside it.
+ */
+const wrapScaledRtlRunWithMeasuredAdvance = (
+  element: HTMLElement,
+  measuredAdvance: number,
+  doc: Document,
+): HTMLElement => {
+  const wrapper = doc.createElement('span');
+  wrapper.classList.add('superdoc-scaled-inline-advance');
+  wrapper.style.display = 'inline-block';
+  wrapper.style.width = `${Math.max(0, measuredAdvance)}px`;
+  wrapper.style.textAlign = 'right';
+  if (element.style.verticalAlign) {
+    wrapper.style.verticalAlign = element.style.verticalAlign;
+    element.style.verticalAlign = 'baseline';
+  }
+  element.style.transformOrigin = 'right center';
+  wrapper.appendChild(element);
+  return wrapper;
 };
 
 // Builds underline spans for the normal inline-flow branch. Spans are in line-relative px
@@ -259,7 +408,7 @@ const buildInlineUnderlineSpans = (
     const run = block.runs[runIndex];
     if (!run) continue;
 
-    const width = runInlinePaintWidth(run, runIndex, segmentsByRun, spacingPerSpace);
+    const width = runInlinePaintWidth(run, runIndex, segmentsByRun, spacingPerSpace, line.tabWidths);
     if (canPaintUnderlineOverlay(run)) {
       appendUnderlineOverlaySpan(spans, currentX, currentX + width, underlineBorderForRun(run));
     }
@@ -303,9 +452,21 @@ export const renderLine = ({
   paragraphMarkLeftOffsetOverride,
   runContext,
 }: RenderLineParams): HTMLElement => {
-  const expandedBlock = { ...block, runs: preExpandedRuns ?? expandRunsForInlineNewlines(block.runs) };
+  // Apply the measured per-line inline-image alignment to the image runs before
+  // anything reads them, so both render branches and the expanded-run path see
+  // the same effective verticalAlign. When the line carries no image alignment,
+  // this is the original block (and the preExpandedRuns fast path is preserved).
+  const resolvedBlock = resolveLineInlineImageRuns(block as ParagraphBlock, line);
+  const hasResolvedImageAlignments = resolvedBlock !== block;
+  const expandedBlock = {
+    ...resolvedBlock,
+    runs: hasResolvedImageAlignments
+      ? expandRunsForInlineNewlines(resolvedBlock.runs)
+      : (preExpandedRuns ?? expandRunsForInlineNewlines(block.runs)),
+  };
   const lineRange = computeLinePmRange(expandedBlock, line);
   let runsForLine = sliceRunsForLine(expandedBlock, line);
+  runsForLine = splitInlineBoxRuns(expandedBlock as ParagraphBlock, line) ?? runsForLine;
 
   const el = runContext.doc.createElement('div');
   el.classList.add(CLASS_NAMES.line);
@@ -337,9 +498,12 @@ export const renderLine = ({
     if (lineRange.pmEnd != null) {
       span.dataset.pmEnd = String(lineRange.pmEnd);
     }
-    // Restore font-size so the &nbsp; remains a visible caret target
-    // (the line container sets fontSize: 0 to eliminate the CSS strut).
-    span.style.fontSize = `${line.lineHeight}px`;
+    const insertionRun = expandedBlock.runs[line.fromRun];
+    if (insertionRun && isTextRun(insertionRun) && insertionRun.text.length === 0) {
+      applyRunTypographyStyles(span, insertionRun, runContext.resolvePhysical);
+    } else {
+      span.style.fontSize = `${line.lineHeight}px`;
+    }
     span.innerHTML = '&nbsp;';
     el.appendChild(span);
   }
@@ -430,12 +594,30 @@ export const renderLine = ({
     spaceCount,
     shouldJustify: justifyShouldApply,
   });
-  const lineContainsInlineImage = runsForLine.some((run) => isImageRun(run));
-  const useSegmentPositioning = shouldUseSegmentPositioning(
-    hasExplicitPositioning ?? false,
-    Boolean(line.segments),
-    isRtl,
+  // Only a top-aligned, line-expanding image triggers the Word text-bottom
+  // workaround. Glyph-like baseline images leave the surrounding text alone.
+  const lineContainsLineExpandingImage = runsForLine.some((run) => isLineExpandingImageRun(run, line));
+  const hasHorizontallyScaledText = runsForLine.some(
+    (run) =>
+      (run.kind === 'text' || run.kind === undefined) &&
+      'horizontalScale' in run &&
+      typeof run.horizontalScale === 'number' &&
+      Number.isFinite(run.horizontalScale) &&
+      run.horizontalScale >= 0 &&
+      run.horizontalScale !== 1,
   );
+  // CSS inline baseline alignment has no font strut when a line contains only
+  // an image (the line container intentionally uses font-size: 0). Route that
+  // structural case through the deterministic measured-baseline painter used
+  // by explicitly positioned segments. Mixed text/image lines keep native
+  // inline composition.
+  const isBaselineImageOnlyLine =
+    runsForLine.length > 0 &&
+    runsForLine.every((run) => isImageRun(run) && (run as ImageRun).verticalAlign === 'baseline');
+  const useSegmentPositioning =
+    shouldUseSegmentPositioning(hasExplicitPositioning ?? false, Boolean(line.segments), isRtl) ||
+    (!isRtl && Boolean(line.segments) && hasHorizontallyScaledText) ||
+    (!isRtl && isBaselineImageOnlyLine);
   // Enabled for both inline-flow and segment-positioned lines: a single measured underline
   // overlay owns the mark across text + preserved spaces + tabs, so the two never disagree
   // on the underline's y (SD-3330). The segment-positioned branch captures span geometry as
@@ -505,7 +687,7 @@ export const renderLine = ({
 
   if (useSegmentPositioning) {
     renderExplicitlyPositionedRuns({
-      block,
+      block: resolvedBlock,
       line,
       context,
       el,
@@ -514,22 +696,28 @@ export const renderLine = ({
       styleId,
       runContext,
       trackedConfig,
-      lineContainsInlineImage,
+      lineContainsLineExpandingImage,
       useLineUnderlineOverlay,
       underlineSpanCollector: useLineUnderlineOverlay ? underlineSpans : undefined,
     });
+    paintInlineBoxes(line.inlineBoxes, el, isRtl);
   } else {
     renderInlineRuns({
+      block: expandedBlock as ParagraphBlock,
       runsForLine,
       line,
+      tabWidthByRun: buildTabWidthByRun(expandedBlock as ParagraphBlock, line),
       context,
       el,
       styleId,
       runContext,
       trackedConfig,
-      lineContainsInlineImage,
+      lineContainsLineExpandingImage,
       useLineUnderlineOverlay,
+      isRtl,
+      spacingPerSpace,
     });
+    paintInlineBoxes(line.inlineBoxes, el, isRtl);
     if (useLineUnderlineOverlay) {
       underlineSpans.push(
         ...buildInlineUnderlineSpans(expandedBlock as ParagraphBlock, line, spacingPerSpace, lineTextStartOffsetPx),
@@ -573,7 +761,7 @@ type RunRenderBranchParams = {
   styleId?: string;
   runContext: RenderLineParams['runContext'];
   trackedConfig: ReturnType<RenderLineParams['runContext']['resolveTrackedChangesConfig']>;
-  lineContainsInlineImage: boolean;
+  lineContainsLineExpandingImage: boolean;
 };
 
 const renderExplicitlyPositionedRuns = ({
@@ -586,7 +774,7 @@ const renderExplicitlyPositionedRuns = ({
   styleId,
   runContext,
   trackedConfig,
-  lineContainsInlineImage,
+  lineContainsLineExpandingImage,
   useLineUnderlineOverlay,
   underlineSpanCollector,
 }: RunRenderBranchParams & {
@@ -607,6 +795,13 @@ const renderExplicitlyPositionedRuns = ({
   // including list marker/suffix space when the resolved layout provides it.
   const indentOffset = lineTextStartOffsetPx;
   let cumulativeX = 0; // Start at 0, we'll add indentOffset when positioning
+  const visibleRunStarts: number[] = [];
+  let visibleOffset = 0;
+  for (const run of block.runs) {
+    visibleRunStarts.push(visibleOffset);
+    visibleOffset += isTextRun(run) ? run.text.length : 1;
+  }
+  const lineVisibleStart = (visibleRunStarts[line.fromRun] ?? 0) + line.fromChar;
 
   const segments = line.segments!;
   const segmentsByRun = new Map<number, LineSegment[]>();
@@ -620,12 +815,14 @@ const renderExplicitlyPositionedRuns = ({
   });
 
   /**
-   * Finds the immediate next segment carrying tab geometry after a given run index.
+   * Finds the next visible adjacent segment carrying tab geometry after a given run index.
    * This handles tab-aligned text and compensated tab paint geometry.
    *
-   * WHY ONLY THE IMMEDIATE NEXT RUN:
+   * WHY ONLY VISIBLE ADJACENCY:
    * When rendering a tab, we need to know where the content IMMEDIATELY after this tab begins
-   * to correctly size the tab element. We don't look beyond the immediate next run because:
+   * to correctly size the tab element. We only skip vanished zero-width text segments because
+   * they are addressable source ranges but not visible tab-adjacent content. We don't look
+   * beyond other runs because:
    * 1. Each tab is independent and should only consider its directly adjacent content
    * 2. Looking further ahead would incorrectly span multiple tabs or unrelated runs
    * 3. If there's another tab between this tab and some content, that intermediate tab is
@@ -640,16 +837,20 @@ const renderExplicitlyPositionedRuns = ({
    * @returns The immediate next tab-positioned segment, or undefined if not found or not immediate
    */
   const findImmediateNextSegment = (fromRunIndex: number): LineSegment | undefined => {
-    // Only check the immediate next run - don't skip over other tabs
-    const nextRunIdx = fromRunIndex + 1;
-    if (nextRunIdx <= line.toRun) {
+    for (let nextRunIdx = fromRunIndex + 1; nextRunIdx <= line.toRun; nextRunIdx += 1) {
+      const nextRun = block.runs[nextRunIdx];
+      if (!nextRun) return undefined;
       const nextSegments = segmentsByRun.get(nextRunIdx);
       if (nextSegments && nextSegments.length > 0) {
         const firstSegment = nextSegments[0];
         // Return only the first segment; later segments in the same run are
         // not immediately adjacent to this tab.
-        return firstSegment.x !== undefined || firstSegment.precedingTabEndX !== undefined ? firstSegment : undefined;
+        if (hasTabBoundaryGeometry(firstSegment)) return firstSegment;
+        if (nextSegments.every((segment) => isTransparentVanishedSegment(nextRun, segment))) continue;
+        return undefined;
       }
+      if (isVanishedTextRun(nextRun)) continue;
+      return undefined;
     }
     return undefined;
   };
@@ -776,6 +977,15 @@ const renderExplicitlyPositionedRuns = ({
         const segWidth = runSegments?.[0]?.width ?? 0;
         elem.style.position = 'absolute';
         elem.style.left = `${segX}px`;
+        // CSS `vertical-align` is ignored once the element is absolutely
+        // positioned, so for a measured baseline (glyph) image we set a
+        // deterministic top from line-derived metrics: the image box bottom sits
+        // on the text baseline. No DOM measurement (SD-2957). Top/legacy images
+        // keep top:auto (line top).
+        if ((baseRun as ImageRun).verticalAlign === 'baseline') {
+          const baselineTop = baselineImageTopFromLine(line, (baseRun as ImageRun).height);
+          elem.style.top = `${baselineTop}px`;
+        }
         appendToLineGeo(elem, baseRun, segX, segWidth);
         cumulativeX = baseSegX + segWidth;
       }
@@ -835,6 +1045,23 @@ const renderExplicitlyPositionedRuns = ({
 
     const runSegments = segmentsByRun.get(runIndex);
     if (!runSegments || runSegments.length === 0) {
+      if (
+        isParagraphMarkDeletionAnchorRun(baseRun) &&
+        runContext.showFormattingMarks === true &&
+        trackedConfig?.enabled === true &&
+        trackedConfig.mode !== 'off'
+      ) {
+        const elem = renderRun(baseRun, context, runContext, trackedConfig);
+        if (elem) {
+          if (styleId) {
+            elem.setAttribute('styleid', styleId);
+          }
+          const xPos = cumulativeX + indentOffset;
+          elem.style.position = 'absolute';
+          elem.style.left = `${xPos}px`;
+          appendToLineGeo(elem, baseRun, xPos, 0);
+        }
+      }
       continue;
     }
 
@@ -846,7 +1073,9 @@ const renderExplicitlyPositionedRuns = ({
         }
         const segment = runSegments[0]!;
         const baseX = segment.x !== undefined ? segment.x : cumulativeX;
-        const xPos = baseX + indentOffset;
+        const segmentOffset = (visibleRunStarts[segment.runIndex] ?? 0) + segment.fromChar - lineVisibleStart;
+        const positionedX = baseX + inlineBoxAdvanceBeforeOffset(line.inlineBoxes, segmentOffset);
+        const xPos = positionedX + indentOffset;
         elem.style.position = 'absolute';
         elem.style.left = `${xPos}px`;
         appendToLineGeo(elem, baseRun, xPos, segment.width);
@@ -875,13 +1104,18 @@ const renderExplicitlyPositionedRuns = ({
 
       const pmSliceStart = runPmStart != null ? runPmStart + segment.fromChar : undefined;
       const pmSliceEnd = runPmStart != null ? runPmStart + segment.toChar : (fallbackPmEnd ?? undefined);
-      const segmentRun: TextRun = {
-        ...(baseRun as TextRun),
-        text: segmentText,
-        pmStart: pmSliceStart,
-        pmEnd: pmSliceEnd,
-        ...(coveredByOverlay ? { underline: undefined } : {}),
-      };
+      const segmentOffset = (visibleRunStarts[segment.runIndex] ?? 0) + segment.fromChar - lineVisibleStart;
+      const segmentRun = markInlineBoxRun(
+        {
+          ...(baseRun as TextRun),
+          text: segmentText,
+          pmStart: pmSliceStart,
+          pmEnd: pmSliceEnd,
+          ...(coveredByOverlay ? { underline: undefined } : {}),
+        },
+        segmentOffset,
+        segmentOffset + (segment.toChar - segment.fromChar),
+      );
 
       const elem = renderRun(segmentRun, context, runContext, trackedConfig);
       if (elem) {
@@ -891,12 +1125,13 @@ const renderExplicitlyPositionedRuns = ({
         if (styleId) {
           elem.setAttribute('styleid', styleId);
         }
-        alignNormalTextBesideInlineImage(elem, segmentRun, lineContainsInlineImage);
+        alignNormalTextBesideLineExpandingImage(elem, segmentRun, lineContainsLineExpandingImage);
         // Determine X position for this segment
         // Layout positions are relative to content area start (0).
         // Add indentOffset to position content at the correct paragraph indent.
         const baseX = segment.x !== undefined ? segment.x : cumulativeX;
-        const xPos = baseX + indentOffset;
+        const positionedX = baseX + inlineBoxAdvanceBeforeOffset(line.inlineBoxes, segmentOffset);
+        const xPos = positionedX + indentOffset;
 
         elem.style.position = 'absolute';
         elem.style.left = `${xPos}px`;
@@ -925,7 +1160,25 @@ const renderExplicitlyPositionedRuns = ({
   closeGeoSdtWrapper();
 };
 
+// Builds a Map from tab run object reference → measured width in px from Line.tabWidths.
+// Tab runs in runsForLine are the same object references as in block.runs (sliceRunsForLine
+// pushes tab runs as-is), so the Map correctly identifies them even if pmStart has shifted.
+const buildTabWidthByRun = (block: ParagraphBlock, line: import('@superdoc/contracts').Line): Map<Run, number> => {
+  const map = new Map<Run, number>();
+  const { tabWidths } = line;
+  if (!tabWidths) return map;
+  for (let i = line.fromRun; i <= line.toRun; i++) {
+    const run = block.runs[i];
+    const width = tabWidths[i];
+    if (run?.kind === 'tab' && width != null) {
+      map.set(run, width);
+    }
+  }
+  return map;
+};
+
 const renderInlineRuns = ({
+  block,
   runsForLine,
   line,
   context,
@@ -933,13 +1186,29 @@ const renderInlineRuns = ({
   styleId,
   runContext,
   trackedConfig,
-  lineContainsInlineImage,
+  lineContainsLineExpandingImage,
   useLineUnderlineOverlay,
-}: RunRenderBranchParams & { runsForLine: Run[]; useLineUnderlineOverlay: boolean }): void => {
+  tabWidthByRun,
+  isRtl,
+  spacingPerSpace,
+}: RunRenderBranchParams & {
+  block: ParagraphBlock;
+  runsForLine: Run[];
+  useLineUnderlineOverlay: boolean;
+  tabWidthByRun: Map<Run, number>;
+  isRtl: boolean;
+  spacingPerSpace: number;
+}): void => {
   // Use run-based rendering for normal text flow
   // Track current inline SDT wrapper to group adjacent runs with the same SDT id
   let currentInlineSdtWrapper: HTMLElement | null = null;
   let currentInlineSdtId: string | null = null;
+  const segmentsByRun = new Map<number, LineSegment[]>();
+  line.segments?.forEach((segment) => {
+    const segments = segmentsByRun.get(segment.runIndex);
+    if (segments) segments.push(segment);
+    else segmentsByRun.set(segment.runIndex, [segment]);
+  });
 
   const closeCurrentWrapper = () => {
     if (currentInlineSdtWrapper) {
@@ -972,6 +1241,9 @@ const renderInlineRuns = ({
             runContext.layoutEpoch,
             styleId,
             !suppressUnderline,
+            // Use original run reference for Map lookup — runForRender may be a
+            // clone (cloneRunWithoutUnderline) that is not in the Map.
+            tabWidthByRun.get(run as Extract<Run, { kind: 'tab' }>),
           )
         : renderRun(runForRender, context, runContext, trackedConfig);
 
@@ -982,7 +1254,18 @@ const renderInlineRuns = ({
       if (styleId) {
         elem.setAttribute('styleid', styleId);
       }
-      alignNormalTextBesideInlineImage(elem, runForRender, lineContainsInlineImage);
+      alignNormalTextBesideLineExpandingImage(elem, runForRender, lineContainsLineExpandingImage);
+      const measuredAdvance =
+        isRtl &&
+        isTextRun(run) &&
+        typeof run.horizontalScale === 'number' &&
+        Number.isFinite(run.horizontalScale) &&
+        run.horizontalScale >= 0 &&
+        run.horizontalScale !== 1
+          ? measuredInlineTextAdvance(run, block, line, segmentsByRun, spacingPerSpace)
+          : null;
+      const inlineElement =
+        measuredAdvance == null ? elem : wrapScaledRtlRunWithMeasuredAdvance(elem, measuredAdvance, runContext.doc);
 
       // If this run has inline SDT, add to or create wrapper
       if (resolved) {
@@ -1000,9 +1283,9 @@ const renderInlineRuns = ({
         // Typography is set when wrapper is created from the first run.
         // Follow-up (SD-2744): define a deterministic mixed-typography rule.
         runContext.expandSdtWrapperPmRange(currentInlineSdtWrapper, run.pmStart, run.pmEnd);
-        currentInlineSdtWrapper.appendChild(elem);
+        currentInlineSdtWrapper.appendChild(inlineElement);
       } else {
-        el.appendChild(elem);
+        el.appendChild(inlineElement);
       }
     }
   });

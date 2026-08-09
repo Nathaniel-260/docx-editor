@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
 import { mount } from '@vue/test-utils';
-import { defineComponent, h } from 'vue';
+import { defineComponent, h, nextTick, reactive } from 'vue';
 
 let commentsStoreStub;
 let isAllowedMock;
@@ -70,12 +70,13 @@ const makeComment = (overrides = {}) => ({
   ...overrides,
 });
 
-const mountHeader = ({ currentUser, comment, config = { readOnly: false } }) =>
+const mountHeader = ({ currentUser, comment, config = { readOnly: false }, extraProps = {} }) =>
   mount(CommentHeader, {
     props: {
       config,
       comment,
       isActive: true,
+      ...extraProps,
     },
     global: {
       config: {
@@ -136,5 +137,195 @@ describe('CommentHeader.vue', () => {
     });
 
     expect(wrapper.find('.imported-tag').exists()).toBe(true);
+  });
+
+  it('does not show resolve for legacy tracked-change thread members', () => {
+    isAllowedMock = vi.fn(() => true);
+    const wrapper = mountHeader({
+      currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+      comment: makeComment({
+        trackedChangeParentId: 'tc-1',
+        trackedChangeType: 'insert',
+      }),
+      config: { readOnly: false, allowResolve: true },
+    });
+
+    expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(false);
+  });
+
+  describe('read-only review actions (SD-3164)', () => {
+    beforeEach(() => {
+      isAllowedMock = vi.fn(() => true);
+    });
+
+    it.each([
+      ['ordinary comment', makeComment()],
+      ['tracked insertion', makeComment({ trackedChange: true, trackedChangeType: 'trackInsert' })],
+      ['tracked deletion', makeComment({ trackedChange: true, trackedChangeType: 'trackDelete' })],
+    ])('removes every mutation control for a read-only %s', (_label, comment) => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment,
+        config: { readOnly: true, allowResolve: true },
+      });
+
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(false);
+      expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(false);
+      expect(wrapper.find('[data-comment-action="overflow"]').exists()).toBe(false);
+      expect(wrapper.find('[data-comment-reopen]').exists()).toBe(false);
+    });
+
+    it('removes reopen for a resolved read-only comment', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ resolvedTime: Date.now() }),
+        config: { readOnly: true, allowResolve: true },
+        extraProps: { reopenSupported: true },
+      });
+
+      expect(wrapper.find('[data-comment-reopen]').exists()).toBe(false);
+    });
+
+    it('keeps writable capability failures visible but disabled', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ trackedChange: true }),
+        config: { readOnly: false, allowResolve: true },
+        extraProps: {
+          resolveDisabledReason: 'review-surface-read-only',
+          rejectDisabledReason: 'review-surface-read-only',
+        },
+      });
+
+      const resolve = wrapper.find('[data-comment-action="resolve"]');
+      const reject = wrapper.find('[data-comment-action="reject"]');
+      expect(resolve.exists()).toBe(true);
+      expect(reject.exists()).toBe(true);
+      expect(resolve.attributes('aria-disabled')).toBe('true');
+      expect(reject.attributes('aria-disabled')).toBe('true');
+    });
+
+    it('honors allowResolve for ordinary lifecycle actions without hiding unrelated writes', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment(),
+        config: { readOnly: false, allowResolve: false },
+      });
+
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(false);
+      expect(wrapper.find('[data-comment-action="overflow"]').exists()).toBe(true);
+      expect(wrapper.find('.options-labels').text()).toContain('Edit');
+      expect(wrapper.find('.options-labels').text()).toContain('Delete');
+    });
+
+    it('does not apply allowResolve to tracked-change decisions', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ trackedChange: true }),
+        config: { readOnly: false, allowResolve: false },
+      });
+
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(true);
+      expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(true);
+    });
+
+    it('removes an already-rendered action surface when config flips to read-only', async () => {
+      const config = reactive({ readOnly: false, allowResolve: true });
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment(),
+        config,
+      });
+      expect(wrapper.find('[data-comment-action="overflow"]').exists()).toBe(true);
+
+      config.readOnly = true;
+      await nextTick();
+
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(false);
+      expect(wrapper.find('[data-comment-action="overflow"]').exists()).toBe(false);
+    });
+  });
+
+  describe('reopen affordance (row 864)', () => {
+    beforeEach(() => {
+      // Reopen reuses the resolve permission; allow it for these cases.
+      isAllowedMock = vi.fn(
+        (permission) => permission === PERMISSIONS.RESOLVE_OWN || permission === PERMISSIONS.RESOLVE_OTHER,
+      );
+    });
+
+    it('exposes a reopen action for a resolved root comment when v2 reopen is supported', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ resolvedTime: Date.now() }),
+        extraProps: { reopenSupported: true },
+      });
+      expect(wrapper.find('[data-comment-reopen]').exists()).toBe(true);
+    });
+
+    it('emits reopen when the affordance is clicked and not disabled', async () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ resolvedTime: Date.now() }),
+        extraProps: { reopenSupported: true },
+      });
+      await wrapper.find('[data-comment-reopen]').trigger('click');
+      expect(wrapper.emitted('reopen')).toBeTruthy();
+    });
+
+    it('does not show reopen for unresolved comments and keeps resolve/delete behavior', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ resolvedTime: null }),
+        extraProps: { reopenSupported: true },
+      });
+      expect(wrapper.find('[data-comment-reopen]').exists()).toBe(false);
+      // Unresolved root comment still offers resolve.
+      expect(wrapper.html()).toContain('overflow-menu');
+    });
+
+    it('does not show reopen when reopen is not supported (v1)', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ resolvedTime: Date.now() }),
+        extraProps: { reopenSupported: false },
+      });
+      expect(wrapper.find('[data-comment-reopen]').exists()).toBe(false);
+    });
+
+    it('does not show reopen for resolved replies', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ resolvedTime: Date.now(), parentCommentId: 'root-1' }),
+        extraProps: { reopenSupported: true },
+      });
+      expect(wrapper.find('[data-comment-reopen]').exists()).toBe(false);
+    });
+
+    it('does not show reopen for legacy tracked-change thread members', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({
+          resolvedTime: Date.now(),
+          trackedChangeParentId: 'tc-1',
+          trackedChangeType: 'insert',
+        }),
+        extraProps: { reopenSupported: true },
+      });
+      expect(wrapper.find('[data-comment-reopen]').exists()).toBe(false);
+    });
+
+    it('renders reopen disabled and does not emit when a disabled reason is set', async () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ resolvedTime: Date.now() }),
+        extraProps: { reopenSupported: true, reopenDisabledReason: 'author-required' },
+      });
+      const reopen = wrapper.find('[data-comment-reopen]');
+      expect(reopen.exists()).toBe(true);
+      expect(reopen.classes()).toContain('sd-is-disabled');
+      await reopen.trigger('click');
+      expect(wrapper.emitted('reopen')).toBeFalsy();
+    });
   });
 });

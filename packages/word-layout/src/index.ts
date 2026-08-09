@@ -26,7 +26,7 @@ export {
 export { LIST_MARKER_GAP, DEFAULT_LIST_HANGING_PX } from './marker-utils.js';
 export type { NumberingFormat } from './marker-utils.js';
 export { createNumberingManager } from './numbering-manager.js';
-export type { NumberingManager, NumberingManagerSnapshot } from './numbering-manager.js';
+export type { NumberingManager, NumberingManagerSnapshot, NumberingCursor } from './numbering-manager.js';
 export { computeWordListMarker } from './list-marker.js';
 export type {
   ComputeWordListMarkerInput,

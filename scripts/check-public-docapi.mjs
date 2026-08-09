@@ -10,18 +10,12 @@
  * Stages:
  *   1. contract-parity      - operation IDs, member maps, runtime API
  *                             shape must agree.
- *   2. contract-outputs     - tracked outputs (reference docs, overview
- *                             block) match the contract; gitignored
- *                             outputs (schemas, agent artifacts) are
- *                             built in memory so builder errors still
- *                             surface. The longest stage.
- *   3. examples             - required workflow example headings exist
- *                             in `packages/document-api/src/README.md`.
- *   4. overview-alignment   - `apps/docs/document-api/available-
- *                             operations.mdx` structural correctness:
- *                             reference link, section markers, every
- *                             `editor.doc.*` path references a known
- *                             member.
+ *   2. contract-outputs     - schemas and agent artifacts match the
+ *                             contract. Built in memory, so a clean
+ *                             checkout needs no prior generate step.
+ *   3. documented-operations - every contract operation is rendered by
+ *                             the documentation site, and the site
+ *                             documents nothing the contract omits.
  *
  * Local usage:
  *   pnpm check:public           (umbrella, runs SuperDoc + Document API)
@@ -52,27 +46,18 @@ const stages = [
     cmd: 'pnpm',
     args: ['exec', 'tsx', 'packages/document-api/scripts/check-contract-outputs.ts'],
     blurb:
-      'Tracked outputs (reference docs, overview block) compared byte-for-byte. ' +
-      'Gitignored outputs (schemas, agent artifacts) built in memory; no need to ' +
-      'run `pnpm run generate:docapi` first.',
+      'Schemas and agent artifacts built in memory and compared to the contract; ' +
+      'no need to run `pnpm run generate:docapi` first.',
   },
   {
-    name: 'examples',
+    name: 'documented-operations',
     cwd: REPO_ROOT,
     cmd: 'pnpm',
-    args: ['exec', 'tsx', 'packages/document-api/scripts/check-examples.ts'],
+    args: ['exec', 'tsx', 'packages/document-api/scripts/check-documented-operations.ts'],
     blurb:
-      'Required workflow example headings exist in ' +
-      'packages/document-api/src/README.md.',
-  },
-  {
-    name: 'overview-alignment',
-    cwd: REPO_ROOT,
-    cmd: 'pnpm',
-    args: ['exec', 'tsx', 'packages/document-api/scripts/check-overview-alignment.ts'],
-    blurb:
-      'Overview page structure: reference link, section markers, no stale ' +
-      'placeholders, every `editor.doc.*` path references a known member.',
+      'Every operation the contract defines is rendered by the documentation ' +
+      'site, and the site documents nothing the contract omits. Regenerates ' +
+      'the reference model, so this is the longest stage.',
   },
 ];
 

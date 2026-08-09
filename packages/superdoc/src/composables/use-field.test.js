@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { isRef, isReactive, nextTick } from 'vue';
 import { useField, useFieldValueWatcher, useImageField, useSelectField, useCheckboxField } from './use-field.js';
 

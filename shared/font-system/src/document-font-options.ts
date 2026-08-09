@@ -34,6 +34,28 @@ function normalizeKey(family: string): string {
     .toLowerCase();
 }
 
+/**
+ * The Word-facing logical family name: the first family of a CSS font stack, with surrounding
+ * quotes stripped. Document runs can carry a fallback stack (e.g. `"Arial, sans-serif"`) as their
+ * family; the picker advertises the logical font (`Arial`), not the stack, so it dedupes against the
+ * bundled offerings instead of listing `Arial` and `Arial, sans-serif` as separate rows.
+ *
+ * Quote-aware: a quoted family may legally contain a comma (e.g. `'"Acme, Inc Sans", sans-serif'`),
+ * so a plain comma split would truncate the name. The first family is read from the leading quoted
+ * token when present, otherwise up to the first comma.
+ */
+function canonicalFamilyName(family: string): string {
+  const trimmed = family.trim();
+  const quote = trimmed[0];
+  if (quote === '"' || quote === "'") {
+    const close = trimmed.indexOf(quote, 1);
+    if (close > 0) return trimmed.slice(1, close).trim();
+  }
+  const comma = trimmed.indexOf(',');
+  const first = comma === -1 ? trimmed : trimmed.slice(0, comma);
+  return first.trim().replace(/^["']|["']$/g, '');
+}
+
 function isRegularFace(rec: FontResolutionRecord): boolean {
   return rec.face?.weight === '400' && rec.face?.style === 'normal';
 }
@@ -98,31 +120,28 @@ export function buildFontFamilyOptions(
 ): FontFamilyOption[] {
   const seen = new Set<string>();
   const options: FontFamilyOption[] = [];
-  for (const offering of getBuiltInToolbarFontOfferings(activation)) {
-    const key = normalizeKey(offering.logicalFamily);
-    if (seen.has(key)) continue;
+  // Add one row per logical family, keyed on the canonical (first-family) name so a document's
+  // CSS-stack family collapses onto the matching bundled offering instead of producing a duplicate
+  // row. `previewFamily` keeps the renderable family (the physical clone or the document's own).
+  const add = (logicalFamily: string, previewFamily: string): void => {
+    const canonical = canonicalFamilyName(logicalFamily);
+    if (!canonical) return;
+    const key = canonical.toLowerCase();
+    if (seen.has(key)) return;
     seen.add(key);
+    options.push({ label: canonical, value: canonical, previewFamily: previewFamily || canonical });
+  };
+  for (const offering of getBuiltInToolbarFontOfferings(activation)) {
     // Preview in the physical clone (e.g. Carlito) only when the pack is configured and thus served.
     // In baseline the clone is neither registered nor served, so previewing in it would render a
     // generic fallback that misrepresents the painted text - use the logical family that renders.
     const previewFamily = activation.packConfigured
       ? offering.physicalFamily || offering.logicalFamily
       : offering.logicalFamily;
-    options.push({
-      label: offering.logicalFamily,
-      value: offering.logicalFamily,
-      previewFamily,
-    });
+    add(offering.logicalFamily, previewFamily);
   }
   for (const option of documentOptions) {
-    const key = normalizeKey(option.logicalFamily);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    options.push({
-      label: option.logicalFamily,
-      value: option.logicalFamily,
-      previewFamily: option.previewFamily || option.logicalFamily,
-    });
+    add(option.logicalFamily, option.previewFamily || option.logicalFamily);
   }
   return options.sort(compareByLabel);
 }

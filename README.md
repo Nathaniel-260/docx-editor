@@ -1,9 +1,6 @@
 <h1 align="center">
   <a href="https://www.superdoc.dev" target="_blank">
-    <img alt="SuperDoc logo" src="https://storage.googleapis.com/public_statichosting/SuperDocHomepage/logo.webp" width="170px" height="auto" />
-  </a>
-  <BR />
-  <a href="https://www.superdoc.dev" target="_blank">
+    <img alt="" src="apps/docs/public/brand/superdoc-mark.webp" width="58" height="64" align="absmiddle" />
     SuperDoc
   </a>
 </h1>
@@ -11,21 +8,19 @@
 <div align="center">
   <a href="https://www.npmjs.com/package/superdoc" target="_blank"><img src="https://img.shields.io/npm/v/superdoc.svg?color=1355ff" height="22px"></a>
   <a href="https://www.npmjs.com/package/superdoc" target="_blank"><img src="https://img.shields.io/npm/dm/superdoc.svg?color=1355ff" height="22px"></a>
-  <a href="https://codecov.io/gh/superdoc/docx-editor" target="_blank"><img src="https://codecov.io/gh/superdoc/docx-editor/branch/main/graph/badge.svg" height="22px"></a>
   <a href="https://www.gnu.org/licenses/agpl-3.0" target="_blank"><img src="https://img.shields.io/badge/License-AGPL%20v3-1355ff.svg?color=1355ff" height="22px"></a>
-  <a href="https://github.com/superdoc/docx-editor" target="_blank"><img src="https://img.shields.io/github/stars/superdoc/docx-editor?style=flat&color=1355ff" height="22px"></a>
   <a href="https://discord.com/invite/b9UuaZRyaB" target="_blank"><img src="https://img.shields.io/badge/discord-join-1355ff" height="22px"></a>
 </div>
 
 <p align="center">
   <strong>The document engine for DOCX files.</strong><br>
-  Renders, edits, and automates .docx files in the browser, headless on the server, and within AI agent workflows.<br>
-  Self-hosted. Open source. Works with React, Vue, Angular, Svelte, and vanilla JS.
+  Render and edit DOCX files in the browser. Use the same Document API for server-side automation and agent workflows.<br>
+  Built directly on OOXML. Edits write back to the XML without an HTML conversion step.
 </p>
 
 <div align="center">
   <a href="https://www.superdoc.dev" target="_blank">
-   <img width="800px" height="auto" alt="SuperDoc" src="https://github.com/user-attachments/assets/0d349b23-2fde-4bd2-adf4-e1ce4ace6526" />
+   <img width="800px" height="auto" alt="SuperDoc" src="https://github.com/user-attachments/assets/112339d3-446c-4320-8219-7ec7dbd6c8d4" />
   </a>
 </div>
 
@@ -35,30 +30,13 @@
 npm install superdoc
 ```
 
-### React
+SuperDoc mounts into elements you provide, so the page needs both before it
+runs:
 
-```bash
-npm install @superdoc-dev/react
+```html
+<div id="superdoc-toolbar"></div>
+<div id="superdoc"></div>
 ```
-
-```tsx
-import { SuperDocEditor } from '@superdoc-dev/react';
-import '@superdoc-dev/react/style.css';
-
-function App() {
-  return (
-    <SuperDocEditor
-      document={file}
-      documentMode="editing"
-      onReady={() => console.log('Ready!')}
-    />
-  );
-}
-```
-
-See the [@superdoc-dev/react README](packages/react/README.md) for full React documentation.
-
-### Vanilla JavaScript
 
 ```javascript
 import 'superdoc/style.css';
@@ -72,124 +50,58 @@ const superdoc = new SuperDoc({
 });
 ```
 
-Optional layered CSS mode:
+`document` accepts a URL, a `File`, or a `Blob`. Omit it to start with a blank
+DOCX. See the [documentation](https://docs.superdoc.dev),
+[React quick start](https://docs.superdoc.dev/editor/frameworks/react) for the
+next step.
 
-```css
-@layer reset, superdoc, app;
-@import 'superdoc/style.layered.css';
-@import 'your-app.css' layer(app);
-```
+## What SuperDoc does
 
-Or use the CDN:
+- **DOCX-native.** Pagination, sections, headers, footers, and tables stay
+  document structures. Edits write back to the XML without an HTML conversion
+  step.
+- **Browser editing.** View, edit, suggest, comment, track changes, and
+  collaborate with Yjs. The editor needs no server of its own.
+- **One Document API.** Query, target, change, and inspect receipts in the
+  browser or through the
+  [Node.js SDK](https://www.npmjs.com/package/@superdoc/sdk),
+  [Python SDK](https://github.com/superdoc/docx-editor/tree/main/packages/sdk/langs/python),
+  [CLI](https://www.npmjs.com/package/@superdoc/cli), and
+  [MCP server](https://www.npmjs.com/package/@superdoc/mcp).
+- **Agent-ready operations.** Agents use supported document operations instead
+  of manipulating raw XML. The engine handles the underlying OOXML parts and
+  relationships.
 
-```html
-<link rel="stylesheet" href="https://unpkg.com/superdoc/dist/style.css" />
-<script type="module" src="https://unpkg.com/superdoc/dist/superdoc.umd.js"></script>
-```
+## Why V2 is DOCX-native
 
-For all available options and events, see the [documentation](https://docs.superdoc.dev) or [SuperDoc.js](packages/superdoc/src/core/SuperDoc.js).
+SuperDoc V1 used ProseMirror as its authoritative browser editing model. A DOCX
+is a package of related XML parts, relationships, and assets rather than one
+editor tree. Server use required a simulated browser DOM, and collaboration
+needed a separate synchronization layer for the rest of the package.
 
-### Using an AI coding agent?
-
-Set up your project for AI agents and configure the MCP server:
-
-```bash
-npx @superdoc-dev/create              # generates AGENTS.md for your framework
-claude mcp add superdoc -- npx @superdoc-dev/mcp   # connect agent to DOCX files
-```
-
-## Features
-
-- **Real DOCX, not rich text** — Built on OOXML. Real pagination, section breaks, headers/footers. Not a contenteditable wrapper with export bolted on.
-- **Self-hosted** — Runs entirely in the browser. Your documents never leave your servers.
-- **Any framework** — React, Vue, Angular, Svelte, vanilla JS. One component, zero lock-in.
-- **Real-time collaboration** — Yjs-based CRDT. Multiplayer editing with comments, tracked changes, and automatic conflict resolution.
-- **Agentic tooling** — Runs headless in Node.js. Bring your own LLM for document automation, redlining, and template workflows.
-- **Dual licensed** — AGPLv3 for community use. [Commercial license](https://www.superdocportal.dev/get-in-touch) for proprietary deployments.
-
-## Examples
-
-Starter projects to get you running quickly:
-
-| Example | |
-|---------|--|
-| [React](examples/getting-started/react) | [Vue](examples/getting-started/vue) |
-| [Angular](examples/getting-started/angular) | [Next.js](examples/getting-started/nextjs) |
-| [Vanilla JS](examples/getting-started/vanilla) | [CDN](examples/getting-started/cdn) |
-| [Comments](examples/editor/built-in-ui/comments) | [Track changes](examples/editor/built-in-ui/track-changes) |
-| [Toolbar](examples/editor/built-in-ui/toolbar) | [AI redlining](examples/ai/redlining) |
-| [AI redlining (server-side)](examples/document-engine/ai-redlining) | |
-
-[Browse all examples](examples/)
-
-## Documentation
-
-[docs.superdoc.dev](https://docs.superdoc.dev) — installation, integration guides, collaboration setup, API reference, and more.
-
-## Roadmap
-
-See the [SuperDoc roadmap](https://github.com/superdoc/docx-editor/issues/1982) for what's coming next. DOCX import/export fidelity is always a top priority.
+V2 uses an OOXML-backed document model. It reads progressively, renders bounded
+windows, runs without a browser DOM, and synchronizes document content and
+package state through one collaboration model.
 
 ## Contributing
 
-Check the [issue tracker](https://github.com/superdoc/docx-editor/issues) for open issues, or read the [Contributing Guide](CONTRIBUTING.md) to get started. Bug reports with reproduction .docx files are especially valuable.
+Read the [contributing guide](https://github.com/superdoc/docx-editor/blob/main/CONTRIBUTING.md),
+browse [open issues](https://github.com/superdoc/docx-editor/issues), or join
+[Discord](https://discord.com/invite/b9UuaZRyaB).
 
-## Community
+## Contributors
 
-- [Discord](https://discord.com/invite/b9UuaZRyaB) — Chat with the team and other contributors
-- [Email](mailto:q@superdoc.dev) — Reach the team directly
+<!-- contrib.rocks does not yet resolve the renamed superdoc/docx-editor repository, so the image uses the previous repository name. -->
+<a href="https://github.com/superdoc/docx-editor/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=superdoc-dev/superdoc" alt="SuperDoc contributors" />
+</a>
 
 ## License
 
-- Open source: [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html)
-- Commercial: [SuperDoc Commercial License](https://www.superdocportal.dev/superdoc-terms-of-service)
-
-## Acknowledgments
-
-Built on <a href="https://prosemirror.net" target="_blank">ProseMirror</a>, <a href="https://github.com/yjs/yjs" target="_blank">Yjs</a>, <a href="https://stuk.github.io/jszip/" target="_blank">JSZip</a>, and <a href="https://vite.dev" target="_blank">Vite</a>.
-
-## Community Contributors
-
-Special thanks to these community members who have contributed code to SuperDoc:
-
-<a href="https://github.com/financialvice"><img src="https://github.com/financialvice.png" width="50" height="50" alt="financialvice" title="financialvice" /></a>
-<a href="https://github.com/luciorubeens"><img src="https://github.com/luciorubeens.png" width="50" height="50" alt="luciorubeens" title="Lúcio Caetano" /></a>
-<a href="https://github.com/Dannyhvv"><img src="https://github.com/Dannyhvv.png" width="50" height="50" alt="Dannyhvv" title="Dannyhvv" /></a>
-<a href="https://github.com/henriquedevelops"><img src="https://github.com/henriquedevelops.png" width="50" height="50" alt="henriquedevelops" title="henriquedevelops" /></a>
-<a href="https://github.com/ybrodsky"><img src="https://github.com/ybrodsky.png" width="50" height="50" alt="ybrodsky" title="Yael Brodsky" /></a>
-<a href="https://github.com/icaroharry"><img src="https://github.com/icaroharry.png" width="50" height="50" alt="icaroharry" title="Ícaro Harry" /></a>
-<a href="https://github.com/asumaran"><img src="https://github.com/asumaran.png" width="50" height="50" alt="asumaran" title="Alfredo Sumaran" /></a>
-<a href="https://github.com/J-Michalek"><img src="https://github.com/J-Michalek.png" width="50" height="50" alt="J-Michalek" title="Jakub Michálek" /></a>
-<a href="https://github.com/gm1357"><img src="https://github.com/gm1357.png" width="50" height="50" alt="gm1357" title="Gabriel Machado" /></a>
-<a href="https://github.com/roncallyt"><img src="https://github.com/roncallyt.png" width="50" height="50" alt="roncallyt" title="Thomerson Roncally" /></a>
-<a href="https://github.com/gpardhivvarma"><img src="https://github.com/gpardhivvarma.png" width="50" height="50" alt="gpardhivvarma" title="G Pardhiv Varma" /></a>
-<a href="https://github.com/lucbic"><img src="https://github.com/lucbic.png" width="50" height="50" alt="lucbic" title="Lucas Bicudo" /></a>
-<a href="https://github.com/claudiu-ior"><img src="https://github.com/claudiu-ior.png" width="50" height="50" alt="claudiu-ior" title="Claudiu Iorgulescu" /></a>
-<a href="https://github.com/Branc0"><img src="https://github.com/Branc0.png" width="50" height="50" alt="Branc0" title="Rafael Rocha de Azevedo" /></a>
-<a href="https://github.com/Muhammad-Nur-Alamsyah-Anwar"><img src="https://github.com/Muhammad-Nur-Alamsyah-Anwar.png" width="50" height="50" alt="Muhammad-Nur-Alamsyah-Anwar" title="Alam" /></a>
-<a href="https://github.com/andrewsrigom"><img src="https://github.com/andrewsrigom.png" width="50" height="50" alt="andrewsrigom" title="Andrews Rigom" /></a>
-<a href="https://github.com/iguit0"><img src="https://github.com/iguit0.png" width="50" height="50" alt="iguit0" title="Igor Alves" /></a>
-<a href="https://github.com/PeterHollens"><img src="https://github.com/PeterHollens.png" width="50" height="50" alt="PeterHollens" title="Peter Hollens" /></a>
-<a href="https://github.com/baristaGeek"><img src="https://github.com/baristaGeek.png" width="50" height="50" alt="baristaGeek" title="Esteban Vargas" /></a>
-<a href="https://github.com/Anuj52"><img src="https://github.com/Anuj52.png" width="50" height="50" alt="Anuj52" title="Anuj Chaudhary" /></a>
-<a href="https://github.com/Abdeltoto"><img src="https://github.com/Abdeltoto.png" width="50" height="50" alt="Abdeltoto" title="Abdel ATIA" /></a>
-<a href="https://github.com/JoaaoVerona"><img src="https://github.com/JoaaoVerona.png" width="50" height="50" alt="JoaaoVerona" title="João Vitor Verona Biazibetti" /></a>
-<a href="https://github.com/michaelreavant"><img src="https://github.com/michaelreavant.png" width="50" height="50" alt="michaelreavant" title="michaelreavant" /></a>
-<a href="https://github.com/ArturQuirino"><img src="https://github.com/ArturQuirino.png" width="50" height="50" alt="ArturQuirino" title="ARTUR QUIRINO" /></a>
-<a href="https://github.com/kiluazen"><img src="https://github.com/kiluazen.png" width="50" height="50" alt="kiluazen" title="Kushal" /></a>
-<a href="https://github.com/kendaller"><img src="https://github.com/kendaller.png" width="50" height="50" alt="kendaller" title="Kendall Ernst" /></a>
-<a href="https://github.com/christos8333"><img src="https://github.com/christos8333.png" width="50" height="50" alt="christos8333" title="Christos Kokosias" /></a>
-<a href="https://github.com/bjohas"><img src="https://github.com/bjohas.png" width="50" height="50" alt="bjohas" title="Bjoern" /></a>
-<a href="https://github.com/shri-scale"><img src="https://github.com/shri-scale.png" width="50" height="50" alt="shri-scale" title="Shri H" /></a>
-<a href="https://github.com/msviderok"><img src="https://github.com/msviderok.png" width="50" height="50" alt="msviderok" title="Myroslav Sviderok" /></a>
-<a href="https://github.com/sergiogomes"><img src="https://github.com/sergiogomes.png" width="50" height="50" alt="sergiogomes" title="Sérgio Paulo Gomes" /></a>
-<a href="https://github.com/wookieb"><img src="https://github.com/wookieb.png" width="50" height="50" alt="wookieb" title="Łukasz Kużyński" /></a>
-<a href="https://github.com/xy200303"><img src="https://github.com/xy200303.png" width="50" height="50" alt="xy200303" title="小云" /></a>
-<a href="https://github.com/garhm"><img src="https://github.com/garhm.png" width="50" height="50" alt="garhm" title="Yaroslav Zakharov" /></a>
-<a href="https://github.com/MIt9"><img src="https://github.com/MIt9.png" width="50" height="50" alt="MIt9" title="Dmitro Bilukha" /></a>
-
-Want to see your avatar here? Check the [Contributing Guide](CONTRIBUTING.md) to get started.
+AGPLv3 for open source use. A
+[commercial license](https://www.superdocportal.dev/get-in-touch) is available
+for proprietary deployments.
 
 ---
 
-Created and maintained by <a href="https://www.superdoc.dev" target="_blank">Harbour</a> and the SuperDoc community
+Created and maintained by <a href="https://www.superdoc.dev" target="_blank">SuperDoc</a>

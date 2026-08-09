@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import {
   isAnchorOutsideFloatingViewport,
   isPersistentReviewSidebarItem,
   normalizeFloatingAnchorTop,
+  resolveRemovedReviewCardContinuityTarget,
   resolvePersistentReviewCardTop,
   shouldKeepPersistentReviewCardAtAnchor,
   shouldMountFloatingCommentDialog,
@@ -132,14 +133,59 @@ describe('floating comment positioning', () => {
     ).toBe(true);
   });
 
-  it('keeps tracked-change review cards mounted even when they are outside the observer range', () => {
-    expect(
+  it('bounds mounted tracked-change dialogs to visible and active rows (SD-3852)', () => {
+    const rowCount = 1_316;
+    const visibleIds = new Set(Array.from({ length: 6 }, (_, index) => `tc-${index}`));
+    const activeCommentInstanceId = 'tc-700';
+    const mountedCount = Array.from({ length: rowCount }, (_, index) => `tc-${index}`).filter((id) =>
       shouldMountFloatingCommentDialog({
-        id: 'tc-1',
-        visibleIds: new Set(),
-        activeCommentInstanceId: null,
-        comment: { commentId: 'tc-1', trackedChange: true },
+        id,
+        visibleIds,
+        activeCommentInstanceId,
+        comment: { commentId: id, trackedChange: true },
       }),
-    ).toBe(true);
+    ).length;
+
+    expect(mountedCount).toBe(visibleIds.size + 1);
+  });
+
+  it('preserves review continuity with the next surviving card', () => {
+    expect(
+      resolveRemovedReviewCardContinuityTarget({
+        previousIds: ['tc-1', 'tc-2', 'tc-3', 'tc-4'],
+        currentIds: new Set(['tc-1', 'tc-3', 'tc-4']),
+        removedId: 'tc-2',
+      }),
+    ).toBe('tc-3');
+  });
+
+  it('skips additional removed cards when resolving the next continuity target', () => {
+    expect(
+      resolveRemovedReviewCardContinuityTarget({
+        previousIds: ['tc-1', 'tc-2', 'tc-3', 'tc-4'],
+        currentIds: new Set(['tc-1', 'tc-4']),
+        removedId: 'tc-2',
+      }),
+    ).toBe('tc-4');
+  });
+
+  it('falls back to the previous surviving card when the removed card was last', () => {
+    expect(
+      resolveRemovedReviewCardContinuityTarget({
+        previousIds: ['tc-1', 'tc-2', 'tc-3'],
+        currentIds: new Set(['tc-1', 'tc-2']),
+        removedId: 'tc-3',
+      }),
+    ).toBe('tc-2');
+  });
+
+  it('returns no continuity target when no review cards survive', () => {
+    expect(
+      resolveRemovedReviewCardContinuityTarget({
+        previousIds: ['tc-1'],
+        currentIds: new Set(),
+        removedId: 'tc-1',
+      }),
+    ).toBeNull();
   });
 });

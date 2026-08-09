@@ -1,5 +1,10 @@
 import type { ImageRun, ParagraphAttrs, ParagraphBlock, TextRun, TrackedChangeMeta } from '@superdoc/contracts';
-import { getParagraphInlineDirection } from '@superdoc/contracts';
+import {
+  getParagraphInlineDirection,
+  inlineBoxStyleSignature,
+  trackedChangeLayersSignature,
+  trackedChangeMetaSignature,
+} from '@superdoc/contracts';
 import { getFontConfigVersion } from '@superdoc/font-system';
 import { hashParagraphBorders } from '../paragraph-hash-utils.js';
 import {
@@ -61,33 +66,34 @@ const getTrackedChangeLayers = (run: TextRun): TrackedChangeMeta[] => {
   return run.trackedChange ? [run.trackedChange] : [];
 };
 
-const trackedChangeVersion = (run: TextRun): string =>
-  getTrackedChangeLayers(run)
-    .map((trackedChange) =>
-      [
-        trackedChange.kind ?? '',
-        trackedChange.id ?? '',
-        trackedChange.storyKey ?? '',
-        trackedChange.overlapParentId ?? '',
-        trackedChange.relationship ?? '',
-        trackedChange.author ?? '',
-        trackedChange.authorEmail ?? '',
-        trackedChange.authorImage ?? '',
-        trackedChange.color ?? '',
-        trackedChange.date ?? '',
-        trackedChange.before ? JSON.stringify(trackedChange.before) : '',
-        trackedChange.after ? JSON.stringify(trackedChange.after) : '',
-      ].join(':'),
-    )
-    .join('|');
+const trackedChangeVersion = (run: TextRun): string => trackedChangeLayersSignature(getTrackedChangeLayers(run));
+
+const inlineBoxesVersion = (block: ParagraphBlock): string =>
+  (block.inlineBoxes ?? [])
+    .map((box) => {
+      const data = Object.entries(box.data ?? {}).sort(([left], [right]) => left.localeCompare(right));
+      return JSON.stringify([
+        box.id,
+        box.from,
+        box.to,
+        inlineBoxStyleSignature({ ...box.layout, ...box.appearance }),
+        box.className ?? '',
+        data,
+        box.cursor ?? '',
+      ]);
+    })
+    .join(';');
 
 export const deriveParagraphBlockVersion = (
   block: ParagraphBlock,
   getSdtMetadataVersion: (metadata: ParagraphAttrs['sdt']) => string,
   readClipPathValue: (value: unknown) => string,
 ): string => {
+  const markerTrackedChangeVersion = block.attrs?.wordLayout?.marker?.trackedChange
+    ? trackedChangeMetaSignature(block.attrs.wordLayout.marker.trackedChange)
+    : '';
   const markerVersion = hasListMarkerProperties(block.attrs)
-    ? `marker:${block.attrs.numberingProperties.numId ?? ''}:${block.attrs.numberingProperties.ilvl ?? 0}:${block.attrs.wordLayout?.marker?.markerText ?? ''}`
+    ? `marker:${block.attrs.numberingProperties.numId ?? ''}:${block.attrs.numberingProperties.ilvl ?? 0}:${block.attrs.wordLayout?.marker?.markerText ?? ''}:${markerTrackedChangeVersion}`
     : '';
 
   const runsVersion = block.runs
@@ -107,6 +113,9 @@ export const deriveParagraphBlockVersion = (
           imgRun.distBottom ?? '',
           imgRun.distLeft ?? '',
           imgRun.distRight ?? '',
+          // Vertical alignment changes paint output (glyph baseline vs top/bottom),
+          // so it must bust the paragraph paint-reuse cache.
+          imgRun.verticalAlign ?? '',
           readClipPathValue((imgRun as { clipPath?: unknown }).clipPath),
         ].join(',');
       }
@@ -116,7 +125,7 @@ export const deriveParagraphBlockVersion = (
       }
 
       if (run.kind === 'tab') {
-        return [run.text ?? '', 'tab'].join(',');
+        return [run.text ?? '', 'tab', run.vanish ? 1 : 0].join(',');
       }
 
       if (run.kind === 'fieldAnnotation') {
@@ -158,12 +167,15 @@ export const deriveParagraphBlockVersion = (
         textRun.fontSize,
         textRun.bold ? 1 : 0,
         textRun.italic ? 1 : 0,
+        textRun.vanish ? 1 : 0,
+        textRun.textTransform ?? '',
         textRun.color ?? '',
         textRun.underline?.style ?? '',
         textRun.underline?.color ?? '',
         textRun.strike ? 1 : 0,
         textRun.highlight ?? '',
         textRun.letterSpacing != null ? textRun.letterSpacing : '',
+        textRun.horizontalScale != null ? textRun.horizontalScale : '',
         textRun.vertAlign ?? '',
         textRun.baselineShift != null ? textRun.baselineShift : '',
         textRun.token ?? '',
@@ -191,11 +203,15 @@ export const deriveParagraphBlockVersion = (
         attrs.shading?.color ?? '',
         getParagraphInlineDirection(attrs) ?? '',
         attrs.tabs?.length ? JSON.stringify(attrs.tabs) : '',
+        attrs.paragraphMarkTrackedChange ? trackedChangeMetaSignature(attrs.paragraphMarkTrackedChange) : '',
+        attrs.paragraphPropertyTrackedChange ? trackedChangeMetaSignature(attrs.paragraphPropertyTrackedChange) : '',
       ].join(':')
     : '';
 
   const sdtVersion = getSdtMetadataVersion(attrs?.sdt);
-  const parts = [markerVersion, runsVersion, paragraphAttrsVersion, sdtVersion].filter(Boolean);
+  const parts = [markerVersion, runsVersion, paragraphAttrsVersion, sdtVersion, inlineBoxesVersion(block)].filter(
+    Boolean,
+  );
   return parts.join('|');
 };
 
@@ -222,10 +238,20 @@ export const hashParagraphBlockForTableVersion = (
     hash = hashString(hash, attrs.shading?.fill ?? '');
     hash = hashString(hash, attrs.shading?.color ?? '');
     hash = hashString(hash, getParagraphInlineDirection(attrs) ?? '');
+    hash = hashString(
+      hash,
+      attrs.paragraphMarkTrackedChange ? trackedChangeMetaSignature(attrs.paragraphMarkTrackedChange) : '',
+    );
+    hash = hashString(
+      hash,
+      attrs.paragraphPropertyTrackedChange ? trackedChangeMetaSignature(attrs.paragraphPropertyTrackedChange) : '',
+    );
     if (attrs.borders) {
       hash = hashString(hash, hashParagraphBorders(attrs.borders));
     }
   }
+
+  hash = hashString(hash, inlineBoxesVersion(paragraphBlock));
 
   for (const run of runs) {
     if ('text' in run && typeof run.text === 'string') {
@@ -237,6 +263,8 @@ export const hashParagraphBlockForTableVersion = (
     hash = hashString(hash, getRunStringProp(run, 'highlight'));
     hash = hashString(hash, getRunBooleanProp(run, 'bold') ? '1' : '');
     hash = hashString(hash, getRunBooleanProp(run, 'italic') ? '1' : '');
+    hash = hashString(hash, getRunBooleanProp(run, 'vanish') ? '1' : '');
+    hash = hashString(hash, getRunStringProp(run, 'textTransform'));
     hash = hashNumber(hash, getRunNumberProp(run, 'fontSize'));
     hash = hashString(hash, getRunStringProp(run, 'fontFamily'));
     hash = hashString(hash, getRunUnderlineStyle(run));

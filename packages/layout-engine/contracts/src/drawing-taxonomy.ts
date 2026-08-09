@@ -109,8 +109,6 @@ export const DRAWING_DIAGNOSTIC_CODES = {
   altContentNoSupportedChoice: 'render.drawing.altcontent-no-supported-choice',
   /** A child of an otherwise-supported group is unsupported. */
   groupChildUnsupported: 'render.drawing.group-child-unsupported',
-  /** Chart object (fail-closed by decision). */
-  chartNotSupported: 'render.chart-not-supported',
 } as const;
 
 export type DrawingDiagnosticCode = (typeof DRAWING_DIAGNOSTIC_CODES)[keyof typeof DRAWING_DIAGNOSTIC_CODES];
@@ -134,6 +132,8 @@ export const DRAWING_DIAGNOSTIC_CODE_ALIASES: Readonly<Record<string, DrawingDia
   // Generic adapter fallbacks (project-blocks.ts) for inline drawings without a
   // resolved media source or a recognized object family.
   'render.media-resolver-unavailable': DRAWING_DIAGNOSTIC_CODES.missingMediaPart,
+  // Historical chart fail-closed diagnostic from before chart support landed.
+  'render.chart-not-supported': DRAWING_DIAGNOSTIC_CODES.unsupportedObject,
   // Existing textbox VML probe — narrower than the drawing-family VML code.
   'render.textbox.vml-unsupported': DRAWING_DIAGNOSTIC_CODES.vmlUnsupported,
 } as const;
@@ -154,6 +154,7 @@ export type DrawingFamily =
   | 'imageChildInGroup'
   | 'vectorShape'
   | 'shapeGroup'
+  | 'chart'
   | 'alternateContent'
   // Fail-closed families (plan §4).
   | 'externalImage'
@@ -173,7 +174,6 @@ export type DrawingFamily =
   | 'unsupportedWrapFields'
   | 'alternateContentNoSupportedChoice'
   | 'groupChildUnsupported'
-  | 'chart'
   // Deferred families (overview §5, plan acceptance §9).
   | 'objectEditing'
   | 'customWrapPolygon'
@@ -241,6 +241,15 @@ export const DRAWING_SUPPORT_TAXONOMY: Readonly<Record<DrawingFamily, DrawingFam
     description: 'DrawingML group whose rendered children are supported vector/image children.',
     contract: 'DrawingBlock',
     drawingKind: 'shapeGroup',
+  },
+  chart: {
+    family: 'chart',
+    support: 'supported',
+    description:
+      'DrawingML chart projected into a ChartDrawing with parsed cached chart XML data. ' +
+      'Complete Word chart fidelity remains deferred to chartFidelity.',
+    contract: 'DrawingBlock',
+    drawingKind: 'chart',
   },
   alternateContent: {
     family: 'alternateContent',
@@ -372,13 +381,6 @@ export const DRAWING_SUPPORT_TAXONOMY: Readonly<Record<DrawingFamily, DrawingFam
     description: 'Unsupported child inside an otherwise-supported group. Supported siblings are not dropped.',
     contract: 'none',
     diagnostic: DRAWING_DIAGNOSTIC_CODES.groupChildUnsupported,
-  },
-  chart: {
-    family: 'chart',
-    support: 'fail-closed',
-    description: 'Chart object. Fail-closed by decision; source payload preserved for save/reopen.',
-    contract: 'none',
-    diagnostic: DRAWING_DIAGNOSTIC_CODES.chartNotSupported,
   },
 
   // -- Deferred (overview §5) ----------------------------------------------

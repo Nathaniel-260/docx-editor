@@ -15,6 +15,9 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "test": "vitest run"
+    "test": "vp test run"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
   }
 }

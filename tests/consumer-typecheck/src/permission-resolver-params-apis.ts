@@ -38,7 +38,7 @@ import type { Config, Modules, PermissionResolverParams } from 'superdoc';
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type AssertEqual<A, B> = Equal<A, B> extends true ? true : never;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// oxlint-disable-next-line @typescript-eslint/no-explicit-any
 type ParamOf<F extends ((...args: any) => any) | undefined> = Parameters<NonNullable<F>>[0];
 
 // ─── Config.permissionResolver ──────────────────────────────────────

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure, ParagraphBlock } from '@superdoc/contracts';
 import { incrementalLayout } from '../src/incrementalLayout';
 

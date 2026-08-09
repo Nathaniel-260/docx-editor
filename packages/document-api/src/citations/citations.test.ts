@@ -78,6 +78,15 @@ describe('citations validation', () => {
         DocumentApiValidationError,
       );
     });
+
+    it('throws INVALID_TARGET for an invalid citation story locator', () => {
+      const adapter = makeAdapter();
+      expect(() =>
+        executeCitationsGet(adapter, {
+          target: { ...validCitationTarget, story: { kind: 'story', storyType: 'footnote' } } as any,
+        }),
+      ).toThrow(DocumentApiValidationError);
+    });
   });
 
   // ── Citation source target validation ───────────────────────────────
@@ -272,9 +281,31 @@ describe('citations validation', () => {
       expect(() => executeCitationsUpdate(adapter, { target: null as any })).toThrow(DocumentApiValidationError);
     });
 
-    it('delegates to adapter.update with normalized options', () => {
+    it('throws INVALID_INPUT when sourceIds is an empty array', () => {
       const adapter = makeAdapter();
-      const input = { target: validCitationTarget };
+      try {
+        executeCitationsUpdate(adapter, { target: validCitationTarget, patch: { sourceIds: [] } } as any);
+        throw new Error('Expected citations.update to reject an empty sourceIds array.');
+      } catch (error: any) {
+        expect(error).toBeInstanceOf(DocumentApiValidationError);
+        expect(error.code).toBe('INVALID_INPUT');
+      }
+    });
+
+    it('throws INVALID_INPUT when sourceIds is not an array', () => {
+      const adapter = makeAdapter();
+      try {
+        executeCitationsUpdate(adapter, { target: validCitationTarget, patch: { sourceIds: 'src-1' } } as any);
+        throw new Error('Expected citations.update to reject a non-array sourceIds value.');
+      } catch (error: any) {
+        expect(error).toBeInstanceOf(DocumentApiValidationError);
+        expect(error.code).toBe('INVALID_INPUT');
+      }
+    });
+
+    it('allows omitted sourceIds and delegates to adapter.update with normalized options', () => {
+      const adapter = makeAdapter();
+      const input = { target: validCitationTarget, patch: {} };
       executeCitationsUpdate(adapter, input as any);
       expect(adapter.update).toHaveBeenCalledWith(input, { changeMode: 'direct', dryRun: false });
     });

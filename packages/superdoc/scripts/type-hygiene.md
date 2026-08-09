@@ -2,8 +2,7 @@
 
 ## Rule
 
-In `.ts` source under `packages/superdoc/src/` and
-`packages/super-editor/src/`, do not use type-bearing JSDoc tags.
+In `.ts` source under `packages/superdoc/src/`, do not use type-bearing JSDoc tags.
 TypeScript syntax is the only source of truth for shape on the public
 contract surface; JSDoc is reserved for prose documentation.
 
@@ -151,8 +150,7 @@ not `@template`.
 
 ## Scope
 
-The scanner runs on `.ts` files under `packages/superdoc/src/` and
-`packages/super-editor/src/`. Excludes:
+The scanner runs on `.ts` files under `packages/superdoc/src/`. Excludes:
 
 - `*.d.ts` (declaration files, generated)
 - `*.test.ts` / `*.spec.ts` (test files; type-bearing JSDoc is fine

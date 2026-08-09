@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import { mount } from '@vue/test-utils';
 import { nextTick, ref, computed } from 'vue';
 import FindReplaceSurface from './FindReplaceSurface.vue';
@@ -142,7 +142,7 @@ describe('FindReplaceSurface — keyboard focus (SD-3045)', () => {
 
   // SD-3045 follow-up (Luccas's PR review comment on #3240): pressing Enter
   // when the next match is on a different page must not undo the
-  // PresentationEditor.scrollToPosition that goNext just performed. The
+  // document renderer scroll that goNext just performed. The
   // surface is rendered in the normal document flow, so the browser's
   // default "scroll input into view" behaviour on .focus() snaps the
   // document back to wherever the find input is, hiding the new match. The
@@ -239,6 +239,65 @@ describe('FindReplaceSurface — keyboard focus (SD-3045)', () => {
     } finally {
       stealTarget.remove();
     }
+  });
+
+  it('disables replace controls when canReplace is false (read-only) and hides the unsupported diacritics toggle', () => {
+    const handle = createHandle({
+      handle: {
+        showReplace: ref(true),
+        canReplace: computed(() => false),
+        replacePending: ref(false),
+        ignoreDiacriticsSupported: ref(false),
+      },
+    });
+    const wrapper = mountSurface(handle);
+
+    const actionButtons = wrapper.findAll('.sd-find-replace__btn--action');
+    expect(actionButtons.length).toBe(2);
+    for (const btn of actionButtons) {
+      expect(btn.attributes('disabled')).toBeDefined();
+    }
+    // The ignore-diacritics toggle button is hidden for the V2 driver.
+    const toggleButtons = wrapper.findAll('.sd-find-replace__btn--toggle');
+    const labels = toggleButtons.map((b) => b.text());
+    expect(labels).not.toContain('ä≡a');
+
+    wrapper.unmount();
+  });
+
+  it('hides the replace expander and row entirely when the session cannot mutate (SD-3569)', () => {
+    const handle = createHandle({
+      handle: {
+        showReplace: ref(true),
+        canReplace: computed(() => false),
+        replaceCanMutate: ref(false),
+        replacePending: ref(false),
+      },
+    });
+    const wrapper = mountSurface(handle);
+
+    expect(wrapper.find('.sd-find-replace__btn--expander').exists()).toBe(false);
+    expect(wrapper.findAll('.sd-find-replace__btn--action').length).toBe(0);
+    expect(wrapper.findAll('input').length).toBe(1);
+
+    wrapper.unmount();
+  });
+
+  it('disables replace controls while a replace is pending', () => {
+    const handle = createHandle({
+      handle: {
+        showReplace: ref(true),
+        canReplace: computed(() => true),
+        replacePending: ref(true),
+        ignoreDiacriticsSupported: ref(true),
+      },
+    });
+    const wrapper = mountSurface(handle);
+    const actionButtons = wrapper.findAll('.sd-find-replace__btn--action');
+    for (const btn of actionButtons) {
+      expect(btn.attributes('disabled')).toBeDefined();
+    }
+    wrapper.unmount();
   });
 
   it('restores focus to the find input after clicking the previous-match button', async () => {

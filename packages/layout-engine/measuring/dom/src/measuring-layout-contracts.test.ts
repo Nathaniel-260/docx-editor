@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { measureBlock } from './index.js';
+import { describe, expect, it } from 'vite-plus/test';
+import { measureBlock, type TableMeasurementObservation } from './index.js';
 import type { DrawingBlock, FlowBlock, ListBlock, Measure, TableBlock } from '@superdoc/contracts';
 
 const textRun = (text: string, fontSize = 16) => ({
@@ -34,6 +34,41 @@ describe('Measuring to Layout contract', () => {
       expect(line.lineHeight).toBeGreaterThan(0);
       expect(line.maxWidth).toBeGreaterThan(0);
     }
+  });
+
+  it('includes inline box edges and block padding in layout-owned line geometry', async () => {
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'inline-box-contract',
+      runs: [textRun('citation text')],
+      inlineBoxes: [
+        {
+          id: 'citation',
+          from: 0,
+          to: 8,
+          layout: {
+            paddingInlineStart: 5,
+            paddingInlineEnd: 7,
+            paddingBlockStart: 3,
+            paddingBlockEnd: 4,
+            gapBefore: 2,
+            gapAfter: 2,
+            borderWidth: 1,
+          },
+          appearance: {},
+        },
+      ],
+    };
+    const plain = { ...block, inlineBoxes: undefined };
+    const [measure, plainMeasure] = await Promise.all([
+      measureBlock(block, 200).then((value) => expectMeasureKind(value, 'paragraph')),
+      measureBlock(plain, 200).then((value) => expectMeasureKind(value, 'paragraph')),
+    ]);
+
+    expect(measure.lines[0]!.inlineBoxes).toHaveLength(1);
+    expect(measure.lines[0]!.width - plainMeasure.lines[0]!.width).toBeCloseTo(18, 3);
+    expect(measure.lines[0]!.lineHeight - plainMeasure.lines[0]!.lineHeight).toBe(9);
+    expect(measure.totalHeight).toBe(measure.lines.reduce((sum, line) => sum + line.lineHeight, 0));
   });
 
   it('produces list item marker metrics and nested paragraph measures', async () => {
@@ -107,6 +142,57 @@ describe('Measuring to Layout contract', () => {
     expect(measure.rows).toHaveLength(1);
     expect(measure.rows[0].cells).toHaveLength(1);
     expect(measure.rows[0].cells[0].blocks?.map((nested) => nested.kind)).toEqual(['paragraph', 'image']);
+  });
+
+  it('attributes table measurement phases without changing the measure contract', async () => {
+    const observations: TableMeasurementObservation[] = [];
+    const block: TableBlock = {
+      kind: 'table',
+      id: 'table-attribution-contract',
+      columnWidths: [120],
+      attrs: { tableLayout: 'fixed' },
+      rows: [
+        {
+          id: 'row-attribution',
+          cells: [
+            {
+              id: 'cell-attribution',
+              blocks: [
+                {
+                  kind: 'paragraph',
+                  id: 'cell-attribution-paragraph',
+                  runs: [textRun('Measured exactly once')],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const measure = await measureBlock(block, {
+      maxWidth: 240,
+      tableMeasurementTrace: {
+        depth: 0,
+        cacheIdentity: 'strict',
+        observer: (observation) => observations.push(observation),
+      },
+    });
+
+    expect(measure.kind).toBe('table');
+    expect(observations).toHaveLength(1);
+    const observation = observations[0];
+    expect(observation).toMatchObject({
+      depth: 0,
+      mode: 'fixed',
+      rowCount: 1,
+      cellCount: 1,
+      nestedBlockCount: 1,
+    });
+    const attributedWallMs = Object.values(observation.phases).reduce((sum, wallMs) => sum + wallMs, 0);
+    expect(Math.abs(attributedWallMs - observation.totalWallMs)).toBeLessThan(0.001);
+    expect(observation.reconciliationDeltaMs).toBeLessThan(0.001);
+    expect(Object.values(observation.cellBlockCache).reduce((sum, count) => sum + count, 0)).toBe(1);
   });
 
   it('produces final image dimensions after measurement constraints', async () => {

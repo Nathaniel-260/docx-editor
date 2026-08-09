@@ -176,6 +176,114 @@ describe('computeWordListMarker', () => {
     expect(end.listRenderingAttrs.justification).toBe('right');
   });
 
+  it('renders 2.1 for a first-emitted ilvl=1 marker with ancestor start 2', () => {
+    const manager = createNumberingManager();
+    const def = baseDef({
+      numId: 30,
+      abstractId: 2,
+      ilvl: 1,
+      start: 1,
+      lvlText: '%1.%2',
+      ancestorStartSettings: [{ ilvl: 0, start: 2, startOverridden: false }],
+    });
+    const r = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 1 });
+    expect(r.path).toEqual([2, 1]);
+    expect(r.listRenderingAttrs.markerText).toBe('2.1');
+  });
+
+  it('increments the second child of a first-emitted ilvl=1 list to 2.2', () => {
+    const manager = createNumberingManager();
+    const def = baseDef({
+      numId: 30,
+      abstractId: 2,
+      ilvl: 1,
+      start: 1,
+      lvlText: '%1.%2',
+      ancestorStartSettings: [{ ilvl: 0, start: 2, startOverridden: false }],
+    });
+    const a = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 1 });
+    const b = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 2 });
+    expect(a.listRenderingAttrs.markerText).toBe('2.1');
+    expect(b.listRenderingAttrs.markerText).toBe('2.2');
+  });
+
+  it('renders 2.3.1 for a first-emitted ilvl=2 marker with ancestor starts 2 and 3', () => {
+    const manager = createNumberingManager();
+    const def = baseDef({
+      numId: 40,
+      abstractId: 3,
+      ilvl: 2,
+      start: 1,
+      lvlText: '%1.%2.%3',
+      ancestorStartSettings: [
+        { ilvl: 0, start: 2, startOverridden: false },
+        { ilvl: 1, start: 3, startOverridden: false },
+      ],
+    });
+    const r = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 1 });
+    expect(r.path).toEqual([2, 3, 1]);
+    expect(r.listRenderingAttrs.markerText).toBe('2.3.1');
+  });
+
+  it('lets a real prior ancestor counter override the definition start fallback', () => {
+    const manager = createNumberingManager();
+    const parent = baseDef({ numId: 30, abstractId: 2, ilvl: 0, start: 2, lvlText: '%1' });
+    const child = baseDef({
+      numId: 30,
+      abstractId: 2,
+      ilvl: 1,
+      start: 1,
+      lvlText: '%1.%2',
+      ancestorStartSettings: [{ ilvl: 0, start: 2, startOverridden: false }],
+    });
+    // Parent emits twice → level 0 counter reaches 3 (start 2, then 3).
+    computeWordListMarker({ definition: parent, manager, paragraphOrdinal: 1 });
+    computeWordListMarker({ definition: parent, manager, paragraphOrdinal: 2 });
+    const r = computeWordListMarker({ definition: child, manager, paragraphOrdinal: 3 });
+    // Ancestor segment is the real counter (3), not the primed start (2).
+    expect(r.path).toEqual([3, 1]);
+    expect(r.listRenderingAttrs.markerText).toBe('3.1');
+  });
+
+  it('keeps a shared abstract ancestor counter flowing across concrete numIds (startOverridden=false)', () => {
+    const manager = createNumberingManager();
+    const parent = baseDef({ numId: 10, abstractId: 0, ilvl: 0, start: 1, lvlText: '%1' });
+    const child = baseDef({
+      numId: 11,
+      abstractId: 0,
+      ilvl: 1,
+      start: 1,
+      lvlText: '%1.%2',
+      ancestorStartSettings: [{ ilvl: 0, start: 2, startOverridden: false }],
+    });
+    const a = computeWordListMarker({ definition: parent, manager, paragraphOrdinal: 1 });
+    const b = computeWordListMarker({ definition: child, manager, paragraphOrdinal: 2 });
+    expect(a.listRenderingAttrs.markerText).toBe('1');
+    // numId 11's ancestor reads the shared abstract pool (numId 10's counter=1),
+    // not its own primed fallback start (2).
+    expect(b.path).toEqual([1, 1]);
+    expect(b.listRenderingAttrs.markerText).toBe('1.1');
+  });
+
+  it('scopes ancestor lookup to the concrete numId when startOverridden=true', () => {
+    const manager = createNumberingManager();
+    const parent = baseDef({ numId: 10, abstractId: 0, ilvl: 0, start: 1, lvlText: '%1' });
+    const child = baseDef({
+      numId: 11,
+      abstractId: 0,
+      ilvl: 1,
+      start: 1,
+      lvlText: '%1.%2',
+      ancestorStartSettings: [{ ilvl: 0, start: 7, startOverridden: true }],
+    });
+    computeWordListMarker({ definition: parent, manager, paragraphOrdinal: 1 });
+    const b = computeWordListMarker({ definition: child, manager, paragraphOrdinal: 2 });
+    // startOverridden scopes the ancestor lookup to numId 11 (no own level-0
+    // counter), so it falls back to the scoped start 7, ignoring numId 10.
+    expect(b.path).toEqual([7, 1]);
+    expect(b.listRenderingAttrs.markerText).toBe('7.1');
+  });
+
   it('formats decimalZero custom zero-padding (path > 1 entry)', () => {
     const manager = createNumberingManager();
     const lvl0 = baseDef({ ilvl: 0, lvlText: '%1', numFmt: 'decimal' });

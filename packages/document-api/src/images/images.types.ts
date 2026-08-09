@@ -266,6 +266,7 @@ export interface SetZOrderInput {
 export interface CreateImageSuccessResult {
   success: true;
   image: ImageAddress;
+  trackedChangeRefs?: ReceiptInsert[];
 }
 
 export interface CreateImageFailureResult {

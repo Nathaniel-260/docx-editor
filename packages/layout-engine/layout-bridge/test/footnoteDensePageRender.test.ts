@@ -18,7 +18,7 @@
  * page, rather than being dropped.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure } from '@superdoc/contracts';
 import { incrementalLayout } from '../src/incrementalLayout';
 

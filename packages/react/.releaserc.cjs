@@ -1,4 +1,3 @@
-/* eslint-env node */
 const {
   createCommitAnalyzer,
   createReleaseNotesGenerator,
@@ -13,7 +12,7 @@ const {
  * When react migrates `superdoc` to peerDependencies, narrow this to
  * packages/react only. See .github/package-impact-map.md.
  */
-const RELEASE_PATHS = [
+require('../../scripts/semantic-release/patch-commit-filter.cjs')([
   'packages/react',
   'packages/superdoc',
   'packages/super-editor',
@@ -22,54 +21,27 @@ const RELEASE_PATHS = [
   'packages/preset-geometry',
   'shared',
   'pnpm-workspace.yaml',
-];
-
-require('../../scripts/semantic-release/patch-commit-filter.cjs')(RELEASE_PATHS);
+]);
 
 const branch = process.env.GITHUB_REF_NAME || process.env.CI_COMMIT_BRANCH;
 
-// Tag ownership: `@superdoc-dev/react` on npm is published by two release lines. V2 owns
-// the default channels — `latest` for stable, `next` for previews — and V1 is
-// maintenance-only under `legacy`. V1 must never claim `latest` or `next`: both
-// lines publish the same package name, so a V1 release that claimed a V2 channel
-// would silently take it over (last write wins). That is what happened here —
-// V1 kept moving `next` while V2's releases were left untagged.
-//
-// `main` is deliberately absent. It was the only branch that could produce a
-// `next` release, so removing it is what stops V1 claiming the channel.
-//
-// Matches packages/superdoc, which established this split.
 const branches = [
-  {
-    name: 'stable',
-    channel: 'legacy', // V1 maintenance line; V2 owns `latest`
-  },
+  { name: 'stable', channel: 'latest' },
+  { name: 'main', prerelease: 'next', channel: 'next' },
 ];
 
 const isPrerelease = branches.some((b) => typeof b === 'object' && b.name === branch && b.prerelease);
 
-// GitHub Releases are stable-only; prerelease tags and package publishing still proceed.
-const shouldPublishGitHubRelease = Boolean(branch) && !isPrerelease;
-// Linear release comments remain the shipped-version breadcrumb, so
-// prereleases link to their Git tags when no GitHub Release exists.
+// stable -> main syncs (real merges) re-attribute prereleases to PRs already shipped on @latest.
+// Gate per-PR/issue success comments off on prereleases to avoid duplicate "shipped" comments.
+const shouldCommentOnRelease = !isPrerelease;
+// Linear release comments are the shipped-version breadcrumb inside Linear
+// itself, so keep them on for prereleases even while GitHub PR comments stay
+// gated separately.
 const shouldCommentOnLinearRelease = true;
 
 // Use AI-powered notes for stable releases, conventional generator for prereleases
-const notesPlugin = isPrerelease
-  ? createReleaseNotesGenerator()
-  : [
-      'semantic-release-ai-notes',
-      {
-        style: 'concise',
-        scope: {
-          name: 'SuperDoc React',
-          paths: RELEASE_PATHS,
-          audience: 'React developers embedding the @superdoc-dev/react component',
-          instructions:
-            "This package wraps the SuperDoc editor for React. Only mention editor changes when they affect the embedded editor's behavior or the component's props and API.",
-        },
-      },
-    ];
+const notesPlugin = isPrerelease ? createReleaseNotesGenerator() : ['semantic-release-ai-notes', { style: 'concise' }];
 
 const config = {
   branches,
@@ -109,14 +81,13 @@ config.plugins.push([
   { teamKeys: ['SD'], addComment: shouldCommentOnLinearRelease, packageName: 'react' },
 ]);
 
-if (shouldPublishGitHubRelease) {
-  config.plugins.push([
-    '@semantic-release/github',
-    {
-      successComment:
-        ':tada: This ${issue.pull_request ? "PR" : "issue"} is included in **@superdoc-dev/react** v${nextRelease.version}\n\nThe release is available on [GitHub release](https://github.com/superdoc/docx-editor/releases/tag/${nextRelease.gitTag})',
-    },
-  ]);
-}
+config.plugins.push([
+  '@semantic-release/github',
+  {
+    successComment:
+      ':tada: This ${issue.pull_request ? "PR" : "issue"} is included in **@superdoc-dev/react** v${nextRelease.version}\n\nThe release is available on [GitHub release](https://github.com/superdoc/docx-editor/releases/tag/${nextRelease.gitTag})',
+    successCommentCondition: shouldCommentOnRelease ? undefined : false,
+  },
+]);
 
 module.exports = config;

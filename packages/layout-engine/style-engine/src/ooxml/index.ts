@@ -34,32 +34,33 @@ export {
   resolveExistingTableEffectiveStyleId,
   resolvePreferredNewTableStyleId,
 } from './table-style-selection.js';
-export type { ResolvedStyle, ResolvedStyleSource } from './table-style-selection.js';
+export type { ResolvedStyle, ResolvedStyleSource, TableSemanticStyleHints } from './table-style-selection.js';
 
 export interface OoxmlResolverParams {
   translatedNumbering: NumberingProperties | null | undefined;
   translatedLinkedStyles: StylesDocumentProperties | null | undefined;
+  /** Actual `w:type="paragraph" w:default="1"` style ID. */
+  defaultParagraphStyleId?: string;
+  /** Bounded read-only aliases for legacy dangling semantic references. */
+  styleIdAliases?: Readonly<Record<string, string>>;
+  /**
+   * Opt-in memoization of `resolveStyleChain` results, keyed per params
+   * object. Only set this when `translatedLinkedStyles` is immutable for the
+   * lifetime of this params object (the compiled WordStyleModel guarantees
+   * that; callers that rebuild styles in place must not opt in).
+   */
+  enableChainMemo?: boolean;
 }
 
 export interface TableInfo {
   tableProperties: TableProperties | null | undefined;
+  directTableProperties?: TableProperties | null | undefined;
   rowIndex: number;
   cellIndex: number;
   numCells: number;
   numRows: number;
   rowCnfStyle?: ParagraphConditionalFormatting | null;
   cellCnfStyle?: ParagraphConditionalFormatting | null;
-  /**
-   * Grid position of the cell (SD-3028 G7). Word's firstCol/lastCol/banding
-   * regions are GRID columns, not display-cell indices: gridSpan, vMerge
-   * continuations (merged away at import), and gridBefore placeholders all
-   * shift display indices off the grid. When absent, display indices are used.
-   */
-  gridColumnStart?: number | null;
-  /** Grid columns covered by the cell. Defaults to 1. */
-  gridColumnSpan?: number | null;
-  /** Total grid columns in the table (w:tblGrid length). */
-  numGridCols?: number | null;
 }
 
 /**
@@ -74,47 +75,6 @@ export const DEFAULT_TBL_LOOK: TableLookProperties = {
   noHBand: false,
   noVBand: true,
 };
-
-const BUILT_IN_HEADING_NAME_RE = /^heading\s+([1-9])$/i;
-
-function getBuiltInHeadingLevel(styleDef: StyleDefinition | undefined): number | undefined {
-  if (styleDef?.type !== 'paragraph' || typeof styleDef.name !== 'string') {
-    return undefined;
-  }
-
-  const match = BUILT_IN_HEADING_NAME_RE.exec(styleDef.name.trim());
-  if (!match?.[1]) {
-    return undefined;
-  }
-
-  return Number(match[1]);
-}
-
-function resolveStyleDefinition(
-  params: OoxmlResolverParams,
-  styleId: string,
-): { styleId: string; styleDef: StyleDefinition } | undefined {
-  const styles = params.translatedLinkedStyles?.styles;
-  const styleDef = styles?.[styleId];
-  if (!styles || !styleDef) {
-    return undefined;
-  }
-
-  const headingLevel = getBuiltInHeadingLevel(styleDef);
-  const canonicalHeadingStyleId = headingLevel ? `Heading${headingLevel}` : null;
-  const canonicalHeadingStyleDef = canonicalHeadingStyleId ? styles[canonicalHeadingStyleId] : undefined;
-
-  if (
-    canonicalHeadingStyleId &&
-    canonicalHeadingStyleId !== styleId &&
-    canonicalHeadingStyleDef &&
-    getBuiltInHeadingLevel(canonicalHeadingStyleDef) === headingLevel
-  ) {
-    return { styleId: canonicalHeadingStyleId, styleDef: canonicalHeadingStyleDef };
-  }
-
-  return { styleId, styleDef };
-}
 
 export function resolveRunProperties(
   params: OoxmlResolverParams,
@@ -134,7 +94,8 @@ export function resolveRunProperties(
 
   // Getting default properties and normal style properties
   const defaultProps = params.translatedLinkedStyles.docDefaults?.runProperties ?? {};
-  const normalStyleDef = params.translatedLinkedStyles.styles['Normal'];
+  const defaultParagraphStyleId = params.defaultParagraphStyleId ?? 'Normal';
+  const normalStyleDef = params.translatedLinkedStyles.styles[defaultParagraphStyleId];
   const normalProps = (normalStyleDef?.runProperties ?? {}) as RunProperties;
 
   // Getting table style run properties
@@ -226,7 +187,8 @@ export function resolveParagraphProperties(
 
   // Normal style and default properties
   const defaultProps = params.translatedLinkedStyles.docDefaults?.paragraphProperties ?? {};
-  const normalStyleDef = params.translatedLinkedStyles.styles['Normal'];
+  const defaultParagraphStyleId = params.defaultParagraphStyleId ?? 'Normal';
+  const normalStyleDef = params.translatedLinkedStyles.styles[defaultParagraphStyleId];
   const normalProps = (normalStyleDef?.paragraphProperties ?? {}) as ParagraphProperties;
 
   // Properties from styles
@@ -237,9 +199,15 @@ export function resolveParagraphProperties(
 
   // Properties from numbering
   let numberingProps = {} as ParagraphProperties;
-  const ilvl = inlineProps?.numberingProperties?.ilvl ?? styleProps?.numberingProperties?.ilvl;
-  const numId = inlineProps?.numberingProperties?.numId ?? styleProps?.numberingProperties?.numId;
-  let numberingDefinedInline = inlineProps?.numberingProperties?.numId != null;
+  const inlineNumbering = inlineProps.numberingProperties;
+  const styleNumbering = styleProps.numberingProperties;
+  const inlineNumId = inlineNumbering?.numId;
+  const numId = inlineNumId ?? styleNumbering?.numId;
+  let ilvl = inlineNumbering?.ilvl;
+  if (ilvl == null) {
+    ilvl = inlineNumId != null ? 0 : resolveStyleImpliedNumberingLevel(params, styleId, numId, styleNumbering?.ilvl);
+  }
+  let numberingDefinedInline = inlineNumId != null;
 
   const isList = numId != null && numId !== 0;
   if (isList) {
@@ -331,9 +299,18 @@ export function resolveParagraphProperties(
   });
   const finalIndent = combineIndentProperties(indentChain);
   finalProps.indent = finalIndent.indent;
+  if (isList) {
+    finalProps.numberingProperties = { numId, ilvl: ilvl ?? 0 };
+  }
 
   return finalProps;
 }
+
+// Per-params memo for resolveStyleChain. The combined chain for a styleId is
+// document-invariant, yet it was re-walked and re-merged for every paragraph
+// and every run. Memoized values are frozen: they are shared across callers,
+// which only spread them into merge chains and never mutate them.
+const CHAIN_MEMO = new WeakMap<OoxmlResolverParams, Map<string, PropertyObject>>();
 
 export function resolveStyleChain<T extends PropertyObject>(
   propertyType: 'paragraphProperties' | 'runProperties' | 'tableProperties',
@@ -343,29 +320,52 @@ export function resolveStyleChain<T extends PropertyObject>(
 ): T {
   if (!styleId) return {} as T;
 
-  const resolvedStyle = resolveStyleDefinition(params, styleId);
-  if (!resolvedStyle) return {} as T;
+  const memoOn = params.enableChainMemo === true;
+  let memo: Map<string, PropertyObject> | undefined;
+  let memoKey: string | undefined;
+  if (memoOn) {
+    memo = CHAIN_MEMO.get(params);
+    if (!memo) {
+      memo = new Map();
+      CHAIN_MEMO.set(params, memo);
+    }
+    memoKey = `${propertyType}:${followBasedOnChain ? 'chain' : 'flat'}:${styleId}`;
+    const hit = memo.get(memoKey);
+    if (hit) return hit as T;
+  }
 
-  const { styleDef } = resolvedStyle;
+  const resolved = resolveStyleChainUncached<T>(propertyType, params, styleId, followBasedOnChain);
+  if (memo && memoKey) {
+    Object.freeze(resolved);
+    memo.set(memoKey, resolved);
+  }
+  return resolved;
+}
+
+function resolveStyleChainUncached<T extends PropertyObject>(
+  propertyType: 'paragraphProperties' | 'runProperties' | 'tableProperties',
+  params: OoxmlResolverParams,
+  styleId: string,
+  followBasedOnChain: boolean,
+): T {
+  const styles = params.translatedLinkedStyles?.styles;
+  const resolvedStyleId = styles?.[styleId] ? styleId : (params.styleIdAliases?.[styleId] ?? styleId);
+  const styleDef = styles?.[resolvedStyleId];
+  if (!styleDef) return {} as T;
+
   const styleProps = (styleDef[propertyType as keyof typeof styleDef] ?? {}) as T;
   const basedOn = styleDef.basedOn;
 
   let styleChain: T[] = [styleProps];
-  const seenStyles = new Set<string>([styleId, resolvedStyle.styleId]);
+  const seenStyles = new Set<string>([resolvedStyleId]);
   let nextBasedOn = basedOn;
   while (followBasedOnChain && nextBasedOn) {
-    if (seenStyles.has(nextBasedOn as string)) {
+    const resolvedBasedOn = styles?.[nextBasedOn] ? nextBasedOn : (params.styleIdAliases?.[nextBasedOn] ?? nextBasedOn);
+    if (seenStyles.has(resolvedBasedOn as string)) {
       break;
     }
-    seenStyles.add(nextBasedOn as string);
-    // Resolve each parent through the canonical heading mapping so derived styles
-    // based on a localized heading (e.g. `MyHeading` basedOn `Kop1`) inherit the
-    // canonical `Heading1` formatting rather than the literal localized definition.
-    const resolvedBasedOn = resolveStyleDefinition(params, nextBasedOn as string);
-    const basedOnStyleDef = resolvedBasedOn?.styleDef;
-    if (resolvedBasedOn) {
-      seenStyles.add(resolvedBasedOn.styleId);
-    }
+    seenStyles.add(resolvedBasedOn as string);
+    const basedOnStyleDef = styles?.[resolvedBasedOn];
     const basedOnProps = basedOnStyleDef?.[propertyType as keyof typeof basedOnStyleDef] as T;
 
     if (basedOnProps && Object.keys(basedOnProps).length) {
@@ -374,6 +374,9 @@ export function resolveStyleChain<T extends PropertyObject>(
     nextBasedOn = basedOnStyleDef?.basedOn;
   }
   styleChain = styleChain.reverse();
+  if (propertyType === 'runProperties') {
+    return combineRunProperties(styleChain as RunProperties[]) as T;
+  }
   return combineProperties(styleChain);
 }
 
@@ -394,19 +397,12 @@ export function getNumberingProperties<T extends ParagraphProperties | RunProper
   const numDefinition = definitions[String(numId)];
   if (!numDefinition) return {} as T;
 
-  const lvlOverride = numDefinition.lvlOverrides?.[String(ilvl)];
-  const overrideProps = lvlOverride?.[propertyType as keyof typeof lvlOverride] as T;
-
-  if (overrideProps) {
-    propertiesChain.push(overrideProps);
-  }
-
   const abstractNumId = numDefinition.abstractNumId!;
 
   const listDefinitionForThisNumId = abstracts[String(abstractNumId)];
   if (!listDefinitionForThisNumId) return {} as T;
 
-  const numStyleLinkId = listDefinitionForThisNumId.numStyleLink ?? listDefinitionForThisNumId.styleLink;
+  const numStyleLinkId = listDefinitionForThisNumId.numStyleLink;
 
   if (numStyleLinkId && tries < 1) {
     const styleDef = params.translatedLinkedStyles?.styles?.[numStyleLinkId];
@@ -417,20 +413,78 @@ export function getNumberingProperties<T extends ParagraphProperties | RunProper
     }
   }
 
+  const lvlOverride = numDefinition.lvlOverrides?.[String(ilvl)];
+  const fullOverrideLevel = lvlOverride?.lvl;
+  const legacyOverrideProps = lvlOverride?.[propertyType as keyof typeof lvlOverride] as T;
+  const fullOverrideProps = fullOverrideLevel?.[propertyType as keyof typeof fullOverrideLevel] as T;
+  if (fullOverrideLevel) {
+    if (!fullOverrideProps) return {} as T;
+    return {
+      ...fullOverrideProps,
+      ...(fullOverrideLevel.styleId ? { styleId: fullOverrideLevel.styleId } : {}),
+    } as T;
+  }
+
+  if (legacyOverrideProps) {
+    propertiesChain.push(legacyOverrideProps);
+  }
+
   const levelDefinition = listDefinitionForThisNumId.levels?.[String(ilvl)];
   if (!levelDefinition) return {} as T;
 
   const abstractProps = levelDefinition[propertyType as keyof typeof levelDefinition] as T;
 
   if (abstractProps != null) {
-    if (levelDefinition?.styleId) {
-      abstractProps.styleId = levelDefinition?.styleId;
-    }
-    propertiesChain.push(abstractProps);
+    propertiesChain.push({
+      ...abstractProps,
+      ...(levelDefinition.styleId ? { styleId: levelDefinition.styleId } : {}),
+    } as T);
   }
 
   propertiesChain.reverse();
   return combineProperties(propertiesChain);
+}
+
+function resolveStyleImpliedNumberingLevel(
+  params: OoxmlResolverParams,
+  paragraphStyleId: string | undefined,
+  numId: number | undefined,
+  fallbackIlvl: number | undefined,
+): number | undefined {
+  if (numId == null || numId === 0) return fallbackIlvl;
+  const abstract = resolveConcreteNumberingAbstract(params, numId);
+  const styles = params.translatedLinkedStyles?.styles;
+  if (!abstract?.levels || !styles || !paragraphStyleId) return fallbackIlvl ?? 0;
+
+  const seen = new Set<string>();
+  let current: string | undefined = paragraphStyleId;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    for (const [key, level] of Object.entries(abstract.levels)) {
+      if (level?.styleId !== current) continue;
+      const candidate = level.ilvl ?? Number(key);
+      if (Number.isInteger(candidate) && candidate >= 0) return candidate;
+    }
+    const style: StyleDefinition | undefined = styles[current];
+    if (style?.paragraphProperties?.numberingProperties?.numId != null) break;
+    current = style?.basedOn;
+  }
+  return fallbackIlvl ?? 0;
+}
+
+function resolveConcreteNumberingAbstract(params: OoxmlResolverParams, numId: number) {
+  const numbering = params.translatedNumbering;
+  const definition = numbering?.definitions?.[String(numId)];
+  const abstractId = definition?.abstractNumId;
+  let abstract = abstractId == null ? undefined : numbering?.abstracts?.[String(abstractId)];
+  const link = abstract?.numStyleLink;
+  if (!link) return abstract;
+  const linkedNumId = params.translatedLinkedStyles?.styles?.[link]?.paragraphProperties?.numberingProperties?.numId;
+  if (linkedNumId == null || linkedNumId === 0 || linkedNumId === numId) return undefined;
+  const linkedDefinition = numbering?.definitions?.[String(linkedNumId)];
+  const linkedAbstractId = linkedDefinition?.abstractNumId;
+  abstract = linkedAbstractId == null ? undefined : numbering?.abstracts?.[String(linkedAbstractId)];
+  return abstract?.numStyleLink ? undefined : abstract;
 }
 
 /**
@@ -543,15 +597,6 @@ function resolveConditionalProps<T extends PropertyObject>(
     const def: StyleDefinition | undefined = translatedLinkedStyles.styles?.[currentId];
     const props = def?.tableStyleProperties?.[styleType]?.[propertyType] as T | undefined;
     if (props) chain.push(props);
-    // ECMA-376 17.7.6: a table style's BASE-LEVEL <w:tcPr> (stored on the def's own
-    // tableCellProperties, a sibling of tableStyleProperties) IS the wholeTable
-    // conditional layer; Word paints e.g. its w:shd on every cell. Pushed after the
-    // explicit wholeTable entry so, post-reverse, the explicit entry still wins within
-    // one def while a leaf's base props beat any ancestor's. (SD-3035)
-    if (styleType === 'wholeTable' && propertyType === 'tableCellProperties') {
-      const baseProps = def?.tableCellProperties as T | undefined;
-      if (baseProps) chain.push(baseProps);
-    }
     currentId = def?.basedOn;
   }
   if (chain.length === 0) return undefined;
@@ -580,9 +625,6 @@ export function resolveCellStyles<T extends PropertyObject>(
     colBandSize,
     tableInfo.rowCnfStyle,
     tableInfo.cellCnfStyle,
-    tableInfo.gridColumnStart,
-    tableInfo.gridColumnSpan,
-    tableInfo.numGridCols,
   );
   cellStyleTypes.forEach((styleType) => {
     const typeProps = resolveConditionalProps<T>(propertyType, styleType, tableStyleId, translatedLinkedStyles);
@@ -605,22 +647,22 @@ export function resolveTableCellProperties(
   tableInfo: TableInfo | null | undefined,
   translatedLinkedStyles: StylesDocumentProperties | null | undefined,
 ): TableCellProperties {
-  if (!translatedLinkedStyles) {
+  const directTableProperties = tableInfo?.directTableProperties;
+  const directTableShading = directTableProperties?.shading;
+  const hasDirectTableShading = directTableProperties != null && directTableShading != null;
+
+  const cellStyleProps = translatedLinkedStyles
+    ? resolveCellStyles<TableCellProperties>('tableCellProperties', tableInfo, translatedLinkedStyles)
+    : [];
+
+  if (cellStyleProps.length === 0 && !hasDirectTableShading) {
     return (inlineProps ?? {}) as TableCellProperties;
   }
 
-  const cellStyleProps = resolveCellStyles<TableCellProperties>(
-    'tableCellProperties',
-    tableInfo,
-    translatedLinkedStyles,
-  );
-
-  if (cellStyleProps.length === 0) {
-    return (inlineProps ?? {}) as TableCellProperties;
-  }
-
-  // Cascade: style properties (low→high) then inline wins last
   const chain: TableCellProperties[] = [...cellStyleProps];
+  if (hasDirectTableShading) {
+    chain.push({ shading: directTableShading });
+  }
   if (inlineProps && Object.keys(inlineProps).length > 0) {
     chain.push(inlineProps);
   }
@@ -644,14 +686,9 @@ const CNF_STYLE_MAP: ReadonlyArray<[keyof ParagraphConditionalFormatting, TableS
   ['lastRowLastColumn', 'seCell'],
 ];
 
-// Conditional-format apply order (low → high). combineProperties treats later
-// entries as higher priority. NOTE: this intentionally diverges from the literal
-// ECMA-376 §17.7.6.6 list (which puts banded rows after banded columns). Word's
-// ACTUAL render applies COLUMN banding over row banding and column edges over row
-// edges — verified by 150dpi Word renders of first_row_styling and
-// conditional_style_regions, whose interior cells paint band1Vert/band2Vert
-// (#EEEEEE/#FAFAFA), not band1Horz/band2Horz (SD-3028, Gabriel review). Match Word,
-// not the spec text.
+// Word / Office precedence order (low → high), per MS-OI29500 §2.1.1310.
+// combineProperties treats later entries as higher priority, so this array
+// must list types from lowest to highest override strength.
 const TABLE_STYLE_PRECEDENCE: TableStyleType[] = [
   'wholeTable',
   'band1Horz',
@@ -678,31 +715,16 @@ function determineCellStyleTypes(
   colBandSize = 1,
   rowCnfStyle?: ParagraphConditionalFormatting | null,
   cellCnfStyle?: ParagraphConditionalFormatting | null,
-  gridColumnStart?: number | null,
-  gridColumnSpan?: number | null,
-  numGridCols?: number | null,
 ): TableStyleType[] {
   const applicable = new Set<TableStyleType>(['wholeTable']);
 
   const normalizedRowBandSize = rowBandSize > 0 ? rowBandSize : 1;
   const normalizedColBandSize = colBandSize > 0 ? colBandSize : 1;
 
-  // Column position on the GRID when the caller provides it (SD-3028 G7);
-  // display indices otherwise. firstCol/lastCol and vertical banding follow
-  // grid columns in Word, so spans and merges must not shift them.
-  const columnStart = gridColumnStart ?? cellIndex;
-  const columnEnd = columnStart + (gridColumnSpan ?? 1);
-  // When a row declares more cells than the table grid has columns, Word
-  // auto-extends the grid; trust the larger count so lastCol / corners apply
-  // only to the true last column, not to every cell whose end reaches the
-  // under-declared grid width (SD-3028).
-  const columnCount =
-    numGridCols != null && numCells != null ? Math.max(numGridCols, numCells) : (numGridCols ?? numCells);
-
   // Per ECMA-376, banding excludes header/footer rows and first/last columns.
   // Offset the index so the first data row/column starts at band1.
   const bandRowIndex = Math.max(0, rowIndex - (tblLook?.firstRow ? 1 : 0));
-  const bandColIndex = Math.max(0, columnStart - (tblLook?.firstColumn ? 1 : 0));
+  const bandColIndex = Math.max(0, cellIndex - (tblLook?.firstColumn ? 1 : 0));
   const rowGroup = Math.floor(bandRowIndex / normalizedRowBandSize);
   const colGroup = Math.floor(bandColIndex / normalizedColBandSize);
 
@@ -717,8 +739,8 @@ function determineCellStyleTypes(
   // Row/column edge flags — reused for both row/col styles and corner gating.
   const isFirstRow = !!tblLook?.firstRow && rowIndex === 0;
   const isLastRow = !!tblLook?.lastRow && numRows != null && numRows > 0 && rowIndex === numRows - 1;
-  const isFirstCol = !!tblLook?.firstColumn && columnStart === 0;
-  const isLastCol = !!tblLook?.lastColumn && columnCount != null && columnCount > 0 && columnEnd >= columnCount;
+  const isFirstCol = !!tblLook?.firstColumn && cellIndex === 0;
+  const isLastCol = !!tblLook?.lastColumn && numCells != null && numCells > 0 && cellIndex === numCells - 1;
 
   if (isFirstRow) applicable.add('firstRow');
   if (isFirstCol) applicable.add('firstCol');

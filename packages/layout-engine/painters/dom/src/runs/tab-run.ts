@@ -21,10 +21,13 @@ const getRunFontSize = (run: UnderlineSource): number =>
 const getRunColor = (run: UnderlineSource): string | undefined =>
   'color' in run && typeof run.color === 'string' ? run.color : undefined;
 
+const isVanishedRun = (run: UnderlineSource): boolean => 'vanish' in run && run.vanish === true;
+
 export const underlineStyleForRun = (run: UnderlineSource): string | undefined =>
   getRunUnderline(run)?.style ?? 'single';
 
 export const canPaintUnderlineAsBorder = (run: UnderlineSource): boolean => {
+  if (isVanishedRun(run)) return false;
   if (!getRunUnderline(run)) return false;
   const style = underlineStyleForRun(run);
   return style !== 'none' && style !== 'words';
@@ -79,12 +82,32 @@ export const renderInlineTabRun = (
   layoutEpoch: number,
   styleId?: string,
   paintUnderline = true,
+  /**
+   * Measured tab width in pixels, pre-resolved by the caller from Line.tabWidths
+   * keyed by block.runs index. Preferred over run.width because it survives
+   * FlowBlock re-projection that creates fresh run objects (run.width not re-set).
+   */
+  tabWidthFromCache?: number,
 ): HTMLElement => {
   const tabEl = doc.createElement('span');
   tabEl.classList.add('superdoc-tab');
 
-  // Calculate tab width - use measured width or estimate based on typical tab stop
-  const tabWidth = run.width ?? 48; // Default tab width if not measured
+  if (run.vanish === true) {
+    tabEl.setAttribute('aria-hidden', 'true');
+    tabEl.style.display = 'inline-block';
+    tabEl.style.width = '0px';
+    tabEl.style.height = '0px';
+    tabEl.style.overflow = 'hidden';
+    if (styleId) {
+      tabEl.setAttribute('styleid', styleId);
+    }
+    if (run.pmStart != null) tabEl.dataset.pmStart = String(run.pmStart);
+    if (run.pmEnd != null) tabEl.dataset.pmEnd = String(run.pmEnd);
+    tabEl.dataset.layoutEpoch = String(layoutEpoch);
+    return tabEl;
+  }
+
+  const tabWidth = tabWidthFromCache ?? run.width ?? 48;
 
   tabEl.style.display = 'inline-block';
   tabEl.style.width = `${tabWidth}px`;
@@ -128,6 +151,26 @@ export const renderPositionedTabRun = (
   styleId?: string,
   paintUnderline = true,
 ): { element: HTMLElement; tabEndX: number; actualTabWidth: number } => {
+  if (run.vanish === true) {
+    const tabEl = doc.createElement('span');
+    tabEl.classList.add('superdoc-tab');
+    tabEl.setAttribute('aria-hidden', 'true');
+    tabEl.style.position = 'absolute';
+    tabEl.style.left = `${tabStartX + indentOffset}px`;
+    tabEl.style.top = '0px';
+    tabEl.style.width = '0px';
+    tabEl.style.height = '0px';
+    tabEl.style.overflow = 'hidden';
+    tabEl.style.pointerEvents = 'none';
+    if (styleId) {
+      tabEl.setAttribute('styleid', styleId);
+    }
+    if (run.pmStart != null) tabEl.dataset.pmStart = String(run.pmStart);
+    if (run.pmEnd != null) tabEl.dataset.pmEnd = String(run.pmEnd);
+    tabEl.dataset.layoutEpoch = String(layoutEpoch);
+    return { element: tabEl, tabEndX: tabStartX, actualTabWidth: 0 };
+  }
+
   // The tab should span from where previous content ended to where next content begins.
   // If layout supplied a tab-end boundary for the next segment, prefer it.
   // Otherwise, use the next segment's explicit X (from tab alignment) or the
@@ -137,6 +180,7 @@ export const renderPositionedTabRun = (
   const actualTabWidth = tabEndX - tabStartX;
 
   const tabEl = doc.createElement('span');
+  tabEl.classList.add('superdoc-tab');
   tabEl.style.position = 'absolute';
   tabEl.style.left = `${tabStartX + indentOffset}px`;
   tabEl.style.top = '0px';

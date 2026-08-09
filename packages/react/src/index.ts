@@ -19,8 +19,9 @@ export type {
   CallbackProps,
 
   // Callback event types
-  Editor,
   EditorSurface,
+  SuperDocRuntimeEditor,
+  SuperDocRuntimeTransaction,
   SuperDocReadyEvent,
   SuperDocEditorCreateEvent,
   SuperDocEditorUpdateEvent,

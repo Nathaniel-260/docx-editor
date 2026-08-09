@@ -16,7 +16,7 @@ const notices = {
   ofl: path.join(assetsDir, 'OFL.txt'),
   apache: path.join(assetsDir, 'Apache-2.0.txt'),
   thirdParty: path.join(repoRoot, 'THIRD_PARTY_LICENSES.md'),
-  // The bundled fonts ship to consumers through @superdoc-dev/fonts (superdoc itself no longer
+  // The bundled fonts ship to consumers through @superdoc/fonts (superdoc itself no longer
   // ships them). Its sync step copies the license texts beside the .woff2, and its published
   // `files` includes the assets dir, so provenance always travels with the binaries.
   fontsSync: path.join(repoRoot, 'packages/fonts/scripts/sync-assets.mjs'),
@@ -238,12 +238,12 @@ if (errors.length === 0) {
   if (!thirdPartyText.includes(manifest.spdxExpression)) {
     fail('THIRD_PARTY_LICENSES.md missing bundled font SPDX expression');
   }
-  // @superdoc-dev/fonts must ship the license texts with the .woff2 it delivers to consumers.
+  // @superdoc/fonts must ship the license texts with the .woff2 it delivers to consumers.
   if (!fontsSyncText.includes(".endsWith('.md')") || !fontsSyncText.includes(".endsWith('.txt')")) {
-    fail('@superdoc-dev/fonts sync-assets.mjs must copy license texts (.md/.txt) alongside the .woff2');
+    fail('@superdoc/fonts sync-assets.mjs must copy license texts (.md/.txt) alongside the .woff2');
   }
   if (!Array.isArray(fontsPackageJson.files) || !fontsPackageJson.files.includes('assets')) {
-    fail('@superdoc-dev/fonts package.json "files" must include "assets" so licenses ship with the fonts');
+    fail('@superdoc/fonts package.json "files" must include "assets" so licenses ship with the fonts');
   }
 
   for (const family of manifest.families ?? []) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { getFallbackDecision, getRenderableFallback } from '@docfonts/fallbacks';
 import { BUNDLED_MANIFEST } from './bundled-manifest';
 import { createFontResolver, resolveFontFamily } from './resolver';

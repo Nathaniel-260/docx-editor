@@ -36,10 +36,12 @@ export interface TextRunStyleAttrs {
   vertAlign?: TextRun['vertAlign'];
   baselineShift?: number;
   letterSpacing?: number;
+  horizontalScale?: number;
   script?: TextRun['script'];
   vanish?: boolean;
   specVanish?: boolean;
   noProof?: boolean;
+  bidi?: NonNullable<TextRun['bidi']>;
 }
 
 /** Re-export so v2 adapter can consume one paragraph attrs type. */

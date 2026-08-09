@@ -67,6 +67,13 @@ import type {
   ListsSetLevelTextInput,
   ListsSetLevelStartInput,
   ListsSetLevelLayoutInput,
+  ListsBlockTarget,
+  ListsGetStateInput,
+  ListsGetStateResult,
+  ListsApplyInput,
+  ListsContinueV2Input,
+  ListsRestartV2Input,
+  ListsRemoveV2Input,
 } from './lists.types.js';
 export type {
   ListInsertInput,
@@ -123,6 +130,13 @@ export type {
   ListsSetLevelTextInput,
   ListsSetLevelStartInput,
   ListsSetLevelLayoutInput,
+  ListsBlockTarget,
+  ListsGetStateInput,
+  ListsGetStateResult,
+  ListsApplyInput,
+  ListsContinueV2Input,
+  ListsRestartV2Input,
+  ListsRemoveV2Input,
 } from './lists.types.js';
 // ---------------------------------------------------------------------------
 // Validation enum sets
@@ -499,8 +513,20 @@ export interface ListsAdapter {
   setLevelText(input: ListsSetLevelTextInput, options?: MutationOptions): ListsMutateItemResult;
   setLevelStart(input: ListsSetLevelStartInput, options?: MutationOptions): ListsMutateItemResult;
   setLevelLayout(input: ListsSetLevelLayoutInput, options?: MutationOptions): ListsMutateItemResult;
+  // v2 numbering-aware list operations.
+  getState?(input: ListsGetStateInput): ListsGetStateResult;
+  apply?(input: ListsApplyInput, options?: MutationOptions): ListsMutateItemResult;
+  continue?(input: ListsContinueV2Input, options?: MutationOptions): ListsMutateItemResult;
+  restart?(input: ListsRestartV2Input, options?: MutationOptions): ListsMutateItemResult;
+  remove?(input: ListsRemoveV2Input, options?: MutationOptions): ListsMutateItemResult;
 }
-export type ListsApi = ListsAdapter;
+export interface ListsApi extends ListsAdapter {
+  getState(input: ListsGetStateInput): ListsGetStateResult;
+  apply(input: ListsApplyInput, options?: MutationOptions): ListsMutateItemResult;
+  continue(input: ListsContinueV2Input, options?: MutationOptions): ListsMutateItemResult;
+  restart(input: ListsRestartV2Input, options?: MutationOptions): ListsMutateItemResult;
+  remove(input: ListsRemoveV2Input, options?: MutationOptions): ListsMutateItemResult;
+}
 // ---------------------------------------------------------------------------
 // Execute wrappers: discovery
 // ---------------------------------------------------------------------------
@@ -1024,4 +1050,105 @@ export function executeListsSetLevelLayout(
     optionalNumber(layout.tabStopAt, 'layout.tabStopAt', 'lists.setLevelLayout');
   }
   return adapter.setLevelLayout(input, normalizeMutationOptions(options));
+}
+// ---------------------------------------------------------------------------
+// Execute wrappers: v2 operations
+// ---------------------------------------------------------------------------
+const VALID_V2_LIST_BLOCK_NODE_TYPES: ReadonlySet<string> = new Set(['paragraph', 'listItem']);
+function validateV2BlockTarget(value: unknown, field: string, operationName: string): void {
+  if (!isRecord(value)) {
+    throw new DocumentApiValidationError('INVALID_TARGET', `${operationName} ${field} must be an object.`, {
+      field,
+      value,
+    });
+  }
+  const v = value as Record<string, unknown>;
+  if (v.kind !== 'block') {
+    throw new DocumentApiValidationError(
+      'INVALID_TARGET',
+      `${operationName} ${field}.kind must be 'block', got "${String(v.kind)}".`,
+      { field: `${field}.kind`, value: v.kind },
+    );
+  }
+  if (typeof v.nodeType !== 'string' || !VALID_V2_LIST_BLOCK_NODE_TYPES.has(v.nodeType)) {
+    throw new DocumentApiValidationError(
+      'INVALID_TARGET',
+      `${operationName} ${field}.nodeType must be 'paragraph' or 'listItem', got "${String(v.nodeType)}".`,
+      { field: `${field}.nodeType`, value: v.nodeType },
+    );
+  }
+  if (typeof v.nodeId !== 'string' || v.nodeId === '') {
+    throw new DocumentApiValidationError(
+      'INVALID_TARGET',
+      `${operationName} ${field}.nodeId must be a non-empty string.`,
+      { field: `${field}.nodeId`, value: v.nodeId },
+    );
+  }
+}
+function unavailableListsResult<TResult extends ListsGetStateResult | ListsMutateItemResult>(
+  operationName: string,
+): TResult {
+  return {
+    success: false,
+    failure: {
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: `${operationName} is not available. The host engine has not provided an adapter for this capability.`,
+      details: { operation: operationName },
+    },
+  } as TResult;
+}
+export function executeListsGetState(adapter: ListsAdapter, input: ListsGetStateInput): ListsGetStateResult {
+  validateListInput(input, 'lists.getState');
+  validateV2BlockTarget(input.target, 'target', 'lists.getState');
+  if (!adapter.getState) return unavailableListsResult<ListsGetStateResult>('lists.getState');
+  return adapter.getState(input);
+}
+export function executeListsApply(
+  adapter: ListsAdapter,
+  input: ListsApplyInput,
+  options?: MutationOptions,
+): ListsMutateItemResult {
+  validateListInput(input, 'lists.apply');
+  validateV2BlockTarget(input.target, 'target', 'lists.apply');
+  requireEnum(input.seed, 'seed', VALID_LIST_KINDS, 'lists.apply');
+  if (input.reuseNumId !== undefined && typeof input.reuseNumId !== 'string') {
+    throw new DocumentApiValidationError('INVALID_INPUT', 'lists.apply reuseNumId must be a string when provided.', {
+      field: 'reuseNumId',
+      value: input.reuseNumId,
+    });
+  }
+  optionalInteger(input.ilvl, 'ilvl', 'lists.apply');
+  if (!adapter.apply) return unavailableListsResult<ListsMutateItemResult>('lists.apply');
+  return adapter.apply(input, normalizeMutationOptions(options));
+}
+export function executeListsContinueV2(
+  adapter: ListsAdapter,
+  input: ListsContinueV2Input,
+  options?: MutationOptions,
+): ListsMutateItemResult {
+  validateListInput(input, 'lists.continue');
+  validateV2BlockTarget(input.target, 'target', 'lists.continue');
+  if (!adapter.continue) return unavailableListsResult<ListsMutateItemResult>('lists.continue');
+  return adapter.continue(input, normalizeMutationOptions(options));
+}
+export function executeListsRestartV2(
+  adapter: ListsAdapter,
+  input: ListsRestartV2Input,
+  options?: MutationOptions,
+): ListsMutateItemResult {
+  validateListInput(input, 'lists.restart');
+  validateV2BlockTarget(input.target, 'target', 'lists.restart');
+  optionalInteger(input.startAt, 'startAt', 'lists.restart');
+  if (!adapter.restart) return unavailableListsResult<ListsMutateItemResult>('lists.restart');
+  return adapter.restart(input, normalizeMutationOptions(options));
+}
+export function executeListsRemoveV2(
+  adapter: ListsAdapter,
+  input: ListsRemoveV2Input,
+  options?: MutationOptions,
+): ListsMutateItemResult {
+  validateListInput(input, 'lists.remove');
+  validateV2BlockTarget(input.target, 'target', 'lists.remove');
+  if (!adapter.remove) return unavailableListsResult<ListsMutateItemResult>('lists.remove');
+  return adapter.remove(input, normalizeMutationOptions(options));
 }

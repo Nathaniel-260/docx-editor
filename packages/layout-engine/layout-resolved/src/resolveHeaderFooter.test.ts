@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { resolveHeaderFooterLayout } from './resolveHeaderFooter.js';
 import { namedStoryLocator } from '@superdoc/contracts';
 import type { FlowBlock, HeaderFooterLayout, Measure, ParaFragment, ResolvedFragmentItem } from '@superdoc/contracts';

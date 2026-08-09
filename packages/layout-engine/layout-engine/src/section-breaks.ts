@@ -33,6 +33,23 @@ export type BreakDecision = {
 /** Default single-column configuration per OOXML spec (absence of w:cols element) */
 export const SINGLE_COLUMN_DEFAULT: Readonly<ColumnLayout> = { count: 1, gap: 0 };
 
+function hasSectionLayoutProperties(block: SectionBreakBlock): boolean {
+  return Boolean(
+    block.pageSize ||
+    block.margins ||
+    block.columns ||
+    block.orientation ||
+    block.headerRefs ||
+    block.footerRefs ||
+    block.vAlign ||
+    block.numbering,
+  );
+}
+
+export function isInitialSectionBreak(block: SectionBreakBlock, hasAnyPages: boolean): boolean {
+  return !hasAnyPages && (block.attrs?.isFirstSection === true || hasSectionLayoutProperties(block));
+}
+
 /**
  * Get the column configuration for a section break.
  * Returns the explicit column config if defined, otherwise returns single-column default.
@@ -144,7 +161,7 @@ export function scheduleSectionBreak(
   };
 
   // Special handling for first section break (appears before any content)
-  if (block.attrs?.isFirstSection && !next.hasAnyPages) {
+  if (isInitialSectionBreak(block, next.hasAnyPages)) {
     if (block.pageSize) {
       next.activePageSize = { w: block.pageSize.w, h: block.pageSize.h };
       next.pendingPageSize = null;
@@ -257,13 +274,27 @@ export function scheduleSectionBreak(
   // Word behavior parity override: require page boundary mid-page when necessary
   if (block.attrs?.requirePageBoundary) {
     next.pendingColumns = getColumnConfig(block.columns);
-    return { decision: { forcePageBreak: true, forceMidPageRegion: false }, state: next };
+    return {
+      decision: {
+        forcePageBreak: true,
+        forceMidPageRegion: false,
+        ...(sectionType === 'nextPage' && block.requiredPageParity ? { requiredParity: block.requiredPageParity } : {}),
+      },
+      state: next,
+    };
   }
 
   switch (sectionType) {
     case 'nextPage': {
       next.pendingColumns = getColumnConfig(block.columns);
-      return { decision: { forcePageBreak: true, forceMidPageRegion: false }, state: next };
+      return {
+        decision: {
+          forcePageBreak: true,
+          forceMidPageRegion: false,
+          ...(block.requiredPageParity ? { requiredParity: block.requiredPageParity } : {}),
+        },
+        state: next,
+      };
     }
     case 'evenPage': {
       next.pendingColumns = getColumnConfig(block.columns);

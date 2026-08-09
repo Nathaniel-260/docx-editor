@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import useSelection from './use-selection.js';
+import { DOCUMENT_EDITOR_SELECTION_SOURCE } from './selection-source.js';
 
 describe('useSelection', () => {
   it('exposes ref-wrapped fields and initial values', () => {
@@ -51,14 +52,14 @@ describe('useSelection', () => {
       const s = useSelection({
         documentId: 'doc-1',
         page: 1,
-        source: 'super-editor',
+        source: DOCUMENT_EDITOR_SELECTION_SOURCE,
         selectionBounds: { top: 5, left: 5 },
       });
       const values = s.getValues();
       expect(values).toEqual({
         documentId: 'doc-1',
         page: 1,
-        source: 'super-editor',
+        source: DOCUMENT_EDITOR_SELECTION_SOURCE,
         selectionBounds: { top: 5, left: 5 },
       });
     });

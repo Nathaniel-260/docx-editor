@@ -6,6 +6,8 @@ import type { Run } from '@superdoc/contracts';
  * Include every run property that affects text measurement or painted output but is not
  * covered elsewhere (e.g. tracked-change / comment keys). When adding a new visual
  * property, update this function only — `cache.ts` and `diff.ts` both depend on it.
+ * Paragraph-scoped inline boxes are deliberately keyed by `inline-box-key.ts`,
+ * not by this run-scoped helper.
  *
  * @param run - Flow run (text, tab, image, etc.); unknown fields are ignored safely.
  * @returns Stable string encoding bold/italic/underline/strike/color/font/highlight/link.
@@ -20,6 +22,9 @@ export const hashRunVisualMarks = (run: Run): string => {
   const fontFamily = 'fontFamily' in run ? run.fontFamily : undefined;
   const highlight = 'highlight' in run ? run.highlight : undefined;
   const link = 'link' in run ? run.link : undefined;
+  const textTransform = 'textTransform' in run ? run.textTransform : undefined;
+  const vanish = 'vanish' in run ? run.vanish : undefined;
+  const horizontalScale = 'horizontalScale' in run ? run.horizontalScale : undefined;
   // SD-3098: DomPainter now reads `bidi.rtl` to apply dir="rtl"/dir="ltr" and the
   // RLM separator injection for date-like tokens. Include it here so dirty-run
   // detection picks up rtl-only changes; otherwise an edit that flips just
@@ -36,6 +41,9 @@ export const hashRunVisualMarks = (run: Run): string => {
     fontFamily ? `ff:${fontFamily}` : '',
     highlight ? `hl:${highlight}` : '',
     link ? `ln:${JSON.stringify(link)}` : '',
+    textTransform ? `tt:${textTransform}` : '',
+    vanish ? 'v:1' : '',
+    horizontalScale != null ? `hs:${horizontalScale}` : '',
     bidi ? `bd:${JSON.stringify(bidi)}` : '',
   ].join('');
 };

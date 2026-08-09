@@ -1,11 +1,3 @@
-/**
- * Tests that exercise the exact code patterns shown in:
- *   - apps/docs/document-api/overview.mdx  (Common workflows)
- *   - packages/document-api/src/README.md  (Workflow examples)
- *
- * If any of these tests break, the corresponding documentation example is wrong
- * and must be updated to match.
- */
 import { describe, expect, it, mock } from 'bun:test';
 import { createDocumentApi, type DocumentApiAdapters } from './index.js';
 import type { DocumentApiCapabilities } from './capabilities/capabilities.js';
@@ -716,13 +708,8 @@ describe('common-workflows.mdx: Find text and insert at position', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// src/README.md — "Workflow:" examples
-// ---------------------------------------------------------------------------
-
-describe('src/README.md workflow examples', () => {
+describe('Document API workflow examples', () => {
   describe('Workflow: Find + Mutate', () => {
-    // Mirrors the exact code block from src/README.md § "Workflow: Find + Mutate"
     it('find then replace', () => {
       const doc = makeApi();
 
@@ -741,7 +728,6 @@ describe('src/README.md workflow examples', () => {
   });
 
   describe('Workflow: Tracked-Mode Insert', () => {
-    // Mirrors the exact code block from src/README.md § "Workflow: Tracked-Mode Insert"
     it('insert in tracked mode and access receipt properties', () => {
       const doc = makeApi();
 
@@ -756,7 +742,6 @@ describe('src/README.md workflow examples', () => {
   });
 
   describe('Workflow: Comment Thread Lifecycle', () => {
-    // Mirrors the exact code block from src/README.md § "Workflow: Comment Thread Lifecycle"
     it('create comment, reply, then resolve', () => {
       const doc = makeApi();
 
@@ -775,7 +760,6 @@ describe('src/README.md workflow examples', () => {
   });
 
   describe('Workflow: List Manipulation', () => {
-    // Mirrors the exact code block from src/README.md § "Workflow: List Manipulation"
     it('insert list item, set type, indent', () => {
       const doc = makeApi();
 
@@ -794,7 +778,6 @@ describe('src/README.md workflow examples', () => {
   });
 
   describe('Workflow: Capabilities-Aware Branching', () => {
-    // Mirrors the exact code block from src/README.md § "Workflow: Capabilities-Aware Branching"
     it('branch on per-operation capabilities', () => {
       const doc = makeApi();
       const target = SELECTION_TARGET;

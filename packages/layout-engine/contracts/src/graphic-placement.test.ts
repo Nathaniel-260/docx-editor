@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { resolveAnchoredGraphicY, resolveAnchoredGraphicX } from './graphic-placement.js';
+import { describe, expect, it } from 'vite-plus/test';
+import {
+  resolveAnchoredGraphicY,
+  resolveAnchoredGraphicX,
+  resolveFooterPageFrameOriginY,
+  isPositionedParagraphFrame,
+  isPagePositionedParagraphFrame,
+} from './graphic-placement.js';
 
 const yBase = {
   objectHeight: 100,
@@ -13,7 +19,54 @@ const margins = { left: 72, right: 72 };
 const pageWidth = 600;
 const objectWidth = 80;
 
+describe('isPositionedParagraphFrame', () => {
+  it.each(['around', 'none'])('accepts layout-supported wrap=%s frames', (wrap) => {
+    expect(isPositionedParagraphFrame({ wrap })).toBe(true);
+  });
+
+  it.each([undefined, 'auto', 'notBeside', 'tight', 'through'])('rejects ordinary-flow wrap=%s frames', (wrap) => {
+    expect(isPositionedParagraphFrame(wrap === undefined ? undefined : { wrap })).toBe(false);
+  });
+});
+
+describe('isPagePositionedParagraphFrame', () => {
+  it.each(['around', 'none'])('accepts finite page-positioned wrap=%s frames', (wrap) => {
+    expect(isPagePositionedParagraphFrame({ wrap, vAnchor: 'page', y: 12 })).toBe(true);
+  });
+
+  it.each([undefined, Number.NaN, Number.POSITIVE_INFINITY])('rejects non-finite y=%s', (y) => {
+    expect(isPagePositionedParagraphFrame({ wrap: 'around', vAnchor: 'page', y })).toBe(false);
+  });
+});
+
+describe('resolveFooterPageFrameOriginY', () => {
+  it.each([72, -24, Number.NaN, undefined])('clamps or defaults bottom margin %s', (bottomMargin) => {
+    const expectedMargin =
+      typeof bottomMargin === 'number' && Number.isFinite(bottomMargin) ? Math.max(0, bottomMargin) : 0;
+    expect(resolveFooterPageFrameOriginY(1056, bottomMargin)).toBe(1056 - expectedMargin);
+  });
+
+  it('clamps the origin to the page top when the bottom margin exceeds the page height', () => {
+    expect(resolveFooterPageFrameOriginY(1056, 1200)).toBe(0);
+  });
+});
+
 describe('resolveAnchoredGraphicY', () => {
+  it('uses simple page coordinates instead of relative positioning when simplePos is active', () => {
+    expect(
+      resolveAnchoredGraphicY({
+        ...yBase,
+        anchor: {
+          simplePos: { x: 25.5, y: 41.25 },
+          vRelativeFrom: 'margin',
+          alignV: 'bottom',
+          offsetV: 999,
+        },
+        anchorParagraphY: 300,
+      }),
+    ).toBe(41.25);
+  });
+
   it('positions margin-relative top with offset', () => {
     expect(
       resolveAnchoredGraphicY({
@@ -102,9 +155,69 @@ describe('resolveAnchoredGraphicY', () => {
       }),
     ).toBe(200);
   });
+
+  it.each([
+    { relativeFrom: 'page' as const, pageNumber: 1, expected: 0 },
+    { relativeFrom: 'margin' as const, pageNumber: 1, expected: 72 },
+    { relativeFrom: 'paragraph' as const, pageNumber: 1, expected: 200 },
+    { relativeFrom: 'line' as const, pageNumber: 1, expected: 240 },
+    { relativeFrom: 'topMargin' as const, pageNumber: 1, expected: 0 },
+    { relativeFrom: 'bottomMargin' as const, pageNumber: 1, expected: 720 },
+    { relativeFrom: 'insideMargin' as const, pageNumber: 1, expected: 0 },
+    { relativeFrom: 'insideMargin' as const, pageNumber: 2, expected: 720 },
+    { relativeFrom: 'outsideMargin' as const, pageNumber: 1, expected: 720 },
+    { relativeFrom: 'outsideMargin' as const, pageNumber: 2, expected: 0 },
+  ])(
+    'matches Word for $relativeFrom with posOffset=0 on physical page $pageNumber',
+    ({ relativeFrom, pageNumber, expected }) => {
+      expect(
+        resolveAnchoredGraphicY({
+          ...yBase,
+          anchor: { vRelativeFrom: relativeFrom, offsetV: 0 },
+          anchorParagraphY: 200,
+          anchorLineY: 240,
+          firstLineHeight: 24,
+          pageNumber,
+        }),
+      ).toBe(expected);
+    },
+  );
+
+  it.each([
+    { alignV: 'inside' as const, pageNumber: 1, expected: 72 },
+    { alignV: 'inside' as const, pageNumber: 2, expected: 620 },
+    { alignV: 'outside' as const, pageNumber: 1, expected: 620 },
+    { alignV: 'outside' as const, pageNumber: 2, expected: 72 },
+  ])('matches Word logical vertical $alignV alignment on page $pageNumber', ({ alignV, pageNumber, expected }) => {
+    expect(
+      resolveAnchoredGraphicY({
+        ...yBase,
+        anchor: { vRelativeFrom: 'margin', alignV },
+        pageNumber,
+      }),
+    ).toBe(expected);
+  });
 });
 
 describe('resolveAnchoredGraphicX', () => {
+  it('uses simple page coordinates instead of relative positioning when simplePos is active', () => {
+    expect(
+      resolveAnchoredGraphicX(
+        {
+          simplePos: { x: 25.5, y: 41.25 },
+          hRelativeFrom: 'margin',
+          alignH: 'right',
+          offsetH: 999,
+        },
+        1,
+        columns,
+        objectWidth,
+        margins,
+        pageWidth,
+      ),
+    ).toBe(25.5);
+  });
+
   const columnIndex = 1;
   const columnLeft = margins.left + columnIndex * (columns.width + columns.gap);
 
@@ -190,5 +303,46 @@ describe('resolveAnchoredGraphicX', () => {
         resolveAnchoredGraphicX({ alignH: 'right', offsetH: 0 }, 0, unequal, objectWidth, margins, pageWidth),
       ).toBe(292);
     });
+  });
+
+  it.each([
+    { relativeFrom: 'page' as const, pageNumber: 1, expected: 0 },
+    { relativeFrom: 'margin' as const, pageNumber: 1, expected: 72 },
+    { relativeFrom: 'column' as const, pageNumber: 1, expected: 292 },
+    { relativeFrom: 'character' as const, pageNumber: 1, expected: 350 },
+    { relativeFrom: 'leftMargin' as const, pageNumber: 1, expected: 0 },
+    { relativeFrom: 'rightMargin' as const, pageNumber: 1, expected: 528 },
+    { relativeFrom: 'insideMargin' as const, pageNumber: 1, expected: 0 },
+    { relativeFrom: 'insideMargin' as const, pageNumber: 2, expected: 528 },
+    { relativeFrom: 'outsideMargin' as const, pageNumber: 1, expected: 528 },
+    { relativeFrom: 'outsideMargin' as const, pageNumber: 2, expected: 0 },
+  ])(
+    'matches Word for $relativeFrom with posOffset=0 on physical page $pageNumber',
+    ({ relativeFrom, pageNumber, expected }) => {
+      expect(
+        resolveAnchoredGraphicX(
+          { hRelativeFrom: relativeFrom, offsetH: 0 },
+          1,
+          columns,
+          objectWidth,
+          margins,
+          pageWidth,
+          { anchorCharacterX: 350, pageNumber },
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it.each([
+    { alignH: 'inside' as const, pageNumber: 1, expected: 72 },
+    { alignH: 'inside' as const, pageNumber: 2, expected: 448 },
+    { alignH: 'outside' as const, pageNumber: 1, expected: 448 },
+    { alignH: 'outside' as const, pageNumber: 2, expected: 72 },
+  ])('matches Word logical horizontal $alignH alignment on page $pageNumber', ({ alignH, pageNumber, expected }) => {
+    expect(
+      resolveAnchoredGraphicX({ hRelativeFrom: 'margin', alignH }, 0, columns, objectWidth, margins, pageWidth, {
+        pageNumber,
+      }),
+    ).toBe(expected);
   });
 });

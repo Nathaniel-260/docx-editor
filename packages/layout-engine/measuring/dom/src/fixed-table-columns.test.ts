@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { WorkingTableGridInput } from './autofit-normalize.js';
 import { computeFixedTableColumnWidths } from './fixed-table-columns.js';
 
@@ -347,6 +347,38 @@ describe('computeFixedTableColumnWidths', () => {
     expect(result.columnWidths[1]).toBeCloseTo(57.14285714285714, 10);
     expect(result.columnWidths[2]).toBeCloseTo(228.57142857142856, 10);
     expect(result.totalWidth).toBe(400);
+  });
+
+  it('preserves authored grid for AutoFit tables under preserveAutoGrid', () => {
+    // Repro for TABLES-FIDELITY-AUTOFIT-COMPLETE-GRID-AUTO-WIDTH-001: when tblW=auto
+    // with a complete authored grid, the first-row tcW requests must not inflate
+    // the table beyond the authored-grid total.
+    const result = computeFixedTableColumnWidths(
+      buildFixedInput({
+        layoutMode: 'autofit',
+        preferredColumnWidths: [144, 144, 144, 144],
+        preferredTableWidth: undefined,
+        maxTableWidth: 576,
+        preserveAutoGrid: true,
+        rows: [
+          {
+            skippedBefore: [],
+            skippedAfter: [],
+            skippedColumns: [],
+            logicalColumnCount: 4,
+            cells: [
+              { startColumn: 0, span: 1, preferredWidth: 240 },
+              { startColumn: 1, span: 1, preferredWidth: 76.8 },
+              { startColumn: 2, span: 1, preferredWidth: 144 },
+              { startColumn: 3, span: 1, preferredWidth: 288 },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(result.columnWidths).toEqual([144, 144, 144, 144]);
+    expect(result.totalWidth).toBe(576);
   });
 
   it('does not clamp fixed results to the available container width', () => {

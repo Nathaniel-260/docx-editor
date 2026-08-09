@@ -22,8 +22,8 @@
  *     specifiers to dist declaration siblings.
  *   - Resolves self-package `from 'superdoc/<subpath>'` through the
  *     package's own `exports` map.
- *   - Ignores external package specifiers (vue, prosemirror-*,
- *     @tiptap/*, etc.) - those don't live in dist.
+ *   - Ignores external package specifiers (vue, @tiptap/*, etc.) - those
+ *     don't live in dist.
  *   - Ignores private workspace specifiers (`@superdoc/*`); they're
  *     audited separately by `audit-declarations.cjs` Rule 1, and any
  *     surviving one in dist is already a build failure.
@@ -59,9 +59,9 @@ function collectTypesTargets(value) {
   return Object.values(value.types).filter((target) => typeof target === 'string');
 }
 
-// Build a self-package resolver: subpath like `./super-editor` → absolute
-// path of the `types` target in dist. Used when an emitted declaration contains
-// `from 'superdoc/super-editor'` (rare but legal).
+// Build a self-package resolver: supported subpath → absolute path of the
+// `types` target in dist. Used when an emitted declaration contains
+// `from 'superdoc/subpath'`.
 const selfPackageTypeMap = new Map();
 for (const [subpath, value] of Object.entries(exportsMap)) {
   const [target] = collectTypesTargets(value);
@@ -135,7 +135,7 @@ function resolveRelative(spec, fromFile) {
 }
 
 function resolveSelfPackage(spec) {
-  // spec like `superdoc` or `superdoc/super-editor`.
+  // spec like `superdoc` or another supported package subpath.
   if (!spec.startsWith(packageName)) return null;
   const remainder = spec.slice(packageName.length);
   const subpath = remainder === '' ? '.' : `.${remainder}`;

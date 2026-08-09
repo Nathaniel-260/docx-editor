@@ -1,6 +1,6 @@
 import type { ImageBlock, ImageMeasure, ImageFragment, ImageFragmentMetadata } from '@superdoc/contracts';
 import { extractBlockPmRange } from './layout-utils.js';
-import type { PageState } from './paginator.js';
+import { breakParagraphAdjacency, type PageState } from './paginator.js';
 
 export type NormalizedColumns = { width: number; gap: number; count: number };
 
@@ -50,6 +50,10 @@ export function layoutImageBlock({
   }
 
   const requiredHeight = marginTop + height + marginBottom;
+
+  if (requiredHeight > 0) {
+    breakParagraphAdjacency(state);
+  }
 
   // Inline/block images advance cursor normally
   if (state.cursorY + requiredHeight > state.contentBottom && state.cursorY > state.topMargin) {

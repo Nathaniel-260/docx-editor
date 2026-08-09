@@ -472,4 +472,6 @@ export interface UnderlineProperties {
 export interface HighlightProperties {
   /** Highlight value attribute. */
   'w:val'?: string | null;
+  /** Nonstandard fill attribute observed in some DOCX producers. */
+  'w:fill'?: string;
 }

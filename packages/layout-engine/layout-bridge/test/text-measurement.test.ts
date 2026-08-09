@@ -1,6 +1,7 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vite-plus/test';
 import type { FlowBlock, Line, Run } from '@superdoc/contracts';
-import { findCharacterAtX, measureCharacterX, charOffsetToPm } from '../src/text-measurement.ts';
+import { resolvePhysicalFamily } from '@superdoc/font-system';
+import { findCharacterAtX, measureCharacterX, charOffsetToPm, getRunFontString } from '../src/text-measurement.ts';
 
 // Helper to count spaces (tests functionality indirectly through justify calculations)
 const countSpaces = (text: string): number => {
@@ -43,7 +44,9 @@ const ensureDocumentStub = (): void => {
   const ctx = {
     font: '',
     measureText(text: string) {
-      return { width: text.length * CHAR_WIDTH } as TextMetrics;
+      const charWidth = this.font.includes('DocumentWide') ? CHAR_WIDTH * 2 : CHAR_WIDTH;
+      const kerningAdjustment = this.font.includes('KerningProbe') ? (text.match(/AV/g)?.length ?? 0) * 2 : 0;
+      return { width: text.length * charWidth - kerningAdjustment } as TextMetrics;
     },
   };
   (globalThis as any).document = {
@@ -80,6 +83,63 @@ const baseLine = (overrides?: Partial<Line>): Line => ({
 });
 
 describe('text measurement utility', () => {
+  it('measures text with the shared physical font family', () => {
+    expect(getRunFontString({ text: 'Editable', fontFamily: 'Calibri', fontSize: 16 })).toBe(
+      `normal normal 16px ${resolvePhysicalFamily('Calibri')}`,
+    );
+    expect(
+      getRunFontString({ text: 'Bold italic', fontFamily: 'Calibri', fontSize: 16, bold: true, italic: true }),
+    ).toBe(`italic bold 16px ${resolvePhysicalFamily('Calibri')}`);
+  });
+
+  it('uses a supplied document font context for forward and inverse character geometry', () => {
+    const documentFontContext = {
+      fontSignature: 'document-wide-v1',
+      resolvePhysical: () => 'DocumentWide',
+    };
+    const block = createBlock([{ text: 'ABCD', fontFamily: 'Calibri', fontSize: 16 }]);
+    const line = baseLine({ fromRun: 0, toRun: 0, toChar: 4, width: 80 });
+
+    expect(getRunFontString(block.runs[0]!, documentFontContext)).toBe('normal normal 16px DocumentWide');
+    expect(measureCharacterX(block, line, 3)).toBe(30);
+    expect(measureCharacterX(block, line, 3, undefined, undefined, documentFontContext)).toBe(60);
+    expect(findCharacterAtX(block, line, 32, 0).charOffset).toBe(3);
+    expect(findCharacterAtX(block, line, 32, 0, undefined, undefined, documentFontContext).charOffset).toBe(2);
+  });
+
+  it('places an interior caret at the fully shaped run boundary', () => {
+    const kerningFontContext = {
+      fontSignature: 'kerning-probe-v1',
+      resolvePhysical: () => 'KerningProbe',
+    };
+    const block = createBlock([{ text: 'AV', fontFamily: 'KerningProbe', fontSize: 16 }]);
+    const line = baseLine({ fromRun: 0, toRun: 0, toChar: 2, width: 18 });
+
+    // The AV pair is 2px tighter than two isolated 10px glyphs. CSS shapes the
+    // whole painted run, so the caret before V owns that pair adjustment and
+    // sits at x=8, not at measureText('A')=10.
+    expect(measureCharacterX(block, line, 1, undefined, undefined, kerningFontContext)).toBe(8);
+    expect(measureCharacterX(block, line, 2, undefined, undefined, kerningFontContext)).toBe(18);
+    expect(findCharacterAtX(block, line, 8, 0, undefined, undefined, kerningFontContext).charOffset).toBe(1);
+  });
+
+  it('uses the document font context for explicitly positioned line segments', () => {
+    const documentFontContext = {
+      fontSignature: 'document-wide-v1',
+      resolvePhysical: () => 'DocumentWide',
+    };
+    const block = createBlock([{ text: 'ABCD', fontFamily: 'Calibri', fontSize: 16 }]);
+    const line = baseLine({
+      fromRun: 0,
+      toRun: 0,
+      toChar: 4,
+      width: 80,
+      segments: [{ runIndex: 0, fromChar: 0, toChar: 4, x: 0, width: 80 }],
+    });
+
+    expect(measureCharacterX(block, line, 3, undefined, undefined, documentFontContext)).toBe(60);
+  });
+
   it('measures across multiple runs', () => {
     const block = createBlock([
       { text: 'Hello', fontFamily: 'Arial', fontSize: 16 },
@@ -255,6 +315,56 @@ describe('text measurement utility', () => {
 
     const textHit = findCharacterAtX(block, line, CHAR_WIDTH * 3.5, 0);
     expect(textHit.pmPosition).toBe(3);
+  });
+
+  it('keeps vanished runs addressable without displacing visible caret geometry', () => {
+    const block = createBlock([
+      { text: 'abcdef', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 6, vanish: true },
+      { text: 'X', fontFamily: 'Arial', fontSize: 16, pmStart: 6, pmEnd: 7 },
+    ]);
+    const line = baseLine({
+      fromRun: 0,
+      toRun: 1,
+      toChar: 1,
+      width: CHAR_WIDTH,
+      segments: [
+        { runIndex: 0, fromChar: 0, toChar: 6, width: 0 },
+        { runIndex: 1, fromChar: 0, toChar: 1, width: CHAR_WIDTH },
+      ],
+    });
+
+    expect(measureCharacterX(block, line, 0)).toBe(0);
+    expect(measureCharacterX(block, line, 3)).toBe(0);
+    expect(measureCharacterX(block, line, 6)).toBe(0);
+    expect(measureCharacterX(block, line, 7)).toBe(CHAR_WIDTH);
+
+    const visibleHit = findCharacterAtX(block, line, CHAR_WIDTH / 2, 0);
+    expect(visibleHit.charOffset).toBe(7);
+    expect(visibleHit.pmPosition).toBe(7);
+  });
+
+  it('keeps vanished runs zero-width in explicitly positioned segment geometry', () => {
+    const block = createBlock([
+      { text: 'abcdef', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 6, vanish: true },
+      { kind: 'tab', text: '\t', width: 48, pmStart: 6, pmEnd: 7 },
+      { text: 'X', fontFamily: 'Arial', fontSize: 16, pmStart: 7, pmEnd: 8 },
+    ]);
+    const line = baseLine({
+      fromRun: 0,
+      toRun: 2,
+      toChar: 1,
+      width: 58,
+      segments: [
+        { runIndex: 0, fromChar: 0, toChar: 6, width: 0 },
+        { runIndex: 1, fromChar: 0, toChar: 1, x: 0, width: 48 },
+        { runIndex: 2, fromChar: 0, toChar: 1, width: CHAR_WIDTH },
+      ],
+    });
+
+    expect(measureCharacterX(block, line, 3)).toBe(0);
+    expect(measureCharacterX(block, line, 6)).toBe(0);
+    expect(measureCharacterX(block, line, 7)).toBe(48);
+    expect(measureCharacterX(block, line, 8)).toBe(48 + CHAR_WIDTH);
   });
 
   describe('charOffsetToPm edge cases', () => {
@@ -772,6 +882,172 @@ describe('text measurement utility', () => {
 
       const x3 = measureCharacterX(block, line, 3, 200);
       expect(x3).toBe(3 * CHAR_WIDTH); // Just character position
+    });
+
+    it.each([
+      ['center', 32],
+      ['right', 64],
+    ])('keeps inline-box caret and hit geometry %s-aligned', (alignment, alignmentOffset) => {
+      const block = createBlock([{ text: 'A B', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 3 }]);
+      (block as any).attrs = { alignment };
+      const line = baseLine({
+        fromRun: 0,
+        toRun: 0,
+        toChar: 3,
+        width: 36,
+        maxWidth: 100,
+        segments: [
+          { runIndex: 0, fromChar: 0, toChar: 1, width: 10 },
+          { runIndex: 0, fromChar: 1, toChar: 3, width: 20 },
+        ],
+        inlineBoxes: [
+          {
+            id: 'citation',
+            from: 1,
+            to: 3,
+            x: 10,
+            width: 26,
+            top: 0,
+            height: 20,
+            startsRange: true,
+            endsRange: true,
+            style: {
+              paddingInlineStart: 2,
+              paddingInlineEnd: 2,
+              paddingBlockStart: 0,
+              paddingBlockEnd: 0,
+              gapBefore: 0,
+              gapAfter: 0,
+              borderWidth: 1,
+            },
+          },
+        ],
+      });
+
+      expect(measureCharacterX(block, line, 0, 100)).toBe(alignmentOffset);
+      expect(measureCharacterX(block, line, 1, 100)).toBe(alignmentOffset + 13);
+      expect(findCharacterAtX(block, line, alignmentOffset + 13, 0, 100).charOffset).toBe(1);
+      expect(findCharacterAtX(block, line, line.inlineBoxes![0]!.x + 1, 0, 100).charOffset).toBe(0);
+    });
+  });
+
+  it('retains justified word spacing before and inside an inline box', () => {
+    const block = createBlock([
+      { text: 'A B C', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 5 },
+      { text: 'next line', fontFamily: 'Arial', fontSize: 16, pmStart: 5, pmEnd: 14 },
+    ]);
+    (block as any).attrs = { alignment: 'justify' };
+    const line = baseLine({
+      fromRun: 0,
+      toRun: 0,
+      toChar: 5,
+      width: 56,
+      maxWidth: 100,
+      spaceCount: 2,
+      segments: [
+        { runIndex: 0, fromChar: 0, toChar: 2, width: 20 },
+        { runIndex: 0, fromChar: 2, toChar: 5, width: 30 },
+      ],
+      inlineBoxes: [
+        {
+          id: 'citation',
+          from: 2,
+          to: 5,
+          x: 20,
+          width: 36,
+          top: 0,
+          height: 20,
+          startsRange: true,
+          endsRange: true,
+          style: {
+            paddingInlineStart: 2,
+            paddingInlineEnd: 2,
+            paddingBlockStart: 0,
+            paddingBlockEnd: 0,
+            gapBefore: 0,
+            gapAfter: 0,
+            borderWidth: 1,
+          },
+        },
+      ],
+    });
+
+    expect(measureCharacterX(block, line, 2, 100)).toBe(45);
+    expect(measureCharacterX(block, line, 4, 100)).toBe(87);
+    expect(findCharacterAtX(block, line, 45, 0, 100).charOffset).toBe(2);
+    expect(findCharacterAtX(block, line, 87, 0, 100).charOffset).toBe(4);
+  });
+
+  describe('forward/inverse round-trip (caret placement oracle)', () => {
+    // Correctness invariant, asserted without a browser or screenshots:
+    // clicking the x of any caret offset must resolve back to that offset.
+    // findCharacterAtX must be the exact inverse of measureCharacterX across
+    // every alignment/positioning mode.
+    const assertInverse = (
+      block: FlowBlock,
+      line: Line,
+      length: number,
+      availableWidth?: number,
+      alignment?: string,
+    ): void => {
+      for (let offset = 0; offset <= length; offset += 1) {
+        const x = measureCharacterX(block, line, offset, availableWidth, alignment);
+        const resolved = findCharacterAtX(block, line, x, 0, availableWidth, alignment).charOffset;
+        expect(resolved, `offset ${offset} at x=${x}`).toBe(offset);
+      }
+    };
+
+    it('round-trips left-aligned multi-run text', () => {
+      const block = createBlock([
+        { text: 'Hello', fontFamily: 'Arial', fontSize: 16 },
+        { text: 'World', fontFamily: 'Arial', fontSize: 16 },
+      ]);
+      assertInverse(block, baseLine({ fromRun: 0, toRun: 1, toChar: 5, width: 100 }), 10);
+    });
+
+    it('round-trips center-aligned text (alignment-offset path)', () => {
+      const block = createBlock([{ text: 'Hello', fontFamily: 'Arial', fontSize: 16 }]);
+      (block as any).attrs = { alignment: 'center' };
+      assertInverse(block, baseLine({ fromRun: 0, toRun: 0, toChar: 5, width: 50 }), 5, 200, 'center');
+    });
+
+    it('round-trips a tab-aligned line', () => {
+      const block = createBlock([
+        { text: 'A', fontFamily: 'Arial', fontSize: 16 },
+        { kind: 'tab', text: '\t', width: 48 },
+        { text: 'B', fontFamily: 'Arial', fontSize: 16 },
+      ]);
+      assertInverse(block, baseLine({ fromRun: 0, toRun: 2, toChar: 1, width: CHAR_WIDTH + 48 + CHAR_WIDTH }), 3);
+    });
+
+    // Regression for the centered-title bug (SD-3464): the title is laid out with
+    // explicit per-segment x (a centering pad), NOT text-align:center. The inverse
+    // (measureCharacterX) honors segment.x via the segment-based branch; the forward
+    // must honor it too, or clicks near the start resolve to the line end.
+    const centeredTitleLine = (): { block: FlowBlock; line: Line } => {
+      const block = createBlock([{ text: 'ABCDE', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 5 }]);
+      const line = baseLine({
+        fromRun: 0,
+        toRun: 0,
+        toChar: 5,
+        width: 50,
+        maxWidth: 200,
+        segments: [{ runIndex: 0, fromChar: 0, toChar: 5, x: 75, width: 50 }],
+      } as Partial<Line>);
+      return { block, line };
+    };
+
+    it('round-trips a segment-positioned (explicitly centered) line', () => {
+      const { block, line } = centeredTitleLine();
+      assertInverse(block, line, 5, 200);
+    });
+
+    it('maps a click at the visual start of a centered title to the start, not the end', () => {
+      const { block, line } = centeredTitleLine();
+      // Painted text starts at x=75 (segment.x). A click at x=77 (the 'A') must land
+      // near offset 0 — before the fix it resolved to the line end (offset ~5).
+      const result = findCharacterAtX(block, line, 77, 0, 200);
+      expect(result.charOffset).toBeLessThanOrEqual(1);
     });
   });
 });

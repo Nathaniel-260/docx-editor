@@ -39,7 +39,7 @@ const HIGHLIGHT_NAMED_COLORS: Readonly<Record<string, string>> = {
   black: '#000000',
   blue: '#0000FF',
   cyan: '#00FFFF',
-  green: '#008000',
+  green: '#00FF00',
   magenta: '#FF00FF',
   red: '#FF0000',
   yellow: '#FFFF00',
@@ -81,14 +81,14 @@ export function normalizeRunAttrsFromOoxml(
   if (fontSize != null) out.fontSize = fontSize;
 
   const color = resolveColor(props, context.themeColors);
-  if (color) {
+  const autoContrastColor = context.backgroundColor ? pickContrastingColor(context.backgroundColor) : undefined;
+  if (autoContrastColor === '#FFFFFF' && (!color || color.toUpperCase() === '#000000' || isExplicitAutoColor(props))) {
+    out.color = autoContrastColor;
+  } else if (color) {
     out.color = color;
-  } else if (isExplicitAutoColor(props) && context.backgroundColor) {
-    const contrasting = pickContrastingColor(context.backgroundColor);
-    if (contrasting) out.color = contrasting;
   }
 
-  const highlight = resolveHighlight(props);
+  const highlight = resolveHighlight(props, context.themeColors);
   if (highlight) out.highlight = highlight;
 
   const underline = mapUnderline(props.underline);
@@ -110,13 +110,30 @@ export function normalizeRunAttrsFromOoxml(
     out.letterSpacing = twipsToPx(props.letterSpacing);
   }
 
+  const horizontalScale = normalizeHorizontalScale(props.w);
+  if (horizontalScale != null) out.horizontalScale = horizontalScale;
+
   const script = mapRunScriptContext(props);
   if (script) out.script = script;
   if (props.vanish != null) out.vanish = props.vanish === true;
   if (props.specVanish != null) out.specVanish = props.specVanish === true;
   if (props.noProof != null) out.noProof = props.noProof === true;
 
+  // SD-3098: w:rPr/w:rtl carries the run-level bidi override signal, whether it
+  // comes from direct formatting or a character-style/docDefaults cascade layer.
+  // The painter reads TextRun.bidi.rtl for Word-parity dir + RLM date handling.
+  if (props.rtl) out.bidi = { rtl: true };
+
   return out;
+}
+
+function normalizeHorizontalScale(value: string | undefined): number | undefined {
+  if (value == null) return undefined;
+  const normalized = value.trim().replace(/%$/, '');
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) return undefined;
+  const percent = Number(normalized);
+  if (!Number.isFinite(percent) || percent < 0 || percent > 600) return undefined;
+  return percent / 100;
 }
 
 function resolveFontFamily(props: RunProperties, fontScheme?: WordThemeFontScheme): string | undefined {
@@ -187,10 +204,35 @@ function resolveColor(props: RunProperties, palette: WordThemeColorPalette | und
   return undefined;
 }
 
-function resolveHighlight(props: RunProperties): string | undefined {
+function resolveHighlight(props: RunProperties, palette: WordThemeColorPalette | undefined): string | undefined {
   const highlight = props.highlight?.['w:val'];
-  if (!highlight || highlight === 'none') return undefined;
-  return HIGHLIGHT_NAMED_COLORS[highlight] ?? normalizeHexColor(highlight) ?? highlight;
+  if (highlight && highlight !== 'none' && highlight !== 'clear') {
+    return HIGHLIGHT_NAMED_COLORS[highlight] ?? normalizeHexColor(highlight) ?? highlight;
+  }
+  const highlightFill = resolveHighlightFill(props.highlight?.['w:fill']);
+  if (highlightFill) return highlightFill;
+  return resolveShadingFill(props.shading, palette);
+}
+
+function resolveHighlightFill(fill: string | undefined): string | undefined {
+  if (!fill || fill.toLowerCase() === 'auto') return undefined;
+  return normalizeHexColor(fill);
+}
+
+function resolveShadingFill(
+  shading: RunProperties['shading'],
+  palette: WordThemeColorPalette | undefined,
+): string | undefined {
+  if (!shading) return undefined;
+  const directFill = resolveHighlightFill(shading.fill);
+  if (directFill) return directFill;
+  if (shading.themeFill && palette) {
+    const base = resolveThemeColor(shading.themeFill, palette);
+    if (base) {
+      return applyThemeTintShade(base, shading.themeFillTint, shading.themeFillShade);
+    }
+  }
+  return undefined;
 }
 
 function mapUnderline(underline: UnderlineProperties | undefined): TextRunStyleAttrs['underline'] | undefined {

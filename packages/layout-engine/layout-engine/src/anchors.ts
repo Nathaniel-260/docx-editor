@@ -8,10 +8,17 @@ import type {
   TableBlock,
   TableMeasure,
 } from '@superdoc/contracts';
-import { resolveFloatingTableAnchorResolution } from './floating-table-anchor.js';
+import { isPageRelativeAnchor } from '@superdoc/contracts';
+import {
+  resolveFloatingTableAnchorResolution,
+  resolveFloatingTableAnchorResolutionSteps,
+} from './floating-table-anchor.js';
+import { shouldSkipParagraphDuringLayout } from './paragraph-layout-eligibility.js';
+import type { LayoutWorkCheckpoint } from './execution.js';
 
 export type { FloatingTableAnchorResolution } from './floating-table-anchor.js';
 export { resolveFloatingTableAnchorResolution };
+export { isPageRelativeAnchor };
 
 /**
  * Represents an anchored image or drawing block with its measurements.
@@ -33,7 +40,7 @@ export type AnchoredDrawingCollection = {
 export type AnchoredTable = {
   block: TableBlock;
   measure: TableMeasure;
-  /** Resolved paint offset after tblpY paragraph walk. */
+  /** Raw w:tblpY offset from the resolved anchor paragraph. */
   layoutOffsetV?: number;
   /** True when raw w:tblpY is line-scoped on the anchor paragraph (Word centers tall form fields). */
   lineScopedOnAnchor?: boolean;
@@ -46,10 +53,17 @@ export type AnchoredTableCollection = {
   withoutParagraph: AnchoredTable[];
 };
 
-function buildParagraphIndexById(blocks: FlowBlock[], len: number): Map<string, number> {
+function* buildParagraphIndexByIdSteps(
+  blocks: FlowBlock[],
+  len: number,
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutWorkCheckpoint, Map<string, number>, void> {
   const paragraphIndexById = new Map<string, number>();
 
   for (let i = 0; i < len; i += 1) {
+    if (checkpointEveryBlocks != null && i % checkpointEveryBlocks === 0) {
+      yield { index: i, total: len };
+    }
     const block = blocks[i];
     if (block.kind === 'paragraph') {
       paragraphIndexById.set(block.id, i);
@@ -59,44 +73,75 @@ function buildParagraphIndexById(blocks: FlowBlock[], len: number): Map<string, 
   return paragraphIndexById;
 }
 
-function findNearestParagraphIndex(blocks: FlowBlock[], len: number, fromIndex: number): number | null {
+function isAnchorableParagraph(blocks: FlowBlock[], index: number): boolean {
+  return blocks[index]?.kind === 'paragraph' && !shouldSkipParagraphDuringLayout(blocks, index);
+}
+
+function* findNearestParagraphIndexSteps(
+  blocks: FlowBlock[],
+  len: number,
+  fromIndex: number,
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutWorkCheckpoint, number | null, void> {
   for (let i = fromIndex - 1; i >= 0; i -= 1) {
-    if (blocks[i].kind === 'paragraph') return i;
+    if (checkpointEveryBlocks != null && i % checkpointEveryBlocks === 0) {
+      yield { index: i, total: len };
+    }
+    if (isAnchorableParagraph(blocks, i)) return i;
   }
 
   for (let i = fromIndex + 1; i < len; i += 1) {
-    if (blocks[i].kind === 'paragraph') return i;
+    if (checkpointEveryBlocks != null && i % checkpointEveryBlocks === 0) {
+      yield { index: i, total: len };
+    }
+    if (isAnchorableParagraph(blocks, i)) return i;
   }
 
   return null;
 }
 
-function resolveAnchorParagraphIndex(
+function* findNextParagraphIndexSteps(
+  blocks: FlowBlock[],
+  len: number,
+  fromIndex: number,
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutWorkCheckpoint, number | null, void> {
+  for (let i = fromIndex + 1; i < len; i += 1) {
+    if (checkpointEveryBlocks != null && i % checkpointEveryBlocks === 0) {
+      yield { index: i, total: len };
+    }
+    if (isAnchorableParagraph(blocks, i)) return i;
+  }
+
+  return null;
+}
+
+function* resolveAnchorParagraphIndexSteps(
   blocks: FlowBlock[],
   len: number,
   paragraphIndexById: Map<string, number>,
   fromIndex: number,
   anchorParagraphId: unknown,
-): number | null {
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutWorkCheckpoint, number | null, void> {
   if (typeof anchorParagraphId === 'string') {
     const explicitIndex = paragraphIndexById.get(anchorParagraphId);
     if (typeof explicitIndex === 'number') {
-      return explicitIndex;
+      const eligibleIndex = isAnchorableParagraph(blocks, explicitIndex)
+        ? explicitIndex
+        : yield* findNextParagraphIndexSteps(blocks, len, explicitIndex, checkpointEveryBlocks);
+      if (eligibleIndex != null) return eligibleIndex;
     }
   }
 
-  return findNearestParagraphIndex(blocks, len, fromIndex);
+  return yield* findNearestParagraphIndexSteps(blocks, len, fromIndex, checkpointEveryBlocks);
 }
 
-/**
- * Check if an anchored image should be pre-registered (before any paragraphs are laid out).
- * Images with vRelativeFrom='margin' or 'page' position themselves relative to the page,
- * not relative to their anchor paragraph. These need to be registered first so ALL
- * paragraphs can wrap around them.
- */
-export function isPageRelativeAnchor(block: ImageBlock | DrawingBlock): boolean {
-  const vRelativeFrom = block.anchor?.vRelativeFrom;
-  return vRelativeFrom === 'margin' || vRelativeFrom === 'page';
+function drainAnchorSteps<T>(steps: Generator<LayoutWorkCheckpoint, T, void>): T {
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
 }
 
 /**
@@ -107,11 +152,18 @@ export function isPageRelativeAnchor(block: ImageBlock | DrawingBlock): boolean 
  * @param measures - Corresponding measures for each block
  * @returns Array of anchored drawings that should be pre-registered
  */
-export function collectPreRegisteredAnchors(blocks: FlowBlock[], measures: Measure[]): AnchoredDrawing[] {
+export function* collectPreRegisteredAnchorsSteps(
+  blocks: FlowBlock[],
+  measures: Measure[],
+  checkpointEveryBlocks: number | null = null,
+): Generator<LayoutWorkCheckpoint, AnchoredDrawing[], void> {
   const result: AnchoredDrawing[] = [];
   const len = Math.min(blocks.length, measures.length);
 
   for (let i = 0; i < len; i += 1) {
+    if (checkpointEveryBlocks != null && i % checkpointEveryBlocks === 0) {
+      yield { index: i, total: len };
+    }
     const block = blocks[i];
     const measure = measures[i];
     const isImage = block.kind === 'image' && measure?.kind === 'image';
@@ -134,51 +186,28 @@ export function collectPreRegisteredAnchors(blocks: FlowBlock[], measures: Measu
   return result;
 }
 
-export function collectPageRelativeAnchorsByParagraph(
-  blocks: FlowBlock[],
-  measures: Measure[],
-): Map<number, AnchoredDrawing[]> {
-  const map = new Map<number, AnchoredDrawing[]>();
-  const len = Math.min(blocks.length, measures.length);
-  const paragraphIndexById = buildParagraphIndexById(blocks, len);
-
-  for (let i = 0; i < len; i += 1) {
-    const block = blocks[i];
-    const measure = measures[i];
-    const isImage = block.kind === 'image' && measure?.kind === 'image';
-    const isDrawing = block.kind === 'drawing' && measure?.kind === 'drawing';
-    if (!isImage && !isDrawing) continue;
-
-    const drawingBlock = block as ImageBlock | DrawingBlock;
-    const drawingMeasure = measure as ImageMeasure | DrawingMeasure;
-    if (!drawingBlock.anchor?.isAnchored || !isPageRelativeAnchor(drawingBlock)) continue;
-
-    const anchorParagraphId =
-      typeof drawingBlock.attrs === 'object' && drawingBlock.attrs
-        ? (drawingBlock.attrs as { anchorParagraphId?: unknown }).anchorParagraphId
-        : undefined;
-    const anchorParaIndex = resolveAnchorParagraphIndex(blocks, len, paragraphIndexById, i, anchorParagraphId);
-    if (anchorParaIndex == null) continue;
-
-    const list = map.get(anchorParaIndex) ?? [];
-    list.push({ block: drawingBlock, measure: drawingMeasure });
-    map.set(anchorParaIndex, list);
-  }
-
-  return map;
+export function collectPreRegisteredAnchors(blocks: FlowBlock[], measures: Measure[]): AnchoredDrawing[] {
+  return drainAnchorSteps(collectPreRegisteredAnchorsSteps(blocks, measures));
 }
 
 /**
  * Collect anchored drawings (images/drawings) mapped to their anchor paragraph index.
  * Map of paragraph block index -> anchored images/drawings associated with that paragraph.
  */
-export function collectAnchoredDrawings(blocks: FlowBlock[], measures: Measure[]): AnchoredDrawingCollection {
+export function* collectAnchoredDrawingsSteps(
+  blocks: FlowBlock[],
+  measures: Measure[],
+  checkpointEveryBlocks: number | null = null,
+): Generator<LayoutWorkCheckpoint, AnchoredDrawingCollection, void> {
   const byParagraph = new Map<number, AnchoredDrawing[]>();
   const withoutParagraph: AnchoredDrawing[] = [];
   const len = Math.min(blocks.length, measures.length);
-  const paragraphIndexById = buildParagraphIndexById(blocks, len);
+  const paragraphIndexById = yield* buildParagraphIndexByIdSteps(blocks, len, checkpointEveryBlocks);
 
   for (let i = 0; i < len; i += 1) {
+    if (checkpointEveryBlocks != null && i % checkpointEveryBlocks === 0) {
+      yield { index: i, total: len };
+    }
     const block = blocks[i];
     const measure = measures[i];
     const isImage = block.kind === 'image' && measure?.kind === 'image';
@@ -203,7 +232,14 @@ export function collectAnchoredDrawings(blocks: FlowBlock[], measures: Measure[]
         ? (drawingBlock.attrs as { anchorParagraphId?: unknown }).anchorParagraphId
         : undefined;
     const anchoredDrawing = { block: drawingBlock, measure: drawingMeasure };
-    const anchorParaIndex = resolveAnchorParagraphIndex(blocks, len, paragraphIndexById, i, anchorParagraphId);
+    const anchorParaIndex = yield* resolveAnchorParagraphIndexSteps(
+      blocks,
+      len,
+      paragraphIndexById,
+      i,
+      anchorParagraphId,
+      checkpointEveryBlocks,
+    );
     if (anchorParaIndex == null) {
       withoutParagraph.push(anchoredDrawing);
       continue;
@@ -225,17 +261,28 @@ export function collectAnchoredDrawings(blocks: FlowBlock[], measures: Measure[]
   };
 }
 
+export function collectAnchoredDrawings(blocks: FlowBlock[], measures: Measure[]): AnchoredDrawingCollection {
+  return drainAnchorSteps(collectAnchoredDrawingsSteps(blocks, measures));
+}
+
 /**
  * Collect anchored/floating tables mapped to their anchor paragraph index.
  * Also returns anchored tables that have no paragraph to attach to.
  */
-export function collectAnchoredTables(blocks: FlowBlock[], measures: Measure[]): AnchoredTableCollection {
+export function* collectAnchoredTablesSteps(
+  blocks: FlowBlock[],
+  measures: Measure[],
+  checkpointEveryBlocks: number | null = null,
+): Generator<LayoutWorkCheckpoint, AnchoredTableCollection, void> {
   const len = Math.min(blocks.length, measures.length);
   const byParagraph = new Map<number, AnchoredTable[]>();
   const withoutParagraph: AnchoredTable[] = [];
-  const paragraphIndexById = buildParagraphIndexById(blocks, len);
+  const paragraphIndexById = yield* buildParagraphIndexByIdSteps(blocks, len, checkpointEveryBlocks);
 
   for (let i = 0; i < len; i += 1) {
+    if (checkpointEveryBlocks != null && i % checkpointEveryBlocks === 0) {
+      yield { index: i, total: len };
+    }
     const block = blocks[i];
     const measure = measures[i];
 
@@ -247,7 +294,15 @@ export function collectAnchoredTables(blocks: FlowBlock[], measures: Measure[]):
     // Check if the table is anchored/floating
     if (!tableBlock.anchor?.isAnchored) continue;
 
-    const resolution = resolveFloatingTableAnchorResolution(blocks, measures, len, i, tableBlock, paragraphIndexById);
+    const resolution = yield* resolveFloatingTableAnchorResolutionSteps(
+      blocks,
+      measures,
+      len,
+      i,
+      tableBlock,
+      paragraphIndexById,
+      checkpointEveryBlocks,
+    );
     if (resolution == null) {
       withoutParagraph.push({ block: tableBlock, measure: tableMeasure });
       continue;
@@ -267,4 +322,8 @@ export function collectAnchoredTables(blocks: FlowBlock[], measures: Measure[]):
     byParagraph,
     withoutParagraph,
   };
+}
+
+export function collectAnchoredTables(blocks: FlowBlock[], measures: Measure[]): AnchoredTableCollection {
+  return drainAnchorSteps(collectAnchoredTablesSteps(blocks, measures));
 }

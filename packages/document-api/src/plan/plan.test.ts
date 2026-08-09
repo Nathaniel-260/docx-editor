@@ -1,7 +1,7 @@
 // plan.execute executor semantics - failure classification parity with the
 // stepwise replay path (thrown errors AND returned failure receipts).
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { DocumentApiValidationError } from '../errors.js';
 import { createPlanApi, type PlanExecuteEntry } from './plan.js';
 
@@ -173,5 +173,57 @@ describe('plan.execute failure classification', () => {
     });
     // Allowed-failure does not capture (stepwise stores nothing for allowed).
     expect('noop' in result.captures).toBe(false);
+  });
+
+  it('preserves capture substitution when dynamic dispatch is async', async () => {
+    const calls: Array<{ operationId: string; input: unknown }> = [];
+    const plan = createPlanApi(async (operationId, input) => {
+      calls.push({ operationId, input });
+      if (operationId === 'selection.current') {
+        return { target: { kind: 'selection', id: 'live-browser-selection' } };
+      }
+      return { success: true, echo: input };
+    });
+
+    const result = await plan.execute({
+      entries: [
+        { operationId: 'selection.current', input: { includeText: true }, captureAs: 'current' },
+        {
+          operationId: 'replace',
+          input: { target: { kind: 'capture-ref', captureKey: 'current', path: 'target' }, text: 'replacement' },
+          captureAs: 'replace',
+        },
+      ],
+      captureReturns: '*',
+    });
+
+    expect(result.receipts.map((r) => r.status)).toEqual(['passed', 'passed']);
+    expect(calls).toEqual([
+      { operationId: 'selection.current', input: { includeText: true } },
+      {
+        operationId: 'replace',
+        input: { target: { kind: 'selection', id: 'live-browser-selection' }, text: 'replacement' },
+      },
+    ]);
+    expect(result.captures.current).toEqual({ target: { kind: 'selection', id: 'live-browser-selection' } });
+  });
+
+  it('returns a promise for empty plans when dynamic dispatch is async', async () => {
+    const plan = createPlanApi(async () => ({ success: true }));
+    const result = plan.execute({ entries: [] });
+
+    expect(result).toHaveProperty('then');
+    await expect(result).resolves.toEqual({ receipts: [], captures: {} });
+  });
+
+  it('rejects validation errors when dynamic dispatch is async', async () => {
+    const plan = createPlanApi(async () => ({ success: true }));
+    const result = plan.execute({ entries: null as never });
+
+    expect(result).toHaveProperty('then');
+    await expect(result).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+      message: expect.stringContaining('input.entries to be an array'),
+    });
   });
 });

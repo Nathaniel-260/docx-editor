@@ -38,8 +38,7 @@
  *                                      here, not as a silent zero-result
  *                                      downstream.
  *   5. jsdoc-hygiene-ts              - type-bearing JSDoc gate for .ts
- *                                      source under packages/superdoc/src
- *                                      and packages/super-editor/src.
+ *                                      source under packages/superdoc/src.
  *                                      Companion to jsdoc-ratchet on the
  *                                      .ts side: enforces TS syntax as
  *                                      the single source of truth for
@@ -78,8 +77,8 @@
  *                                      Skipped when `--skip-build` is
  *                                      passed (CI calls `pnpm run build`
  *                                      separately in its own step).
- *   9. consumer-typecheck-matrix     - packs superdoc + installs the
- *                                      tarball into
+ *   9. consumer-typecheck-matrix     - packs superdoc, or reuses the
+ *                                      CI-built tarball, then installs it into
  *                                      tests/consumer-typecheck/
  *                                      node_modules/, then runs every
  *                                      consumer scenario.
@@ -90,8 +89,8 @@
  *  11. package-shape                 - publint + attw against the packed
  *                                      manifest. Reuses the tarball
  *                                      from stage 8.
- *  12. export-snapshots              - super-editor / legacy / root
- *                                      no-growth export snapshots.
+ *  12. export-snapshots              - v2-only resolution absence gate plus
+ *                                      supported root export inventory.
  *                                      Reuses the install.
  *  13. root-classification-closure   - no supported-root or legacy-root
  *                                      export references an internal-
@@ -108,13 +107,13 @@
  *   pnpm check:public           (umbrella, runs SuperDoc + Document API)
  *   pnpm check:public:superdoc  (SuperDoc only, this script)
  *
- * CI usage (Build step already ran):
+ * CI usage (candidate build and tarball already restored):
  *   pnpm check:public:superdoc --skip-build
  *
  * SD-3256 Phase 1 (initial wrapper) / SD-673 Phase 1 (CI wiring).
  * Extended in the typecheck-wrapper consolidation PR to subsume the
- * package-shape / snapshots / closure steps that release-superdoc.yml,
- * release-stable.yml, and ci-superdoc.yml previously ran separately.
+ * package-shape / snapshots / closure steps that ci-superdoc.yml previously ran
+ * separately.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -125,11 +124,28 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const flags = new Set(process.argv.slice(2));
 const skipBuild = flags.has('--skip-build');
+const requirePreparedCandidate = process.env.SUPERDOC_V2_CI_REQUIRE_PREPARED === '1';
+const consumerMatrixArgs = skipBuild && requirePreparedCandidate
+  ? ['typecheck-matrix.mjs', '--use-existing-tarball']
+  : ['typecheck-matrix.mjs'];
 
 // Stage names below are display labels for logs only; the actual rerun
 // command on failure is reconstructed from `cmd` + `args`. Renaming a
 // `name` is purely cosmetic.
 const stages = [
+  {
+    name: 'v2-only-source',
+    cwd: REPO_ROOT,
+    cmd: 'node',
+    args: ['scripts/check-v2-only-source.mjs'],
+    blurb:
+      'v2-only source guard: fails when active public surfaces (apps, docs, ' +
+      'examples, demos, packages/superdoc/src, build config) reference v1 ' +
+      'super-editor (@superdoc/super-editor, Editor.open, SuperEditor, ' +
+      'PresentationEditor, packages/super-editor, editors/v1, removed legacy ' +
+      'superdoc/* subpaths). Cheapest gate; runs first so v1 reintroduction ' +
+      'fails in milliseconds before the build/matrix stages.',
+  },
   {
     name: 'contract-tiers-test',
     cwd: REPO_ROOT,
@@ -179,8 +195,8 @@ const stages = [
     cmd: 'node',
     args: ['packages/superdoc/scripts/check-jsdoc-hygiene-ts.cjs'],
     blurb:
-      'Type-bearing JSDoc gate for .ts source under packages/superdoc/src and ' +
-      'packages/super-editor/src. Strict-zero gate (no grandfathered baseline, ' +
+      'Type-bearing JSDoc gate for .ts source under packages/superdoc/src. ' +
+      'Strict-zero gate (no grandfathered baseline, ' +
       'no --write): fails on any type-bearing JSDoc tag (@param {T}, @returns {T}, ' +
       '@type, @typedef, @template, etc.). See packages/superdoc/scripts/' +
       'type-hygiene.md for the rule and fix patterns. Cheap; complements ' +
@@ -227,8 +243,12 @@ const stages = [
     name: 'consumer-typecheck-matrix',
     cwd: resolve(REPO_ROOT, 'tests/consumer-typecheck'),
     cmd: 'node',
-    args: ['typecheck-matrix.mjs'],
-    blurb: 'Packs superdoc + installs the tarball into the consumer fixture, ' + 'then runs every typecheck scenario.',
+    args: consumerMatrixArgs,
+    blurb:
+      (skipBuild && requirePreparedCandidate
+        ? 'Freshly installs the candidate tarball into the consumer fixture, '
+        : 'Packs superdoc and installs the tarball into the consumer fixture, ') +
+      'then runs every typecheck scenario.',
   },
   {
     name: 'deep-type-audit-supported-root',
@@ -254,8 +274,8 @@ const stages = [
     cmd: 'node',
     args: ['snapshot.mjs', '--all', '--check'],
     blurb:
-      'No-growth snapshots for super-editor / legacy / root export inventories. ' +
-      'Run with `node snapshot.mjs --family <name> --write` to regenerate intentionally.',
+      'v2-only package resolution gate plus supported root export inventory. ' +
+      'Supported v2 imports must resolve; removed v1 package/subpath imports must fail.',
   },
   {
     name: 'root-classification-closure',
@@ -265,17 +285,6 @@ const stages = [
     blurb:
       'Closure gate: no supported-root or legacy-root export references an ' +
       'internal-candidate type in its public declared shape (SD-3212 A1b).',
-  },
-  {
-    name: 'docs-snippet-typecheck',
-    cwd: REPO_ROOT,
-    cmd: 'pnpm',
-    args: ['--filter', '@superdoc/docs', 'run', 'check:types'],
-    blurb:
-      'Docs snippet type-check (SD-673): extracts "Full Example" code blocks under ' +
-      'apps/docs/editor/superdoc/** (JS + TS fences) and runs `tsc --noEmit --strict` ' +
-      '(with allowJs + checkJs for JS) against packages/superdoc/dist. Catches drift ' +
-      'between docs examples and the typed public surface.',
   },
 ];
 

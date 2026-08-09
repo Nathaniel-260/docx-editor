@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { ParagraphMeasure, TableCellMeasure, TableCell, TableMeasure } from '@superdoc/contracts';
 import type { BlockId } from '@superdoc/contracts';
 import {

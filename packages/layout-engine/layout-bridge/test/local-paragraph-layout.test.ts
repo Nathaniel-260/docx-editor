@@ -5,7 +5,7 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { LocalParagraphLayout } from '../src/local-paragraph-layout';
 import { FontMetricsCache } from '../src/font-metrics-cache';
 import type { TextRun } from '../src/local-paragraph-layout';

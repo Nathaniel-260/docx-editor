@@ -2,8 +2,8 @@
  * Room-level overwrite helpers for SuperDoc collaboration upgrade.
  *
  * These operate on SuperDoc-level Yjs state (comments, lock metadata)
- * that lives outside the editor's domain. Editor-level seeding is
- * handled by `seedEditorStateToYDoc` in super-editor.
+ * that lives outside the editor's domain. Editor-level seeding is handled by
+ * the document editor runtime.
  */
 
 import { Map as YMap } from 'yjs';

@@ -1,6 +1,6 @@
 import type { MutationOptions } from '../types/index.js';
 import { DocumentApiValidationError } from '../errors.js';
-import { validateStoryLocator } from '../validation/story-validator.js';
+import { validateStoryConsistency, validateStoryLocator } from '../validation/story-validator.js';
 import type {
   CreateImageInput,
   CreateImageResult,
@@ -528,5 +528,18 @@ export function executeCreateImage(
 ): CreateImageResult {
   requireString(input?.src, 'src');
   validateStoryLocator(input?.in, 'in');
+  const targetStory = input.at && 'target' in input.at ? input.at.target.story : undefined;
+  validateStoryLocator(targetStory, 'at.target.story');
+  if (!isHeaderFooterSlotPartPair(input.in, targetStory)) {
+    validateStoryConsistency(input.in, targetStory, undefined);
+  }
   return adapter.image(input, options);
+}
+
+function isHeaderFooterSlotPartPair(inputStory: CreateImageInput['in'], targetStory: CreateImageInput['in']): boolean {
+  if (!inputStory || !targetStory) return false;
+  return (
+    (inputStory.storyType === 'headerFooterSlot' && targetStory.storyType === 'headerFooterPart') ||
+    (inputStory.storyType === 'headerFooterPart' && targetStory.storyType === 'headerFooterSlot')
+  );
 }

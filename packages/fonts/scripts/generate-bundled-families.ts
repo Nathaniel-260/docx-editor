@@ -3,29 +3,34 @@
 // set (every logical family the resolver substitutes to a bundled face, including category fallbacks
 // like Verdana) - NOT the asset manifest's narrower metric-clone `replaces`.
 //
-// Skips when the font-system source is absent (a rare standalone install), leaving the committed file;
-// in the monorepo a real import error fails loudly. Committed so npm consumers get the list without
-// re-generating. Re-run via `pnpm --filter @superdoc-dev/fonts generate` when the curation set changes.
-import { existsSync, writeFileSync } from 'node:fs';
+// Inside the monorepo a missing font-system source is a failure: generating nothing would leave the
+// committed list stale and let `check:families` compare it against itself. Outside it, absence is
+// expected and the committed file stands. See `font-system-source.mjs`.
+// Committed so npm consumers get the list without re-generating. Re-run via
+// `pnpm --filter @superdoc/fonts generate` when the curation set changes.
+import { writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { FONT_SYSTEM_OFFERINGS, resolveFontSystemPath } from './font-system-source.mjs';
+import { formatGenerated } from './lib/format-generated.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outFile = resolve(here, '../src/bundled-families.ts');
-const fontSystemSource = resolve(here, '../../../shared/font-system/src/font-offerings.ts');
 
-if (!existsSync(fontSystemSource)) {
-  console.log(
-    '[@superdoc-dev/fonts] font-system source not present (standalone install); kept committed src/bundled-families.ts',
-  );
-  process.exit(0);
+const source = resolveFontSystemPath(FONT_SYSTEM_OFFERINGS, 'source');
+if (!source.ok) {
+  if (source.skip) {
+    console.log(`${source.message}; kept committed src/bundled-families.ts`);
+    process.exit(0);
+  }
+  console.error(source.message);
+  process.exit(1);
 }
 
-// eslint-disable-next-line import-x/no-relative-packages -- build-only script (not shipped); @superdoc-dev/fonts stays a dependency-free runtime package and font-system exposes no /src export, so reading its source relatively here is intentional
-const { getBundledFamilyNames } = await import('../../../shared/font-system/src/font-offerings');
+const { getBundledFamilyNames } = await import(pathToFileURL(FONT_SYSTEM_OFFERINGS).href);
 const names = getBundledFamilyNames();
 if (names.length === 0) {
-  console.error('[@superdoc-dev/fonts] font-system returned no curatable families');
+  console.error('[@superdoc/fonts] font-system returned no curatable families');
   process.exit(1);
 }
 
@@ -49,14 +54,5 @@ ${names.map((name) => `  ${JSON.stringify(name)},`).join('\n')}
 export type BundledFontFamilyName = (typeof BUNDLED_FAMILY_NAMES)[number];
 `;
 
-let output = content;
-try {
-  const prettier = await import('prettier');
-  const config = (await prettier.resolveConfig(outFile)) ?? {};
-  output = await prettier.format(content, { ...config, filepath: outFile });
-} catch {
-  // Prettier optional; the unformatted output is still valid TypeScript.
-}
-
-writeFileSync(outFile, output);
-console.log(`[@superdoc-dev/fonts] wrote ${names.length} curatable family names -> src/bundled-families.ts`);
+writeFileSync(outFile, formatGenerated(content, outFile));
+console.log(`[@superdoc/fonts] wrote ${names.length} curatable family names -> src/bundled-families.ts`);

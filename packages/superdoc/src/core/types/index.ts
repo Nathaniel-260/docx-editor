@@ -13,57 +13,497 @@
 
 import type { Doc as YDoc } from 'yjs';
 import type { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider';
-import type { Transaction } from 'prosemirror-state';
 import type { Ref, ComputedRef } from 'vue';
 
 import type {
-  Editor as SuperEditor,
-  PresentationEditor as SuperEditorPresentationEditor,
-  StoryLocator as SuperEditorStoryLocator,
-  BookmarkAddress as SuperEditorBookmarkAddress,
-  BlockNavigationAddress as SuperEditorBlockNavigationAddress,
-  CommentAddress as SuperEditorCommentAddress,
-  TrackedChangeAddress as SuperEditorTrackedChangeAddress,
-  NavigableAddress as SuperEditorNavigableAddress,
-  CollaborationProvider as SuperEditorCollaborationProvider,
-  Comment,
-  FontConfig,
-  FontFaceConfig,
-  FontFamilyConfig,
-  FontsConfig,
-  FontsResolvedPayload,
-  FontsChangedPayload,
+  DocumentFontOption,
+  FontAssetUrlResolver,
+  FontFamilyOption,
+  FontLoadSummary,
   FontResolutionRecord,
+} from '@superdoc/font-system';
+
+export type {
   DocumentFontOption,
   FontAssetUrlContext,
   FontAssetUrlResolver,
-  ListDefinitionsPayload,
-  ProofingProvider,
-  SelectionInfo,
-  User,
-} from '@superdoc/super-editor';
+  FontFaceSlot,
+  FontFamilyOption,
+  FontLoadResult,
+  FontLoadStatus,
+  FontLoadSummary,
+  FontResolutionReason,
+  FontResolutionRecord,
+  GlyphException,
+  ResolvedFontEvidence,
+  SubstitutePolicyAction,
+  SubstituteVerdict,
+} from '@superdoc/font-system';
 
 import type { SuperDoc as SuperDocClass } from '../SuperDoc.js';
+import type { SuperDocActiveEditorExtensions, SuperDocExtension } from '../extensions/index.js';
 
-// Re-exports (kept as named exports so `import('../core/types').Editor` still
-// resolves the same names consumers were using).
-export type Editor = SuperEditor;
 export type SuperDoc = SuperDocClass;
-export type StoryLocator = SuperEditorStoryLocator;
-export type BookmarkAddress = SuperEditorBookmarkAddress;
-export type BlockNavigationAddress = SuperEditorBlockNavigationAddress;
-export type CommentAddress = SuperEditorCommentAddress;
-export type TrackedChangeAddress = SuperEditorTrackedChangeAddress;
-export type NavigableAddress = SuperEditorNavigableAddress;
+
+// Defined in its own leaf module so `superdoc/ui`'s self-contained types can
+// share the definition without importing the `SuperDoc` class type from here.
+import type { BrowserDocumentApi } from '../../public/browser-document-api.js';
+export type { BrowserDocumentApi } from '../../public/browser-document-api.js';
+
+import type { CustomCommandContext } from '../../public/ui/types.js';
+
+/**
+ * A row in a custom dropdown's option list, and the value handed back to the
+ * `command` callback when one is chosen.
+ *
+ * `label` and `key` are what the toolbar reads: `handleSelect` uses `label` as
+ * the command argument (unless `dropdownValueKey` names another member) and
+ * `key` as the selection identity (`ButtonGroup.vue:167-169`).
+ *
+ * Both are optional here rather than required, because a `type: 'render'`
+ * entry is a custom-rendered row that the selection path explicitly skips
+ * (`ButtonGroup.vue:268`), so it carries neither. The index signature keeps
+ * the rest of the row open.
+ */
+export interface ToolbarDropdownOption {
+  /** Row text, and the default command argument when the row is chosen. */
+  label?: string;
+  /**
+   * Stable row identity, used for selection state and handed to the command.
+   *
+   * Numbers included, because the built-in zoom dropdown uses them
+   * (`key: 0.5`, `key: 1`) and the runtime passes the value through
+   * unchanged. This is what a `command` callback reads as `context.option`,
+   * so a string-only declaration here made a numeric key unusable at the far
+   * end even once the config side accepted it.
+   */
+  key?: string | number;
+  /** Attributes spread onto the rendered row. */
+  props?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/**
+ * The context a custom toolbar button's `command` callback receives.
+ *
+ * The runtime registers the callback as a custom command and invokes it with
+ * the controller's {@link CustomCommandContext} plus three toolbar-specific
+ * members (`built-in-toolbar.js:#prepareCustomButton`), so a consumer writing
+ * `({ execute, option }) => ...` gets both halves typed.
+ *
+ * `item` is deliberately `unknown`. It is the live Vue reactive object
+ * `useToolbarItem` returns — a bag of `ref`s whose shape is an implementation
+ * detail. Typing it would publish that internal and freeze it; see #1098 for
+ * the public toolbar-item contract that would replace it.
+ */
+export interface ToolbarCustomButtonContext extends CustomCommandContext {
+  /** The live toolbar item handle. Internal shape; see #1098. */
+  item: unknown;
+  /**
+   * The selected dropdown row, passed through verbatim, or `undefined` for a
+   * plain button that has no selection.
+   */
+  option?: ToolbarDropdownOption;
+  /** Argument threaded through the command payload. */
+  argument?: unknown;
+}
+
+/**
+ * What a custom toolbar entry does when activated.
+ *
+ * A function is registered as a custom command and invoked with
+ * {@link ToolbarCustomButtonContext}; a string is read as a canonical V2
+ * command id and routed through the shared controller. An unknown id is
+ * accepted at compile time and then reported through the toolbar's
+ * `exception` event as "Command not handled" -- so the string form stays
+ * unnarrowed, but a typo is diagnosed at runtime rather than ignored.
+ */
+export type ToolbarCustomButtonCommand = string | ((context: ToolbarCustomButtonContext) => unknown);
+
+/** Members every custom toolbar entry carries, whatever its type. */
+interface ToolbarCustomEntryBase {
+  /**
+   * Unique item name, which also derives the registered command id and the
+   * rendered `data-item` attribute.
+   *
+   * Uniqueness is enforced at construction rather than here: a name that
+   * repeats, or that matches a built-in item, used to render a second control
+   * under the same `data-item` with neither responding.
+   */
+  name: string;
+  /** Which toolbar group the entry joins. Defaults to `center`. */
+  group?: 'left' | 'center' | 'right' | (string & {});
+  /** Hover text. */
+  tooltip?: string;
+  /** Render the entry as unavailable. Honored: a disabled entry does not run. */
+  disabled?: boolean;
+  /** Extra DOM hooks. Both are read straight onto the rendered control. */
+  attributes?: {
+    /**
+     * Appended to the item's class list. Any value Vue's `class` binding
+     * takes: a string, an array, a condition map, or a nesting of those.
+     *
+     * AIDEV-NOTE: unconstrained for the same reason as `dropdownStyles`, and
+     * verified rather than assumed. This lands inside an array binding --
+     * `ToolbarButton` renders `:class="['sd-toolbar-item',
+     * attributes.className]"` -- so Vue resolves it, and `string` rejected
+     * `['compact', { active: isActive }]`, the ordinary way to write a
+     * conditional class. There is also nothing to import or mirror:
+     * `@vue/shared` types the input as `normalizeClass(value: unknown)`, so
+     * Vue does not name this shape either, and any union written here would
+     * be narrower than what Vue accepts. A browser test asserts the array and
+     * the condition map both resolve, including that a false branch is
+     * dropped rather than stringified.
+     */
+    className?: unknown;
+    /** Sets `aria-label`, which is otherwise absent on a custom entry. */
+    ariaLabel?: string;
+  };
+  /** Render the control at reduced width. */
+  isNarrow?: boolean;
+  /** Render the control at increased width. */
+  isWide?: boolean;
+  /**
+   * `active` and `activeIcon` are rejected by name because both are dead.
+   * `useToolbarItem` hard-codes the initial active state to `false` and
+   * discards the option, and nothing in the toolbar reads `activeIcon`. Set
+   * the state from the command instead, which does work.
+   */
+  active?: never;
+  activeIcon?: never;
+  /**
+   * Open on purpose. `useToolbarItem` accepts 37 fields and forwards them, and
+   * closing this list around the ones I could enumerate rejected seven working
+   * configurations in review -- `label`, `hasCaret`, `dropdownValueKey`, row
+   * `icon`, `attributes`, `splitButton`, `argument` -- each of which renders or
+   * is forwarded by code the enumeration missed.
+   *
+   * So the guarantees here are structural rather than exhaustive: which `type`
+   * values render at all, that a button and a dropdown each have something
+   * visible, that a dropdown has rows, and that the two dead fields above are
+   * refused. A misspelled rare field still compiles, which is the same
+   * trade-off `CommentsConfig` makes for the same reason -- the runtime passes
+   * the whole bag through, so a closed type would be wrong more often than a
+   * typo is.
+   */
+  [key: string]: unknown;
+}
+
+/**
+ * A custom button.
+ *
+ * `icon` is required, which is stricter than the runtime check and deliberately
+ * so. Construction accepts `icon` **or** `defaultLabel`, but only the icon
+ * reaches the DOM: a button carrying `defaultLabel` alone builds, mounts, and
+ * draws nothing, leaving an empty control in the toolbar. Requiring `icon`
+ * keeps this type to shapes that produce something a user can see.
+ *
+ * `label` is not accepted at all. It is the *live* label a built-in item
+ * rewrites as state changes, it does not satisfy the affordance check, and a
+ * button carrying only `label` is rejected at construction.
+ *
+ * AIDEV-NOTE: `defaultLabel` renders nothing for a custom button. The check in
+ * `use-toolbar-item.js` treats it as an affordance and `ToolbarButton.vue`
+ * never draws it. Widening this type to accept `defaultLabel` alone requires
+ * fixing that render first, or it re-admits invisible buttons (#1098).
+ */
+export interface ToolbarCustomButtonItem extends ToolbarCustomEntryBase {
+  type: 'button';
+  /** Inline SVG or markup. The only thing a custom button actually renders. */
+  icon: string;
+  /**
+   * Static label kept for the affordance check and for parity with the legacy
+   * spelling. It does not render today; pair it with `icon`, never alone.
+   */
+  defaultLabel?: string;
+  /**
+   * Visible text drawn beside the icon. Unlike `defaultLabel` this really is
+   * rendered, but it does not satisfy the affordance check on its own, so it
+   * accompanies `icon` rather than replacing it.
+   */
+  label?: string;
+  /**
+   * What the button does. Optional because omitting it renders a control that
+   * does nothing rather than failing, which is legal today; an entry meant to
+   * be actionable should always carry one.
+   */
+  command?: ToolbarCustomButtonCommand;
+}
+
+/**
+ * One selectable row in a custom dropdown.
+ *
+ * Both members are required: `key` is what reaches the command through
+ * {@link ToolbarCustomButtonContext.option}, and `label` is the only text the
+ * row renders, so a row missing either draws blank or selects as `undefined`.
+ */
+interface ToolbarCustomDropdownOptionBase {
+  /**
+   * Drawn beside the row's label, or a function returning it.
+   *
+   * Not string-only: `OptionIcon` returns whatever this resolves to straight
+   * from a render function, so a Vue VNode works as well as markup.
+   *
+   * `object` rather than `Record<string, unknown>`, which was the first
+   * attempt and admitted only inferred object literals -- a value already
+   * typed as Vue's `VNode` has no string index signature and so failed to
+   * assign. `object` accepts both without importing Vue's types into the
+   * public surface.
+   */
+  icon?: string | object | ((option: ToolbarCustomDropdownOption) => unknown);
+  /** Render the row as unavailable. */
+  disabled?: boolean;
+  /** Added to the row's class list. */
+  class?: unknown;
+  /**
+   * Spread onto the rendered row as attributes, and its `class` is merged
+   * with the one above. Declared here as well as on `ToolbarDropdownOption`,
+   * which it mirrors.
+   */
+  props?: Record<string, unknown>;
+  /**
+   * Open, like the `ToolbarDropdownOption` it mirrors, because
+   * `dropdownValueKey` names a member to read dynamically: a row can carry
+   * `{ label, key, value }` and send `value` to the command. Closing this
+   * would make that shape uncompilable while it still works.
+   */
+  [key: string]: unknown;
+}
+
+/**
+ * One row in a custom dropdown.
+ *
+ * A selectable row needs both `label` and `key`: `label` is the only text it
+ * renders, and `key` is what reaches the command through
+ * {@link ToolbarCustomButtonContext.option}.
+ *
+ * A `type: 'render'` row is the exception and is why this is a union rather
+ * than one interface. `ToolbarDropdown` routes those to its `RenderOption`
+ * branch and never reads `label` for them, so requiring it would reject rows
+ * the runtime supports -- which the first version of this type did.
+ */
+export type ToolbarCustomDropdownOption =
+  | (ToolbarCustomDropdownOptionBase & {
+      /**
+       * Application metadata. A row carrying `{ type: 'action', label, key }`
+       * stays selectable and reaches the command verbatim, so this member is
+       * open.
+       *
+       * AIDEV-NOTE: that openness means `{ type: 'render', label, key }` with
+       * no renderer still matches this branch, so the render branch's
+       * required `render` does not catch it (#1098). `Exclude<string,
+       * 'render'>` does not help -- subtracting a literal from the wide
+       * `string` type leaves `string` -- and neither does a branded
+       * intersection, because a plain string literal remains assignable to
+       * both. Closing this needs a literal union of the metadata values the
+       * product supports, which is a contract decision rather than a
+       * transcription. The runtime treats such a row as render-only and draws
+       * a blank, inert row.
+       */
+      type?: string;
+      /** Text rendered for the row. */
+      label: string;
+      /**
+       * Value handed to the command when this row is chosen, and the row's
+       * Vue key. Numbers are allowed because the built-in zoom dropdown uses
+       * them (`key: 0.5`, `key: 1`), and `ButtonGroup` passes the value
+       * through to `selectedValue` unchanged.
+       */
+      key: string | number;
+    })
+  | (ToolbarCustomDropdownOptionBase & {
+      /** Rendered through `RenderOption` rather than as a selectable row. */
+      type: 'render';
+      /**
+       * Required, because `RenderOption` returns `null` unless this is
+       * callable. A render row is also excluded from selection, so one
+       * without a renderer is a permanently blank row that cannot be clicked.
+       */
+      render: () => unknown;
+      label?: string;
+      key?: string | number;
+    });
+
+/**
+ * A custom dropdown.
+ *
+ * `options` is required and must be non-empty: a dropdown with no rows, or an
+ * empty array, renders no trigger at all, so the entry silently disappears
+ * rather than drawing something inert.
+ *
+ * The trigger rule is looser than a button's -- `label` works here as well as
+ * `icon` -- because the dropdown draws its own trigger rather than going
+ * through the button affordance check.
+ */
+interface ToolbarCustomDropdownBase extends ToolbarCustomEntryBase {
+  type: 'dropdown';
+  /**
+   * Static fallback trigger text. Present for parity with the legacy spelling
+   * and does not render, which is why it does not satisfy the trigger
+   * requirement below.
+   */
+  defaultLabel?: string;
+  /**
+   * The rows the dropdown offers. Empty is accepted, and is not a mistake on
+   * its own: `#updateHighlightColors` assigns `nestedOptions` after the item
+   * is built, so a dropdown can construct empty and fill in later. An empty
+   * one renders no menu rather than breaking -- `ButtonGroup` guards the
+   * branch on `nestedOptions.value.length`.
+   *
+   * AIDEV-NOTE: this was a nonempty tuple until #1188 review. The tuple did
+   * reject `options: []`, and it also rejected every array TypeScript cannot
+   * see the length of -- `rows.map(...)`, a `Row[]` variable, a function
+   * return. Those are how dropdown rows are normally built; `lineHeight` in
+   * `default-items.js` builds its own rows with `.map()`. The obvious escape,
+   * `readonly T[] & { 0: T }`, rejects all four (measured, not assumed): an
+   * array type carries no index-0 property for the intersection to satisfy.
+   * So please do not reintroduce a tuple here -- and note there is no runtime
+   * check to fall back on either, deliberately, because an empty dropdown is
+   * a legitimate intermediate state.
+   *
+   * `readonly` so an `as const` array is accepted: the runtime only iterates
+   * this and copies the elements into `nestedOptions`, never mutating the
+   * consumer's array.
+   */
+  options: readonly ToolbarCustomDropdownOption[];
+  /** Draw the dropdown caret beside the trigger. Rendered by `ToolbarButton`. */
+  hasCaret?: boolean;
+  /**
+   * Which member of the selected row becomes the command's `argument`.
+   *
+   * Defaults to `label`, not `key`: `ButtonGroup.handleSelect` reads
+   * `option[dropdownValueKey]` and falls back to `option.label` when this is
+   * unset. So a dropdown whose display text differs from its value has to set
+   * `'key'` explicitly, or the command receives the text a user sees rather
+   * than the value it stands for. Any member name works, not just `key`: a row
+   * carrying `{ label, key, value }` can send `value`. `context.option` always
+   * carries the whole row either way.
+   */
+  dropdownValueKey?: string;
+  /**
+   * Inline styles for the dropdown's own element -- its trigger and wrapper --
+   * forwarded unchanged to Vue's `:style` binding.
+   *
+   * Not the open panel: `ButtonGroup` styles that separately through
+   * `menu-props`, which `customButtons` cannot reach. Widths set here size the
+   * control in the toolbar, not the menu it opens.
+   *
+   * AIDEV-NOTE: deliberately unconstrained. Restating Vue's `StyleValue` here
+   * was attempted three times and was wrong each time -- string-valued
+   * objects rejected `{ padding: 0 }`, object-only rejected
+   * `'min-width: 200px'`, and a hand-written union rejected a value already
+   * typed as `CSSProperties`, whose index signature a structural restatement
+   * does not match. The shape set is Vue's to define and moves with Vue, so
+   * mirroring it by hand keeps rejecting working configuration. Importing
+   * `StyleValue` would pull a Vue type into the public surface, which this
+   * package avoids elsewhere.
+   */
+  dropdownStyles?: unknown;
+  /**
+   * `key` of the row to show as selected before the user picks one. Matches
+   * the row `key` type, numbers included.
+   */
+  selectedValue?: string | number;
+  /** Invoked with the chosen row on {@link ToolbarCustomButtonContext.option}. */
+  command?: ToolbarCustomButtonCommand;
+}
+
+/**
+ * A dropdown needs a trigger a user can see, and it has three ways to draw
+ * one. `ToolbarButton` renders `icon` and `label` in its non-split branch and,
+ * beside them, `.sd-dropdown-caret` on `v-if="hasCaret"` alone -- so a compact
+ * caret-only dropdown is a real control, not an oversight. It renders with a
+ * measurable width and opens its rows; only `defaultLabel` draws nothing.
+ *
+ * Splitting the variant is what makes at-least-one enforceable rather than
+ * advisory. Pair a caret-only trigger with `attributes.ariaLabel`, since
+ * there is no text for a screen reader to announce.
+ */
+export type ToolbarCustomDropdownItem =
+  | (ToolbarCustomDropdownBase & { icon: string; label?: string; hasCaret?: boolean })
+  | (ToolbarCustomDropdownBase & { label: string; icon?: string; hasCaret?: boolean })
+  | (ToolbarCustomDropdownBase & { hasCaret: true; icon?: string; label?: string });
+
+/** A visual divider. Renders on its own and has nothing to run. */
+export interface ToolbarCustomSeparatorItem extends ToolbarCustomEntryBase {
+  type: 'separator';
+}
+
+/**
+ * A custom entry appended to the built-in toolbar's default item set.
+ *
+ * What this guarantees is structural, not exhaustive. Each variant fixes the
+ * shape of the entry -- which `type` values render at all, that a button and a
+ * dropdown each carry something visible, that a dropdown has rows -- while the
+ * field list itself stays open, because `useToolbarItem` accepts 37 fields and
+ * forwards them. Closing that list rejected eight working configurations
+ * during review, and a rejected working config is a worse failure than the
+ * autocomplete it buys.
+ *
+ * Two of the five `useToolbarItem` types are absent because they render
+ * nothing: `options` constructs without throwing and `ButtonGroup` has no
+ * branch for it, and `overflow` draws only from the separately-built overflow
+ * list, which `customButtons` cannot populate.
+ *
+ * Two fields are refused by name on {@link ToolbarCustomEntryBase} for the
+ * same reason: `active` is discarded (`useToolbarItem` hard-codes the initial
+ * state to `false`) and `activeIcon` has no toolbar reader at all.
+ *
+ * Derived from a rendered-behavior survey rather than from the constructor
+ * (#1098): construction succeeding proves only that nothing threw, which for
+ * this surface was never the same question as whether a control appeared.
+ */
+export type ToolbarCustomButton = ToolbarCustomButtonItem | ToolbarCustomDropdownItem | ToolbarCustomSeparatorItem;
+
+export type V2AuthoringSelectionCollapse = 'start' | 'end' | null;
+
+export type V2AuthoringResult =
+  | { ok: true; mode?: 'collapsed' | 'range'; [key: string]: unknown }
+  | { ok: false; reason: string; detail?: string };
+
+/**
+ * Narrow v2 browser-authoring bridge for shell/proof setup code. This surface
+ * does not expose v1 ProseMirror `view` / `state` / `commands`; it resolves
+ * public Document API selection targets and asks the v2 host to apply them to
+ * the live editable selection.
+ */
+export interface V2AuthoringFacade {
+  setSelectionByText(input: {
+    text: string;
+    occurrence?: number;
+    collapse?: V2AuthoringSelectionCollapse;
+    focus?: boolean;
+  }): Promise<V2AuthoringResult>;
+  setSelectionTarget(input: {
+    target: unknown;
+    collapse?: V2AuthoringSelectionCollapse;
+    focus?: boolean;
+  }): Promise<V2AuthoringResult>;
+  focusEditable(): unknown;
+  readBlocks?(input?: Record<string, unknown>): unknown;
+  replaceTextByText?(input: {
+    findText: string;
+    replacement: string;
+    occurrence?: number;
+    mode?: 'direct' | 'tracked';
+  }): Promise<V2AuthoringResult>;
+  replaceSelection?(input: {
+    target: unknown;
+    replacement?: string;
+    mode?: 'direct' | 'tracked';
+  }): Promise<V2AuthoringResult>;
+  serializeSelectionToClipboard?(input?: { includeHtml?: boolean }): Promise<V2AuthoringResult>;
+  pasteClipboardPayload?(input: {
+    payload: unknown;
+    target?: unknown;
+    mode?: 'direct' | 'tracked';
+    fallback?: unknown;
+  }): Promise<V2AuthoringResult>;
+  pastePlainText?(input: { text: string; target?: unknown; mode?: 'direct' | 'tracked' }): Promise<V2AuthoringResult>;
+}
 
 /**
  * The current user of this superdoc.
- *
- * Re-exported directly from `@superdoc/super-editor` so the public
- * consumer-facing `User` (re-exported again at `src/public/index.ts`)
- * and the internal `User` referenced by SuperDoc method signatures
- * (`addSharedUser(user: User)`, `removeSharedUser(...)`, etc.) are
- * the same symbol — not two structurally-similar declarations.
  *
  * Every field is optional on input. `SuperDoc.#init` normalizes a
  * missing or partial `user` by spreading `DEFAULT_USER` over consumer
@@ -74,16 +514,369 @@ export type NavigableAddress = SuperEditorNavigableAddress;
  * the internal `AwarenessUser` (see below), assigned by SuperDoc's
  * `#assignUserColor()` after `#init`.
  */
-export type { User } from '@superdoc/super-editor';
-export type {
-  FontFaceConfig,
-  FontFamilyConfig,
-  FontResolutionRecord,
-  FontsChangedPayload,
-  FontsConfig,
-  FontAssetUrlContext,
-  FontAssetUrlResolver,
-} from '@superdoc/super-editor';
+export interface User {
+  id?: string | null;
+  name?: string | null;
+  email?: string | null;
+  image?: string | null;
+  [key: string]: unknown;
+}
+
+/** V2-neutral active editor facade exposed by legacy shell methods. */
+export interface EditorCommands {
+  search?: (text: string | RegExp, options?: Record<string, unknown>) => SearchMatch[];
+  goToSearchResult?: (match: SearchMatch) => unknown;
+  [key: string]: unknown;
+}
+
+export interface Editor {
+  editorVersion?: 2;
+  options?: {
+    documentId?: string;
+    documentMode?: DocumentMode;
+    [key: string]: unknown;
+  };
+  /**
+   * The public, read-only-guarded browser Document API facade for the active
+   * editor (`superdoc.activeEditor.doc`). It exposes the supported browser
+   * Document API surface customers know (`doc.comments.*`,
+   * `doc.trackChanges.*`, `doc.history.*`, `doc.selection.current`,
+   * `doc.format.*`, `doc.query.*`, etc.), with read-only enforcement and
+   * mutation finalization owned by the v2 host facade. In browser mode this
+   * surface is async-capable and operations may return promises; SDK/headless
+   * document automation stays synchronous on its own surface.
+   */
+  doc?: BrowserDocumentApi | null;
+  authoring?: V2AuthoringFacade | null;
+  /**
+   * Command bag exposed by v1 editors (`null` on v2-shaped runtimes). Only the
+   * commands the shell dispatches directly are typed; everything else stays
+   * behind the index signature.
+   */
+  commands?: EditorCommands | null;
+  state?: unknown;
+  view?: unknown;
+  exportDocx?: (options?: Record<string, unknown>) => Promise<Blob | File | null | undefined>;
+  focus?: (options?: { preventScroll?: boolean; restoreSelection?: boolean }) => unknown;
+  setOptions?: (options: Record<string, unknown>) => unknown;
+  setDocumentMode?: (mode: DocumentMode) => unknown;
+  setHighContrastMode?: (isHighContrast: boolean) => unknown;
+  on?: (...args: unknown[]) => unknown;
+  off?: (...args: unknown[]) => unknown;
+  getHTML: (options?: Record<string, unknown>) => unknown;
+  getDocumentId?: () => string | null | undefined;
+  /**
+   * Narrow v2 extension facet for command execution and diagnostics, backed by
+   * the active document's extension manager. Present only when one or more
+   * `extensions` are registered on the active document; `null`/absent
+   * otherwise. Does not expose the raw private extension manager. See
+   * {@link SuperDocActiveEditorExtensions}.
+   */
+  extensions?: SuperDocActiveEditorExtensions | null;
+  [key: string]: unknown;
+}
+
+/**
+ * Presentation-editor capability bag retained for shell compatibility. The
+ * methods the shell dispatches to are typed; capabilities stay optional because
+ * JS composables assemble this bag incrementally.
+ */
+export interface DocumentRendererRuntime {
+  getLastFontsChangedPayload?: () => FontsChangedPayload | null;
+  navigateTo?: (target: NavigableAddress) => unknown;
+  scrollToElement?: (elementId: string) => unknown;
+  setContextMenuDisabled?: (disabled: boolean) => unknown;
+  setShowBookmarks?: (show: boolean) => unknown;
+  setShowFormattingMarks?: (show: boolean) => unknown;
+  setDocumentMode?: (mode: DocumentMode) => unknown;
+  setTrackedChangesOverrides?: (preferences?: {
+    mode?: 'review' | 'original' | 'final' | 'off';
+    enabled?: boolean;
+  }) => unknown;
+  setViewingCommentOptions?: (options: Record<string, unknown>) => unknown;
+  [key: string]: unknown;
+}
+
+export type StoryLocator = string | Record<string, unknown>;
+export type BookmarkAddress = string | Record<string, unknown>;
+export type BlockNavigationAddress = string | Record<string, unknown>;
+export type CommentAddress = string | Record<string, unknown>;
+export type TrackedChangeAddress = string | Record<string, unknown>;
+export type NavigableAddress =
+  | StoryLocator
+  | BookmarkAddress
+  | BlockNavigationAddress
+  | CommentAddress
+  | TrackedChangeAddress;
+
+export interface CollaborationProvider {
+  awareness?: unknown;
+  document?: unknown;
+  synced?: boolean;
+  isSynced?: boolean;
+  on?: (...args: unknown[]) => unknown;
+  off?: (...args: unknown[]) => unknown;
+  disconnect?: () => unknown;
+  destroy?: () => unknown;
+  [key: string]: unknown;
+}
+
+/**
+ * Document-level v2 collaboration handoff.
+ *
+ * This is the public surface for SuperDoc v2's shipped real-time collaboration
+ * model. v2 collaboration is always single-doc: one `Y.Doc`, one provider
+ * session, and one awareness channel bound to one document/root identity. Set
+ * it on a `Document` entry to make that document collaborative under the v2
+ * runtime; SuperDoc forwards it into the v2 browser shell, which constructs the
+ * single-doc provider internally. One `documentId` maps to exactly one
+ * room/provider/root identity.
+ *
+ * SuperDoc v2 supports three first-class provider families through this field:
+ * y-websocket, Hocuspocus, and Liveblocks. The provider is selected with
+ * `providerType`; omitting it preserves the original y-websocket-only shape
+ * (`{ documentId, serverUrl, params? }`) for backward compatibility.
+ *
+ * This is intentionally distinct from the legacy provider-agnostic
+ * {@link CollaborationConfig} (`Config.modules.collaboration`): v2 owns its
+ * provider internally and does **not** accept an external Yjs `provider`/`ydoc`
+ * through this field. External `{ ydoc, provider }` remains a v1 /
+ * provider-compat concern only and is rejected as a v2 content driver.
+ */
+export type V2CollaborationConfig =
+  | V2YWebsocketCollaborationConfig
+  | V2HocuspocusCollaborationConfig
+  | V2LiveblocksCollaborationConfig;
+
+/**
+ * y-websocket single-doc provider config.
+ *
+ * `providerType` is optional: omitting it (the `{ documentId, serverUrl }`
+ * shape) is the backward-compatible default and resolves to y-websocket.
+ */
+export interface V2YWebsocketCollaborationConfig {
+  /** Provider family selector. Optional; defaults to `'y-websocket'`. */
+  providerType?: 'y-websocket';
+  /**
+   * Stable shared document identity. Both actors that pass the same
+   * `documentId` join the same room and converge on the same root Y.Doc.
+   */
+  documentId: string;
+  /** WebSocket server URL for the single-doc y-websocket provider. */
+  serverUrl?: string;
+  /** Alias for {@link serverUrl}; `url` wins when both are present. */
+  url?: string;
+  /**
+   * Optional connection query params forwarded to the provider (for example
+   * an auth token). Values are strings.
+   */
+  params?: Record<string, string> | null;
+  /** Explicit room operation. Defaults to `'join'`; `'create'` never joins an existing room. */
+  roomMode?: 'join' | 'create';
+}
+
+/** Hocuspocus single-doc provider config. */
+export interface V2HocuspocusCollaborationConfig {
+  providerType: 'hocuspocus';
+  /** Stable shared document identity (used as the v2 root/room identity). */
+  documentId: string;
+  /** Hocuspocus backend websocket URL. */
+  serverUrl?: string;
+  /** Alias for {@link serverUrl}; `url` wins when both are present. */
+  url?: string;
+  /** Optional connection params forwarded to the backend. */
+  params?: Record<string, string> | null;
+  /** Auth-message token forwarded to the Hocuspocus backend. */
+  token?: string;
+  /** Explicit room operation. Defaults to `'join'`; `'create'` never joins an existing room. */
+  roomMode?: 'join' | 'create';
+}
+
+/**
+ * Liveblocks single-doc provider config.
+ *
+ * Exactly one auth mode is supported: `publicApiKey` (anonymous) or
+ * `authEndpoint` (server-side token issuance).
+ */
+export interface V2LiveblocksCollaborationConfig {
+  providerType: 'liveblocks';
+  /** Stable shared document/room identity. */
+  documentId?: string;
+  /** Alias for {@link documentId} (Liveblocks room naming). */
+  roomId?: string;
+  /** Liveblocks public API key (anonymous auth) — mutually exclusive with {@link authEndpoint}. */
+  publicApiKey?: string;
+  /**
+   * Liveblocks auth endpoint URL (server-side token) — mutually exclusive with
+   * {@link publicApiKey}. Browser-relative URLs resolve against the current
+   * page; non-browser SDK/CLI callers must use an absolute HTTP(S) URL.
+   */
+  authEndpoint?: string;
+  /** Explicit room operation. Defaults to `'join'`; `'create'` never joins an existing room. */
+  roomMode?: 'join' | 'create';
+}
+
+export interface Comment {
+  id?: string;
+  commentId?: string;
+  text?: string;
+  resolved?: boolean;
+  [key: string]: unknown;
+}
+
+export interface FontFaceConfig {
+  source?: string;
+  url?: string;
+  weight?: string | number;
+  style?: string;
+  display?: string;
+  [key: string]: unknown;
+}
+
+export interface FontFamilyConfig {
+  family: string;
+  faces?: FontFaceConfig[];
+  [key: string]: unknown;
+}
+
+export type FontConfig = FontFamilyConfig;
+
+/**
+ * One row in the toolbar's font-family dropdown.
+ *
+ * Distinct from {@link FontFamilyConfig}, which describes a family to load and
+ * measure. This describes a row to render.
+ *
+ * `label` and `key` are both required because the toolbar has no fallback for
+ * either. `label` is the value applied to the selection
+ * (`emitFontCommand(option.label)`) and what active-state matching compares
+ * against (`fontOptions.find((i) => i.label === fontFamily)`); `key` is the
+ * selection identity and the rendered list key. An entry missing either one
+ * produces a blank row or an undefined command value rather than a
+ * degraded-but-working option.
+ */
+export interface ToolbarFontOption {
+  /**
+   * Logical family name. Rendered as the row's text, written to the selection
+   * when chosen, and compared against the current font for active state.
+   */
+  label: string;
+  /** Stable option identity, used for selection state and the list key. */
+  key: string;
+  /**
+   * Attributes spread onto the rendered row, which is the only channel that
+   * reaches it: both renderers bind `option.props` and nothing else
+   * (`ToolbarComboBox.vue:559`, `ToolbarDropdown.vue:420`).
+   *
+   * `props.style.fontFamily` is the preview stack the row is drawn in;
+   * `normalizeFontOption` falls back to `label` then `key` when it is absent,
+   * so a row always previews in something. Weight and any other per-row style
+   * go here too — `props: { style: { fontWeight: 700 } }` renders, a top-level
+   * `fontWeight` does not.
+   */
+  props?: {
+    style?: { fontFamily?: string; [key: string]: unknown };
+    [key: string]: unknown;
+  };
+}
+
+export interface FontsConfig {
+  bundled?: boolean | 'baseline' | 'full' | string[] | Record<string, unknown>;
+  families?: FontFamilyConfig[];
+  /**
+   * Base URL the bundled substitute pack (and curated faces) are fetched from, e.g. `'/fonts/'`.
+   * Canonical self-hosting field. When no pack is configured, SuperDoc fetches no bundled assets.
+   */
+  assetBaseUrl?: string;
+  /**
+   * Resolver for per-asset URLs (signed / versioned / CDN), called for each bundled face filename.
+   * Takes precedence over {@link assetBaseUrl} when present.
+   */
+  resolveAssetUrl?: FontAssetUrlResolver;
+  /** @deprecated Use {@link assetBaseUrl} (string) or {@link resolveAssetUrl} (function) instead. */
+  assetUrl?: string | FontAssetUrlResolver;
+  [key: string]: unknown;
+}
+
+export interface FontsResolvedPayload {
+  report?: FontResolutionRecord[];
+  missingFonts?: string[];
+  documentFonts?: string[];
+  documentFontOptions?: DocumentFontOption[];
+  [key: string]: unknown;
+}
+
+export interface FontsChangedPayload extends FontsResolvedPayload {
+  source?: string;
+  loadSummary?: FontLoadSummary | null;
+}
+
+export interface ListDefinitionsPayload {
+  [key: string]: unknown;
+}
+
+export type ProofingIssueKind = 'spelling' | 'grammar' | 'style';
+
+export interface ProofingCapabilities {
+  issueKinds: ProofingIssueKind[];
+  supportsSuggestions?: boolean;
+  supportsMultipleLanguages?: boolean;
+  supportsBatching?: boolean;
+  requiresNetwork?: boolean;
+}
+
+export interface ProofingSegmentMetadata {
+  blockId?: string;
+  pageIndex?: number;
+  surface: 'body' | 'header' | 'footer' | 'table-cell' | 'other';
+}
+
+export interface ProofingSegment {
+  id: string;
+  text: string;
+  language?: string | null;
+  metadata: ProofingSegmentMetadata;
+}
+
+export interface ProofingCheckRequest {
+  documentId?: string | null;
+  defaultLanguage?: string | null;
+  maxSuggestions?: number;
+  segments: ProofingSegment[];
+  signal?: AbortSignal;
+}
+
+export interface ProofingIssue {
+  segmentId: string;
+  /** Zero-based start offset into the segment text (UTF-16 code units). */
+  start: number;
+  /** Zero-based end offset into the segment text (UTF-16 code units, exclusive). */
+  end: number;
+  kind: ProofingIssueKind;
+  message?: string;
+  replacements?: string[];
+  ruleId?: string;
+  providerMeta?: Record<string, unknown>;
+}
+
+export interface ProofingCheckResult {
+  issues: ProofingIssue[];
+}
+
+/**
+ * Provider-agnostic proofing engine. SuperDoc owns segment extraction,
+ * scheduling, and rendering; providers only inspect text and return ranges.
+ */
+export interface ProofingProvider {
+  id: string;
+  getCapabilities?: () => Promise<ProofingCapabilities> | ProofingCapabilities;
+  check: (request: ProofingCheckRequest) => Promise<ProofingCheckResult>;
+  dispose?: () => Promise<void> | void;
+}
+
+export interface SelectionInfo {
+  [key: string]: unknown;
+}
 
 /**
  * Font surface on a SuperDoc instance (`superdoc.fonts`). The substitution- and load-aware
@@ -112,6 +905,13 @@ export interface SuperDocFontsApi {
    * a preview family. Document fonts only - compose with the defaults.
    */
   getDocumentFontOptions(): DocumentFontOption[];
+  /**
+   * The complete font-family picker list for the active document: the bundled offerings gated on its
+   * font activation (baseline when no pack is configured, the curated rich set when it is, honoring
+   * include/exclude) unioned with the document's own fonts, sorted alphabetically. Drives the built-in
+   * toolbar font dropdown; ready to use, not just document fonts.
+   */
+  getFontFamilyOptions(): FontFamilyOption[];
   /**
    * Observe the font report: replays the current report immediately if one has already
    * resolved, then invokes `callback` on every future change. Use this rather than
@@ -213,7 +1013,7 @@ export interface Document {
   /** The type of the document. */
   type: string;
   /** The initial data of the document (File, Blob, or null). */
-  data?: File | Blob | null;
+  data?: globalThis.File | globalThis.Blob | null;
   /** The name of the document. */
   name?: string;
   /** The URL of the document. */
@@ -230,6 +1030,14 @@ export interface Document {
    * Consumers needing Hocuspocus-specific members must narrow before use.
    */
   provider?: CollaborationProvider;
+  /**
+   * Document-level v2 collaboration handoff. When present, the v2 runtime
+   * makes this document collaborative through the shipped single-doc
+   * y-websocket provider (one room / Y.Doc / awareness channel per
+   * `documentId`). See {@link V2CollaborationConfig}. Ignored by the v1
+   * editor, which uses `Config.modules.collaboration` instead.
+   */
+  v2Collaboration?: V2CollaborationConfig | null;
 }
 
 /**
@@ -239,7 +1047,7 @@ export interface Document {
  *
  * `documents` is typed as the public `Document[]` view. Internally the
  * runtime tracks `RuntimeDocument`, which adds runtime-only fields
- * (`getEditor`, `getPresentationEditor`, `restoreComments`, etc.) for
+ * (editor/renderer accessors, `restoreComments`, etc.) for
  * SuperDoc's own lifecycle plumbing. Those fields are not part of the
  * supported surface; consumers using `state.documents` should treat
  * each entry as `Document` and not rely on the richer runtime shape.
@@ -254,19 +1062,17 @@ export interface SuperDocState {
 /**
  * External collaboration provider interface. Accepts any Yjs-compatible
  * provider (HocuspocusProvider, LiveblocksYjsProvider, TiptapCollabProvider,
- * etc.). Re-exported from `@superdoc/super-editor` so `Config.modules.collaboration.provider`
- * (typed against this) accepts values typed against the publicly-exported
- * `CollaborationProvider` from `superdoc`.
+ * etc.). The v2 branch exposes a structural provider type so public
+ * declarations do not depend on the v1 editor package.
  */
-export type CollaborationProvider = SuperEditorCollaborationProvider;
 
 /**
  * Internal augmentation of `Document` for runtime-only fields that the
  * SuperDoc instance attaches to each document during initialization. The
  * public `Document` interface above is what consumers pass in via
  * `Config.documents`; this type adds the fields SuperDoc itself sets and
- * reads internally (per-document `role` propagation, the live `getEditor`
- * and `getPresentationEditor` accessors that the surface manager and
+ * reads internally (per-document `role` propagation, the live editor and
+ * renderer accessors that the surface manager and
  * mode-switch helpers walk).
  *
  * Internal use only: not part of any public typedef. Consumers cannot
@@ -293,15 +1099,15 @@ export interface RuntimeDocument extends Document {
    * deprecation marker forward from the source accessor in
    * `packages/superdoc/src/composables/use-document.js`.
    */
-  getEditor?: () => SuperEditor | null | undefined;
+  getEditor?: () => Editor | null | undefined;
   /**
-   * Returns the PresentationEditor for this document, when the runtime
+   * Returns the DocumentRendererRuntime for this document, when the runtime
    * has created one. Set by the editor-create lifecycle.
    *
    * @deprecated Direct editor access will be removed in a future version.
    * Use the Document API (`editor.doc`) instead.
    */
-  getPresentationEditor?: () => SuperEditorPresentationEditor | null | undefined;
+  getDocumentRuntime?: () => DocumentRendererRuntime | null | undefined;
   /**
    * Runtime-only flag mirrored from `Config.rulers` per document by the
    * Pinia store. SuperDoc writes this on each document during the
@@ -339,12 +1145,40 @@ export interface CollaborationConfig {
   params?: object;
 }
 
-/** Options for `upgradeToCollaboration()`. */
+/**
+ * Options for `upgradeToCollaboration()`.
+ *
+ * v2 promotes a local single-DOCX editor into the shipped single-doc
+ * y-websocket room described by {@link V2CollaborationConfig}. Pass a
+ * `v2Collaboration` target to promote into a supported v2 room.
+ *
+ * The legacy `ydoc` / `provider` fields remain accepted for source
+ * compatibility with v1-shaped callers, but v2 does **not** drive document
+ * content from an arbitrary external `{ ydoc, provider }` pair: a v2 upgrade
+ * resolves to a supported v2 target through the shell's collaboration target
+ * resolver, or fails closed with a named, redacted diagnostic. The legacy
+ * fields are therefore optional and only honored when they resolve to a
+ * supported v2 room.
+ *
+ * @see {@link V2CollaborationConfig}
+ */
 export interface UpgradeToCollaborationOptions {
-  /** The target Yjs document to seed and connect to. */
-  ydoc: YDoc;
-  /** The collaboration provider to use. */
-  provider: CollaborationProvider;
+  /**
+   * Canonical supported v2 promotion target: the single-doc y-websocket room
+   * ({ documentId, serverUrl, params? }) to create from the current document.
+   * Promotion fails if the v2 room already exists.
+   */
+  v2Collaboration?: V2CollaborationConfig;
+  /**
+   * Legacy external Yjs document. Accepted for v1 source compatibility; not a
+   * supported v2 content source on its own.
+   */
+  ydoc?: YDoc;
+  /**
+   * Legacy external collaboration provider. Accepted for v1 source
+   * compatibility; not a supported v2 content source on its own.
+   */
+  provider?: CollaborationProvider;
 }
 
 /** Context passed to a link popover resolver when a link is clicked. */
@@ -368,7 +1202,7 @@ export interface LinkPopoverContext {
   /** Whether this is an anchor link (href starts with #). */
   isAnchorLink: boolean;
   /** Current document mode ('editing', 'viewing', 'suggesting'). */
-  documentMode: string;
+  documentMode: DocumentMode;
   /** Computed popover position relative to editor surface. */
   position: { left: string; top: string };
   /** Close the popover programmatically. */
@@ -403,6 +1237,115 @@ export type LinkPopoverResolution =
  * default popover.
  */
 export type LinkPopoverResolver = (ctx: LinkPopoverContext) => LinkPopoverResolution | null | undefined;
+
+/**
+ * Canonical presentation settings for the built-in comments UI.
+ *
+ * Presentation only, and deliberately not the whole of `modules.comments`.
+ * That block also carries `readOnly` and `allowResolve`, which resolve through
+ * `interaction.comments`, and `permissionResolver`, which is read off
+ * `modules.comments` or the top-level `Config`. All three are stripped from
+ * this bag: policy outlives the built-in UI, so an application drawing its own
+ * comment surface still has to honor it. See the fields themselves, which are
+ * rejected by name with the spelling that applies to each.
+ *
+ * Open on purpose, for the same reason `modules.comments` is: the runtime
+ * merges this bag over that block and spreads the result through the comments
+ * store, which accepts pass-through keys. Closing it would reject working
+ * configurations, which is a worse failure than the missing autocomplete it
+ * would buy. The named fields are the ones the shell reads.
+ */
+export type CommentsConfig = {
+  /** How comments present themselves as the surface narrows. */
+  displayMode?: 'auto' | 'sidebar' | 'inline';
+  /** CSS selector for an explicit width measurement target in `auto` mode. */
+  compactMeasurementSelector?: string;
+  /** Fixed compact-mode breakpoint override, in pixels. */
+  compactBreakpointPx?: number;
+  /** Comment highlight colors (internal/external and active overrides). */
+  highlightColors?: {
+    /** Base highlight color for internal comments. */
+    internal?: string;
+    /** Base highlight color for external comments. */
+    external?: string;
+    /** Active highlight color override for internal comments. */
+    activeInternal?: string;
+    /** Active highlight color override for external comments. */
+    activeExternal?: string;
+  };
+  /** Comment highlight opacity, active and inactive. */
+  highlightOpacity?: {
+    /** Opacity for the active comment highlight. */
+    active?: number;
+    /** Opacity for inactive comment highlights. */
+    inactive?: number;
+  };
+  /** Highlight color used while hovering a comment. */
+  highlightHoverColor?: string;
+  /** Tracked-change highlight colors. */
+  trackChangeHighlightColors?: TrackChangeHighlightColors;
+  /** Active tracked-change highlight colors (defaults to the above). */
+  trackChangeActiveHighlightColors?: TrackChangeHighlightColors;
+  /**
+   * Policy, not presentation. `normalizeUiConfig` strips all three from this
+   * bag before anything reads it, so accepting them here would advertise a
+   * setting that is silently discarded.
+   *
+   * `readOnly` and `allowResolve` belong on `interaction.comments`, where they
+   * resolve and keep applying to an application drawing its own comment
+   * surface.
+   *
+   * `permissionResolver` is collaboration wiring rather than policy, and has
+   * no `ui` spelling at all. `pickResolver` takes the first of
+   * `modules.comments.permissionResolver` and the top-level
+   * `Config.permissionResolver`, in that order, so either works and the
+   * comments-scoped one wins.
+   */
+  readOnly?: never;
+  allowResolve?: never;
+  permissionResolver?: never;
+} & Record<string, unknown>;
+
+/** Border and background colors for one tracked-change highlight state. */
+export interface TrackChangeHighlightColors {
+  /** Border color for inserted text. */
+  insertBorder?: string;
+  /** Background color for inserted text. */
+  insertBackground?: string;
+  /** Border color for deleted text. */
+  deleteBorder?: string;
+  /** Background color for deleted text. */
+  deleteBackground?: string;
+  /** Border color for a format change. */
+  formatBorder?: string;
+}
+
+/**
+ * Canonical configuration for the chrome drawn around content controls.
+ *
+ * `chrome` is the whole option bag this surface has. `'default'` and `'none'`
+ * are the only values the painter and the v2 host accept; anything else is
+ * coerced back to `'default'`.
+ */
+export interface ContentControlsConfig {
+  /** Whether SuperDoc draws its own chrome around each content control. */
+  chrome?: 'default' | 'none';
+}
+
+/**
+ * Canonical configuration for the built-in link popover.
+ *
+ * `popoverResolver` supersedes `modules.links.popoverResolver`, which stays
+ * supported for all of v2. Setting both keeps the canonical one; the legacy
+ * spelling only applies when the canonical one is absent.
+ */
+export interface LinkPopoverConfig {
+  /**
+   * Called when a user clicks a link, to decide which popover to show.
+   * Returning `null` or `undefined` falls back to the built-in popover.
+   */
+  popoverResolver?: LinkPopoverResolver;
+}
 
 // ---------------------------------------------------------------------------
 // Context menu types
@@ -462,14 +1405,83 @@ export interface ContextMenuItem {
   icon?: string;
   /** Custom Vue component to render this item. */
   component?: unknown;
-  /** Callback invoked when the item is clicked. */
+  /**
+   * Callback invoked when the item is clicked.
+   *
+   * @deprecated replaceWith=`onSelect` removeIn=v3.0 — V1 only. SuperDoc 2
+   * cannot invoke this: its first argument is a ProseMirror `Editor` the v2
+   * runtime does not have, and `ContextMenuContext` carries fields v2 does not
+   * expose. Items using it render and then do nothing when clicked, and the
+   * runtime warns once naming the replacement.
+   */
   action?: (editor: Editor, context: ContextMenuContext) => void;
+  /**
+   * Application-owned click handler. Runs after the menu dismisses.
+   *
+   * This is the supported way to attach a product action such as "copy the
+   * selection into our workflow"; the built-in `intent` union covers only what
+   * SuperDoc itself performs.
+   */
+  onSelect?: (payload: ContextMenuSelectPayload) => void | Promise<void>;
   /** Predicate controlling visibility. */
   showWhen?: (context: ContextMenuContext) => boolean;
   /** Custom renderer returning an HTML element. */
   render?: (context: ContextMenuContext) => HTMLElement;
   /** Keyboard shortcut label displayed beside the item. */
   shortcut?: string;
+}
+
+/** The menu context a `ContextMenuItem.onSelect` handler receives. */
+export interface ContextMenuSelectContext {
+  /**
+   * Text selected when the menu opened. Empty when the caret was collapsed, and
+   * also empty when a worker-backed read had not settled by click time — await
+   * `selectedTextSettled` when accuracy matters more than the gesture.
+   */
+  selectedText: string;
+  /**
+   * The settled selection text.
+   *
+   * The handler is invoked synchronously so it keeps the click's user
+   * activation, which gesture-gated APIs such as `navigator.clipboard.write`,
+   * `window.open`, and `showOpenFilePicker` require. Awaiting this resolves the
+   * accurate text but spends that activation, so reach for it only when the
+   * handler does not need a gesture. Resolves to `selectedText` when the read
+   * had already settled or failed.
+   */
+  selectedTextSettled: Promise<string>;
+  hasSelection: boolean;
+  /** How the menu was opened. */
+  trigger: 'click' | 'slash';
+  isInTable: boolean;
+  isInList: boolean;
+  documentMode: 'editing' | 'suggesting' | 'viewing';
+  isEditable: boolean;
+}
+
+/** Repaint coordination handed alongside the Document API surface. */
+export interface ContextMenuSelectReadiness {
+  /** Render epoch of the mounted surface, or null when not mounted. */
+  getRenderEpoch(): number | null;
+  /** Resolves once a mutation's scheduled repaint has settled. */
+  whenPainted(input?: { txId?: string; afterEpoch?: number | null }): Promise<{ renderEpoch: number | null }>;
+}
+
+/**
+ * What a `ContextMenuItem.onSelect` handler is given.
+ *
+ * `document` is the async Document API surface, and it is a result rather than
+ * a handle: it reports `available: false` with a reason before the document is
+ * ready, so a handler has to check before reaching for `doc`. It is not the
+ * ProseMirror `Editor` the deprecated `action` callback took, which the v2
+ * runtime does not have.
+ */
+export interface ContextMenuSelectPayload {
+  document:
+    | { available: true; doc: BrowserDocumentApi; readiness: ContextMenuSelectReadiness }
+    | { available: false; reason: string };
+  /** The context captured when the menu opened, not the live document state. */
+  context: ContextMenuSelectContext | null;
 }
 
 /** A section (group) of items in the context menu. */
@@ -695,8 +1707,14 @@ export interface ExternalSurfaceRenderContext {
 
 /** Module-level configuration for the surface system. */
 export interface SurfacesModuleConfig {
-  /** Global surface resolver. */
-  resolver?: SurfaceResolver;
+  /**
+   * Global surface resolver.
+   *
+   * `null` is the resolved "no resolver" value the normalizer produces after
+   * rejecting a non-function; SurfaceManager guards with `typeof === 'function'`
+   * either way.
+   */
+  resolver?: SurfaceResolver | null;
   /** Default dialog options. */
   dialog?: {
     /** Default escape behavior for dialogs (default: true). */
@@ -909,6 +1927,12 @@ export interface ResolvedFindReplaceTexts {
   ignoreDiacriticsLabel: string;
   /** Accessible label for ignore diacritics toggle. */
   ignoreDiacriticsAriaLabel: string;
+  /** Regex toggle text. */
+  regexLabel: string;
+  /** Accessible label for the regex toggle. */
+  regexAriaLabel: string;
+  /** Inline error shown when the regex pattern is invalid or unsafe. */
+  invalidPatternLabel: string;
 }
 
 /**
@@ -984,6 +2008,35 @@ export interface FindReplaceHandle {
   matchLabel: ComputedRef<string>;
   /** Whether there are any matches. */
   hasMatches: ComputedRef<boolean>;
+  /**
+   * Whether the replace controls should be enabled right now: there are
+   * matches, no replace is in flight, and the active session permits mutation
+   * (V2 read-only/viewing mode disables replace; V1 stays enabled).
+   */
+  canReplace: ComputedRef<boolean>;
+  /** Whether a replace mutation is currently in flight (re-entrancy guard). */
+  replacePending: Ref<boolean>;
+  /**
+   * Runtime mutability of the active session (false in viewing/read-only
+   * mode). Surfaces hide replace controls on this; `canReplace` additionally
+   * requires matches and gates the actions.
+   */
+  replaceCanMutate: Ref<boolean>;
+  /**
+   * Whether the active driver supports the ignore-diacritics toggle. V1
+   * supports it; the V2 Document API query path does not, so the toggle is
+   * hidden rather than shipped as a no-op.
+   */
+  ignoreDiacriticsSupported: Ref<boolean>;
+  /**
+   * Whether the active driver supports regex search. The V2 (`ui.search`)
+   * driver supports it; V1 hides the toggle.
+   */
+  regexSupported: Ref<boolean>;
+  /** Whether the current query is treated as a regular expression. */
+  regex: Ref<boolean>;
+  /** Inline error label when the regex pattern is invalid/unsafe, else null. */
+  searchError: Ref<string | null>;
   /** Whether replace actions are available (false for find-only mode). */
   replaceEnabled: boolean;
   /** All text strings resolved with defaults. */
@@ -1083,6 +2136,12 @@ export interface FindReplaceConfig {
   ignoreDiacriticsLabel?: string;
   /** Override ignore diacritics aria-label. */
   ignoreDiacriticsAriaLabel?: string;
+  /** Override regex toggle text. */
+  regexLabel?: string;
+  /** Override regex toggle aria-label. */
+  regexAriaLabel?: string;
+  /** Override the inline invalid-pattern error text. */
+  invalidPatternLabel?: string;
   /** Whether replace is available (default: true). */
   replaceEnabled?: boolean;
   /** When true, search includes text from pending tracked deletions. Defaults to false. */
@@ -1095,6 +2154,33 @@ export interface FindReplaceConfig {
   render?: (ctx: FindReplaceRenderContext) => { destroy?: () => void } | void;
   /** Conditional resolver. Can coexist with `component`/`render`. */
   resolver?: (ctx: FindReplaceContext) => FindReplaceResolution | null | undefined;
+  /**
+   * Where the floating find/replace bar is pinned, so it can be moved clear of
+   * the document. `placement` is a corner/edge preset; explicit insets
+   * (`top`/`right`/`bottom`/`left`, a px number or CSS length) override it.
+   * Defaults to `{ placement: 'top-right' }`.
+   */
+  floating?: {
+    placement?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'top-center' | 'bottom-center';
+    top?: number | string;
+    right?: number | string;
+    bottom?: number | string;
+    left?: number | string;
+    width?: number | string;
+    maxWidth?: number | string;
+    maxHeight?: number | string;
+    /**
+     * Focus the find input when the surface opens. Defaults to `true`; set
+     * `false` to leave focus wherever the user had it.
+     *
+     * Honored but undeclared until #1094: `useFindReplace` spreads this whole
+     * bag into the surface request, and `SurfaceManager` applies it last, over
+     * the `modules.surfaces.floating` defaults.
+     */
+    autoFocus?: boolean;
+    /** Close the surface on a pointer press outside it. Defaults to `false`. */
+    closeOnOutsidePointerDown?: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,6 +2284,10 @@ export interface Modules {
     | ({
         /** Custom permission resolver for comment actions. */
         permissionResolver?: (params: PermissionResolverParams) => boolean | undefined;
+        /** Hide and reject every comment and tracked-change mutation affordance. */
+        readOnly?: boolean;
+        /** Show ordinary comment resolve/reopen actions when writable (default: true). */
+        allowResolve?: boolean;
         /** Comment highlight colors (internal/external and active overrides). */
         highlightColors?: {
           /** Base highlight color for internal comments. */
@@ -1274,58 +2364,88 @@ export interface Modules {
   /** Collaboration module configuration. */
   collaboration?: CollaborationConfig;
   /**
-   * Toolbar module configuration. The `selector`, `groups`, `icons`, and
-   * `texts` fields fall back to the top-level `Config.toolbar`,
-   * `Config.toolbarGroups`, `Config.toolbarIcons`, and `Config.toolbarTexts`
-   * aliases respectively if not set here.
+   * Toolbar module configuration. Pass `true` to configure the toolbar with
+   * defaults (equivalent to an empty object).
+   *
+   * This field configures the toolbar's contents and behavior; it does not by
+   * itself provide a place to render it. A toolbar is only rendered once a
+   * mount target resolves, from either `selector` here or the top-level
+   * `Config.toolbar`. Without one, SuperDoc still creates the
+   * `superdoc.toolbar` handle (item lookup and command routing keep working)
+   * but renders no toolbar UI.
+   *
+   * Fallbacks to the top-level aliases are per field: `selector` falls back to
+   * `Config.toolbar`, `icons` to `Config.toolbarIcons`, and `texts` to
+   * `Config.toolbarTexts`. `Config.toolbarGroups` supplies the group ordering,
+   * not `groups`: the two are different settings. `groups` maps group ids to
+   * item ids (composition) and has no top-level alias, so omitting it uses the
+   * built-in composition. Supplying it also replaces the group ordering with
+   * its own keys.
    */
-  toolbar?: {
-    /**
-     * CSS selector (id or class) for the DOM element to render the toolbar
-     * into. Must be a string selector, not an `HTMLElement` reference. Falls
-     * back to `Config.toolbar` if omitted.
-     */
-    selector?: string;
-    /** Toolbar item ids to hide from the default set. */
-    excludeItems?: string[];
-    /**
-     * Object map of group id to item ids
-     * (`{ left: [...], center: [...], right: [...] }`) that overrides the
-     * default group composition. Default group ids are
-     * `'left' | 'center' | 'right'`. To pass an ordered group-id array
-     * (`['left', 'center', 'right']`) use the top-level `Config.toolbarGroups`
-     * instead — the array form is not accepted here.
-     */
-    groups?: Record<string, string[]>;
-    /** Icon overrides keyed by toolbar item id. Falls back to `Config.toolbarIcons`. */
-    icons?: Record<string, unknown>;
-    /** Text/label overrides keyed by toolbar item id. Falls back to `Config.toolbarTexts`. */
-    texts?: Record<string, string>;
-    /** Custom font list rendered in the font-family dropdown. */
-    fonts?: FontConfig[];
-    /** Hide buttons that overflow the available width (default: true). */
-    hideButtons?: boolean;
-    /** Recompute the visible toolbar item set on container resize (default: false). */
-    responsiveToContainer?: boolean;
-    /**
-     * Custom toolbar buttons appended to the default item set. Each entry is
-     * a `ToolbarItem`-shaped object (see the consumer-facing toolbar docs for
-     * the full shape). The internal `ToolbarItem` type is not yet on the
-     * public surface; this typedef accepts the structural shape consumers
-     * already pass through `modules.toolbar.customButtons`.
-     */
-    customButtons?: Array<Record<string, unknown>>;
-    /**
-     * Show the formatting marks (pilcrow) button in the toolbar. Off by
-     * default. Distinct from `layoutEngineOptions.showFormattingMarks`, which
-     * controls whether the marks render in the document.
-     */
-    showFormattingMarksButton?: boolean;
-    /**
-     * Show the table of contents insert button in the toolbar. Off by default.
-     */
-    showTableOfContentsButton?: boolean;
-  } & Record<string, unknown>;
+  toolbar?:
+    | boolean
+    | ({
+        /**
+         * Selector for the DOM element to render the toolbar into: an id
+         * selector (`#toolbar`), a class selector (`.toolbar`), or a bare
+         * element id (`toolbar`). Must be a string, not an `HTMLElement`
+         * reference — pass an element through the top-level `Config.toolbar`.
+         * Falls back to `Config.toolbar` if omitted.
+         */
+        selector?: string;
+        /** Toolbar item ids to hide from the default set. */
+        excludeItems?: string[];
+        /**
+         * Object map of group id to item ids
+         * (`{ left: [...], center: [...], right: [...] }`) that overrides the
+         * default group composition. Default group ids are
+         * `'left' | 'center' | 'right'`. To pass an ordered group-id array
+         * (`['left', 'center', 'right']`) use the top-level `Config.toolbarGroups`
+         * instead — the array form is not accepted here.
+         */
+        groups?: Record<string, string[]>;
+        /** Icon overrides keyed by toolbar item id. Falls back to `Config.toolbarIcons`. */
+        icons?: Record<string, unknown>;
+        /** Text/label overrides keyed by toolbar item id. Falls back to `Config.toolbarTexts`. */
+        texts?: Record<string, string>;
+        /**
+         * Custom font list rendered in the font-family dropdown.
+         *
+         * AIDEV-NOTE: legacy-public - accepts {@link FontFamilyConfig} entries
+         * alongside dropdown rows. This spelling was typed `FontConfig[]`,
+         * whose index signature let `{ family, label, key }` compile and work,
+         * so narrowing it to rows alone would break installs mid-2.x.
+         * Replaced by `ui.toolbar.fonts`, which takes rows only.
+         * Earliest removal: v3.0 (#853).
+         *
+         * The runtime uses the list verbatim and reads `label` and `key` off
+         * each entry, so a `family`-only entry renders a blank row either way.
+         */
+        fonts?: Array<FontConfig | ToolbarFontOption>;
+        /** Hide buttons that overflow the available width (default: true). */
+        hideButtons?: boolean;
+        /** Recompute the visible toolbar item set on container resize (default: false). */
+        responsiveToContainer?: boolean;
+        /**
+         * Custom toolbar buttons appended to the default item set.
+         *
+         * AIDEV-NOTE: legacy-public - stays an open record. This spelling was
+         * typed `Array<Record<string, unknown>>`, so narrowing it now would
+         * reject entries that compile and work today. Replaced by
+         * `ui.toolbar.customButtons`. Earliest removal: v3.0 (#853).
+         */
+        customButtons?: Array<Record<string, unknown>>;
+        /**
+         * Show the formatting marks (pilcrow) button in the toolbar. Off by
+         * default. Distinct from `layoutEngineOptions.showFormattingMarks`, which
+         * controls whether the marks render in the document.
+         */
+        showFormattingMarksButton?: boolean;
+        /**
+         * Show the table of contents insert button in the toolbar. Off by default.
+         */
+        showTableOfContentsButton?: boolean;
+      } & Record<string, unknown>);
   /** Link click popover configuration. */
   links?: {
     /** Custom resolver for the link click popover. */
@@ -1392,6 +2512,92 @@ export interface TrackChangesAuthorColorsConfig {
   resolve?: (author: TrackChangeAuthor) => string | undefined;
 }
 
+/**
+ * Semantic tracked-change color categories configurable through
+ * {@link TrackChangesSemanticColorsConfig}. These color review roles: inserted
+ * text, deleted text, moved-from/-to text, table cell insertion/deletion, cell
+ * merge, and cell split, not authors. The same author can therefore receive
+ * different colors for different review roles, which the author-identity path
+ * cannot express.
+ *
+ * Whole-table, table-row, and table-split changes are NOT part of this config
+ * surface: their paint colors are themed via the
+ * `--sd-tracked-changes-table-*` CSS variables instead.
+ *
+ * Declared locally (mirroring the {@link TrackChangeAuthor} pattern) so the
+ * published `superdoc` type graph never depends on the private
+ * `@superdoc/contracts` specifier. Mirrors the
+ * `TrackedChangeConfigurableSemanticColorKey` union in `@superdoc/contracts`.
+ */
+export type TrackedChangeSemanticColorKey =
+  | 'insertion'
+  | 'deletion'
+  | 'move'
+  | 'move-from'
+  | 'move-to'
+  | 'table-cell-insertion'
+  | 'table-cell-deletion'
+  | 'cell-merge'
+  | 'cell-split';
+
+/**
+ * Input passed to a semantic tracked-change color
+ * {@link TrackChangesSemanticColorsConfig.resolve | resolver} for a single
+ * review role. `key` is always present; the remaining fields describe the
+ * change being colored when SuperDoc knows them.
+ */
+export interface TrackedChangeSemanticColorResolverInput {
+  /** Semantic category being colored. */
+  key: TrackedChangeSemanticColorKey;
+  /** Author identity, when known. Semantic colors are not author-derived. */
+  author?: TrackChangeAuthor;
+  /** Raw tracked-change type, when known. */
+  type?: string;
+  /** Logical subtype, when known. */
+  subtype?: string;
+  /** Target kind (e.g. text/cell/row/table), when known. */
+  targetKind?: string;
+  /** Scope of the semantic paint anchor, when known. */
+  semanticAnchorScope?: string;
+}
+
+/**
+ * Semantic tracked-change color configuration. The second
+ * tracked-change color axis alongside {@link TrackChangesAuthorColorsConfig}:
+ * `authorColors` colors by author identity, `semanticColors` colors review
+ * roles (inserted text, deleted text, moved text, table cell
+ * insertion/deletion, cell merge, cell split).
+ *
+ * Supported semantic colors are active by default. Word-like defaults apply with
+ * no configuration: insertion blue, deletion red, and moved text green.
+ * Resolution order per key: `overrides` by semantic key, `overrides.move` for
+ * `move-from` / `move-to`, then `resolve(input)`, then the built-in default for
+ * that key. Set `enabled: false` to suppress semantic colors and fall back to
+ * existing author/broad defaults.
+ *
+ * Whole-table, table-row, and table-split paint colors are themed through the
+ * `--sd-tracked-changes-table-*` CSS variables, not this config.
+ *
+ * This is separate from `modules.comments.trackChangeHighlightColors`, the
+ * older broad insert/delete/format CSS-variable surface.
+ */
+export interface TrackChangesSemanticColorsConfig {
+  /** When `false`, semantic colors are not applied. Defaults to enabled. */
+  enabled?: boolean;
+  /**
+   * Color overrides keyed by semantic category (`'insertion'`, `'deletion'`,
+   * `'move'`, `'move-from'`, `'move-to'`, `'table-cell-insertion'`,
+   * `'table-cell-deletion'`, `'cell-merge'`, `'cell-split'`). `move` applies
+   * to both move sides unless a side-specific override exists.
+   */
+  overrides?: Partial<Record<TrackedChangeSemanticColorKey, string>>;
+  /**
+   * Resolver consulted after `overrides`. Return a CSS color string, or
+   * `undefined` to fall through to the built-in default for the key.
+   */
+  resolve?: (input: TrackedChangeSemanticColorResolverInput) => string | undefined;
+}
+
 export interface TrackChangesModuleConfig {
   /** Whether tracked-change indicators are shown in viewing mode. */
   visible?: boolean;
@@ -1423,6 +2629,14 @@ export interface TrackChangesModuleConfig {
    * `ui.trackChanges.getSnapshot()` exposes the resolved author colors.
    */
   authorColors?: TrackChangesAuthorColorsConfig;
+  /**
+   * Semantic (structural) tracked-change colors. Colors structural change
+   * subtypes: moved text, table cell insertion/deletion, cell merge, and cell
+   * split, independently of {@link authorColors}. Supported keys are active by
+   * default; set `enabled: false` to fall back to existing author/broad
+   * defaults. Separate from `modules.comments.trackChangeHighlightColors`.
+   */
+  semanticColors?: TrackChangesSemanticColorsConfig;
 }
 
 export type DocumentMode = 'editing' | 'viewing' | 'suggesting';
@@ -1459,7 +2673,7 @@ export interface ExportParams {
   /** Custom filename (without extension). */
   exportedName?: string;
   /** Extra files to include in the export zip. */
-  additionalFiles?: Blob[];
+  additionalFiles?: globalThis.Blob[];
   /** Filenames for the additional files. */
   additionalFileNames?: string[];
   /** Whether this is a final document export. */
@@ -1524,6 +2738,33 @@ export interface SuperDocEditorPayload {
 }
 
 /**
+ * Payload emitted with `document-replaced`.
+ *
+ * `editor` is the editor whose replacement completed, not necessarily the one
+ * active when the event is received: a replace is asynchronous, so the active
+ * editor can move while it is in flight. A consumer must compare this against
+ * the editor it is bound to and ignore anything else.
+ *
+ * Typed `unknown` rather than `Editor`: the active editor can be a v2 facade
+ * that does not satisfy `Editor` (`getHTML` is required there and absent on the
+ * facade), so annotating it as `Editor` would promise methods that are not
+ * present. It is an identity token to compare, not an object to call.
+ */
+export interface SuperDocDocumentReplacedPayload {
+  editor: unknown;
+  /**
+   * The host that rendered the replaced document.
+   *
+   * Carried because `editor` alone cannot be matched in the V2 browser path: a
+   * successful replace emits its ready payload before `replaceFile()` resolves,
+   * so the shell has already installed a NEW facade by the time this event
+   * fires, and the captured facade is one the controller no longer holds. The
+   * host survives that swap, so it is the identity that still lines up.
+   */
+  host: unknown;
+}
+
+/**
  * Payload emitted with the `locked` event and passed to
  * `Config.onLocked`. `lockedBy` is non-optional because the runtime
  * always includes the key (`lockSuperdoc` defaults `lockedBy` to
@@ -1571,12 +2812,40 @@ export interface SuperDocCommentsUpdatePayload {
    * yourself ahead of the floating-bubble click.
    *
    * `null` means the pending comment did not start from an addressable
-   * SuperEditor text selection, or the active editor/selection API was
-   * unavailable. PDF and other non-SuperEditor selections emit `null`.
-   * Empty SuperEditor selections can still yield a `SelectionInfo` with
+   * SuperDoc editor text selection, or the active editor/selection API was
+   * unavailable. PDF and other non-SuperDoc editor selections emit `null`.
+   * Empty SuperDoc editor selections can still yield a `SelectionInfo` with
    * `target: null`.
    */
   pendingSelection?: SelectionInfo | null;
+}
+
+export interface EditorTransactionLike {
+  readonly docChanged?: boolean;
+  readonly doc?: {
+    readonly content?: { readonly size?: number };
+    nodesBetween?: (
+      from: number,
+      to: number,
+      callback: (node: {
+        readonly type?: { readonly name?: string };
+        readonly attrs?: Record<string, unknown>;
+        readonly marks?: ReadonlyArray<{
+          readonly type?: { readonly name?: string };
+          readonly attrs?: Record<string, unknown>;
+        }>;
+      }) => false | void | undefined,
+    ) => void;
+  };
+  readonly mapping?: {
+    readonly maps?: ReadonlyArray<{
+      forEach(callback: (oldStart: number, oldEnd: number, newStart: number, newEnd: number) => void): void;
+    }>;
+    slice?(from: number): {
+      map(position: number, assoc?: number): number;
+    };
+  };
+  getMeta?(key: unknown): unknown;
 }
 
 export interface EditorTransactionEvent {
@@ -1584,8 +2853,8 @@ export interface EditorTransactionEvent {
   editor: Editor;
   /** The editor instance that emitted the transaction. For body edits, this matches `editor`. */
   sourceEditor: Editor;
-  /** The ProseMirror transaction emitted by the source editor. */
-  transaction: Transaction;
+  /** The editor transaction emitted by the source editor. */
+  transaction: EditorTransactionLike;
   /** Time spent applying the transaction, in milliseconds. */
   duration?: number;
   /** The surface where the transaction originated. */
@@ -1658,6 +2927,32 @@ export interface SuperDocLayoutEngineOptions {
    * Toggleable at runtime via `superdoc.setShowFormattingMarks()`.
    */
   showFormattingMarks?: boolean;
+  /**
+   * Whether the V2 mounted body paints progressively from an initial window.
+   * Defaults to `true`.
+   *
+   * @experimental Diagnostic posture, not a supported product mode and not a
+   * pipeline bypass: both settings route through the same canonical
+   * render-pipeline engine. `true` (default) paints an initial window and
+   * (the canonical initial-render and incremental engine
+   * passes); `false` makes EVERY mounted repaint wait for complete source
+   * coverage and materialize the full body before painting — not only the
+   * first paint — via the exact-complete engine pass, which can be much
+   * slower than progressive streaming on large documents. Failures fail
+   * closed: the mount/repaint promise rejects with a named
+   * `render.complete-before-first-paint-*` error and the host records a
+   * render-readiness diagnostic. The render surface has no independent
+   * first-paint timeout; callers and harnesses must provide their own.
+   */
+  /**
+   * P6a: per-paint work-counter HUD (console table +
+   * `data-v2-paint-hud-recent`) and the dark reuse-collapse tripwire for the
+   * windowed paint owner (since P7, vertical-paginated flow's only paint
+   * path — no flag needed).
+   *
+   * @experimental Dev/verification instrument.
+   */
+  paintHud?: boolean;
 }
 
 export interface ViewingVisibilityConfig {
@@ -1715,20 +3010,40 @@ export interface SuperDocExceptionEditorPayload {
 }
 
 /**
- * Union of all `exception` event payloads SuperDoc emits at runtime.
- * Consumers can narrow with `'stage' in payload` (store init) or
- * `'code' in payload` (editor lifecycle).
+ * Exception payload raised by the built-in toolbar.
  *
- * The union exists today because three independent emit sites
- * (`initializeDocuments`, the restore path, and the editor lifecycle)
- * pre-date a shared error contract. Normalizing them to a single
- * payload shape is a separate follow-up; consumers can narrow with
+ * Emitted for a command that failed and for a custom entry the toolbar could
+ * not build, in which case `itemName` is the entry that was skipped and the
+ * message names the field that would fix it. Reaches the host as well as the
+ * toolbar, because entries are built inside the toolbar constructor and
+ * nothing can have subscribed to the toolbar yet.
+ */
+export interface SuperDocExceptionToolbarPayload {
+  error: Error;
+  /** The value originally thrown, before it was normalized to an `Error`. */
+  originalError: unknown;
+  /** The toolbar item involved, or `null` when the entry had no usable name. */
+  itemName: string | null;
+  editor?: Editor | null;
+}
+
+/**
+ * Union of all `exception` event payloads SuperDoc emits at runtime.
+ * Consumers can narrow with `'stage' in payload` (store init),
+ * `'code' in payload` (editor lifecycle), or `'itemName' in payload`
+ * (built-in toolbar).
+ *
+ * The union exists today because four independent emit sites
+ * (`initializeDocuments`, the restore path, the editor lifecycle, and the
+ * built-in toolbar) pre-date a shared error contract. Normalizing them to a
+ * single payload shape is a separate follow-up; consumers can narrow with
  * the `in` checks above in the meantime.
  */
 export type SuperDocExceptionPayload =
   | SuperDocExceptionStorePayload
   | SuperDocExceptionRestorePayload
-  | SuperDocExceptionEditorPayload;
+  | SuperDocExceptionEditorPayload
+  | SuperDocExceptionToolbarPayload;
 
 /**
  * Zoom mode. `manual` holds whatever value was last set; `fit-width`
@@ -1737,6 +3052,22 @@ export type SuperDocExceptionPayload =
  * `manual`; `setZoomMode('fit-width')` re-enters fitting.
  */
 export type SuperDocZoomMode = 'manual' | 'fit-width';
+
+/**
+ * Measurement unit for rulers and measurement fields (Word's "measurement
+ * units" preference). `in` = inches, `cm` = centimetres. Set the starting unit
+ * with `Config.measurementUnit`; change it at runtime with `setMeasurementUnit()`.
+ */
+export type SuperDocMeasurementUnit = 'in' | 'cm';
+
+/**
+ * Payload emitted with the `measurement-unit-change` event. Fires when
+ * `setMeasurementUnit()` changes the document-wide ruler/measurement unit.
+ */
+export interface SuperDocMeasurementUnitChangePayload {
+  /** The measurement unit now in effect. */
+  unit: SuperDocMeasurementUnit;
+}
 
 /**
  * Payload emitted with the `zoomChange` event and passed to
@@ -1844,6 +3175,193 @@ export interface SuperDocZoomConfig {
   /** Bounds and padding for the `fit-width` policy. */
   fitWidth?: SuperDocFitWidthOptions;
 }
+/**
+ * Per-surface built-in UI configuration. Every field is optional; an omitted
+ * field keeps that surface's historical default rather than inheriting from
+ * its siblings, so a partial config only changes what it names.
+ *
+ * `false` disables a surface, `true` enables it with defaults, and an options
+ * object both enables and configures it.
+ *
+ * @see {@link Config.ui}
+ */
+export interface UIConfig {
+  /**
+   * Built-in toolbar. Enabled by default, but a toolbar only appears once
+   * `container` resolves to an element — enabling it without one creates the
+   * `superdoc.toolbar` handle and renders nothing.
+   */
+  toolbar?:
+    | boolean
+    | {
+        /**
+         * Where to render the toolbar: an element, an id selector
+         * (`#toolbar`), a class selector (`.toolbar`), or a bare element id.
+         * Other CSS selector syntax resolves to nothing.
+         */
+        container?: string | HTMLElement;
+        /**
+         * Which groups render, or what goes in them. The shape decides which
+         * of the two it means, so both v1 spellings have somewhere to land.
+         *
+         * An array selects which groups render, e.g.
+         * `['left', 'center', 'right']`. This is where `Config.toolbarGroups`
+         * moves to. It is a membership list, not a sort order: the built-in
+         * toolbar lays groups out left, center, right, and renders center
+         * whether or not it is listed.
+         *
+         * An object is composition: a group id mapped to the item ids inside
+         * it, e.g. `{ right: ['bold'] }`. This is where
+         * `modules.toolbar.groups` moves to. Supplying both an ordering array
+         * here and a legacy composition map keeps the composition and applies
+         * the ordering as a filter.
+         */
+        groups?: string[] | Record<string, string[]>;
+        /** Toolbar item ids to hide from the default set. */
+        excludeItems?: string[];
+        /** Icon overrides, merged over the built-in set. */
+        icons?: Record<string, unknown>;
+        /** Text overrides, merged over the built-in set. */
+        texts?: Record<string, unknown>;
+        /**
+         * Hide buttons that overflow the available width (default: true).
+         *
+         * The runtime has always honored this through the toolbar options
+         * pass-through; it was only missing from this type, so passing it here
+         * failed excess-property checks while working at runtime.
+         */
+        hideButtons?: boolean;
+        /** Size the toolbar to its container rather than the viewport. */
+        responsiveToContainer?: boolean;
+        /**
+         * Custom font list rendered in the font-family dropdown. The runtime
+         * uses this list verbatim, so entries are dropdown rows
+         * ({@link ToolbarFontOption}), not families to load
+         * ({@link FontFamilyConfig}). Register loadable families through
+         * `fonts.families` instead.
+         */
+        fonts?: ToolbarFontOption[];
+        /**
+         * Custom toolbar entries appended to the default item set. See
+         * `ToolbarCustomButton` for which shapes render.
+         *
+         * `readonly` so an `as const` array is accepted. Without it the array
+         * built in a separate variable had no way through: widening turns each
+         * `type` into `string`, `as const` is the documented answer to that,
+         * and a mutable field then rejected the result. The toolbar only reads
+         * this.
+         */
+        customButtons?: readonly ToolbarCustomButton[];
+        /**
+         * Show the formatting marks (pilcrow) button in the toolbar. Off by
+         * default. Distinct from `layoutEngineOptions.showFormattingMarks`, which
+         * controls whether the marks render in the document.
+         */
+        showFormattingMarksButton?: boolean;
+        /** Show the table of contents insert button in the toolbar. Off by default. */
+        showTableOfContentsButton?: boolean;
+      };
+  /** Built-in comments UI. Enabled by default. */
+  comments?: boolean | CommentsConfig;
+  /** Built-in right-click and slash context menu. Enabled by default. */
+  contextMenu?: boolean | ContextMenuConfig;
+  /**
+   * Built-in find/replace surface. Disabled by default. Enabling it lets
+   * SuperDoc intercept Cmd+F / Ctrl+F; `editor.ui.search` stays available to
+   * custom UI either way.
+   */
+  search?: boolean | FindReplaceConfig;
+  /**
+   * Built-in popover shown when a link is clicked. It renders by default;
+   * pass `false` (or `ui: false`) to suppress it. Supplying a
+   * {@link LinkPopoverConfig.popoverResolver} replaces it with your own UI.
+   */
+  linkPopover?: boolean | LinkPopoverConfig;
+  /** Built-in ruler. Disabled by default. */
+  ruler?:
+    | boolean
+    | {
+        /** Element or selector to render the ruler into. */
+        container?: string | HTMLElement;
+      };
+  /** Built-in chrome drawn around content controls. Enabled by default. */
+  contentControls?: boolean | ContentControlsConfig;
+}
+
+/**
+ * What the user is permitted to do, as distinct from what SuperDoc draws.
+ *
+ * Policy outlives presentation: `ui: false` removes the built-in comment
+ * dialog, but an application rendering its own still needs `readOnly`
+ * enforced. Keeping the two apart means a custom UI does not have to hold a
+ * `modules.comments` object alive purely to carry policy.
+ */
+export interface InteractionConfig {
+  /** Comment and tracked-change interaction policy. */
+  comments?: {
+    /** Reject every comment and tracked-change mutation (default: false). */
+    readOnly?: boolean;
+    /** Offer resolve/reopen actions when writable (default: true). */
+    allowResolve?: boolean;
+  };
+}
+
+/**
+ * Shared plumbing for dialogs and floating overlays, including surfaces the
+ * application opens itself through `superdoc.openSurface()`.
+ *
+ * Unaffected by `ui: false`: turning off SuperDoc's own surfaces does not
+ * disable the mechanism an application uses to render its own.
+ */
+export interface SurfacesConfig {
+  /**
+   * Resolver for intent-based surface requests.
+   *
+   * `null` explicitly clears a resolver inherited from the legacy
+   * `modules.surfaces.resolver`, which omitting the key does not do.
+   */
+  resolver?: SurfaceResolver | null;
+  /** Defaults applied to dialog surfaces. */
+  dialog?: {
+    /** Close on Escape (default: true). */
+    closeOnEscape?: boolean;
+    /** Close on backdrop click (default: true). */
+    closeOnBackdrop?: boolean;
+    /** Default max width. */
+    maxWidth?: string | number;
+  };
+  /** Defaults applied to floating surfaces. */
+  floating?: {
+    /** Placement preset (default: 'top-right'). */
+    placement?: SurfaceFloatingPlacement;
+    /** Default width. */
+    width?: string | number;
+    /** Default max width. */
+    maxWidth?: string | number;
+    /** Default max height. */
+    maxHeight?: string | number;
+    /** Close on Escape (default: true). */
+    closeOnEscape?: boolean;
+    /** Close on outside pointer down (default: false). */
+    closeOnOutsidePointerDown?: boolean;
+    /** Focus the surface on open (default: true). */
+    autoFocus?: boolean;
+  };
+}
+
+/**
+ * Browser worker asset URLs for deployments where application code and built
+ * SuperDoc assets are served from different origins. Each URL must resolve to
+ * a same-origin module worker served by the embedding application.
+ */
+interface V2WorkerUrlsConfig {
+  /** Main document worker used by non-collaborative v2 documents. */
+  document?: string | URL;
+  /** Collaboration-capable document worker used by v2 collaboration rooms. */
+  collaboration?: string | URL;
+  /** Isolated review-index worker used for comments and tracked changes. */
+  reviewIndex?: string | URL;
+}
 
 export interface Config {
   /** The ID of the SuperDoc. */
@@ -1862,9 +3380,20 @@ export interface Config {
   role?: 'editor' | 'viewer' | 'suggester';
   /**
    * The document to load. If a string, it will be treated as a URL. If a File
-   * or Blob, it will be used directly.
+   * or Blob, it will be used directly. For a v2 collaboration room, pass a
+   * structured document carrying `v2Collaboration`.
+   *
+   * Omitting this field and `documents` mounts a blank DOCX, so the Editor
+   * opens a real document rather than an empty surface. The blank document is
+   * a supported v2 source; it is seeded before mount and behaves like any
+   * other opened DOCX, including export.
+   *
+   * Setting the v1 `modules.collaboration` field also suppresses that seeding,
+   * but it is not a supported v2 path: the runtime fails closed with
+   * `collaboration-v1-config-unsupported` and mounts only enough state to
+   * report that error.
    */
-  document?: object | string | File | Blob;
+  document?: object | string | globalThis.File | globalThis.Blob;
   /** Password for encrypted DOCX files. Forwarded during document load. */
   password?: string;
   /** The documents to load → soon to be deprecated. */
@@ -1881,12 +3410,77 @@ export interface Config {
   users?: User[];
   /** Colors to use for user awareness. */
   colors?: string[];
+  /**
+   * Which built-in interface SuperDoc renders.
+   *
+   * Omit it to keep SuperDoc's historical rendering: comments, the context
+   * menu, and content-control chrome are on; search, the link popover, and
+   * the ruler are opt-in; and the toolbar renders once it has somewhere to
+   * mount. That profile is not symmetrical, and omitting this field
+   * reproduces it exactly.
+   *
+   * Pass `false` when the application owns the interface. SuperDoc then
+   * renders no controls, chrome, dialogs, or popovers, while the document,
+   * the Document API, and `editor.ui` keep working — so a custom UI drives
+   * the same commands the built-in one would have.
+   *
+   * Pass an object to choose per surface. An omitted key keeps that
+   * surface's default rather than following its siblings, so
+   * `{ comments: false }` disables comments and changes nothing else.
+   *
+   * @example
+   * // Application owns the interface.
+   * new SuperDoc({ selector: '#editor', document: file, ui: false });
+   *
+   * @example
+   * // Built-in toolbar and search, no comments or context menu.
+   * new SuperDoc({
+   *   selector: '#editor',
+   *   document: file,
+   *   ui: {
+   *     toolbar: { container: '#toolbar' },
+   *     search: true,
+   *     comments: false,
+   *     contextMenu: false,
+   *   },
+   * });
+   */
+  ui?: false | UIConfig;
+  /**
+   * What the user is permitted to do. Independent of {@link Config.ui}: a
+   * `readOnly` policy still applies when the application renders its own
+   * comment UI.
+   */
+  interaction?: InteractionConfig;
+  /**
+   * Shared configuration for dialogs and floating overlays, including ones
+   * opened through `superdoc.openSurface()`. Stays active under `ui: false`.
+   */
+  surfaces?: SurfacesConfig;
   /** Modules to load. */
   modules?: Modules;
   /** Top-level override for permission checks. */
   permissionResolver?: (params: PermissionResolverParams) => boolean | undefined;
-  /** Optional DOM element to render the toolbar in. */
-  toolbar?: string;
+  /**
+   * Where to render the built-in toolbar. Either an `HTMLElement`, or a
+   * selector string in one of the supported forms: an id selector (`#toolbar`),
+   * a class selector (`.toolbar`), or a bare element id (`toolbar`). Other CSS
+   * selector syntax is not supported — an attribute or descendant selector such
+   * as `[data-toolbar]` resolves to nothing and leaves the toolbar unrendered.
+   *
+   * SuperDoc renders into the resolved element but does not manage its
+   * placement, and never includes it in the `contained` layout calculation.
+   * Where the application puts it therefore decides the space it needs: a
+   * sibling of a 400px `contained` Editor adds its own height alongside it,
+   * while a toolbar placed inside that host consumes part of the 400px and can
+   * overflow it.
+   *
+   * Omitting this field (and `modules.toolbar.selector`) renders no toolbar.
+   * `modules.toolbar: true` on its own does not render one either — it creates
+   * the `superdoc.toolbar` handle without a mount target. See
+   * {@link Modules.toolbar}.
+   */
+  toolbar?: string | HTMLElement;
   /** Toolbar groups to show. */
   toolbarGroups?: string[];
   /** Icons to show in the toolbar. */
@@ -1914,20 +3508,34 @@ export interface Config {
    */
   disablePiniaDevtools?: boolean;
   /**
-   * Layout engine overrides passed through to PresentationEditor (page size,
+   * Layout engine overrides passed through to DocumentRendererRuntime (page size,
    * margins, virtualization, zoom, debug label, etc.).
    */
   layoutEngineOptions?: SuperDocLayoutEngineOptions;
   /**
-   * Advanced PresentationEditor feature toggles. `unifiedHistory` is enabled
+   * Advanced DocumentRendererRuntime feature toggles. `unifiedHistory` is enabled
    * by default; set it to `false` to force legacy active-surface undo
-   * routing.
+   * routing. `v2Host` enables the experimental mode-aware v2 DOCX shell path.
    */
-  experimental?: { unifiedHistory?: boolean };
+  experimental?: {
+    unifiedHistory?: boolean;
+    v2Host?: boolean;
+    /**
+     * Derived-invalidation deferral for direct single-paragraph edits (v2
+     * engine only). Field display text settles off the keystroke path under
+     * the engine's settlement contract. DEFAULT TRUE — this is the engine's
+     * standard behavior; set `false` only as an emergency kill switch.
+     */
+    deferDerivedInvalidations?: boolean;
+  };
   /** Callback before an editor is created. Receives a wrapper carrying the editor. */
   onEditorBeforeCreate?: (params: SuperDocEditorPayload) => void;
   /** Callback after an editor is created. Receives a wrapper carrying the editor. */
   onEditorCreate?: (params: SuperDocEditorPayload) => void;
+  /** Callback when the v2 document source reaches source-complete posture and diff.capture is safe to call. */
+  onSourceComplete?: () => void;
+  /** Callback when v2 source signals finish building (fires after onSourceComplete; diff.capture is synchronously safe). */
+  onSourceSignalsComplete?: () => void;
   /** Callback when a transaction is made. */
   onTransaction?: (params: EditorTransactionEvent) => void;
   /** Callback after an editor is destroyed. */
@@ -1935,7 +3543,7 @@ export interface Config {
   /**
    * Callback when an editor reports a content error (parse failure, doc
    * import error, etc.). `error` is widened to `unknown` because the
-   * super-editor side mostly normalizes to `Error` but some emitters
+   * document editor side mostly normalizes to `Error` but some emitters
    * (e.g. `insertContentAt`) forward the original caught value. `file`
    * matches `Document.data` (`File | Blob | null | undefined`) since
    * the document can be loaded from any of those shapes. `documentId`
@@ -1945,7 +3553,7 @@ export interface Config {
     error: unknown;
     editor: Editor;
     documentId: string;
-    file: File | Blob | null | undefined;
+    file: globalThis.File | globalThis.Blob | null | undefined;
   }) => void;
   /** Callback when the SuperDoc is ready. Receives a wrapper carrying the live SuperDoc instance. */
   onReady?: (params: SuperDocReadyPayload) => void;
@@ -1998,8 +3606,26 @@ export interface Config {
   onViewportChange?: (params: SuperDocViewportChangePayload) => void;
   /** The format of the document (docx, pdf, html). */
   format?: string;
-  /** The extensions to load for the editor. */
+  /**
+   * Legacy v1 ProseMirror extensions. `editorExtensions` is a v1/ProseMirror
+   * concept and is IGNORED by `superdoc@2`: these objects are never loaded into
+   * the v2 runtime. Passing `editorExtensions` records a clear console
+   * diagnostic at construction. For v2, use {@link Config.extensions} with
+   * `defineSuperDocExtension`; the two are not interchangeable.
+   */
   editorExtensions?: object[];
+  /**
+   * v2 SuperDoc extensions, created with `defineSuperDocExtension`. `superdoc@2`
+   * IS the v2 editor, so these activate unconditionally — there is no
+   * `editorVersion` / `editorIntegration` selector. Each extension owns
+   * isolated storage, named events, commands, anchors, and render-only
+   * decorations, and mutates the document exclusively through the guarded
+   * Document API (`ctx.doc.*`). This is the v2 replacement for the
+   * v1/ProseMirror `editorExtensions` path; the two are not interchangeable.
+   * Extension arrays are mount-time config: changing the array reference
+   * requires a remount to take effect.
+   */
+  extensions?: SuperDocExtension[];
   /** Whether the SuperDoc is internal. */
   isInternal?: boolean;
   /** The title of the SuperDoc. */
@@ -2017,11 +3643,19 @@ export interface Config {
   /** Whether the SuperDoc is locked. */
   isLocked?: boolean;
   /** The function to handle image uploads. */
-  handleImageUpload?: (file: File) => Promise<string>;
+  handleImageUpload?: (file: globalThis.File) => Promise<string>;
   /** The user who locked the SuperDoc. */
   lockedBy?: User;
   /** Whether to show the ruler in the editor. */
   rulers?: boolean;
+  /**
+   * Element or selector the ruler mounts into. Omit to render it inline above
+   * the editor.
+   *
+   * @deprecated replaceWith=`ui.ruler.container` removeIn=v3.0 — the runtime
+   * still honors it, and the canonical value wins when both are set.
+   */
+  rulerContainer?: string | HTMLElement;
   /** Whether to suppress default styles in docx mode. */
   suppressDefaultDocxStyles?: boolean;
   /** Provided JSON to override content with. */
@@ -2047,11 +3681,26 @@ export interface Config {
   /** Document view options (OOXML ST_View compatible). */
   viewOptions?: ViewOptions;
   /**
-   * Enable contained mode for fixed-height container embedding. When true,
-   * SuperDoc propagates height through its DOM tree and adds internal
-   * scrolling, so multi-page documents scroll within the consumer's
-   * fixed-height container. Default behavior (false) lets the document
-   * expand to its natural height.
+   * Enable contained mode for fixed-height container embedding.
+   *
+   * SuperDoc supports two layout modes, and the host element's height
+   * requirement differs between them:
+   *
+   * - Natural (default, `false`): the Editor grows to the document's full
+   *   height and the page scrolls. The host needs no height. Setting one does
+   *   not constrain the document or enable internal scrolling, because
+   *   SuperDoc leaves overflow visible in this mode, though application CSS
+   *   on the host can still clip what is drawn.
+   * - Contained (`true`): SuperDoc propagates `height: 100%` through its DOM
+   *   tree and scrolls the document internally, so multi-page documents stay
+   *   inside the host. This mode requires the host to have a definite height
+   *   (for example `height: 400px`); without one there is nothing for the
+   *   percentage heights to resolve against.
+   *
+   * A toolbar mounted through `Config.toolbar` or `modules.toolbar.selector` is
+   * never part of this calculation. Placed as a sibling of the host, its height
+   * adds to the host's: a 400px host with a 40px toolbar occupies 440px in
+   * total. Placed inside the host, it consumes part of the 400px instead.
    */
   contained?: boolean;
   /** Content Security Policy nonce for dynamically injected styles. */
@@ -2072,17 +3721,47 @@ export interface Config {
    */
   fonts?: FontsConfig;
   /**
+   * Optional same-origin URLs for v2's browser worker assets. Configure these
+   * when the application and SuperDoc bundle are served from different origins.
+   * Omitted entries keep SuperDoc's bundled worker URLs.
+   */
+  workerUrls?: V2WorkerUrlsConfig;
+  /**
+   * Budget for the document worker to start up, in milliseconds
+   * (default: 30000). Measured from worker spawn, so it covers script
+   * download, parsing, evaluation, and the worker's first response to
+   * SuperDoc. Raise it when a large worker chunk is served
+   * over a slow connection or a cold dev-server cache; lower it to fail faster.
+   * Worker load errors are reported immediately and do not wait for this
+   * budget. Must be a finite positive number no greater than 2147483647, the
+   * platform timer ceiling above which a delay would fire immediately.
+   */
+  workerStartupTimeoutMs?: number;
+  /**
    * Opt-in toggle for the layout engine. Auto-disabled when web layout is
    * requested without `layoutEngineOptions.flowMode === 'semantic'`; the
    * loader logs a warning and falls back to the legacy ProseMirror render
    * path in that case.
    */
   useLayoutEngine?: boolean;
+  // V2 branch: `editorVersion`, `v2Integration`, and `v2` are intentionally NOT
+  // customer config. `superdoc@2` always runs the DOCX Engine dependency and
+  // exposes a read-only `instance.editorVersion === 2` as runtime evidence
+  // only. There is no runtime selection and no v1 fallback, so the historical
+  // runtime-selection config holes (`editorVersion?: 1 | 2`,
+  // `v2Integration?: unknown`, `v2?: unknown`) are removed from the public type
+  // surface. `#init` already ignores any such input at runtime.
   /**
    * Zoom behavior: the initial zoom level and optional fit-width
    * policy. See `SuperDocZoomConfig`.
    */
   zoom?: SuperDocZoomConfig;
+  /**
+   * Starting measurement unit for rulers and measurement fields (Word's
+   * "measurement units" preference). Defaults to `'in'` (Word's en-US default).
+   * Change it at runtime with `setMeasurementUnit()`. See `SuperDocMeasurementUnit`.
+   */
+  measurementUnit?: SuperDocMeasurementUnit;
   /**
    * Callback fired after the editor reports `fonts-resolved`. The payload
    * contains `documentFonts` and `unsupportedFonts` arrays so hosts can fall
@@ -2093,6 +3772,15 @@ export interface Config {
    * For the authoritative, load-settled picture use {@link onFontsChanged}.
    */
   onFontsResolved?: (payload: FontsResolvedPayload) => void;
+  /**
+   * Painter plan P7 §1 (@experimental): fires when the paginated page count
+   * changes, at layout-end — before resolve or paint, so page counters and
+   * minimaps can trust the number as soon as it is knowable. The payload's
+   * `generation` identifies the announcing layout pass (informational; the
+   * event is keyed on page-count changes, not generations). v2 vertical
+   * pagination only; semantic "web layout" surfaces never fire it.
+   */
+  onPageCountKnown?: (payload: { pageCount: number; generation: number }) => void;
   /**
    * Callback fired with the authoritative substitution + load-aware font report: once
    * after the load-before-measure gate settles (`source: 'initial'`), again when a face
@@ -2120,6 +3808,15 @@ export interface Config {
  */
 export interface InternalConfig extends Config {
   /**
+   * Internal v2 boot gate set when a consumer supplies the removed v1
+   * `modules.collaboration` API. The shell surfaces this without ever
+   * attaching the supplied Y.Doc/provider.
+   */
+  v2CollaborationPreflightFailure?: {
+    readonly code: 'collaboration-v1-config-unsupported';
+    readonly message: string;
+  };
+  /**
    * The shared websocket instance created by SuperDoc when
    * `modules.collaboration.providerType === 'hocuspocus'`. Set automatically;
    * not part of the public Config surface.
@@ -2129,7 +3826,7 @@ export interface InternalConfig extends Config {
    * Normalized to `[]` by `#init` if the consumer passes nothing or
    * `undefined`. Narrowed to `RuntimeDocument[]` because once `#init`
    * runs, each entry has been augmented with the runtime-only fields
-   * (`role`, `getEditor`, `getPresentationEditor`, etc.). Consumers
+   * (`role`, editor/renderer accessors, etc.). Consumers
    * still pass `Document[]` via the public `Config` interface; this
    * override only describes the post-init shape internal callsites see.
    */

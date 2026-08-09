@@ -4,8 +4,12 @@
  * Tests the resolution of page number tokens in header and footer blocks.
  */
 
-import { describe, it, expect } from 'vitest';
-import { resolveHeaderFooterTokens, cloneHeaderFooterBlocks } from '../src/resolveHeaderFooterTokens';
+import { describe, it, expect } from 'vite-plus/test';
+import {
+  resolveHeaderFooterTokens,
+  cloneHeaderFooterBlocks,
+  PROVISIONAL_PAGE_COUNT_PLACEHOLDER,
+} from '../src/resolveHeaderFooterTokens';
 import type { FlowBlock, ParagraphBlock, TextRun } from '@superdoc/contracts';
 
 describe('resolveHeaderFooterTokens', () => {
@@ -615,5 +619,104 @@ describe('cloneHeaderFooterBlocks', () => {
     const clonedBlock1 = cloned[0] as ParagraphBlock;
     const originalBlock1 = original[0] as ParagraphBlock;
     expect(clonedBlock1.runs).not.toBe(originalBlock1.runs);
+  });
+});
+
+describe('atomic-first-page — provisional page-count fields', () => {
+  const run = (text: string, token?: string): TextRun =>
+    ({ text, ...(token ? { token } : {}), fontFamily: 'Arial', fontSize: 12 }) as TextRun;
+
+  const para = (id: string, runs: TextRun[]): ParagraphBlock => ({ kind: 'paragraph', id, runs }) as ParagraphBlock;
+
+  it('PAGE resolves immediately while NUMPAGES/SECTIONPAGES keep their source-cached text', () => {
+    const blocks: FlowBlock[] = [
+      para('p1', [
+        run('0', 'pageNumber'),
+        run(' of ', undefined),
+        run('12', 'totalPageCount'),
+        run(' / ', undefined),
+        run('7', 'sectionPageCount'),
+      ]),
+    ];
+
+    resolveHeaderFooterTokens(blocks, 1, 3, undefined, undefined, 2, undefined, undefined, undefined, {
+      pageCountFieldsExact: false,
+    });
+
+    const p = blocks[0] as ParagraphBlock;
+    // The physical first-page number is known even under partial pagination.
+    expect(p.runs[0].text).toBe('1');
+    // Cached DOCX results survive; the partial totals (3 / 2) never paint.
+    expect(p.runs[2].text).toBe('12');
+    expect(p.runs[4].text).toBe('7');
+  });
+
+  it('renders an em dash when a provisional total field has no cached result', () => {
+    const blocks: FlowBlock[] = [para('p1', [run('', 'totalPageCount'), run('   ', 'sectionPageCount')])];
+
+    resolveHeaderFooterTokens(blocks, 1, 3, undefined, undefined, 2, undefined, undefined, undefined, {
+      pageCountFieldsExact: false,
+    });
+
+    const p = blocks[0] as ParagraphBlock;
+    expect(p.runs[0].text).toBe(PROVISIONAL_PAGE_COUNT_PLACEHOLDER);
+    expect(p.runs[1].text).toBe(PROVISIONAL_PAGE_COUNT_PLACEHOLDER);
+  });
+
+  it('exact mode (default) replaces provisional values with computed totals', () => {
+    const blocks: FlowBlock[] = [para('p1', [run('12', 'totalPageCount'), run('7', 'sectionPageCount')])];
+
+    resolveHeaderFooterTokens(blocks, 1, 34, undefined, undefined, 8);
+
+    const p = blocks[0] as ParagraphBlock;
+    expect(p.runs[0].text).toBe('34');
+    expect(p.runs[1].text).toBe('8');
+  });
+
+  it('applies the provisional policy to fields nested in table cells', () => {
+    const table = {
+      kind: 'table',
+      id: 't1',
+      rows: [
+        {
+          cells: [
+            {
+              blocks: [para('cell-p', [run('0', 'pageNumber'), run('99', 'totalPageCount')])],
+            },
+          ],
+        },
+      ],
+    } as unknown as FlowBlock;
+
+    resolveHeaderFooterTokens([table], 2, 5, undefined, undefined, undefined, undefined, undefined, undefined, {
+      pageCountFieldsExact: false,
+    });
+
+    const cellPara = (table as { rows: Array<{ cells: Array<{ blocks: ParagraphBlock[] }> }> }).rows[0].cells[0]
+      .blocks[0];
+    expect(cellPara.runs[0].text).toBe('2');
+    expect(cellPara.runs[1].text).toBe('99');
+  });
+
+  it('resolves textbox paragraph fields on an isolated deep clone', () => {
+    const textbox = {
+      kind: 'drawing',
+      id: 'footer-textbox',
+      drawingKind: 'textboxShape',
+      geometry: { width: 120, height: 30, rotation: 0, flipH: false, flipV: false },
+      contentBlocks: [para('textbox-p', [run('0', 'pageNumber'), run('19', 'totalPageCount')])],
+    } as unknown as FlowBlock;
+    const cloned = cloneHeaderFooterBlocks([textbox]);
+
+    resolveHeaderFooterTokens(cloned, 2, 3, undefined, undefined, undefined, undefined, undefined, undefined, {
+      pageCountFieldsExact: false,
+    });
+
+    const clonedParagraph = (cloned[0] as unknown as { contentBlocks: ParagraphBlock[] }).contentBlocks[0];
+    const originalParagraph = (textbox as unknown as { contentBlocks: ParagraphBlock[] }).contentBlocks[0];
+    expect(clonedParagraph.runs[0].text).toBe('2');
+    expect(clonedParagraph.runs[1].text).toBe('19');
+    expect(originalParagraph.runs[0].text).toBe('0');
+    expect(originalParagraph.runs[1].text).toBe('19');
   });
 });

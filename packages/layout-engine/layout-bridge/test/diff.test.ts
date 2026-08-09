@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import type { ImageRun, ParagraphBlock, ShapeGroupDrawing, VectorShapeDrawing } from '@superdoc/contracts';
+import { describe, it, expect } from 'vite-plus/test';
+import type { ImageRun, ParagraphBlock, TableBlock, VectorShapeDrawing } from '@superdoc/contracts';
 import { computeDirtyRegions } from '../src/diff';
 
 const block = (id: string, text: string) => ({
@@ -21,6 +21,27 @@ const paragraphWithRuns = (id: string, runs: ParagraphBlock['runs']) => ({
   runs,
 });
 
+const inlineBoxParagraph = (paddingInlineStart = 4, backgroundColor = '#eef2ff'): ParagraphBlock => ({
+  ...block('inline-box-diff', 'Citation'),
+  inlineBoxes: [
+    {
+      id: 'citation',
+      from: 0,
+      to: 8,
+      layout: {
+        paddingInlineStart,
+        paddingInlineEnd: 4,
+        paddingBlockStart: 1,
+        paddingBlockEnd: 1,
+        gapBefore: 1,
+        gapAfter: 1,
+        borderWidth: 1,
+      },
+      appearance: { backgroundColor, borderStyle: 'solid' },
+    },
+  ],
+});
+
 const drawing = (overrides?: Partial<VectorShapeDrawing>): VectorShapeDrawing => ({
   kind: 'drawing',
   id: 'drawing-0',
@@ -40,18 +61,22 @@ const drawing = (overrides?: Partial<VectorShapeDrawing>): VectorShapeDrawing =>
   ...overrides,
 });
 
-const shapeGroup = (overrides?: Partial<ShapeGroupDrawing>): ShapeGroupDrawing => ({
-  kind: 'drawing',
-  id: 'shape-group-0',
-  drawingKind: 'shapeGroup',
-  geometry: { width: 100, height: 80, rotation: 0, flipH: false, flipV: false },
-  groupTransform: {
-    width: 100,
-    height: 80,
-    childWidth: 100,
-    childHeight: 80,
-  },
-  shapes: [],
+const table = (text = 'Table text', overrides?: Partial<TableBlock>): TableBlock => ({
+  kind: 'table',
+  id: 'table-0',
+  rows: [
+    {
+      id: 'row-0',
+      cells: [
+        {
+          id: 'cell-0',
+          blocks: [block('table-p', text)],
+          attrs: { padding: { top: 2, right: 3, bottom: 4, left: 5 } },
+        },
+      ],
+    },
+  ],
+  columnWidths: [120],
   ...overrides,
 });
 
@@ -71,6 +96,18 @@ describe('computeDirtyRegions', () => {
     const result = computeDirtyRegions(prev, next);
     expect(result.firstDirtyIndex).toBe(1);
     expect(result.lastStableIndex).toBe(0);
+  });
+
+  it('detects inline-box metric and appearance changes while retaining unrelated blocks', () => {
+    const stable = block('stable', 'Unrelated');
+    const metric = computeDirtyRegions([stable, inlineBoxParagraph()], [stable, inlineBoxParagraph(8)]);
+    const appearance = computeDirtyRegions([stable, inlineBoxParagraph()], [stable, inlineBoxParagraph(4, '#ffffff')]);
+    const identical = computeDirtyRegions([stable, inlineBoxParagraph()], [stable, inlineBoxParagraph()]);
+
+    expect(metric.firstDirtyIndex).toBe(1);
+    expect(metric.stableBlockIds).toContain('stable');
+    expect(appearance.firstDirtyIndex).toBe(1);
+    expect(identical.firstDirtyIndex).toBe(2);
   });
 
   it('detects insertion', () => {
@@ -271,8 +308,6 @@ describe('computeDirtyRegions', () => {
     ['alt', { alt: 'Diagram' }],
     ['title', { title: 'Title' }],
     ['clipPath', { clipPath: 'inset(1px)' }],
-    ['shapeClipPath', { shapeClipPath: 'ellipse(50% 50% at 50% 50%)' }],
-    ['objectFit', { objectFit: 'cover' as const }],
     ['distTop', { distTop: 1 }],
     ['distBottom', { distBottom: 2 }],
     ['distLeft', { distLeft: 3 }],
@@ -381,71 +416,33 @@ describe('computeDirtyRegions', () => {
     expect(result.firstDirtyIndex).toBe(0);
   });
 
-  it('detects vector shape effect changes', () => {
-    const prev = [
-      drawing({
-        effects: {
-          outerShadow: {
-            type: 'outerShadow',
-            blurRadius: 6,
-            distance: 4,
-            direction: 45,
-            color: '#999999',
-            opacity: 0.4,
-          },
-        },
-      }),
-    ];
-    const next = [
-      drawing({
-        effects: {
-          outerShadow: {
-            type: 'outerShadow',
-            blurRadius: 6,
-            distance: 4,
-            direction: 45,
-            color: '#999999',
-            opacity: 0.7,
-          },
-        },
-      }),
-    ];
-    const result = computeDirtyRegions(prev, next);
-    expect(result.firstDirtyIndex).toBe(0);
+  it('treats structurally identical table blocks as stable', () => {
+    const result = computeDirtyRegions([table()], [table()]);
+
+    expect(result.firstDirtyIndex).toBe(1);
+    expect(result.changedBlockIds).toEqual([]);
+    expect(result.stableBlockIds.has('table-0')).toBe(true);
   });
 
-  it('detects shape group transform rotation changes', () => {
-    const prev = [shapeGroup()];
-    const next = [
-      shapeGroup({
-        groupTransform: {
-          width: 100,
-          height: 80,
-          childWidth: 100,
-          childHeight: 80,
-          rotation: 30,
-        },
-      }),
-    ];
-    const result = computeDirtyRegions(prev, next);
-    expect(result.firstDirtyIndex).toBe(0);
+  it('ignores PM-only shifts inside an otherwise unchanged table', () => {
+    const previous = table();
+    const next = table();
+    const paragraph = next.rows[0]!.cells[0]!.blocks![0];
+    if (paragraph.kind !== 'paragraph') throw new Error('expected paragraph');
+    paragraph.runs[0] = { ...paragraph.runs[0]!, pmStart: 101, pmEnd: 111 };
+
+    const result = computeDirtyRegions([previous], [next]);
+
+    expect(result.firstDirtyIndex).toBe(1);
+    expect(result.stableBlockIds.has('table-0')).toBe(true);
   });
 
-  it('detects shape group transform flip changes', () => {
-    const prev = [shapeGroup()];
-    const next = [
-      shapeGroup({
-        groupTransform: {
-          width: 100,
-          height: 80,
-          childWidth: 100,
-          childHeight: 80,
-          flipH: true,
-        },
-      }),
-    ];
-    const result = computeDirtyRegions(prev, next);
-    expect(result.firstDirtyIndex).toBe(0);
+  it('detects table-cell content and table geometry changes', () => {
+    const contentResult = computeDirtyRegions([table()], [table('Changed')]);
+    const geometryResult = computeDirtyRegions([table()], [table('Table text', { columnWidths: [180] })]);
+
+    expect(contentResult.changedBlockIds).toEqual(['table-0']);
+    expect(geometryResult.changedBlockIds).toEqual(['table-0']);
   });
 
   // ============================================================================

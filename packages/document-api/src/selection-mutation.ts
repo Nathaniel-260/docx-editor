@@ -65,9 +65,9 @@ export type SelectionMutationRequest =
 // ---------------------------------------------------------------------------
 
 /**
- * Adapter that the super-editor plan engine implements for selection-based
- * mutations. Delete, replace-text, insert-with-locator, and format.apply go
- * through this single interface.
+ * Adapter that the plan engine implements for selection-based mutations.
+ * Delete, replace-text, insert-with-locator, and format.apply go through this
+ * single interface.
  */
 export interface SelectionMutationAdapter {
   execute(request: SelectionMutationRequest, options?: MutationOptions): TextMutationReceipt;

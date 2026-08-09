@@ -7,19 +7,27 @@
 // consumer bundlers. Runs in `prepare` (after install, and before pack/publish), so the monorepo
 // dev server and the npm tarball both have the files. A published consumer install does NOT run
 // this (no `prepare` for registry deps); they get the assets straight from the tarball.
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { cpSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FONT_SYSTEM_ASSETS, resolveFontSystemPath } from './font-system-source.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = resolve(here, '../../../shared/font-system/assets');
+const src = FONT_SYSTEM_ASSETS;
 const dst = resolve(here, '../assets');
 
-if (!existsSync(src)) {
-  // Not in the monorepo (e.g. a published install that somehow ran prepare). The assets are
-  // expected to already be present from the tarball, so this is a no-op, not an error.
-  console.warn(`[@superdoc-dev/fonts] canonical assets not found at ${src}; skipping sync (assets assumed present)`);
-  process.exit(0);
+const assets = resolveFontSystemPath(src, 'assets directory');
+if (!assets.ok) {
+  if (assets.skip) {
+    // A published install ships the assets in its own tarball, so there is
+    // nothing to sync and nothing wrong.
+    console.warn(`${assets.message}; skipping sync (assets assumed present)`);
+    process.exit(0);
+  }
+  // Inside the monorepo, syncing from a path that does not exist would wipe
+  // `assets/` and copy nothing, publishing a font package with no fonts.
+  console.error(assets.message);
+  process.exit(1);
 }
 
 rmSync(dst, { recursive: true, force: true });
@@ -31,4 +39,4 @@ for (const name of readdirSync(src)) {
   }
 }
 const count = readdirSync(dst).filter((f) => f.endsWith('.woff2')).length;
-console.log(`[@superdoc-dev/fonts] synced ${count} font faces from shared/font-system/assets -> assets/`);
+console.log(`[@superdoc/fonts] synced ${count} font faces from ${relative(resolve(here, '../../..'), src)} -> assets/`);

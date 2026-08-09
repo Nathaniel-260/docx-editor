@@ -30,6 +30,22 @@ function makeAdapter(receipt?: Partial<StylesApplyReceipt>): StylesAdapter {
         ...receipt,
       }),
     ),
+    getCatalog: () => ({
+      version: 'style-catalog/v1',
+      revision: null,
+      view: 'all',
+      defaults: { paragraphStyleId: null, characterStyleId: null, tableStyleId: null },
+      items: [],
+      styles: [],
+      sourceStatus: {
+        styles: 'present',
+        settings: 'present',
+        usage: 'unsupported',
+        preview: 'unsupported',
+        view: 'supported',
+      },
+      diagnostics: [],
+    }),
   };
 }
 

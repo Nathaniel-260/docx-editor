@@ -30,12 +30,8 @@
  *      (`@superdoc/*`), no package-manager internals (`.pnpm/`), and no
  *      absolute local paths into the repo or `node_modules`.
  *
- *      Note: relative declaration references into the per-package dist
- *      tree (e.g. `../../../super-editor/src/index.js`) are expected at
- *      this phase. The dts pipeline relocates `@superdoc/super-editor`
- *      specifiers into the relocated declaration tree so consumers do
- *      not see the workspace specifier. Later SD-3178 follow-ups reduce
- *      how much the facade depends on that broader declaration graph.
+ *      Note: relative declaration references into the per-package dist tree
+ *      are expected when the root facade exposes relocated private types.
  *
  * Adding a new facade file:
  *   - Create `packages/superdoc/src/public/<name>.ts` with named exports.
@@ -99,128 +95,36 @@ const FACADE_ENTRIES = [
     esm: path.join(PUBLIC_DIST, 'index.d.ts'),
     cjs: path.join(PUBLIC_DIST, 'index.d.cts'),
     source: path.join(PUBLIC_SRC, 'index.ts'),
-    runsCommandSignatureProbe: true,
+    runsCommandSignatureProbe: false,
     ticket: 'SD-3212',
   },
+  // v2-native public UI facade entries. Self-contained: re-export the local
+  // `./ui/**` controller plus relocated public Document API shapes. No v1
+  // editor surface, no private v2 packages. The expected named export set is
+  // derived from the source `.ts` (no hand-maintained name list).
   {
-    name: 'legacy/headless-toolbar',
-    esm: path.join(PUBLIC_DIST, 'legacy', 'headless-toolbar.d.ts'),
-    cjs: path.join(PUBLIC_DIST, 'legacy', 'headless-toolbar.d.cts'),
-    source: path.join(PUBLIC_SRC, 'legacy', 'headless-toolbar.ts'),
+    name: 'ui (./ui)',
+    esm: path.join(PUBLIC_DIST, 'ui.d.ts'),
+    cjs: path.join(PUBLIC_DIST, 'ui.d.cts'),
+    source: path.join(PUBLIC_SRC, 'ui.ts'),
     runsCommandSignatureProbe: false,
-    ticket: 'SD-3179',
-  },
-  // SD-3207: legacy headless-toolbar framework helpers. Each entry
-  // re-exports `useHeadlessToolbar` only. Same classification as the
-  // root `legacy/headless-toolbar` entry above.
-  {
-    name: 'legacy/headless-toolbar-react',
-    esm: path.join(PUBLIC_DIST, 'legacy', 'headless-toolbar-react.d.ts'),
-    cjs: path.join(PUBLIC_DIST, 'legacy', 'headless-toolbar-react.d.cts'),
-    source: path.join(PUBLIC_SRC, 'legacy', 'headless-toolbar-react.ts'),
-    runsCommandSignatureProbe: false,
-    ticket: 'SD-3207',
+    ticket: 'SD-3178',
   },
   {
-    name: 'legacy/headless-toolbar-vue',
-    esm: path.join(PUBLIC_DIST, 'legacy', 'headless-toolbar-vue.d.ts'),
-    cjs: path.join(PUBLIC_DIST, 'legacy', 'headless-toolbar-vue.d.cts'),
-    source: path.join(PUBLIC_SRC, 'legacy', 'headless-toolbar-vue.ts'),
-    runsCommandSignatureProbe: false,
-    ticket: 'SD-3207',
-  },
-  // SD-3180: legacy leaf entries. These match the existing single-types
-  // pattern of the live `superdoc/converter` / `superdoc/docx-zipper` /
-  // `superdoc/file-zipper` subpaths, which do not have `.d.cts` shims
-  // today. `cjs: null` skips the ESM/CJS parity check. Phase 4 decides
-  // whether to add CJS shims when the contract flips.
-  {
-    name: 'legacy/converter',
-    esm: path.join(PUBLIC_DIST, 'legacy', 'converter.d.ts'),
-    cjs: null,
-    // AIDEV-NOTE: `hasBodyNumberingReferences` is in the runtime contract
-    // of today's `superdoc/converter` (see
-    // `packages/superdoc/dist/super-editor/converter.es.js`) but missing
-    // from the existing types entry. The facade types both so Phase 4
-    // can flip without regressing JS consumers.
-    source: path.join(PUBLIC_SRC, 'legacy', 'converter.ts'),
-    runsCommandSignatureProbe: false,
-    ticket: 'SD-3180',
-  },
-  {
-    name: 'legacy/docx-zipper',
-    esm: path.join(PUBLIC_DIST, 'legacy', 'docx-zipper.d.ts'),
-    cjs: null,
-    // AIDEV-NOTE: `default`, not `DocxZipper`. The current public contract
-    // is `import DocxZipper from 'superdoc/docx-zipper'`. The resolved
-    // exported name is therefore `default`. Changing to a named export
-    // would break consumers.
-    source: path.join(PUBLIC_SRC, 'legacy', 'docx-zipper.ts'),
-    runsCommandSignatureProbe: false,
-    ticket: 'SD-3180',
-  },
-  {
-    name: 'legacy/file-zipper',
-    esm: path.join(PUBLIC_DIST, 'legacy', 'file-zipper.d.ts'),
-    cjs: null,
-    source: path.join(PUBLIC_SRC, 'legacy', 'file-zipper.ts'),
-    runsCommandSignatureProbe: false,
-    ticket: 'SD-3180',
-  },
-  // SD-3182: first supported-surface facade entry. The `superdoc/ui/react`
-  // subpath is the strategic React binding surface. Matches the existing
-  // `./ui/react` single-`types` shape, so `cjs: null`.
-  {
-    name: 'ui-react',
+    name: 'ui-react (./ui/react)',
     esm: path.join(PUBLIC_DIST, 'ui-react.d.ts'),
-    cjs: null,
+    cjs: path.join(PUBLIC_DIST, 'ui-react.d.cts'),
     source: path.join(PUBLIC_SRC, 'ui-react.ts'),
     runsCommandSignatureProbe: false,
     ticket: 'SD-3182',
   },
-  // SD-3183: largest supported-surface facade entry. The `superdoc/ui`
-  // subpath is the strategic UI controller surface. Matches the existing
-  // `./ui` single-`types` shape, so `cjs: null`. The shape of the emitted
-  // `dist/public/ui.es.js` is additionally guarded by `audit-bundle.cjs`
-  // (must not pull the editor main barrel).
   {
-    name: 'ui',
-    esm: path.join(PUBLIC_DIST, 'ui.d.ts'),
-    cjs: null,
-    source: path.join(PUBLIC_SRC, 'ui.ts'),
+    name: 'collaboration-upgrade-engine (./collaboration-upgrade-engine)',
+    esm: path.join(PUBLIC_DIST, 'collaboration-upgrade-engine.d.ts'),
+    cjs: path.join(PUBLIC_DIST, 'collaboration-upgrade-engine.d.cts'),
+    source: path.join(PUBLIC_SRC, 'collaboration-upgrade-engine.ts'),
     runsCommandSignatureProbe: false,
-    ticket: 'SD-3183',
-  },
-  // SD-3184: types facade — type-only entry. 116 names from the
-  // existing superdoc/types declaration surface, all exported as
-  // `export type { ... }`. Five names are value-origin upstream
-  // (defineNode, defineMark, isNodeType, assertNodeType, isMarkType)
-  // but kept type-only here to match today's contract.
-  //
-  // SD-3147 classification (corrected, see SD-3185): 26 public + 90
-  // legacy/public-compat. Command-augmentation infrastructure
-  // (CoreCommandMap, ExtensionCommandMap, EditorCommands, etc.) is
-  // legacy/public-compat — typed for backward compat, kept compiling,
-  // not advertised — per the @deprecated tags on `editor.commands` in
-  // Editor.ts and AGENTS.md's "use editor.doc" guidance. All 116 names
-  // remain in the facade; only the tier label changes.
-  //
-  // The existing `./types` package.json#exports entry uses split
-  // types.import/types.require, so this facade has a real .d.cts shim
-  // and the verifier exercises ESM/CJS parity.
-  {
-    name: 'types',
-    esm: path.join(PUBLIC_DIST, 'types.d.ts'),
-    cjs: path.join(PUBLIC_DIST, 'types.d.cts'),
-    // SD-3184: superdoc/types is contracted type-only. The CJS shim
-    // must not emit `export declare const` for any name (would
-    // advertise a runtime value the empty runtime bundle does not
-    // provide). The verifier scans the emitted .d.cts and fails on
-    // value declarations.
-    typeOnly: true,
-    source: path.join(PUBLIC_SRC, 'types.ts'),
-    runsCommandSignatureProbe: false,
-    ticket: 'SD-3184',
+    ticket: 'collaboration-upgrade',
   },
 ];
 

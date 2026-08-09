@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 
 vi.mock('@superdoc/core/collaboration/helpers.js', () => ({
   syncCommentsToClients: vi.fn(),
@@ -6,6 +6,7 @@ vi.mock('@superdoc/core/collaboration/helpers.js', () => ({
 
 import useComment from './use-comment.js';
 import { syncCommentsToClients } from '@superdoc/core/collaboration/helpers.js';
+import { DOCUMENT_EDITOR_SELECTION_SOURCE } from '@superdoc/helpers/selection-source';
 
 const makeSuperdoc = () => ({
   emit: vi.fn(),
@@ -21,6 +22,26 @@ const makeSuperdoc = () => ({
 describe('use-comment: extended coverage', () => {
   beforeEach(() => {
     syncCommentsToClients.mockClear();
+  });
+
+  it('rejects direct model mutations when the comments store is read-only', () => {
+    const comment = useComment({ commentId: 'c-read-only', isInternal: true, commentText: 'Original' });
+    const superdoc = makeSuperdoc();
+    superdoc.commentsStore = { getConfig: { readOnly: true } };
+
+    const outcomes = [
+      comment.resolveComment({ id: 'user-1', email: 'user@example.com', name: 'User', superdoc }),
+      comment.setIsInternal({ isInternal: false, superdoc }),
+      comment.setText({ text: 'Changed', superdoc }),
+    ];
+
+    expect(outcomes).toEqual(outcomes.map(() => ({ ok: false, reason: 'read-only-document' })));
+    expect(comment.resolvedTime).toBeNull();
+    expect(comment.isInternal).toBe(true);
+    expect(comment.commentText).toBe('Original');
+    expect(superdoc.emit).not.toHaveBeenCalled();
+    expect(superdoc.activeEditor.commands.resolveComment).not.toHaveBeenCalled();
+    expect(superdoc.activeEditor.commands.setCommentInternal).not.toHaveBeenCalled();
   });
 
   describe('resolveComment', () => {
@@ -152,7 +173,7 @@ describe('use-comment: extended coverage', () => {
         right: 20,
         bottom: 100,
       });
-      expect(c.selection.source).toBe('super-editor');
+      expect(c.selection.source).toBe(DOCUMENT_EDITOR_SELECTION_SOURCE);
     });
   });
 

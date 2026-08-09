@@ -1,5 +1,9 @@
-.DS_Store
-node_modules/
-.env
-dev/
-.vscode/
+/node_modules
+/.next
+/.source
+/out
+next-env.d.ts
+*.tsbuildinfo
+/content/docs/document-api/reference/
+/generated/document-api-reference.json
+/public/reference/document-api/

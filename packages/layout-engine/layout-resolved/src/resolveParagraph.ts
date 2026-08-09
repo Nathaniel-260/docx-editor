@@ -8,6 +8,7 @@ import type {
   ResolvedTextLineItem,
   ResolvedDropCapItem,
   ResolvedListMarkerItem,
+  MarkerTrackedChange,
 } from '@superdoc/contracts';
 import { adjustAvailableWidthForTextIndent, getParagraphInlineDirection } from '@superdoc/contracts';
 import {
@@ -105,6 +106,13 @@ export function resolveParagraphContent(
   // Check if the paragraph ends with a lineBreak run
   const lastRun = block.runs.length > 0 ? block.runs[block.runs.length - 1] : null;
   const paragraphEndsWithLineBreak = lastRun?.kind === 'lineBreak';
+  // In Word, a tab immediately before Shift+Enter terminates the visible line
+  // without expanding its spaces. This is a common authoring workaround for
+  // suppressing justification on a soft-break line.
+  const terminalTabRunIndex =
+    paragraphEndsWithLineBreak && block.runs.length >= 2 && block.runs[block.runs.length - 2]?.kind === 'tab'
+      ? block.runs.length - 2
+      : -1;
 
   // Compute lines for this fragment
   const lines: Line[] = fragment.lines ?? measure.lines.slice(fragment.fromLine, fragment.toLine);
@@ -214,6 +222,11 @@ export function resolveParagraphContent(
         smallCaps: m.run?.smallCaps,
       },
       sourceAnchor: block.sourceAnchor,
+      // Plan 5: carry marker tracked-change review metadata through resolve so
+      // the painter can stamp/style the marker glyph. Absent for normal markers.
+      // The `@superdoc/common` marker type mirrors the contracts shape; narrow
+      // it to the canonical `MarkerTrackedChange` at this single boundary.
+      ...(m.trackedChange ? { trackedChange: m.trackedChange as MarkerTrackedChange } : {}),
     };
   }
 
@@ -257,7 +270,8 @@ export function resolveParagraphContent(
     // --- Skip justify ---
     const isLastLineOfFragment = index === lines.length - 1;
     const isLastLineOfParagraph = isLastLineOfFragment && !fragment.continuesOnNext;
-    const skipJustify = isLastLineOfParagraph && !paragraphEndsWithLineBreak;
+    const lineEndsWithTerminalTab = terminalTabRunIndex >= 0 && line.toRun === terminalTabRunIndex;
+    const skipJustify = (isLastLineOfParagraph && !paragraphEndsWithLineBreak) || lineEndsWithTerminalTab;
 
     // --- Is list first line ---
     const isListFirstLine = Boolean(hasListFirstLineMarker && fragment.markerTextWidth);

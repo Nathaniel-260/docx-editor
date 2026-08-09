@@ -5,7 +5,7 @@
  * lose `pmStart`/`pmEnd` fields and future producers cannot break the
  * editor-neutral shape used by downstream surfaces.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import {
   LAYOUT_BOUNDARY_SCHEMA,
   bodyStoryLocator,

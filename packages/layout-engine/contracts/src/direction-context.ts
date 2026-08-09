@@ -59,10 +59,19 @@ export type TableDirectionContext = {
   /**
    * Visual direction of cell ordering; from w:tblPr/w:bidiVisual.
    * Undefined when not specified.
+   *
+   * This is the single load-bearing field: `getTableVisualDirection` and all
+   * downstream consumers (layout-table, DomPainter) read only `visualDirection`.
    */
   visualDirection: BaseDirection | undefined;
-  /** Inherited from the parent section. */
-  parentSection: SectionDirectionContext;
+  /**
+   * Inherited from the parent section. Optional: producers that resolve only
+   * the table's own visual axis (e.g. the v2 layout adapter, which derives
+   * `visualDirection` from inline `w:bidiVisual` evidence) populate just
+   * `visualDirection`. Section inheritance is an orthogonal axis resolved
+   * elsewhere; no consumer reads `parentSection` today.
+   */
+  parentSection?: SectionDirectionContext;
 };
 
 /**

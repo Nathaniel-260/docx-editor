@@ -70,6 +70,32 @@ describe('executeTemplatesApply contract', () => {
     expect(receipt.success).toBe(true);
   });
 
+  it.each(['narrow', 'error'] as const)(
+    'throws exact INVALID_INPUT for the unsupported onUnsupportedContent=%s field',
+    (policy) => {
+      const adapter = makeAdapter();
+      let thrown: unknown;
+
+      try {
+        executeTemplatesApply(adapter, {
+          source: { kind: 'path', path: '/a.docx' },
+          onUnsupportedContent: policy,
+        } as unknown as TemplatesApplyInput);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(DocumentApiValidationError);
+      expect(thrown).toMatchObject({
+        name: 'DocumentApiValidationError',
+        code: 'INVALID_INPUT',
+        message: 'Unknown field "onUnsupportedContent" on templates.apply input. Allowed fields: source, bodyPolicy.',
+        details: { field: 'onUnsupportedContent' },
+      });
+      expect(adapter.apply).not.toHaveBeenCalled();
+    },
+  );
+
   it('throws INVALID_INPUT for a non-object input', () => {
     const adapter = makeAdapter();
     expect(() => executeTemplatesApply(adapter, null as unknown as TemplatesApplyInput)).toThrow(

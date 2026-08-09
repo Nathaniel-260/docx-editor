@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { measureBlock } from './index.js';
+import { describe, it, expect, beforeAll, vi } from 'vite-plus/test';
+import { clearMeasurementCache, configureMeasurement, measureBlock } from './index.js';
 import type {
   FlowBlock,
   ParagraphMeasure,
@@ -8,7 +8,10 @@ import type {
   DrawingMeasure,
   DrawingBlock,
   TableMeasure,
+  TabRun,
   TextRun,
+  InlineBoxSpan,
+  CellBorders,
 } from '@superdoc/contracts';
 import { EMPTY_SDT_PLACEHOLDER_TEXT } from '@superdoc/contracts';
 import { resolvePhysicalFamily } from '@superdoc/font-system';
@@ -147,6 +150,156 @@ describe('measureBlock', () => {
       expect(measure.totalHeight).toBeGreaterThan(0);
     });
 
+    it('keeps vanished text addressable without contributing width or visible line metrics', async () => {
+      const visibleBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'visible-small-run',
+        runs: [{ text: 'Visible', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: {},
+      };
+      const hiddenPrefixBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'hidden-prefix-run',
+        runs: [
+          { text: 'Hidden ', fontFamily: 'Arial', fontSize: 48, vanish: true },
+          { text: 'Visible', fontFamily: 'Arial', fontSize: 12 },
+        ],
+        attrs: {},
+      };
+
+      const visibleMeasure = expectParagraphMeasure(await measureBlock(visibleBlock, 1000));
+      const hiddenPrefixMeasure = expectParagraphMeasure(await measureBlock(hiddenPrefixBlock, 1000));
+
+      expect(hiddenPrefixMeasure.lines).toHaveLength(1);
+      expect(hiddenPrefixMeasure.lines[0].width).toBeCloseTo(visibleMeasure.lines[0].width, 3);
+      expect(hiddenPrefixMeasure.lines[0].lineHeight).toBeCloseTo(visibleMeasure.lines[0].lineHeight, 3);
+      expect(hiddenPrefixMeasure.lines[0].segments).toEqual([
+        { runIndex: 0, fromChar: 0, toChar: 7, width: 0 },
+        { runIndex: 1, fromChar: 0, toChar: 7, width: expect.any(Number) },
+      ]);
+    });
+
+    it('keeps vanished tabs addressable without advancing visible content', async () => {
+      const hiddenTab: TabRun = {
+        kind: 'tab',
+        text: '\t',
+        fontFamily: 'Arial',
+        fontSize: 48,
+        vanish: true,
+      };
+      Object.freeze(hiddenTab);
+      const visibleBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'visible-small-run',
+        runs: [{ text: 'Visible', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: {},
+      };
+      const hiddenTabPrefixBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'hidden-tab-prefix-run',
+        runs: [hiddenTab, { text: 'Visible', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: {},
+      };
+
+      const visibleMeasure = expectParagraphMeasure(await measureBlock(visibleBlock, 1000));
+      const hiddenTabPrefixMeasure = expectParagraphMeasure(await measureBlock(hiddenTabPrefixBlock, 1000));
+
+      expect(hiddenTabPrefixMeasure.lines).toHaveLength(1);
+      expect(hiddenTabPrefixMeasure.lines[0].width).toBeCloseTo(visibleMeasure.lines[0].width, 3);
+      expect(hiddenTabPrefixMeasure.lines[0].lineHeight).toBeCloseTo(visibleMeasure.lines[0].lineHeight, 3);
+      expect(hiddenTabPrefixMeasure.lines[0].segments).toEqual([
+        { runIndex: 0, fromChar: 0, toChar: 1, width: 0 },
+        { runIndex: 1, fromChar: 0, toChar: 7, width: expect.any(Number) },
+      ]);
+      expect(hiddenTabPrefixMeasure.lines[0].tabWidths?.[0]).toBe(0);
+      expect(hiddenTab).not.toHaveProperty('width');
+    });
+
+    it('does not let vanished text inflate a following visible tab line', async () => {
+      const visibleTabBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'visible-tab-run',
+        runs: [{ kind: 'tab', text: '\t', fontFamily: 'Arial', fontSize: 12 } as TabRun],
+        attrs: {},
+      };
+      const hiddenBeforeTabBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'hidden-before-tab-run',
+        runs: [
+          { text: 'Hidden', fontFamily: 'Arial', fontSize: 72, vanish: true },
+          { kind: 'tab', text: '\t', fontFamily: 'Arial', fontSize: 12 } as TabRun,
+        ],
+        attrs: {},
+      };
+
+      const visibleTabMeasure = expectParagraphMeasure(await measureBlock(visibleTabBlock, 1000));
+      const hiddenBeforeTabMeasure = expectParagraphMeasure(await measureBlock(hiddenBeforeTabBlock, 1000));
+
+      expect(hiddenBeforeTabMeasure.lines).toHaveLength(1);
+      expect(hiddenBeforeTabMeasure.lines[0].width).toBeCloseTo(visibleTabMeasure.lines[0].width, 3);
+      expect(hiddenBeforeTabMeasure.lines[0].lineHeight).toBeCloseTo(visibleTabMeasure.lines[0].lineHeight, 3);
+      expect(hiddenBeforeTabMeasure.lines[0].segments).toEqual([{ runIndex: 0, fromChar: 0, toChar: 6, width: 0 }]);
+      expect(hiddenBeforeTabMeasure.lines[0].tabWidths?.[1]).toBeGreaterThan(0);
+    });
+
+    it('keeps vanished-only paragraphs structurally measurable', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'hidden-only-run',
+        runs: [{ text: 'Hidden', fontFamily: 'Arial', fontSize: 16, vanish: true }],
+        attrs: {},
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].width).toBe(0);
+      expect(measure.lines[0].segments).toEqual([{ runIndex: 0, fromChar: 0, toChar: 6, width: 0 }]);
+      expect(measure.totalHeight).toBeGreaterThan(0);
+    });
+
+    it('uses explicit multiplier line spacing for empty paragraphs', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'empty-explicit-line-spacing',
+        runs: [{ text: '', fontFamily: 'Times New Roman', fontSize: 16 }],
+        attrs: { spacing: { after: 16, line: 1, lineUnit: 'multiplier', lineRule: 'auto' } },
+      };
+      const referenceBlock: FlowBlock = {
+        ...block,
+        id: 'visible-explicit-line-spacing',
+        runs: [{ text: 'x', fontFamily: 'Times New Roman', fontSize: 16 }],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      const referenceMeasure = expectParagraphMeasure(await measureBlock(referenceBlock, 1000));
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].lineHeight).toBeCloseTo(referenceMeasure.lines[0].lineHeight, 3);
+      expect(measure.totalHeight).toBeCloseTo(referenceMeasure.totalHeight, 3);
+    });
+
+    it('matches the Word mutation-derived Arial pitch for empty body paragraphs', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'empty-footer-line',
+        runs: [{ text: '', fontFamily: 'Liberation Sans, sans-serif', fontSize: 14.666666666666666 }],
+        attrs: { spacing: { line: 1.15, lineUnit: 'multiplier', lineRule: 'auto' } },
+      };
+      const fontContext = { resolvePhysical: (family: string) => family, fontSignature: 'sd-1331-probe' };
+
+      const defaultMeasure = expectParagraphMeasure(await measureBlock(block, 1000, fontContext));
+      const bodyMeasure = expectParagraphMeasure(
+        await measureBlock(block, { maxWidth: 1000, emptyParagraphLineMetrics: 'body' }, fontContext),
+      );
+      const footerMeasure = expectParagraphMeasure(
+        await measureBlock(block, { maxWidth: 1000, emptyParagraphLineMetrics: 'headerFooter' }, fontContext),
+      );
+      expect(bodyMeasure.lines[0].lineHeight).toBeCloseTo(19.397, 3);
+      expect(defaultMeasure.lines[0].lineHeight).toBeCloseTo(19.397, 3);
+      expect(footerMeasure.lines[0].lineHeight).toBeCloseTo(19.397, 3);
+    });
+
     it('does not let skipped empty runs inflate visible line height', async () => {
       const visibleBlock: FlowBlock = {
         kind: 'paragraph',
@@ -168,6 +321,339 @@ describe('measureBlock', () => {
       const emptyPrefixMeasure = expectParagraphMeasure(await measureBlock(emptyPrefixBlock, 1000));
 
       expect(emptyPrefixMeasure.lines[0].lineHeight).toBeCloseTo(visibleMeasure.lines[0].lineHeight, 3);
+    });
+
+    it('does not let bookmark marker runs inflate visible line height', async () => {
+      const visibleBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'footer-visible-run',
+        runs: [{ text: '30695.10', fontFamily: 'Calibri', fontSize: 14.666666666666666 }],
+        attrs: { spacing: { after: 0, line: 1, lineUnit: 'multiplier', lineRule: 'auto' } },
+      };
+      const bookmarkWrappedBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'footer-bookmark-wrapped-run',
+        runs: [
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 16,
+            dataAttrs: { 'data-bookmark-marker': 'start', 'data-bookmark-id': '0' },
+          },
+          { text: '30695.10', fontFamily: 'Calibri', fontSize: 14.666666666666666 },
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 16,
+            dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '0' },
+          },
+        ],
+        attrs: { spacing: { after: 0, line: 1, lineUnit: 'multiplier', lineRule: 'auto' } },
+      };
+
+      const visibleMeasure = expectParagraphMeasure(await measureBlock(visibleBlock, 1000));
+      const bookmarkWrappedMeasure = expectParagraphMeasure(await measureBlock(bookmarkWrappedBlock, 1000));
+
+      expect(bookmarkWrappedMeasure.lines[0].lineHeight).toBeCloseTo(visibleMeasure.lines[0].lineHeight, 3);
+      expect(bookmarkWrappedMeasure.totalHeight).toBeCloseTo(visibleMeasure.totalHeight, 3);
+    });
+
+    it('ignores bookmark marker runs when they would otherwise change wrapped line breaks', async () => {
+      const visibleBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'footnote-visible-wrap',
+        runs: [
+          {
+            text: 'If Alternative 1 (arbitration) is being used for dispute resolution, the jury trial waiver language should always be included. If Alternative 2 (court) is being used for dispute resolution, then this provision is optional.',
+            fontFamily: 'Times New Roman',
+            fontSize: 13.333333333333332,
+          },
+        ],
+        attrs: {
+          spacing: { after: 4, line: 1, lineUnit: 'multiplier', lineRule: 'auto' },
+          tabs: [{ val: 'start', pos: 360 }],
+        },
+      };
+      const bookmarkWrappedBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'footnote-bookmark-wrap',
+        runs: [
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 13.333333333333332,
+            dataAttrs: { 'data-bookmark-marker': 'start', 'data-bookmark-id': '172' },
+          },
+          {
+            text: 'If Alternative 1 (arbitration) is being used for dispute resolution, the jury trial waiver language should always be included. If Alternative 2 (court) is being used for dispute resolution, then this provision is optional',
+            fontFamily: 'Times New Roman',
+            fontSize: 13.333333333333332,
+          },
+          {
+            text: '.',
+            fontFamily: 'Times New Roman',
+            fontSize: 13.333333333333332,
+          },
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 13.333333333333332,
+            dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '172' },
+          },
+        ],
+        attrs: visibleBlock.attrs,
+      };
+
+      const visibleMeasure = expectParagraphMeasure(await measureBlock(visibleBlock, 624));
+      const bookmarkWrappedMeasure = expectParagraphMeasure(await measureBlock(bookmarkWrappedBlock, 624));
+
+      expect(bookmarkWrappedMeasure.lines).toHaveLength(visibleMeasure.lines.length);
+      expect(bookmarkWrappedMeasure.totalHeight).toBeCloseTo(visibleMeasure.totalHeight, 3);
+    });
+
+    it('ignores bookmark marker runs inside visible bookmarked headings when wrapping', async () => {
+      const attrs = {
+        styleId: 'Heading2',
+        alignment: 'justify' as const,
+        spacing: { before: 16, after: 0, line: 1, lineUnit: 'multiplier' as const, lineRule: 'auto' as const },
+        indent: { left: 0, firstLine: 48 },
+        headingLevel: 2,
+        tabs: [{ val: 'start' as const, pos: 1440 }],
+        wordLayout: {
+          indentLeftPx: 0,
+          hangingPx: 0,
+          firstLinePx: 48,
+          tabsPx: [],
+          textStartPx: 66,
+          marker: {
+            markerText: '1.1',
+            markerBoxWidthPx: 18,
+            markerX: 48,
+            textStartX: 66,
+            gutterWidthPx: 8,
+            justification: 'left' as const,
+            suffix: 'tab' as const,
+            run: {
+              fontFamily: 'Times New Roman',
+              fontSize: 14.666666666666666,
+              bold: false,
+              italic: false,
+              lang: 'en-US',
+            },
+          },
+          defaultTabIntervalPx: 720,
+          firstLineIndentMode: true,
+        },
+      };
+      const visibleBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'heading-visible-wrap',
+        runs: [
+          {
+            text: 'Performance. The Company shall have performed and complied with all covenants, agreements, obligations and conditions contained in this Agreement that are required to be performed or complied with by the Company in all respects on or before the Initial Closing [and, as to any subsequent Closing, in all material respects on or before such subsequent Closing].',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+          },
+        ],
+        attrs,
+      };
+      const bookmarkWrappedBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'heading-bookmark-wrap',
+        runs: [
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+            dataAttrs: { 'data-bookmark-marker': 'start', 'data-bookmark-id': '131' },
+          },
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+            dataAttrs: { 'data-bookmark-marker': 'start', 'data-bookmark-id': '132' },
+          },
+          {
+            text: 'Performance',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+            underline: { style: 'single' },
+          },
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+            underline: {},
+            dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '131' },
+          },
+          {
+            text: '.',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+          },
+          {
+            text: ' The Company shall have performed and complied with all covenants, agreements, obligations and conditions contained in this Agreement that are required to be performed or complied with by the Company in all respects on or before the Initial Closing [and, as to any subsequent Closing, in all material respects on or before such subsequent Closing].',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+          },
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+            dataAttrs: { 'data-bookmark-marker': 'start', 'data-bookmark-id': '133' },
+          },
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+            dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '130' },
+          },
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+            dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '132' },
+          },
+        ],
+        attrs,
+      };
+
+      const visibleMeasure = expectParagraphMeasure(await measureBlock(visibleBlock, 624));
+      const bookmarkWrappedMeasure = expectParagraphMeasure(await measureBlock(bookmarkWrappedBlock, 624));
+
+      expect(bookmarkWrappedMeasure.lines).toHaveLength(visibleMeasure.lines.length);
+      expect(bookmarkWrappedMeasure.totalHeight).toBeCloseTo(visibleMeasure.totalHeight, 3);
+    });
+
+    it('uses the paragraph fallback font for empty lines with only bookmark marker text', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'empty-line-with-bookmark-marker',
+        runs: [
+          { text: '', fontFamily: 'Times New Roman', fontSize: 16 },
+          {
+            text: '\u200B',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.666666666666666,
+            dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '42' },
+          },
+        ],
+        attrs: { spacing: { after: 16, line: 1, lineUnit: 'multiplier', lineRule: 'auto' } },
+      };
+      const referenceBlock: FlowBlock = {
+        ...block,
+        id: 'empty-line-without-bookmark-marker',
+        runs: [{ text: '', fontFamily: 'Times New Roman', fontSize: 16 }],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      const referenceMeasure = expectParagraphMeasure(await measureBlock(referenceBlock, 1000));
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].lineHeight).toBeCloseTo(referenceMeasure.lines[0].lineHeight, 3);
+      expect(measure.totalHeight).toBeCloseTo(referenceMeasure.totalHeight, 3);
+    });
+
+    it('uses empty-paragraph metrics for bookmark-carrier-only lines with fractional spacing', async () => {
+      configureMeasurement({
+        mode: 'deterministic',
+        fonts: { deterministicFamily: 'Noto Sans', fallbackStack: ['Noto Sans', 'Arial', 'sans-serif'] },
+      });
+      try {
+        const emptyVisibleBlock: FlowBlock = {
+          kind: 'paragraph',
+          id: 'empty-visible-line-fractional-spacing',
+          runs: [{ text: '', fontFamily: 'Calibri', fontSize: 14.666666666666666 }],
+          attrs: {
+            spacing: { after: 0, line: 1, lineUnit: 'multiplier', lineRule: 'auto' },
+            tabs: [
+              { val: 'start', pos: 5529 },
+              { val: 'end', pos: 8875 },
+            ],
+          },
+        };
+        const bookmarkCarrierBlock: FlowBlock = {
+          kind: 'paragraph',
+          id: 'bookmark-carrier-only-line-fractional-spacing',
+          runs: [
+            { text: '', fontFamily: 'Calibri', fontSize: 14.666666666666666 },
+            {
+              text: '\u200B',
+              fontFamily: 'Calibri',
+              fontSize: 12,
+              dataAttrs: { 'data-bookmark-marker': 'start', 'data-bookmark-id': '1', 'data-bookmark-name': 'Options' },
+            },
+            {
+              text: '\u200B',
+              fontFamily: 'Calibri',
+              fontSize: 12,
+              dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '1' },
+            },
+            {
+              text: '\u200B',
+              fontFamily: 'Calibri',
+              fontSize: 12,
+              dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '0' },
+            },
+          ],
+          attrs: {
+            spacing: { after: 0, line: 1, lineUnit: 'multiplier', lineRule: 'auto' },
+            tabs: [
+              { val: 'start', pos: 5529 },
+              { val: 'end', pos: 8875 },
+            ],
+          },
+        };
+
+        const emptyVisibleMeasure = expectParagraphMeasure(await measureBlock(emptyVisibleBlock, 1000));
+        const bookmarkCarrierMeasure = expectParagraphMeasure(await measureBlock(bookmarkCarrierBlock, 1000));
+
+        expect(emptyVisibleMeasure.lines[0].lineHeight).toBeCloseTo(16.9, 3);
+        expect(bookmarkCarrierMeasure.lines[0].lineHeight).toBeCloseTo(emptyVisibleMeasure.lines[0].lineHeight, 3);
+        expect(bookmarkCarrierMeasure.totalHeight).toBeCloseTo(emptyVisibleMeasure.totalHeight, 3);
+      } finally {
+        configureMeasurement({ mode: 'browser' });
+      }
+    });
+
+    it('ignores bookmark marker runs when selecting fallback metrics for a leading-tab line', async () => {
+      const attrs = {
+        spacing: { line: 1, lineUnit: 'multiplier' as const },
+        tabs: [
+          { val: 'center' as const, pos: 4680 },
+          { val: 'right' as const, pos: 9360 },
+        ],
+      };
+      const withBookmarkMarker: FlowBlock = {
+        kind: 'paragraph',
+        id: 'bookmark-leading-tab',
+        runs: [
+          {
+            text: '\u200B',
+            fontFamily: 'Arial',
+            fontSize: 13.33,
+            dataAttrs: { 'data-bookmark-marker': 'start', 'data-bookmark-id': '180' },
+          },
+          { kind: 'tab', text: '\t', fontFamily: 'Arial', fontSize: 13.33 },
+          { text: '21871', fontFamily: 'Arial', fontSize: 12 },
+        ],
+        attrs,
+      };
+      const withoutBookmarkMarker: FlowBlock = {
+        kind: 'paragraph',
+        id: 'plain-leading-tab',
+        runs: [
+          { kind: 'tab', text: '\t', fontFamily: 'Arial', fontSize: 13.33 },
+          { text: '21871', fontFamily: 'Arial', fontSize: 12 },
+        ],
+        attrs,
+      };
+
+      const markerMeasure = expectParagraphMeasure(await measureBlock(withBookmarkMarker, 636));
+      const referenceMeasure = expectParagraphMeasure(await measureBlock(withoutBookmarkMarker, 636));
+
+      expect(markerMeasure.lines).toHaveLength(1);
+      expect(markerMeasure.lines[0].lineHeight).toBeCloseTo(referenceMeasure.lines[0].lineHeight, 3);
     });
 
     // SD-3330: a line containing only tabs must be measured at the run's font size,
@@ -193,6 +679,60 @@ describe('measureBlock', () => {
       // The tab-only line height matches the text line (both 16px), not 12px × 1.15.
       expect(tabMeasure.lines[0].lineHeight).toBeCloseTo(textMeasure.lines[0].lineHeight, 1);
       expect(tabMeasure.lines[0].lineHeight).toBeGreaterThan(16);
+    });
+
+    // SD-3347: line.tabWidths must be populated alongside run.width so the painter can read the
+    // measured tab width even after FlowBlock re-projection creates fresh run objects
+    // (cache hit → run.width never re-set → painter would fall back to 48px without tabWidths).
+    // Keyed by block.runs index (not pmStart) so the entry survives upstream edits that shift
+    // PM positions without changing paragraph content or formatting.
+    it('stores measured tab width in line.tabWidths keyed by block.runs index', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'sig-line-tabwidths',
+        runs: [
+          {
+            kind: 'tab' as const,
+            text: '\t' as const,
+            fontFamily: 'Arial',
+            fontSize: 12,
+          },
+        ],
+        attrs: {
+          tabs: [{ val: 'start' as const, pos: 2880 }],
+        },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 500));
+      const line = measure.lines[0];
+
+      expect(line.tabWidths).toBeDefined();
+      // The tab is at block.runs[0], so tabWidths key is 0.
+      expect(typeof line.tabWidths![0]).toBe('number');
+      // tabWidths entry must match the tab's contribution to line.width
+      expect(line.tabWidths![0]).toBeCloseTo(line.width, 1);
+    });
+
+    it('stores correct tabWidths keys for a paragraph with text then tab', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'sig-line-text-then-tab',
+        runs: [
+          { text: 'Email:', fontFamily: 'Arial', fontSize: 12 },
+          { kind: 'tab' as const, text: '\t' as const, fontFamily: 'Arial', fontSize: 12 },
+        ],
+        attrs: {
+          tabs: [{ val: 'start' as const, pos: 5760 }],
+        },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 800));
+      const line = measure.lines[0];
+
+      expect(line.tabWidths).toBeDefined();
+      // Tab is at block.runs[1], so tabWidths key must be 1, not 0.
+      expect(line.tabWidths![1]).toBeGreaterThan(0);
+      expect(line.tabWidths![0]).toBeUndefined();
     });
 
     it('breaks lines when text exceeds maxWidth', async () => {
@@ -650,6 +1190,51 @@ describe('measureBlock', () => {
       expect(measure.marker?.markerTextWidth).toBeGreaterThan(0);
     });
 
+    it('composes the list marker font into the first line envelope only', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'symbol-marker-line-envelope',
+        runs: [
+          {
+            text: 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda',
+            fontFamily: 'Times New Roman',
+            fontSize: 44 / 3,
+          },
+        ],
+        attrs: {
+          indent: { left: 120, hanging: 24 },
+          wordLayout: {
+            indentLeftPx: 120,
+            hangingPx: 24,
+            textStartPx: 120,
+            marker: {
+              markerText: '•',
+              markerBoxWidthPx: 24,
+              markerX: 96,
+              textStartX: 120,
+              gutterWidthPx: 8,
+              justification: 'left',
+              suffix: 'tab',
+              run: {
+                fontFamily: 'Symbol',
+                fontSize: 44 / 3,
+                bold: false,
+                italic: false,
+                letterSpacing: 0,
+              },
+            },
+          },
+        },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 260));
+
+      expect(measure.lines.length).toBeGreaterThan(1);
+      expect(measure.lines[0].lineHeight).toBeGreaterThan(measure.lines[1].lineHeight);
+      expect(measure.lines[0].lineHeight).toBeCloseTo(17.92, 1);
+      expect(measure.lines[1].lineHeight).toBeCloseTo((44 / 3) * 1.15, 1);
+    });
+
     it('creates a new line for explicit lineBreak runs', async () => {
       const block: FlowBlock = {
         kind: 'paragraph',
@@ -923,6 +1508,30 @@ describe('measureBlock', () => {
       const spacedMeasure = expectParagraphMeasure(await measureBlock(spacedBlock, 400));
 
       expect(spacedMeasure.lines[0].width).toBeGreaterThan(baseMeasure.lines[0].width);
+    });
+
+    it('uses horizontal glyph scaling for width and line breaking', async () => {
+      const text = 'dated February 2025';
+      const baseBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'unscaled-width',
+        runs: [{ text, fontFamily: 'Arial', fontSize: 16 }],
+        attrs: {},
+      };
+      const natural = expectParagraphMeasure(await measureBlock(baseBlock, 1000));
+      const scaledBlock: FlowBlock = {
+        ...baseBlock,
+        id: 'scaled-width',
+        runs: [{ ...baseBlock.runs[0], horizontalScale: 0.9 }],
+      };
+      const scaledNatural = expectParagraphMeasure(await measureBlock(scaledBlock, 1000));
+      const widthBetween = natural.lines[0].width * 0.95;
+      const unscaledWrapped = expectParagraphMeasure(await measureBlock(baseBlock, widthBetween));
+      const scaledFits = expectParagraphMeasure(await measureBlock(scaledBlock, widthBetween));
+
+      expect(scaledNatural.lines[0].width).toBeCloseTo(natural.lines[0].width * 0.9, 2);
+      expect(unscaledWrapped.lines.length).toBeGreaterThan(1);
+      expect(scaledFits.lines).toHaveLength(1);
     });
 
     it('reduces available width when paragraph indent is set', async () => {
@@ -1202,7 +1811,7 @@ describe('measureBlock', () => {
       }
     });
 
-    it('converts spacing multipliers using the baseline line height', async () => {
+    it('converts spacing multipliers using the font natural-line height', async () => {
       const fontSize = 16;
       const block: FlowBlock = {
         kind: 'paragraph',
@@ -1220,9 +1829,7 @@ describe('measureBlock', () => {
       };
 
       const measure = expectParagraphMeasure(await measureBlock(block, 400));
-      // `lineUnit: "multiplier"` applies directly to fontSize.
-      // (pm-adapter already bakes the OOXML auto 1.15 factor into the multiplier value.)
-      expect(measure.lines[0].lineHeight).toBeCloseTo(1.5 * fontSize, 1);
+      expect(measure.lines[0].lineHeight).toBeCloseTo(1.5 * 1.15 * fontSize, 1);
     });
 
     it('applies higher auto multipliers to the baseline line height', async () => {
@@ -1243,7 +1850,7 @@ describe('measureBlock', () => {
       };
 
       const measure = expectParagraphMeasure(await measureBlock(block, 400));
-      expect(measure.lines[0].lineHeight).toBeCloseTo(2 * fontSize, 1);
+      expect(measure.lines[0].lineHeight).toBeCloseTo(2 * 1.15 * fontSize, 1);
     });
 
     it('applies large auto values as multipliers', async () => {
@@ -1263,7 +1870,7 @@ describe('measureBlock', () => {
       };
 
       const measure = expectParagraphMeasure(await measureBlock(block, 400));
-      expect(measure.lines[0].lineHeight).toBeCloseTo(42 * 16, 1);
+      expect(measure.lines[0].lineHeight).toBeCloseTo(42 * 1.15 * 16, 1);
     });
 
     it('does not clamp line height for very small fonts', async () => {
@@ -1286,7 +1893,7 @@ describe('measureBlock', () => {
       expect(measure.lines[0].lineHeight).toBeLessThan(16);
     });
 
-    it('uses 1.15 multiplier for normal fonts', async () => {
+    it('uses the frozen-main 1.15 baseline for normal fonts when spacing is absent', async () => {
       const fontSize = 20;
       const block: FlowBlock = {
         kind: 'paragraph',
@@ -1301,9 +1908,23 @@ describe('measureBlock', () => {
       };
 
       const measure = expectParagraphMeasure(await measureBlock(block, 400));
-      // Normal font should use fontSize * 1.15
       const expectedLineHeight = fontSize * 1.15; // 20 * 1.15 = 23px
       expect(measure.lines[0].lineHeight).toBeCloseTo(expectedLineHeight, 1);
+    });
+
+    it('uses the measured Word natural line pitch for Nunito Sans', async () => {
+      const fontSize = 44 / 3;
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'nunito-word-line-pitch',
+        runs: [{ text: 'Employee Share Option Scheme', fontFamily: 'Nunito Sans, sans-serif', fontSize }],
+        attrs: {
+          spacing: { line: 1, lineUnit: 'multiplier', lineRule: 'auto' },
+        },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 400));
+      expect(measure.lines[0].lineHeight).toBeCloseTo(20.16, 3);
     });
 
     it('bypasses 1.15 base with exact lineRule', async () => {
@@ -1466,6 +2087,42 @@ describe('measureBlock', () => {
       // With actual font metrics, lineHeight is based on actual glyph bounds, not fontSize
       expect(measure.lines[0].lineHeight).toBeGreaterThan(20); // Should be based on 24px font
       expect(measure.lines[0].ascent).toBeGreaterThan(16); // Should reflect larger font
+    });
+
+    it('combines same-size run metrics without depending on run order', async () => {
+      const makeSingleRunBlock = (fontFamily: string): FlowBlock => ({
+        kind: 'paragraph',
+        id: fontFamily,
+        runs: [{ text: 'Single face', fontFamily, fontSize: 16 }],
+        attrs: {},
+      });
+      const makeMixedBlock = (timesFirst: boolean): FlowBlock => ({
+        kind: 'paragraph',
+        id: timesFirst ? 'times-first' : 'arial-first',
+        runs: timesFirst
+          ? [
+              { text: 'Times ', fontFamily: 'Times New Roman', fontSize: 16 },
+              { text: 'Arial', fontFamily: 'Arial', fontSize: 16 },
+            ]
+          : [
+              { text: 'Arial ', fontFamily: 'Arial', fontSize: 16 },
+              { text: 'Times', fontFamily: 'Times New Roman', fontSize: 16 },
+            ],
+        attrs: {},
+      });
+
+      const times = expectParagraphMeasure(await measureBlock(makeSingleRunBlock('Times New Roman'), 1000)).lines[0];
+      const arial = expectParagraphMeasure(await measureBlock(makeSingleRunBlock('Arial'), 1000)).lines[0];
+      const timesFirst = expectParagraphMeasure(await measureBlock(makeMixedBlock(true), 1000)).lines[0];
+      const arialFirst = expectParagraphMeasure(await measureBlock(makeMixedBlock(false), 1000)).lines[0];
+      const expectedAscent = Math.max(times.ascent, arial.ascent);
+      const expectedDescent = Math.max(times.descent, arial.descent);
+
+      expect(timesFirst.ascent).toBe(expectedAscent);
+      expect(timesFirst.descent).toBe(expectedDescent);
+      expect(arialFirst.ascent).toBe(expectedAscent);
+      expect(arialFirst.descent).toBe(expectedDescent);
+      expect(timesFirst.lineHeight).toBe(arialFirst.lineHeight);
     });
   });
 
@@ -1738,73 +2395,6 @@ describe('measureBlock', () => {
       const totalChars = measure.lines.reduce((sum, line) => sum + (line.toChar - line.fromChar), 0);
       expect(totalChars).toBe(3);
     });
-
-    it('matches merged-run wrapping when a numeric run is followed by unspaced CJK text', async () => {
-      const prefix = '2023';
-      const suffix = '年度基层工会职工小家文体活动服务商入围项目';
-      const splitBlock: FlowBlock = {
-        kind: 'paragraph',
-        id: 'cjk-numeric-split-runs',
-        runs: [
-          {
-            text: prefix,
-            fontFamily: 'Arial',
-            fontSize: 26,
-          },
-          {
-            text: suffix,
-            fontFamily: 'Arial',
-            fontSize: 26,
-          },
-        ],
-        attrs: {},
-      };
-      const mergedBlock: FlowBlock = {
-        kind: 'paragraph',
-        id: 'cjk-numeric-merged-run',
-        runs: [
-          {
-            text: `${prefix}${suffix}`,
-            fontFamily: 'Arial',
-            fontSize: 26,
-          },
-        ],
-        attrs: {},
-      };
-
-      const fullWidthMeasure = expectParagraphMeasure(await measureBlock(mergedBlock, 2000));
-      const fullWidth = Math.ceil(fullWidthMeasure.lines[0].width);
-      let matchingWidth: number | undefined;
-      let splitMeasureAtMatch: ParagraphMeasure | undefined;
-      let mergedMeasureAtMatch: ParagraphMeasure | undefined;
-
-      for (let width = fullWidth - 1; width >= Math.max(80, Math.floor(fullWidth * 0.4)); width -= 1) {
-        const mergedCandidate = expectParagraphMeasure(await measureBlock(mergedBlock, width));
-        if (mergedCandidate.lines.length !== 2) continue;
-        if (mergedCandidate.lines[0].toRun !== 0 || mergedCandidate.lines[0].toChar <= prefix.length) continue;
-
-        const splitCandidate = expectParagraphMeasure(await measureBlock(splitBlock, width));
-        const splitLineTexts = splitCandidate.lines.map((line) => extractLineText(splitBlock, line));
-        const mergedLineTexts = mergedCandidate.lines.map((line) => extractLineText(mergedBlock, line));
-
-        if (splitCandidate.lines[0].toRun !== 1 || splitCandidate.lines[0].toChar <= 0) continue;
-        if (splitLineTexts.join('|') !== mergedLineTexts.join('|')) continue;
-
-        matchingWidth = width;
-        splitMeasureAtMatch = splitCandidate;
-        mergedMeasureAtMatch = mergedCandidate;
-        break;
-      }
-
-      expect(matchingWidth).toBeDefined();
-
-      const splitLineTexts = splitMeasureAtMatch!.lines.map((line) => extractLineText(splitBlock, line));
-      const mergedLineTexts = mergedMeasureAtMatch!.lines.map((line) => extractLineText(mergedBlock, line));
-
-      expect(splitMeasureAtMatch!.lines[0].toRun).toBe(1);
-      expect(splitMeasureAtMatch!.lines[0].toChar).toBeGreaterThan(0);
-      expect(splitLineTexts).toEqual(mergedLineTexts);
-    });
   });
 
   describe('deterministic behavior', () => {
@@ -1904,6 +2494,54 @@ describe('measureBlock', () => {
         // Width should move text to position near 200px
         expect(tabRun.width).toBeLessThan(200);
       }
+    });
+
+    it('keeps a Word-authored tabbed suffix on the line when it is within the subpixel tolerance', async () => {
+      // SD-4125 manual, section 566: the explicit stop is measured from the
+      // column edge, while the text begins at the paragraph indent. The final
+      // glyph lands ~0.06px inside the available width. Word keeps this as one
+      // line; treating the 0.5px tolerance as reserved space creates a false
+      // wrap that compounds across continuous multi-column sections.
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'near-edge-explicit-tab',
+        runs: [
+          {
+            kind: 'text',
+            text: '00',
+            fontFamily: 'Arial',
+            fontSize: 8,
+            horizontalScale: 1.05,
+            letterSpacing: -1 / 3,
+          },
+          {
+            kind: 'tab',
+            text: '\t',
+            fontFamily: 'Arial',
+            fontSize: 8,
+            tabIndex: 0,
+          },
+          {
+            kind: 'text',
+            text: '0',
+            fontFamily: 'Arial',
+            fontSize: 8,
+            horizontalScale: 1.05,
+            letterSpacing: -2 / 3,
+          },
+        ],
+        attrs: {
+          indent: { left: 344 / 15 },
+          tabs: [{ val: 'start', pos: 787 }],
+          tabIntervalTwips: 720,
+        },
+      };
+
+      clearMeasurementCache();
+      const measure = expectParagraphMeasure(await measureBlock(block, 858 / 15));
+
+      expect(measure.lines).toHaveLength(1);
+      expect(extractLineText(block, measure.lines[0])).toBe('00\t0');
     });
 
     it('uses the hanging-indent body text start as the first default tab target', async () => {
@@ -3178,6 +3816,275 @@ describe('measureBlock', () => {
       expect(windowText).toContain('neste ato representado por seu representante legal');
     });
 
+    it('calibrates Aptos glyph advances without scaling its spaces', async () => {
+      const contextPrototype = Object.getPrototypeOf(document.createElement('canvas').getContext('2d'));
+      const originalMeasureText = contextPrototype.measureText;
+      const measureTextSpy = vi.spyOn(contextPrototype, 'measureText').mockImplementation(function (text: string) {
+        if (text === 'abc' || text === 'def' || text === ' ') {
+          const width = text === ' ' ? 10 : 30;
+          return {
+            width,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: width,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+          } as TextMetrics;
+        }
+        return originalMeasureText.call(this, text);
+      });
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'aptos-word-width-calibration',
+        runs: [{ text: 'abc def', fontFamily: 'Aptos, sans-serif', fontSize: 12 }],
+      };
+
+      try {
+        clearMeasurementCache();
+        const measure = expectParagraphMeasure(await measureBlock(block, 200));
+
+        expect(measure.lines[0].width).toBeCloseTo(30 * 1.0016 * 2 + 10, 5);
+      } finally {
+        measureTextSpy.mockRestore();
+        clearMeasurementCache();
+      }
+    });
+
+    it('limits justified space compression to the Word-compatible bound', async () => {
+      const contextPrototype = Object.getPrototypeOf(document.createElement('canvas').getContext('2d'));
+      const originalMeasureText = contextPrototype.measureText;
+      const measureTextSpy = vi.spyOn(contextPrototype, 'measureText').mockImplementation(function (text: string) {
+        if (text === 'aa' || text === 'cc' || text === 'bbbbbbbbbb' || text === ' ') {
+          const width = text === 'bbbbbbbbbb' ? 100 : 10;
+          return {
+            width,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: width,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+          } as TextMetrics;
+        }
+        return originalMeasureText.call(this, text);
+      });
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'justify-compression-bound',
+        runs: [{ text: 'aa aa bbbbbbbbbb cc', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: { alignment: 'justify' },
+      };
+
+      try {
+        clearMeasurementCache();
+        const withinBound = expectParagraphMeasure(await measureBlock(block, 136));
+        const beyondBound = expectParagraphMeasure(await measureBlock(block, 130));
+
+        expect(extractLineText(block, withinBound.lines[0]).trim()).toBe('aa aa bbbbbbbbbb');
+        expect(extractLineText(block, beyondBound.lines[0]).trim()).toBe('aa aa');
+      } finally {
+        measureTextSpy.mockRestore();
+        clearMeasurementCache();
+      }
+    });
+
+    it('uses the tighter Helvetica compression boundary evidenced by Word', async () => {
+      const contextPrototype = Object.getPrototypeOf(document.createElement('canvas').getContext('2d'));
+      const originalMeasureText = contextPrototype.measureText;
+      const measureTextSpy = vi.spyOn(contextPrototype, 'measureText').mockImplementation(function (text: string) {
+        if (text === 'aa' || text === 'cc' || text === ' ') {
+          const width = text === 'cc' ? 20 : 10;
+          return {
+            width,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: width,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+          } as TextMetrics;
+        }
+        return originalMeasureText.call(this, text);
+      });
+      const makeBlock = (fontFamily: string): FlowBlock => ({
+        kind: 'paragraph',
+        id: `justify-${fontFamily}`,
+        runs: [{ text: 'aa aa cc', fontFamily, fontSize: 12 }],
+        attrs: { alignment: 'justify' },
+      });
+
+      try {
+        clearMeasurementCache();
+        const defaultMeasure = expectParagraphMeasure(await measureBlock(makeBlock('Times New Roman'), 55.4));
+        clearMeasurementCache();
+        const helveticaMeasure = expectParagraphMeasure(await measureBlock(makeBlock('Helvetica'), 55.4));
+
+        expect(extractLineText(makeBlock('Times New Roman'), defaultMeasure.lines[0]).trim()).toBe('aa aa cc');
+        expect(extractLineText(makeBlock('Helvetica'), helveticaMeasure.lines[0]).trim()).toBe('aa aa');
+      } finally {
+        measureTextSpy.mockRestore();
+        clearMeasurementCache();
+      }
+    });
+
+    it('applies Word Helvetica candidate bounds to zero-indent numbering and terminal-tab soft breaks', async () => {
+      const contextPrototype = Object.getPrototypeOf(document.createElement('canvas').getContext('2d'));
+      const originalMeasureText = contextPrototype.measureText;
+      const measureTextSpy = vi.spyOn(contextPrototype, 'measureText').mockImplementation(function (text: string) {
+        if (text === 'aa' || text === ' ' || text === '1.') {
+          const width = text === '1.' ? 12 : 10;
+          return {
+            width,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: width,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+          } as TextMetrics;
+        }
+        if (text === 'cc') {
+          return {
+            width: 20,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: 20,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+          } as TextMetrics;
+        }
+        return originalMeasureText.call(this, text);
+      });
+      const text = 'aa aa aa aa aa aa aa cc';
+      const tightWidth = 152.3;
+      const numberingTextStart = 18.933333333333334;
+      const ordinary: FlowBlock = {
+        kind: 'paragraph',
+        id: 'helvetica-ordinary-candidate',
+        runs: [{ text, fontFamily: 'Helvetica', fontSize: 12 }],
+        attrs: { alignment: 'justify' },
+      };
+      const zeroIndentNumbering: FlowBlock = {
+        kind: 'paragraph',
+        id: 'helvetica-numbering-candidate',
+        runs: [{ text, fontFamily: 'Helvetica', fontSize: 12 }],
+        attrs: {
+          alignment: 'justify',
+          wordLayout: {
+            indentLeftPx: 0,
+            hangingPx: 18,
+            firstLinePx: 0,
+            tabsPx: [numberingTextStart],
+            textStartPx: 0,
+            marker: {
+              markerText: '1.',
+              markerBoxWidthPx: 18,
+              markerX: -18,
+              textStartX: 0,
+              gutterWidthPx: 8,
+              justification: 'left',
+              suffix: 'tab',
+              run: { fontFamily: 'Helvetica', fontSize: 12 },
+            },
+          },
+        },
+      };
+      const terminalTabBreak: FlowBlock = {
+        kind: 'paragraph',
+        id: 'helvetica-terminal-tab-candidate',
+        runs: [
+          { text, fontFamily: 'Helvetica', fontSize: 12 },
+          { kind: 'tab', text: '\t', fontFamily: 'Helvetica', fontSize: 12 } as TabRun,
+          { kind: 'lineBreak', fontFamily: 'Helvetica', fontSize: 12 },
+        ],
+        attrs: { alignment: 'justify' },
+      };
+
+      try {
+        clearMeasurementCache();
+        const ordinaryMeasure = expectParagraphMeasure(await measureBlock(ordinary, tightWidth));
+        clearMeasurementCache();
+        const numberingMeasure = expectParagraphMeasure(
+          await measureBlock(zeroIndentNumbering, tightWidth + numberingTextStart),
+        );
+        clearMeasurementCache();
+        const terminalAcceptMeasure = expectParagraphMeasure(await measureBlock(terminalTabBreak, 152.9));
+        clearMeasurementCache();
+        const terminalRejectMeasure = expectParagraphMeasure(await measureBlock(terminalTabBreak, tightWidth));
+
+        expect(extractLineText(ordinary, ordinaryMeasure.lines[0]).trim()).toBe(text);
+        expect(extractLineText(zeroIndentNumbering, numberingMeasure.lines[0]).trim()).toBe('aa aa aa aa aa aa aa');
+        expect(extractLineText(terminalTabBreak, terminalAcceptMeasure.lines[0]).trim()).toBe(text);
+        expect(extractLineText(terminalTabBreak, terminalRejectMeasure.lines[0]).trim()).toBe('aa aa aa aa aa aa aa');
+      } finally {
+        measureTextSpy.mockRestore();
+        clearMeasurementCache();
+      }
+    });
+
+    it('does not pull a mostly-overflowing candidate back across a tab stop', async () => {
+      const contextPrototype = Object.getPrototypeOf(document.createElement('canvas').getContext('2d'));
+      const originalMeasureText = contextPrototype.measureText;
+      const measureTextSpy = vi.spyOn(contextPrototype, 'measureText').mockImplementation(function (text: string) {
+        if (text === 'aa' || text === ' ') {
+          return {
+            width: 10,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: 10,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+          } as TextMetrics;
+        }
+        return originalMeasureText.call(this, text);
+      });
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'justify-tab-compression',
+        runs: [
+          { kind: 'tab', text: '\t', fontFamily: 'Arial', fontSize: 12 } as TabRun,
+          { text: 'aa aa aa aa', fontFamily: 'Arial', fontSize: 12 },
+        ],
+        attrs: { alignment: 'justify' },
+      };
+
+      try {
+        clearMeasurementCache();
+        const measure = expectParagraphMeasure(await measureBlock(block, 112));
+
+        expect(measure.lines).toHaveLength(2);
+        expect(extractLineText(block, measure.lines[0])).not.toContain('aa aa aa aa');
+      } finally {
+        measureTextSpy.mockRestore();
+        clearMeasurementCache();
+      }
+    });
+
+    it('wraps after a hyphen-minus without dropping the hyphen', async () => {
+      const contextPrototype = Object.getPrototypeOf(document.createElement('canvas').getContext('2d'));
+      const originalMeasureText = contextPrototype.measureText;
+      const measureTextSpy = vi.spyOn(contextPrototype, 'measureText').mockImplementation(function (text: string) {
+        if (/^[a-z -]+$/i.test(text)) {
+          const width = text.length * 10;
+          return {
+            width,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: width,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+          } as TextMetrics;
+        }
+        return originalMeasureText.call(this, text);
+      });
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'hyphen-wrap',
+        runs: [{ text: 'alpha twenty-one omega', fontFamily: 'Arial', fontSize: 12 }],
+      };
+
+      try {
+        clearMeasurementCache();
+        const measure = expectParagraphMeasure(await measureBlock(block, 130.5));
+
+        expect(extractLineText(block, measure.lines[0]).trim()).toBe('alpha twenty-');
+        expect(extractLineText(block, measure.lines[1]).trim()).toBe('one omega');
+      } finally {
+        measureTextSpy.mockRestore();
+        clearMeasurementCache();
+      }
+    });
+
     it('preserves leading spaces in runs (xml:space="preserve" case)', async () => {
       // When a run starts with a space (common in DOCX with xml:space="preserve"),
       // the space should be included in the line width, not dropped.
@@ -3415,6 +4322,192 @@ describe('measureBlock', () => {
     });
   });
 
+  describe('inline image baseline alignment', () => {
+    const inlineImageSrc = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/';
+
+    it('emits baseline alignment for a tiny inline image that fits the text line', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'glyph-image',
+        runs: [
+          { text: '1.', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 2 },
+          { kind: 'image', src: inlineImageSrc, width: 11, height: 10, pmStart: 2, pmEnd: 3 },
+          { text: ' Title', fontFamily: 'Arial', fontSize: 16, pmStart: 3, pmEnd: 9 },
+        ],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      const line = measure.lines[0];
+      expect(line.inlineImageAlignments).toEqual([{ runIndex: 1, verticalAlign: 'baseline' }]);
+      // Glyph image must not expand the text-derived line height.
+      expect(line.lineHeight).toBeGreaterThan(10);
+    });
+
+    it('keeps a tall inline image top-aligned (no baseline entry, line expands)', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'tall-image',
+        runs: [
+          { text: 'Before ', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 7 },
+          { kind: 'image', src: inlineImageSrc, width: 40, height: 40, pmStart: 7, pmEnd: 8 },
+        ],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      const line = measure.lines[0];
+      expect(line.inlineImageAlignments).toBeUndefined();
+      // Line-expanding behaviour preserved: lineHeight grows to the image height.
+      expect(line.lineHeight).toBe(40);
+    });
+
+    it('measures the visual bounds of a rotated inline image', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'rotated-image',
+        runs: [
+          {
+            kind: 'image',
+            src: inlineImageSrc,
+            width: 80,
+            height: 40,
+            rotation: 270,
+            pmStart: 0,
+            pmEnd: 1,
+          },
+        ],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      expect(measure.lines[0].width).toBeCloseTo(40);
+      expect(measure.lines[0].lineHeight).toBeCloseTo(80);
+    });
+
+    it('lets an explicit source verticalAlign win over the measured default', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'explicit-image',
+        runs: [
+          { text: '1.', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 2 },
+          { kind: 'image', src: inlineImageSrc, width: 11, height: 10, verticalAlign: 'top', pmStart: 2, pmEnd: 3 },
+        ],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      expect(measure.lines[0].inlineImageAlignments).toBeUndefined();
+    });
+
+    it('keeps an image with authored vertical margins top-aligned', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'margin-image',
+        runs: [
+          { text: 'x', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 1 },
+          { kind: 'image', src: inlineImageSrc, width: 11, height: 10, distTop: 4, pmStart: 1, pmEnd: 2 },
+        ],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      expect(measure.lines[0].inlineImageAlignments).toBeUndefined();
+    });
+
+    it('requires positive image dimensions before emitting baseline alignment', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'zero-width-image',
+        runs: [
+          { text: 'x', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 1 },
+          { kind: 'image', src: inlineImageSrc, width: 0, height: 10, pmStart: 1, pmEnd: 2 },
+        ],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      expect(measure.lines[0].inlineImageAlignments).toBeUndefined();
+    });
+
+    it('does not emit baseline for an image-only paragraph without owning-run typography', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'image-only',
+        runs: [{ kind: 'image', src: inlineImageSrc, width: 11, height: 10, pmStart: 0, pmEnd: 1 }],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      expect(measure.lines[0].inlineImageAlignments).toBeUndefined();
+    });
+
+    it('composes a small image-only run against its owning OOXML run baseline', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'image-only-with-run-typography',
+        runs: [
+          {
+            kind: 'image',
+            src: inlineImageSrc,
+            width: 624,
+            height: 3,
+            fontFamily: 'Times New Roman',
+            fontSize: 52 / 3,
+            pmStart: 0,
+            pmEnd: 1,
+          },
+        ],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      const line = measure.lines[0];
+      expect(line.inlineImageAlignments).toEqual([{ runIndex: 0, verticalAlign: 'baseline' }]);
+      expect(line.lineHeight).toBeGreaterThan(3);
+    });
+
+    it('resolves the equal-height boundary deterministically (within tolerance -> baseline, beyond -> top)', async () => {
+      // fontSize 16 with no explicit spacing -> text line height = 16 * 1.15 = 18.4px.
+      // Tolerance is 0.5px, so 18px fits (baseline) and 20px does not (top).
+      const atBoundary: FlowBlock = {
+        kind: 'paragraph',
+        id: 'boundary-fit',
+        runs: [
+          { text: 'x', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 1 },
+          { kind: 'image', src: inlineImageSrc, width: 11, height: 18, pmStart: 1, pmEnd: 2 },
+        ],
+      };
+      const justOver: FlowBlock = {
+        kind: 'paragraph',
+        id: 'boundary-over',
+        runs: [
+          { text: 'x', fontFamily: 'Arial', fontSize: 16, pmStart: 0, pmEnd: 1 },
+          { kind: 'image', src: inlineImageSrc, width: 11, height: 20, pmStart: 1, pmEnd: 2 },
+        ],
+      };
+
+      const fit = expectParagraphMeasure(await measureBlock(atBoundary, 1000));
+      expect(fit.lines[0].inlineImageAlignments).toEqual([{ runIndex: 1, verticalAlign: 'baseline' }]);
+
+      const over = expectParagraphMeasure(await measureBlock(justOver, 1000));
+      expect(over.lines[0].inlineImageAlignments).toBeUndefined();
+    });
+
+    it('treats a bookmark-marker-only line as text-less (no baseline)', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'bookmark-image',
+        runs: [
+          {
+            text: '',
+            fontFamily: 'Arial',
+            fontSize: 16,
+            dataAttrs: { 'data-bookmark-marker': 'start' },
+            pmStart: 0,
+            pmEnd: 0,
+          },
+          { kind: 'image', src: inlineImageSrc, width: 11, height: 10, pmStart: 0, pmEnd: 1 },
+        ],
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      expect(measure.lines[0].inlineImageAlignments).toBeUndefined();
+    });
+  });
+
   describe('image measurement', () => {
     it('reports intrinsic size when within constraints', async () => {
       const block: FlowBlock = {
@@ -3480,6 +4573,25 @@ describe('measureBlock', () => {
       expect(measure.height).toBe(320);
     });
 
+    it('preserves authored width for anchored column-relative images', async () => {
+      const block: FlowBlock = {
+        kind: 'image',
+        id: 'img-floating-column-anchor',
+        src: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/',
+        width: 630,
+        height: 130,
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'column',
+        },
+        wrap: { type: 'Square' },
+      };
+
+      const measure = expectImageMeasure(await measureBlock(block, { maxWidth: 176, maxHeight: 864 }));
+      expect(measure.width).toBe(630);
+      expect(measure.height).toBe(130);
+    });
+
     it('respects maxHeight constraints', async () => {
       const block: FlowBlock = {
         kind: 'image',
@@ -3494,7 +4606,7 @@ describe('measureBlock', () => {
       expect(measure.width).toBeCloseTo(150);
     });
 
-    describe('negative positioning bypass logic', () => {
+    describe('floating drawing constraints', () => {
       it('bypasses maxHeight when anchored image has offsetV < 0', async () => {
         const block: FlowBlock = {
           kind: 'image',
@@ -3594,6 +4706,210 @@ describe('measureBlock', () => {
   });
 
   describe('drawing measurement', () => {
+    it('measures textbox content with canonical font metrics', async () => {
+      const block: DrawingBlock = {
+        kind: 'drawing',
+        id: 'textbox-with-content',
+        drawingKind: 'textboxShape',
+        geometry: { width: 240, height: 60, rotation: 0 },
+        textInsets: { top: 2, right: 4, bottom: 2, left: 4 },
+        contentBlocks: [
+          {
+            kind: 'paragraph',
+            id: 'textbox-paragraph',
+            runs: [{ text: 'Underlined header', fontFamily: 'Arial', fontSize: 14, underline: {} }],
+            attrs: {},
+          },
+        ],
+      };
+
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 500 }));
+      expect(measure.contentMeasures).toHaveLength(1);
+      expect(measure.contentMeasures?.[0].lines).toHaveLength(1);
+      expect(measure.contentMeasures?.[0].lines[0].ascent).toBeGreaterThan(0);
+      expect(measure.contentMeasures?.[0].lines[0].descent).toBeGreaterThan(0);
+    });
+
+    it('keeps wrap-none textbox paragraphs on authored lines while square wrapping remains bounded', async () => {
+      const createTextbox = (wrap: 'none' | 'square'): DrawingBlock => ({
+        kind: 'drawing',
+        id: `textbox-wrap-${wrap}`,
+        drawingKind: 'textboxShape',
+        geometry: { width: 80, height: 80, rotation: 0 },
+        textInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        textLayout: { wrap, horizontalOverflow: 'overflow' },
+        contentBlocks: [
+          {
+            kind: 'paragraph',
+            id: `textbox-wrap-${wrap}-paragraph`,
+            runs: [
+              {
+                text: 'This authored WordArt line is deliberately wider than its shape',
+                fontFamily: 'Arial',
+                fontSize: 20,
+              },
+            ],
+          },
+        ],
+      });
+
+      const unwrapped = expectDrawingMeasure(await measureBlock(createTextbox('none'), { maxWidth: 500 }));
+      const wrapped = expectDrawingMeasure(await measureBlock(createTextbox('square'), { maxWidth: 500 }));
+
+      expect(unwrapped.contentMeasures?.[0].lines).toHaveLength(1);
+      expect(wrapped.contentMeasures?.[0].lines.length ?? 0).toBeGreaterThan(1);
+    });
+
+    it('grows a wrap-none auto-fit shape up to the available boundary before wrapping', async () => {
+      const block: DrawingBlock = {
+        kind: 'drawing',
+        id: 'autofit-wrap-none-boundary',
+        drawingKind: 'textboxShape',
+        geometry: { width: 80, height: 80, rotation: 0 },
+        autoFit: true,
+        textInsets: { top: 0, right: 4, bottom: 0, left: 4 },
+        textLayout: { wrap: 'none', horizontalOverflow: 'overflow' },
+        contentBlocks: [
+          {
+            kind: 'paragraph',
+            id: 'autofit-wrap-none-boundary-paragraph',
+            runs: [
+              {
+                text: 'A deliberately long WordArt line that must reach its boundary',
+                fontFamily: 'Arial',
+                fontSize: 20,
+              },
+            ],
+          },
+        ],
+      };
+
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 200 }));
+
+      expect(measure.geometry.width).toBe(200);
+      expect(measure.contentMeasures?.[0].lines.length ?? 0).toBeGreaterThan(1);
+    });
+
+    it('measures textbox tables with canonical auto, atLeast, and exact row-height semantics', async () => {
+      const measureVariant = async (rule: 'auto' | 'atLeast' | 'exact', value: number) => {
+        const block: DrawingBlock = {
+          kind: 'drawing',
+          id: `textbox-table-${rule}`,
+          drawingKind: 'textboxShape',
+          geometry: { width: 120, height: 20, rotation: 0 },
+          textInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+          contentBlocks: [
+            {
+              kind: 'table',
+              id: `textbox-table-content-${rule}`,
+              columnWidths: [120],
+              rows: [
+                {
+                  id: `textbox-table-row-${rule}`,
+                  attrs: { rowHeight: { rule, value } },
+                  cells: [
+                    {
+                      id: `textbox-table-cell-${rule}`,
+                      blocks: [
+                        {
+                          kind: 'paragraph',
+                          id: `textbox-table-paragraph-${rule}`,
+                          runs: [{ text: 'Table content', fontFamily: 'Arial', fontSize: 12 }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+        return expectDrawingMeasure(await measureBlock(block, { maxWidth: 500 }));
+      };
+
+      const auto = await measureVariant('auto', 100);
+      const atLeast = await measureVariant('atLeast', 40);
+      const exact = await measureVariant('exact', 4);
+      const autoTable = auto.contentMeasures?.[0];
+      const atLeastTable = atLeast.contentMeasures?.[0];
+      const exactTable = exact.contentMeasures?.[0];
+
+      expect(autoTable?.kind).toBe('table');
+      expect(atLeastTable?.kind).toBe('table');
+      expect(exactTable?.kind).toBe('table');
+      if (autoTable?.kind !== 'table' || atLeastTable?.kind !== 'table' || exactTable?.kind !== 'table') {
+        throw new Error('expected nested table measures');
+      }
+      expect(autoTable.rows[0]?.height).toBeLessThan(100);
+      expect(atLeastTable.rows[0]?.height).toBe(40);
+      expect(exactTable.rows[0]?.height).toBe(4);
+      expect(auto.height).toBe(20);
+      expect(atLeast.height).toBe(20);
+      expect(exact.height).toBe(20);
+    });
+
+    it('shrinks an auto-fit textbox to its measured text, paragraph spacing, and insets', async () => {
+      const block = {
+        kind: 'drawing',
+        id: 'autofit-textbox',
+        drawingKind: 'textboxShape',
+        geometry: { width: 120, height: 147, rotation: 0 },
+        autoFit: true,
+        textInsets: { top: 4.8, right: 9.6, bottom: 4.8, left: 9.6 },
+        contentBlocks: [
+          {
+            kind: 'paragraph',
+            id: 'autofit-textbox-paragraph',
+            runs: [{ text: 'Contract “ACC”', fontFamily: 'Aptos', fontSize: 44 / 3 }],
+            attrs: {
+              spacing: { after: 32 / 3, line: 259 / 240, lineUnit: 'multiplier', lineRule: 'auto' },
+            },
+          },
+        ],
+      } as unknown as DrawingBlock;
+
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 500 }));
+      const contentHeight = measure.contentMeasures?.[0]?.totalHeight ?? 0;
+      expect(measure.geometry.height).toBeCloseTo(contentHeight + 32 / 3 + 9.6, 6);
+      expect(measure.height).toBeCloseTo(measure.geometry.height, 6);
+      expect(measure.height).toBeLessThan(147);
+    });
+
+    it('keeps frozen textbox tab runs immutable while returning their measured widths', async () => {
+      const tabRun: TabRun = {
+        kind: 'tab',
+        text: '\t',
+        fontFamily: 'Arial',
+        fontSize: 12,
+        underline: {},
+      };
+      const block: DrawingBlock = {
+        kind: 'drawing',
+        id: 'frozen-textbox-tab',
+        drawingKind: 'textboxShape',
+        geometry: { width: 240, height: 60, rotation: 0 },
+        contentBlocks: [
+          {
+            kind: 'paragraph',
+            id: 'frozen-textbox-tab-paragraph',
+            runs: [tabRun],
+            attrs: { tabs: [{ val: 'start', pos: 1440 }] },
+          },
+        ],
+      };
+      Object.freeze(tabRun);
+      Object.freeze(block.contentBlocks[0]!.runs);
+      Object.freeze(block.contentBlocks[0]!);
+      Object.freeze(block.contentBlocks);
+      Object.freeze(block);
+
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 500 }));
+
+      expect(measure.contentMeasures?.[0].lines[0].tabWidths?.[0]).toBeGreaterThan(0);
+      expect(tabRun).not.toHaveProperty('width');
+      expect(Object.isFrozen(tabRun)).toBe(true);
+    });
+
     it('honors rotated geometry', async () => {
       const block: DrawingBlock = {
         kind: 'drawing',
@@ -3610,65 +4926,6 @@ describe('measureBlock', () => {
       expect(measure.width).toBeCloseTo(60);
       expect(measure.height).toBeCloseTo(120);
       expect(measure.scale).toBe(1);
-    });
-
-    it('honors shape group transforms when measuring rotated bounds', async () => {
-      const block: DrawingBlock = {
-        kind: 'drawing',
-        id: 'shape-group-rotated-transform',
-        drawingKind: 'shapeGroup',
-        geometry: {
-          width: 200,
-          height: 100,
-          rotation: 0,
-        },
-        groupTransform: {
-          width: 200,
-          height: 100,
-          rotation: 90,
-        },
-        shapes: [],
-      };
-
-      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 500 }));
-      expect(measure.width).toBeCloseTo(100);
-      expect(measure.height).toBeCloseTo(200);
-      expect(measure.geometry.width).toBe(200);
-      expect(measure.geometry.height).toBe(100);
-      expect(measure.geometry.rotation).toBe(90);
-      expect(measure.groupTransform?.rotation).toBe(90);
-    });
-
-    it('preserves shape group effect extent when group transform is present', async () => {
-      const block: DrawingBlock = {
-        kind: 'drawing',
-        id: 'shape-group-effect-extent',
-        drawingKind: 'shapeGroup',
-        geometry: {
-          width: 105,
-          height: 59,
-          rotation: 0,
-        },
-        groupTransform: {
-          width: 100,
-          height: 50,
-        },
-        effectExtent: {
-          left: 2,
-          top: 4,
-          right: 3,
-          bottom: 5,
-        },
-        shapes: [],
-      };
-
-      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 500 }));
-      expect(measure.width).toBe(105);
-      expect(measure.height).toBe(59);
-      expect(measure.geometry.width).toBe(105);
-      expect(measure.geometry.height).toBe(59);
-      expect(measure.groupTransform?.width).toBe(100);
-      expect(measure.groupTransform?.height).toBe(50);
     });
 
     it('resolves full-width drawings using maxWidth constraints and indents', async () => {
@@ -3730,61 +4987,48 @@ describe('measureBlock', () => {
       expect(measure.geometry.rotation).toBe(270);
     });
 
-    it('bypasses maxHeight for behindDoc wrapNone anchored drawings with positive page-relative offsets', async () => {
+    it('uses the projected outer geometry when an effectExtent-bearing shape is rotated', async () => {
       const block: DrawingBlock = {
         kind: 'drawing',
-        id: 'drawing-behind-doc-page-overlay',
+        id: 'drawing-effect-extent',
         drawingKind: 'vectorShape',
         geometry: {
-          width: 961.3333333333334,
-          height: 568,
-          rotation: 0,
-          flipH: false,
-          flipV: false,
+          width: 57.5,
+          height: 21,
+          rotation: 270,
         },
-        anchor: {
-          isAnchored: true,
-          hRelativeFrom: 'column',
-          vRelativeFrom: 'page',
-          offsetH: -43.76472440944882,
-          offsetV: 0.6,
-          behindDoc: true,
-        },
-        wrap: {
-          type: 'None',
-          behindDoc: true,
+        effectExtent: {
+          left: 0,
+          top: 0.5,
+          right: 2.5,
+          bottom: 4.5,
         },
       };
 
-      const measure = expectDrawingMeasure(
-        await measureBlock(block, { maxWidth: 909.1333333333333, maxHeight: 461.26666666666665 }),
-      );
-      expect(measure.width).toBeCloseTo(961.3333333333334);
-      expect(measure.height).toBeCloseTo(568);
-      expect(measure.scale).toBe(1);
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 500 }));
+      expect(measure.geometry.width).toBeCloseTo(57.5, 3);
+      expect(measure.geometry.height).toBeCloseTo(21, 3);
+      expect(measure.width).toBeCloseTo(21, 3);
+      expect(measure.height).toBeCloseTo(57.5, 3);
+      expect(measure.naturalWidth).toBeCloseTo(21, 3);
+      expect(measure.naturalHeight).toBeCloseTo(57.5, 3);
     });
 
-    it('bypasses maxHeight for behindDoc wrapNone image drawings', async () => {
+    it('does not shrink an inline connector when only its effect extent exceeds the text constraint', async () => {
       const block: DrawingBlock = {
         kind: 'drawing',
-        id: 'drawing-image-behind-doc',
-        drawingKind: 'image',
-        src: 'data:image/png;base64,iVBORw0KGgo=',
-        width: 960,
-        height: 566,
-        anchor: {
-          isAnchored: true,
-          behindDoc: true,
-        },
-        wrap: {
-          type: 'None',
-          behindDoc: true,
-        },
+        id: 'footer-connector',
+        drawingKind: 'vectorShape',
+        shapeKind: 'line',
+        geometry: { width: 703, height: 8, rotation: 0 },
+        effectExtent: { left: 3, top: 3, right: 5, bottom: 4 },
+        strokeColor: '#7CE0D3',
+        strokeWidth: 6,
       };
 
-      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 909, maxHeight: 461 }));
-      expect(measure.width).toBeCloseTo(960);
-      expect(measure.height).toBeCloseTo(566);
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 697, maxHeight: 100 }));
+      expect(measure.width).toBe(703);
+      expect(measure.height).toBe(8);
       expect(measure.scale).toBe(1);
     });
 
@@ -3809,38 +5053,6 @@ describe('measureBlock', () => {
         // Should NOT scale height due to negative offsetV bypass
         expect(measure.height).toBe(200);
         expect(measure.width).toBe(100);
-        expect(measure.scale).toBe(1);
-      });
-
-      it('bypasses maxHeight for behindDoc wrapNone anchored drawings with negative paragraph-relative offsets', async () => {
-        const block: DrawingBlock = {
-          kind: 'drawing',
-          id: 'drawing-behind-doc-negative-paragraph-overlay',
-          drawingKind: 'vectorShape',
-          geometry: {
-            width: 969.3333333333334,
-            height: 568.0215223097113,
-            rotation: 0,
-            flipH: false,
-            flipV: false,
-          },
-          anchor: {
-            isAnchored: true,
-            hRelativeFrom: 'column',
-            vRelativeFrom: 'paragraph',
-            offsetH: -51.577952755905514,
-            offsetV: -40.00262467191601,
-            behindDoc: true,
-          },
-          wrap: {
-            type: 'None',
-            behindDoc: true,
-          },
-        };
-
-        const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 909, maxHeight: 461 }));
-        expect(measure.width).toBeCloseTo(969.3333333333334);
-        expect(measure.height).toBeCloseTo(568.0215223097113);
         expect(measure.scale).toBe(1);
       });
 
@@ -3870,30 +5082,28 @@ describe('measureBlock', () => {
         expect(measure.scale).toBe(1);
       });
 
-      it('does NOT bypass maxHeight when anchored drawing has offsetV === 0', async () => {
+      it('preserves page-sized anchored drawings when the story band is shorter', async () => {
         const block: DrawingBlock = {
           kind: 'drawing',
-          id: 'drawing-zero-offset',
-          drawingKind: 'vectorShape',
+          id: 'page-sized-header-group',
+          drawingKind: 'shapeGroup',
           geometry: {
-            width: 100,
-            height: 200,
+            width: 793.7,
+            height: 1122.5,
             rotation: 0,
           },
           anchor: {
             isAnchored: true,
+            hRelativeFrom: 'page',
+            vRelativeFrom: 'page',
             offsetV: 0,
-          },
-          margin: {
-            top: 0,
           },
         };
 
-        const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 500, maxHeight: 100 }));
-        // Should scale height because offsetV and margin.top are both 0 (not negative)
-        expect(measure.height).toBe(100);
-        expect(measure.width).toBe(50);
-        expect(measure.scale).toBe(0.5);
+        const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 593.2, maxHeight: 839 }));
+        expect(measure.width).toBeCloseTo(793.7);
+        expect(measure.height).toBeCloseTo(1122.5);
+        expect(measure.scale).toBe(1);
       });
 
       it('does NOT bypass maxHeight when non-anchored drawing has negative margin', async () => {
@@ -3921,7 +5131,7 @@ describe('measureBlock', () => {
         expect(measure.scale).toBe(0.5);
       });
 
-      it('respects maxHeight when anchored drawing has positive offsets', async () => {
+      it('preserves anchored drawing dimensions with positive offsets', async () => {
         const block: DrawingBlock = {
           kind: 'drawing',
           id: 'drawing-positive-offset',
@@ -3941,10 +5151,9 @@ describe('measureBlock', () => {
         };
 
         const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 500, maxHeight: 100 }));
-        // Should scale height because both offsetV and margin.top are positive
-        expect(measure.height).toBe(100);
-        expect(measure.width).toBe(50);
-        expect(measure.scale).toBe(0.5);
+        expect(measure.height).toBe(200);
+        expect(measure.width).toBe(100);
+        expect(measure.scale).toBe(1);
       });
 
       it('bypasses maxHeight when one of offsetV or margin.top is negative (OR condition)', async () => {
@@ -4002,6 +5211,129 @@ describe('measureBlock', () => {
   });
 
   describe('table measurement with column widths', () => {
+    it('reserves the authored total width for separate double table borders', async () => {
+      const block: FlowBlock = {
+        kind: 'table',
+        id: 'table-double-border-width',
+        attrs: {
+          borderCollapse: 'separate',
+          borders: {
+            top: { style: 'double', width: 2 / 3 },
+            right: { style: 'double', width: 2 / 3 },
+            bottom: { style: 'double', width: 2 / 3 },
+            left: { style: 'double', width: 2 / 3 },
+          },
+        },
+        rows: [
+          {
+            id: 'row-double-border-width',
+            cells: [
+              {
+                id: 'cell-double-border-width',
+                blocks: [
+                  {
+                    kind: 'paragraph',
+                    id: 'paragraph-double-border-width',
+                    runs: [{ text: 'A', fontFamily: 'Arial', fontSize: 12 }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        columnWidths: [100],
+      };
+
+      const measure = await measureBlock(block, { maxWidth: 600 });
+
+      expect(measure.kind).toBe('table');
+      if (measure.kind !== 'table') throw new Error('expected table measure');
+      expect(measure.tableBorderWidths).toEqual({
+        top: 2 / 3,
+        right: 2 / 3,
+        bottom: 2 / 3,
+        left: 2 / 3,
+      });
+      expect(measure.totalWidth).toBeCloseTo(100 + 4 / 3, 4);
+    });
+
+    it('includes explicit cell border chrome in automatic row height', async () => {
+      const createTable = (borders?: CellBorders): FlowBlock => ({
+        kind: 'table',
+        id: borders ? 'table-bordered-cell' : 'table-borderless-cell',
+        rows: [
+          {
+            id: 'row',
+            cells: [
+              {
+                id: 'cell',
+                attrs: borders ? { borders } : undefined,
+                blocks: [
+                  {
+                    kind: 'paragraph',
+                    id: 'paragraph',
+                    runs: [{ text: 'Cell text', fontFamily: 'Arial', fontSize: 12 }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        columnWidths: [100],
+      });
+      const doubleRing: CellBorders = {
+        top: { style: 'double', width: 3 },
+        right: { style: 'double', width: 3 },
+        bottom: { style: 'double', width: 3 },
+        left: { style: 'double', width: 3 },
+      };
+
+      const borderless = await measureBlock(createTable(), { maxWidth: 600 });
+      const bordered = await measureBlock(createTable(doubleRing), { maxWidth: 600 });
+
+      expect(borderless.kind).toBe('table');
+      expect(bordered.kind).toBe('table');
+      if (borderless.kind !== 'table' || bordered.kind !== 'table') throw new Error('expected table measures');
+      expect(bordered.rows[0]?.height).toBeCloseTo((borderless.rows[0]?.height ?? 0) + 6, 4);
+      expect(bordered.rows[0]?.cells[0]?.height).toBeCloseTo((borderless.rows[0]?.cells[0]?.height ?? 0) + 6, 4);
+    });
+
+    it('adds the owned collapsed border to an authored atLeast row height', async () => {
+      const border = { style: 'single' as const, width: 1, color: '#000000' };
+      const block: FlowBlock = {
+        kind: 'table',
+        id: 'table-at-least-height-with-collapsed-grid',
+        attrs: {
+          borders: {
+            top: border,
+            right: border,
+            bottom: border,
+            left: border,
+            insideH: border,
+            insideV: border,
+          },
+        },
+        columnWidths: [100],
+        rows: [0, 1].map((rowIndex) => ({
+          id: `row-${rowIndex}`,
+          attrs: { rowHeight: { rule: 'atLeast', value: 40 } },
+          cells: [
+            {
+              id: `cell-${rowIndex}`,
+              blocks: [{ kind: 'paragraph', id: `paragraph-${rowIndex}`, runs: [] }],
+            },
+          ],
+        })),
+      };
+
+      const measure = await measureBlock(block, { maxWidth: 600 });
+
+      expect(measure.kind).toBe('table');
+      if (measure.kind !== 'table') throw new Error('expected table measure');
+      expect(measure.rows.map((row) => row.height)).toEqual([41, 41]);
+      expect(measure.totalHeight).toBe(82);
+    });
+
     it('uses provided column widths from w:tblGrid', async () => {
       const block: FlowBlock = {
         kind: 'table',
@@ -4298,7 +5630,7 @@ describe('measureBlock', () => {
       expect(Math.abs(measure.columnWidths[0] - measure.columnWidths[1])).toBeLessThan(1);
     });
 
-    it('synthesizes runtime widths for missing logical columns and content-sizes pure-auto tables', async () => {
+    it('preserves authored widths and synthesizes runtime widths for missing logical columns', async () => {
       const block: FlowBlock = {
         kind: 'table',
         id: 'table-3',
@@ -4363,10 +5695,7 @@ describe('measureBlock', () => {
       if (measure.kind !== 'table') throw new Error('expected table measure');
       expect(measure.columnWidths).toHaveLength(3);
       expect(measure.columnWidths[0]).toBeGreaterThan(0);
-      // SD-3309: pure-auto tables (auto tblW, no tcW anywhere) content-size like Word;
-      // the partial authored grid is not a layout cache, so equal content gives equal columns.
-      expect(measure.columnWidths[1]).toBeGreaterThan(0);
-      expect(measure.totalWidth).toBeLessThan(250);
+      expect(measure.columnWidths[1]).toBeGreaterThan(measure.columnWidths[0]);
       expect(measure.columnWidths[2]).toBeGreaterThan(0);
       expect(measure.totalWidth).toBeCloseTo(
         measure.columnWidths.reduce((sum, width) => sum + width, 0),
@@ -4647,126 +5976,6 @@ describe('measureBlock', () => {
     });
   });
 
-  // SD-3308: a row whose cells are ALL row-spanning (vMerge start or continuation)
-  // must not collapse to zero height. In OOXML the continuation cells are real
-  // <w:tc> elements holding an empty paragraph, and Word sizes the row from them
-  // (one line high). The import merges those cells away, so the measurer grants
-  // every spanned row a minimum of the spanning cell's one-line height.
-  describe('rowspan-only rows (SD-3028 vMerge continuation)', () => {
-    it('keeps a row alive when all of its cells are row-spanning', async () => {
-      const para = (id: string, text: string) => ({
-        kind: 'paragraph' as const,
-        id,
-        runs: [{ text, fontFamily: 'Arial', fontSize: 12 }],
-      });
-      const block: FlowBlock = {
-        kind: 'table',
-        id: 'vmerge-rows',
-        rows: [
-          {
-            id: 'r0',
-            cells: [
-              { id: 'c00', blocks: [para('p00', 'head')] },
-              { id: 'c01', rowSpan: 2, colSpan: 2, blocks: [para('p01', 'span-down')] },
-              { id: 'c02', rowSpan: 2, blocks: [para('p02', 'right')] },
-            ],
-          },
-          {
-            id: 'r1',
-            cells: [{ id: 'c10', rowSpan: 2, blocks: [para('p10', 'only-real-cell')] }],
-          },
-          {
-            id: 'r2',
-            cells: [
-              { id: 'c20', colSpan: 2, blocks: [para('p20', 'new')] },
-              { id: 'c21', blocks: [para('p21', 'new2')] },
-            ],
-          },
-        ],
-        columnWidths: [120, 60, 60, 60],
-      };
-
-      const measure = await measureBlock(block, { maxWidth: 624 });
-      expect(measure.kind).toBe('table');
-      if (measure.kind !== 'table') throw new Error('expected table measure');
-      expect(measure.rows).toHaveLength(3);
-      // Row 1 holds only the start of a 2-row span (its other columns are vMerge
-      // continuations merged away at import): one line high like Word, not zero.
-      expect(measure.rows[1].height).toBeGreaterThan(0);
-      expect(measure.rows[1].height).toBeCloseTo(measure.rows[0].height, 0);
-      expect(measure.rows[2].height).toBeCloseTo(measure.rows[0].height, 0);
-    });
-  });
-
-  describe('border band row-height reservation (SD-3308)', () => {
-    const makeTable = (borderStyle: string, width: number): FlowBlock =>
-      ({
-        kind: 'table',
-        id: 'table-band',
-        rows: [0, 1].map((r) => ({
-          id: `row-${r}`,
-          cells: [
-            {
-              id: `cell-${r}-0`,
-              blocks: [
-                {
-                  kind: 'paragraph',
-                  id: `para-${r}`,
-                  runs: [{ text: 'X', fontFamily: 'Arial', fontSize: 12 }],
-                },
-              ],
-            },
-          ],
-        })),
-        attrs: {
-          borders: {
-            top: { style: borderStyle, width },
-            bottom: { style: borderStyle, width },
-            left: { style: borderStyle, width },
-            right: { style: borderStyle, width },
-            insideH: { style: borderStyle, width },
-            insideV: { style: borderStyle, width },
-          },
-        },
-      }) as unknown as FlowBlock;
-
-    it('reserves the band excess for double borders and nothing for hairline singles', async () => {
-      const single = await measureBlock(makeTable('single', 1), { maxWidth: 600 });
-      const double = await measureBlock(makeTable('double', 2), { maxWidth: 600 });
-      if (single.kind !== 'table' || double.kind !== 'table') throw new Error('expected table measures');
-      // double sz12: band = 3 * 2 = 6px -> reservation 5px per gridline.
-      // row 0 owns its top gridline; the last row owns its top gridline plus the bottom edge.
-      expect(double.rows[0].height).toBeCloseTo(single.rows[0].height + 5, 5);
-      expect(double.rows[1].height).toBeCloseTo(single.rows[1].height + 10, 5);
-    });
-
-    it('does not reserve anything in separate-borders mode', async () => {
-      const base = makeTable('double', 2) as { attrs: Record<string, unknown> };
-      base.attrs.cellSpacing = { type: 'dxa', value: 60 };
-      const separate = await measureBlock(base as unknown as FlowBlock, { maxWidth: 600 });
-      const collapsed = await measureBlock(makeTable('double', 2), { maxWidth: 600 });
-      if (separate.kind !== 'table' || collapsed.kind !== 'table') throw new Error('expected table measures');
-      expect(separate.rows[0].height).toBeLessThan(collapsed.rows[0].height);
-    });
-
-    it('reserves the band excess for compound thinThick* and triple borders', async () => {
-      // The shared contracts band profile drives the reservation, so compound
-      // styles reserve exactly like double does. (SD-3308)
-      const single = await measureBlock(makeTable('single', 1), { maxWidth: 600 });
-      const thinThick = await measureBlock(makeTable('thinThickSmallGap', 4), { maxWidth: 600 });
-      const triple = await measureBlock(makeTable('triple', 2), { maxWidth: 600 });
-      if (single.kind !== 'table' || thinThick.kind !== 'table' || triple.kind !== 'table') {
-        throw new Error('expected table measures');
-      }
-      // thinThickSmallGap w4: band = 4 + 1 + 1 = 6px -> reservation 5px per gridline.
-      expect(thinThick.rows[0].height).toBeCloseTo(single.rows[0].height + 5, 5);
-      expect(thinThick.rows[1].height).toBeCloseTo(single.rows[1].height + 10, 5);
-      // triple w2: band = 5 * 2 = 10px -> reservation 9px per gridline.
-      expect(triple.rows[0].height).toBeCloseTo(single.rows[0].height + 9, 5);
-      expect(triple.rows[1].height).toBeCloseTo(single.rows[1].height + 18, 5);
-    });
-  });
-
   describe('autofit tables with colspan should not truncate grid columns', () => {
     const makeCell = (id: string) => ({
       id,
@@ -4970,7 +6179,7 @@ describe('measureBlock', () => {
       expect(measure.totalWidth).toBe(300);
     });
 
-    it('does not upscale a pure-auto table beyond its content', async () => {
+    it('does not scale when widths are within target', async () => {
       const block: FlowBlock = {
         kind: 'table',
         id: 'scale-test-2',
@@ -5010,139 +6219,8 @@ describe('measureBlock', () => {
       if (measure.kind !== 'table') throw new Error('expected table measure');
 
       // Auto layout preserves explicit widths (no scale-up)
-      // SD-3309: pure-auto tables content-size like Word; equal content gives equal
-      // columns and the table never upscales toward the authored grid sum.
-      expect(Math.abs(measure.columnWidths[0] - measure.columnWidths[1])).toBeLessThan(1);
-      expect(measure.totalWidth).toBeLessThanOrEqual(100);
-      expect(measure.totalWidth).toBeGreaterThan(0);
-    });
-
-    // SD-3308: a SINGLE-column pure-auto grid is not a Word layout cache either.
-    // Word content-sizes such tables to the text (band-scaling probe: gridCol 3000
-    // renders ~70px wide around "XXXX", not 200px). The single-column arm of
-    // hasNonUniformGrid must not let preserveAutoGrid pin the stale grid.
-    it('content-sizes a single-column pure-auto table instead of preserving its grid', async () => {
-      const block: FlowBlock = {
-        kind: 'table',
-        id: 'single-col-pure-auto',
-        attrs: { tableWidth: { width: 0, type: 'auto' } },
-        rows: [
-          {
-            id: 'row-0',
-            cells: [
-              {
-                id: 'cell-0-0',
-                blocks: [
-                  {
-                    kind: 'paragraph',
-                    id: 'para-0',
-                    runs: [{ text: 'XXXX', fontFamily: 'Arial', fontSize: 12 }],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-        columnWidths: [200],
-      };
-
-      const measure = await measureBlock(block, { maxWidth: 624 });
-
-      expect(measure.kind).toBe('table');
-      if (measure.kind !== 'table') throw new Error('expected table measure');
-      // Content demand for "XXXX" plus margins is far below the stale 200px grid.
-      expect(measure.totalWidth).toBeLessThan(120);
-      expect(measure.totalWidth).toBeGreaterThan(0);
-    });
-
-    // SD-3308 Word-measured band rule for content-sized columns (band-scaling probes):
-    // each vertical gridline grants HALF its band to each adjacent column, then the
-    // painted band sits fully inside the cell box and eats the other half back from
-    // the PADDING. Padding may compress to zero but text never clips, so:
-    //   column = text + max(padding + band, 2 x band)
-    // Probe evidence: Word's thinThickSmallGap content span shrinks by exactly the
-    // band delta as sz grows (padding absorbing), while triple sz24's content span
-    // bottoms out at the text width (floor active, margins fully consumed).
-    it('content-sized columns add half a band per edge, padding absorbing until the text floor', async () => {
-      const makeBordered = (style: string, width: number): FlowBlock =>
-        ({
-          kind: 'table',
-          id: `band-allowance-${style}-${width}`,
-          attrs: {
-            tableWidth: { width: 0, type: 'auto' },
-            borders: {
-              top: { style, width },
-              bottom: { style, width },
-              left: { style, width },
-              right: { style, width },
-            },
-          },
-          rows: [
-            {
-              id: 'row-0',
-              cells: [
-                {
-                  id: 'cell-0-0',
-                  blocks: [
-                    {
-                      kind: 'paragraph',
-                      id: 'para-0',
-                      runs: [{ text: 'XXXX', fontFamily: 'Arial', fontSize: 12 }],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-          columnWidths: [200],
-        }) as unknown as FlowBlock;
-
-      const bare = await measureBlock(makeBordered('none', 0), { maxWidth: 624 });
-      const single = await measureBlock(makeBordered('single', 2), { maxWidth: 624 });
-      const triple = await measureBlock(makeBordered('triple', 2), { maxWidth: 624 });
-      if (bare.kind !== 'table' || single.kind !== 'table' || triple.kind !== 'table') {
-        throw new Error('expected table measures');
-      }
-      // bare = text + default padding 8. single band 2: 2x2 < 8+2 -> padding absorbs,
-      // column = bare + band.
-      expect(single.totalWidth - bare.totalWidth).toBeCloseTo(2, 5);
-      // triple band 10: 2x10 > 8+10 -> text floor wins, column = text + 2x10 =
-      // (bare - 8) + 20 = bare + 12. The content area between the painted bands is
-      // exactly the text width: no clipping.
-      expect(triple.totalWidth - bare.totalWidth).toBeCloseTo(12, 5);
-    });
-
-    it('still preserves a single-column auto grid when the cell carries a concrete width', async () => {
-      // With tcW present the authored grid IS a valid Word layout cache: keep it.
-      const block: FlowBlock = {
-        kind: 'table',
-        id: 'single-col-cached-grid',
-        rows: [
-          {
-            id: 'row-0',
-            cells: [
-              {
-                id: 'cell-0-0',
-                attrs: { tableCellProperties: { cellWidth: { value: 3000, type: 'dxa' } } },
-                blocks: [
-                  {
-                    kind: 'paragraph',
-                    id: 'para-0',
-                    runs: [{ text: 'XXXX', fontFamily: 'Arial', fontSize: 12 }],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-        columnWidths: [200],
-      };
-
-      const measure = await measureBlock(block, { maxWidth: 624 });
-
-      expect(measure.kind).toBe('table');
-      if (measure.kind !== 'table') throw new Error('expected table measure');
-      expect(measure.totalWidth).toBeCloseTo(200, 0);
+      expect(measure.columnWidths).toEqual([50, 50]);
+      expect(measure.totalWidth).toBe(100);
     });
 
     it('produces exact sum after rounding adjustment', async () => {
@@ -5459,6 +6537,28 @@ describe('measureBlock', () => {
       // Set maxWidth to just after first word - should force second word to new line
       const breakMeasure = expectParagraphMeasure(await measureBlock(twoWordBlock, firstWordWidth + 2));
       expect(breakMeasure.lines.length).toBeGreaterThan(1);
+    });
+
+    it('accepts sub-pixel run-boundary rounding on a mixed-format non-justified line', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'mixed-run-fudge',
+        runs: [
+          { text: 'DELIVERABLES:', fontFamily: 'Aptos', fontSize: 13.333, bold: true },
+          { text: ' ', fontFamily: 'Aptos', fontSize: 13.333, bold: true },
+          { text: 'Consultant services', fontFamily: 'Aptos', fontSize: 13.333 },
+        ],
+        attrs: {},
+      };
+
+      const unconstrained = expectParagraphMeasure(await measureBlock(block, 1000));
+      expect(unconstrained.lines).toHaveLength(1);
+
+      const withinWordRunRounding = expectParagraphMeasure(
+        await measureBlock(block, unconstrained.lines[0].width - 0.25),
+      );
+
+      expect(withinWordRunRounding.lines).toHaveLength(1);
     });
   });
 
@@ -6135,13 +7235,9 @@ describe('measureBlock', () => {
       expect(measure.kind).toBe('table');
       if (measure.kind !== 'table') throw new Error('expected table measure');
 
-      // SD-1239 invariant: a missing tableWidth must not be misread as a percentage
-      // or crash; the table still measures sanely. SD-3308: a single-column
-      // pure-auto table content-sizes to its text like Word (the stale 140px grid
-      // is not a layout cache), so the width tracks content, not the grid.
-      expect(measure.totalWidth).toBeGreaterThan(0);
-      expect(measure.totalWidth).toBeLessThan(140);
-      expect(measure.columnWidths[0]).toBe(measure.totalWidth);
+      // No tableWidth - auto layout preserves column widths
+      expect(measure.totalWidth).toBe(140);
+      expect(measure.columnWidths[0]).toBe(140);
     });
 
     it('does NOT scale up column widths for fixed layout tables with explicit width', async () => {
@@ -6494,6 +7590,47 @@ describe('measureBlock', () => {
       // Anchored image is out-of-flow: it should not increase cell height.
       const expectedCellHeight = paraHeight;
       expect(cellMeasure.height).toBe(expectedCellHeight);
+    });
+
+    it('expands a table cell for an anchored object with layoutInCell enabled', async () => {
+      const table: FlowBlock = {
+        kind: 'table',
+        id: 'table-layout-in-cell-image',
+        attrs: {},
+        rows: [
+          {
+            id: 'row-0',
+            cells: [
+              {
+                id: 'cell-0-0',
+                attrs: {},
+                blocks: [
+                  {
+                    kind: 'paragraph',
+                    id: 'para-0',
+                    runs: [{ text: 'Anchor', fontFamily: 'Arial', fontSize: 16 }],
+                  },
+                  {
+                    kind: 'image',
+                    id: 'img-0',
+                    src: 'data:image/png;base64,AAA',
+                    width: 20,
+                    height: 40,
+                    anchor: { isAnchored: true, layoutInCell: true, vRelativeFrom: 'paragraph', offsetV: 5 },
+                    wrap: { type: 'None', distTop: 3, distBottom: 4 },
+                    attrs: { anchorParagraphId: 'para-0' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const measure = await measureBlock(table, 1000);
+      expect(measure.kind).toBe('table');
+      const cellMeasure = measure.rows[0].cells[0];
+      expect(cellMeasure.height).toBe(5 + 40 + 3 + 4);
     });
 
     it('should handle type safety for spacing.after', async () => {
@@ -6875,7 +8012,7 @@ describe('measureBlock', () => {
 
   describe('AutoFit table layout (ECMA-376 §17.18.87)', () => {
     it('expands columns to fit content when grid widths are smaller than content (IT-679)', async () => {
-      // Simulates the IT-679 customer file: placeholder grid widths (tiny values)
+      // Simulates the placeholder-grid regression: tiny grid widths
       // with a small percentage table width. AutoFit should expand columns to fit content.
       const block: FlowBlock = {
         kind: 'table',
@@ -7265,5 +8402,392 @@ describe('measureBlock', () => {
         tableMeasure.columnWidths.reduce((sum: number, width: number) => sum + width, 0),
       );
     });
+  });
+});
+
+describe('inline box measurement', () => {
+  const box = (from: number, to: number): InlineBoxSpan => ({
+    id: 'citation',
+    from,
+    to,
+    layout: {
+      paddingInlineStart: 6,
+      paddingInlineEnd: 8,
+      paddingBlockStart: 3,
+      paddingBlockEnd: 5,
+      gapBefore: 2,
+      gapAfter: 4,
+      borderWidth: 1,
+    },
+    appearance: { backgroundColor: '#fff2a8', borderStyle: 'solid' },
+  });
+
+  const boxedParagraph = (): FlowBlock => ({
+    kind: 'paragraph',
+    id: 'boxed-paragraph',
+    runs: [{ text: 'alpha beta', fontFamily: 'Arial', fontSize: 16 }],
+    inlineBoxes: [box(6, 10)],
+  });
+
+  it('keeps an exact fit and wraps when the measured box is one pixel over', async () => {
+    let exactWidth = 0;
+    for (let width = 20; width <= 300; width += 1) {
+      const candidate = expectParagraphMeasure(await measureBlock(boxedParagraph(), width));
+      if (candidate.lines.length === 1) {
+        exactWidth = width;
+        break;
+      }
+    }
+    expect(exactWidth).toBeGreaterThan(0);
+
+    const exact = expectParagraphMeasure(await measureBlock(boxedParagraph(), exactWidth));
+    const onePixelOver = expectParagraphMeasure(await measureBlock(boxedParagraph(), exactWidth - 1));
+
+    expect(exact.lines).toHaveLength(1);
+    expect(exact.lines[0]!.width).toBeLessThanOrEqual(exactWidth);
+    expect(onePixelOver.lines.length).toBeGreaterThan(1);
+    expect(onePixelOver.lines.every((line) => line.width <= exactWidth - 1)).toBe(true);
+  });
+
+  it('releases a line edge budget when the box moves to the next line', async () => {
+    const prefix = 'alpha beta cc ';
+    const text = `${prefix}x`;
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'moved-box-budget',
+      runs: [{ text, fontFamily: 'Arial', fontSize: 16 }],
+      inlineBoxes: [
+        {
+          ...box(prefix.length, text.length),
+          layout: {
+            ...box(prefix.length, text.length).layout,
+            paddingInlineStart: 24,
+            paddingInlineEnd: 24,
+          },
+        },
+      ],
+    };
+    const prefixBlock: FlowBlock = {
+      ...block,
+      id: 'moved-box-budget-prefix',
+      runs: [{ text: prefix, fontFamily: 'Arial', fontSize: 16 }],
+      inlineBoxes: undefined,
+    };
+    const plainBlock: FlowBlock = { ...block, id: 'moved-box-budget-plain', inlineBoxes: undefined };
+
+    let matchingMeasure: ParagraphMeasure | undefined;
+    let matchingWidth = 0;
+    for (let width = 20; width <= 300; width += 1) {
+      const [prefixMeasure, plainMeasure, boxedMeasure] = await Promise.all([
+        measureBlock(prefixBlock, width).then(expectParagraphMeasure),
+        measureBlock(plainBlock, width).then(expectParagraphMeasure),
+        measureBlock(block, width).then(expectParagraphMeasure),
+      ]);
+      if (
+        prefixMeasure.lines.length === 1 &&
+        plainMeasure.lines.length === 1 &&
+        boxedMeasure.lines[1]?.inlineBoxes?.length
+      ) {
+        matchingMeasure = boxedMeasure;
+        matchingWidth = width;
+        break;
+      }
+    }
+
+    expect(matchingMeasure).toBeDefined();
+    expect(matchingMeasure!.lines[0]!.toChar).toBe(prefix.length);
+    expect(matchingMeasure!.lines.every((line) => line.width <= matchingWidth)).toBe(true);
+  });
+
+  it('does not reserve a late inline box edge on preceding lines after cycle cleanup', async () => {
+    const maxWidth = 61;
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'late-box-cycle-cleanup',
+      runs: [
+        {
+          text: 'xxxx xx xxxxx xxxxxxx xxxx xxxx xxxxxxx xxxxxxx xx xxxxx xxxxx xxxxxxx xxxx xx xxx xxxxxx xxxxxx xx xxxxxxx xxxxxx xx',
+          fontFamily: 'Arial',
+          fontSize: 16,
+        },
+      ],
+      inlineBoxes: [
+        {
+          ...box(73, 76),
+          layout: {
+            ...box(73, 76).layout,
+            paddingInlineStart: 9,
+            paddingInlineEnd: 13,
+            gapBefore: 0,
+            gapAfter: 6,
+            borderWidth: 0,
+          },
+        },
+      ],
+    };
+    const plainBlock: FlowBlock = { ...block, id: 'late-box-cycle-cleanup-plain', inlineBoxes: undefined };
+
+    const [plainMeasure, boxedMeasure] = await Promise.all([
+      measureBlock(plainBlock, maxWidth).then(expectParagraphMeasure),
+      measureBlock(block, maxWidth).then(expectParagraphMeasure),
+    ]);
+
+    expect(boxedMeasure.lines[0]!.toChar).toBe(plainMeasure.lines[0]!.toChar);
+    expect(boxedMeasure.lines.every((line) => line.width <= (line.maxWidth ?? maxWidth))).toBe(true);
+  });
+
+  it('relocates fallback budgets when cleanup moves an inline box to another line', async () => {
+    const maxWidth = 37;
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'relocated-fallback-budget',
+      runs: [
+        {
+          text: 'xxxxxxxx xxxxxx xxxx xxxxxxx xxxx xxxxxxxx',
+          fontFamily: 'Arial',
+          fontSize: 16,
+        },
+      ],
+      inlineBoxes: [
+        {
+          ...box(19, 34),
+          layout: {
+            ...box(19, 34).layout,
+            paddingInlineStart: 1,
+            paddingInlineEnd: 5,
+            gapBefore: 2,
+            gapAfter: 3,
+            borderWidth: 0,
+          },
+        },
+      ],
+    };
+    const plainBlock: FlowBlock = { ...block, id: 'relocated-fallback-budget-plain', inlineBoxes: undefined };
+
+    const [plainMeasure, boxedMeasure] = await Promise.all([
+      measureBlock(plainBlock, maxWidth).then(expectParagraphMeasure),
+      measureBlock(block, maxWidth).then(expectParagraphMeasure),
+    ]);
+    const boxedLineIndex = boxedMeasure.lines.findIndex((line) => line.inlineBoxes?.length);
+    const unrelatedLineCount = Math.max(0, boxedLineIndex - 1);
+
+    expect(boxedLineIndex).toBeGreaterThan(0);
+    expect(
+      boxedMeasure.lines.slice(0, unrelatedLineCount).map(({ fromChar, toChar }) => ({ fromChar, toChar })),
+    ).toEqual(plainMeasure.lines.slice(0, unrelatedLineCount).map(({ fromChar, toChar }) => ({ fromChar, toChar })));
+    expect(boxedMeasure.lines.every((line) => line.width <= (line.maxWidth ?? maxWidth))).toBe(true);
+  });
+
+  it('reserves every inline box edge when adjacent boxes share a line', async () => {
+    const maxWidth = 64;
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'adjacent-box-budgets',
+      runs: [{ text: 'xxxx xxxxxx xxxxxx xxxxxx xx x', fontFamily: 'Arial', fontSize: 16 }],
+      inlineBoxes: [
+        {
+          ...box(1, 8),
+          id: 'first-citation',
+          layout: {
+            ...box(1, 8).layout,
+            paddingInlineStart: 7,
+            paddingInlineEnd: 0,
+            gapBefore: 1,
+            gapAfter: 4,
+            borderWidth: 0,
+          },
+        },
+        {
+          ...box(8, 10),
+          id: 'second-citation',
+          layout: {
+            ...box(8, 10).layout,
+            paddingInlineStart: 3,
+            paddingInlineEnd: 2,
+            gapBefore: 0,
+            gapAfter: 4,
+            borderWidth: 1,
+          },
+        },
+      ],
+    };
+
+    const measure = expectParagraphMeasure(await measureBlock(block, maxWidth));
+
+    expect(measure.lines.every((line) => line.width <= maxWidth)).toBe(true);
+  });
+
+  it('keeps adjacent inline box edges within the measured line width', async () => {
+    const maxWidth = 40;
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'adjacent-box-final-width',
+      runs: [{ text: 'prefix xxxxx x', fontFamily: 'Arial', fontSize: 16 }],
+      inlineBoxes: [
+        {
+          ...box(7, 12),
+          id: 'first-citation',
+          layout: {
+            ...box(7, 12).layout,
+            paddingInlineStart: 8,
+            paddingInlineEnd: 4,
+            paddingBlockStart: 1,
+            paddingBlockEnd: 1,
+            gapBefore: 0,
+            gapAfter: 4,
+            borderWidth: 0,
+          },
+        },
+        {
+          ...box(12, 13),
+          id: 'second-citation',
+          layout: {
+            ...box(12, 13).layout,
+            paddingInlineStart: 4,
+            paddingInlineEnd: 1,
+            paddingBlockStart: 1,
+            paddingBlockEnd: 1,
+            gapBefore: 1,
+            gapAfter: 3,
+            borderWidth: 1,
+          },
+        },
+      ],
+    };
+
+    const measure = expectParagraphMeasure(await measureBlock(block, maxWidth));
+
+    expect(measure.lines.every((line) => line.width <= maxWidth)).toBe(true);
+  });
+
+  it('keeps inline box edges within the indented line width', async () => {
+    const maxWidth = 70;
+    const effectiveWidth = 30;
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'indented-inline-box',
+      runs: [{ text: 'alpha beta gamma delta epsilon', fontFamily: 'Arial', fontSize: 12 }],
+      attrs: { indent: { left: 30, right: 10 } },
+      inlineBoxes: [
+        {
+          ...box(6, 16),
+          layout: {
+            ...box(6, 16).layout,
+            paddingInlineStart: 8,
+            paddingInlineEnd: 8,
+            gapBefore: 4,
+            gapAfter: 4,
+            borderWidth: 1,
+          },
+        },
+      ],
+    };
+
+    const measure = expectParagraphMeasure(await measureBlock(block, maxWidth));
+
+    expect(measure.lines.filter((line) => line.inlineBoxes?.length).length).toBeGreaterThan(1);
+    expect(measure.lines.every((line) => line.width <= effectiveWidth)).toBe(true);
+  });
+
+  it('emits exact fragment edges without changing text ascent or descent', async () => {
+    const plain = { ...boxedParagraph(), inlineBoxes: undefined };
+    const [plainMeasure, boxedMeasure] = await Promise.all([
+      measureBlock(plain, 1000).then(expectParagraphMeasure),
+      measureBlock(boxedParagraph(), 1000).then(expectParagraphMeasure),
+    ]);
+    const line = boxedMeasure.lines[0]!;
+    const lineBox = line.inlineBoxes?.[0];
+
+    expect(lineBox).toMatchObject({ from: 6, to: 10, startsRange: true, endsRange: true, top: 0 });
+    expect(lineBox!.x + lineBox!.width + lineBox!.style.gapAfter).toBeCloseTo(line.width);
+    expect(line.ascent).toBe(plainMeasure.lines[0]!.ascent);
+    expect(line.descent).toBe(plainMeasure.lines[0]!.descent);
+    expect(line.lineHeight - plainMeasure.lines[0]!.lineHeight).toBe(10);
+  });
+
+  it('preserves each box height when boxes have different vertical chrome', async () => {
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'different-box-heights',
+      runs: [{ text: 'alpha beta gamma', fontFamily: 'Arial', fontSize: 16 }],
+      inlineBoxes: [
+        box(0, 5),
+        {
+          ...box(6, 10),
+          id: 'compact-citation',
+          layout: {
+            ...box(6, 10).layout,
+            paddingBlockStart: 1,
+            paddingBlockEnd: 1,
+          },
+        },
+      ],
+    };
+    const plainBlock = { ...block, inlineBoxes: undefined };
+    const [plainMeasure, boxedMeasure] = await Promise.all([
+      measureBlock(plainBlock, 1000).then(expectParagraphMeasure),
+      measureBlock(block, 1000).then(expectParagraphMeasure),
+    ]);
+    const baseLineHeight = plainMeasure.lines[0]!.lineHeight;
+    const line = boxedMeasure.lines[0]!;
+
+    expect(line.lineHeight).toBe(baseLineHeight + 10);
+    expect(line.inlineBoxes?.map((lineBox) => lineBox.height)).toEqual([baseLineHeight + 10, baseLineHeight + 4]);
+  });
+
+  it('preserves a mid-run boundary as a segment edge beside atomic content', async () => {
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'boundary-segments',
+      runs: [
+        { text: 'prefix ', fontFamily: 'Arial', fontSize: 16 },
+        { text: 'boxed suffix', fontFamily: 'Arial', fontSize: 16 },
+        { kind: 'image', src: 'image.png', width: 10, height: 10 },
+      ],
+      inlineBoxes: [box(9, 12)],
+    };
+
+    const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+    const runSegments = measure.lines[0]!.segments!.filter((segment) => segment.runIndex === 1);
+
+    expect(runSegments.some((segment) => segment.toChar === 2)).toBe(true);
+    expect(runSegments.some((segment) => segment.fromChar === 2 && segment.toChar === 5)).toBe(true);
+    expect(runSegments.some((segment) => segment.fromChar === 5)).toBe(true);
+  });
+
+  it('positions box geometry after a tab stop in line coordinates', async () => {
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'tabbed-box',
+      runs: [{ kind: 'tab' }, { text: 'boxed suffix', fontFamily: 'Arial', fontSize: 16 }],
+      inlineBoxes: [box(1, 6)],
+    };
+
+    const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+    const line = measure.lines[0]!;
+    const firstTextSegment = line.segments?.find((segment) => segment.runIndex === 1);
+
+    expect(firstTextSegment?.x).toBeGreaterThan(0);
+    expect(line.inlineBoxes?.[0]?.x).toBeGreaterThanOrEqual(firstTextSegment!.x!);
+  });
+
+  it('keeps integer-authored geometry deterministic without rounding it through layout mode', async () => {
+    configureMeasurement({ mode: 'deterministic' });
+    try {
+      const first = expectParagraphMeasure(await measureBlock(boxedParagraph(), 180));
+      const second = expectParagraphMeasure(await measureBlock(boxedParagraph(), 180));
+      expect(second.lines).toEqual(first.lines);
+      expect(first.lines[0]!.inlineBoxes?.[0]!.style).toMatchObject({
+        paddingInlineStart: 6,
+        paddingInlineEnd: 8,
+        paddingBlockStart: 3,
+        paddingBlockEnd: 5,
+        gapBefore: 2,
+        gapAfter: 4,
+        borderWidth: 1,
+      });
+    } finally {
+      configureMeasurement({ mode: 'browser' });
+    }
   });
 });

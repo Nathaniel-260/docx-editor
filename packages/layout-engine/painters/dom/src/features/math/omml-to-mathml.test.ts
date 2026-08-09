@@ -1,10 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { JSDOM } from 'jsdom';
+import { describe, it, expect } from 'vite-plus/test';
+// Fresh isolated documents from the happy-dom test environment (see
+// vitest.config.mjs) - the painter package deliberately has no jsdom
+// dependency, so a direct `import "jsdom"` fails vite's transform here
+// (persistent-page rendering preflight plan, workstream 8).
+const createTestDocument = (): Document => document.implementation.createHTMLDocument('painter-test');
+
 import { convertOmmlToMathml, MATHML_NS } from './omml-to-mathml.js';
 import { tokenizeMathText } from './converters/math-run.js';
 
-const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
-const doc = dom.window.document;
+const doc = createTestDocument();
 
 describe('convertOmmlToMathml', () => {
   it('returns null for null/undefined input', () => {

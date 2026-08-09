@@ -1,5 +1,5 @@
 /**
- * Detect whether a ProseMirror transaction touches a structural row tracked
+ * Detect whether an editor transaction touches a structural row tracked
  * change (whole-table insert/delete encoded on `tableRow.attrs.trackChange`).
  *
  * Structural row revisions live on node attributes — NOT on inline marks — so
@@ -13,7 +13,7 @@
  * `tableRow` carrying a `rowInsert`/`rowDelete` `trackChange`. False positives
  * only cost an extra full resync; false negatives would silently drop the bubble.
  *
- * @param {import('prosemirror-state').Transaction} transaction
+ * @param {import('../core/types/index.js').EditorTransactionLike} transaction
  * @returns {boolean}
  */
 export function transactionTouchesStructuralChange(transaction) {

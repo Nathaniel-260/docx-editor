@@ -1,5 +1,0 @@
-# Ignore lock files
-*-lock*
-
-# Ignore npmrc files
-*.npmrc

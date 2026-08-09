@@ -682,10 +682,22 @@ function validateLegacyHeading(node: Record<string, unknown>): void {
 }
 
 function validateLegacyTable(node: Record<string, unknown>): void {
-  if (!Array.isArray(node.rows) || node.rows.length === 0) {
+  // Two interoperable legacy table shapes are accepted:
+  //   - the simplified legacy shape: rows under `rows`, cells under `cells`,
+  //     cell type `tableCell`;
+  //   - the ProseMirror/SuperDoc node shape: rows under `content`, cells under
+  //     `content`, cell type `tableCell` OR `tableHeader`.
+  // The PM shape is the public `presetContent.json` table contract the v1
+  // baseline ingests; accepting it here keeps v2 at parity (TB-PAR-022).
+  const rows = Array.isArray(node.rows)
+    ? (node.rows as unknown[])
+    : Array.isArray(node.content)
+      ? (node.content as unknown[])
+      : null;
+  if (!rows || rows.length === 0) {
     throw new DocumentApiValidationError('INVALID_PAYLOAD', 'Table must have at least one row.', { field: 'rows' });
   }
-  for (const row of node.rows as unknown[]) {
+  for (const row of rows) {
     assertLegacyNodeShape(row);
     const rowRec = row as Record<string, unknown>;
     if (rowRec.type !== 'tableRow') {
@@ -694,18 +706,23 @@ function validateLegacyTable(node: Record<string, unknown>): void {
         `Table rows must have type "tableRow", got "${String(rowRec.type)}".`,
       );
     }
-    if (!Array.isArray(rowRec.cells) || (rowRec.cells as unknown[]).length === 0) {
+    const cells = Array.isArray(rowRec.cells)
+      ? (rowRec.cells as unknown[])
+      : Array.isArray(rowRec.content)
+        ? (rowRec.content as unknown[])
+        : null;
+    if (!cells || cells.length === 0) {
       throw new DocumentApiValidationError('INVALID_PAYLOAD', 'Table row must have at least one cell.', {
         field: 'cells',
       });
     }
-    for (const cell of rowRec.cells as unknown[]) {
+    for (const cell of cells) {
       assertLegacyNodeShape(cell);
       const cellRec = cell as Record<string, unknown>;
-      if (cellRec.type !== 'tableCell') {
+      if (cellRec.type !== 'tableCell' && cellRec.type !== 'tableHeader') {
         throw new DocumentApiValidationError(
           'INVALID_PAYLOAD',
-          `Table cells must have type "tableCell", got "${String(cellRec.type)}".`,
+          `Table cells must have type "tableCell" or "tableHeader", got "${String(cellRec.type)}".`,
         );
       }
       if (cellRec.content !== undefined) {

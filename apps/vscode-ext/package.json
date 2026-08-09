@@ -2,7 +2,8 @@
   "name": "superdoc-vscode-ext",
   "displayName": "SuperDoc - Word Document Editor",
   "description": "Open and edit Word documents (.docx) directly in VS Code using SuperDoc",
-  "version": "2.17.0",
+  "version": "2.13.0",
+  "private": true,
   "publisher": "superdoc-dev",
   "icon": "logo.png",
   "homepage": "https://superdoc.dev",
@@ -78,10 +79,10 @@
     "watch": "pnpm run compile:ext -- --watch",
     "package": "vsce package --no-dependencies",
     "publish:vsce": "vsce publish --packagePath *.vsix --skip-duplicate",
-    "lint": "eslint .",
-    "lint:fix": "eslint --fix .",
-    "format": "prettier --write .",
-    "test": "vitest run",
+    "lint": "pnpm -w exec vp lint apps/vscode-ext",
+    "lint:fix": "pnpm -w exec vp lint --fix apps/vscode-ext",
+    "format": "pnpm -w exec vp fmt apps/vscode-ext",
+    "test": "vp test run",
     "typecheck": "tsc --noEmit",
     "release": "pnpx semantic-release",
     "release:dry-run": "pnpx semantic-release --dry-run",
@@ -92,9 +93,11 @@
     "@types/node": "catalog:",
     "@types/vscode": "^1.107.0",
     "@vscode/vsce": "^2.32.0",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.0",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
   },
   "dependencies": {
     "superdoc": "workspace:*"

@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 // cdn-entry resolves faces relative to its own <script> (document.currentScript), captured at module
 // eval. The fonts test env is `node` (no document), so we stub a minimal document.currentScript and
 // re-import the module per case to re-run that capture, mirroring what the browser sees.
-const SCRIPT = 'https://cdn.jsdelivr.net/npm/@superdoc-dev/fonts@0.1.0/dist/superdoc-fonts.min.js';
-const ASSET_BASE = 'https://cdn.jsdelivr.net/npm/@superdoc-dev/fonts@0.1.0/assets/';
+const SCRIPT = 'https://cdn.jsdelivr.net/npm/@superdoc/fonts@0.1.0/dist/superdoc-fonts.min.js';
+const ASSET_BASE = 'https://cdn.jsdelivr.net/npm/@superdoc/fonts@0.1.0/assets/';
 
 describe('cdn-entry (browser/IIFE): script-relative resolver', () => {
   beforeEach(() => {

@@ -21,18 +21,13 @@
 // (built public). If that pattern appears later, deleting the .d.ts will
 // break the package's published types - audit before deletion.
 //
-// AIDEV-NOTE: The collaboration-yjs allowlist is load-bearing. tsup's --dts
-// generator uses the src/.d.ts files as compilation leaves; removing them
-// breaks the build until tsup is reconfigured. Treat the entry below as a
-// scoped exception, not a precedent. See SD-2922 for the follow-up.
-
 import { readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 const ROOT = process.cwd();
 const SCAN = 'packages';
 
-const ALLOWLIST_PREFIXES = ['packages/collaboration-yjs/'];
+const ALLOWLIST_PREFIXES = [];
 
 function* walk(dir) {
   let entries;

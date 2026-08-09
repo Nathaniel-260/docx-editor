@@ -64,42 +64,6 @@ describe('executeTrackChangesDecide validation', () => {
     expect((caught as Error | undefined)?.message).toContain('exactly one selector');
   });
 
-  it('rejects id-target side aliases "insert"/"delete" (canonical inserted/deleted only)', () => {
-    // The published id-target side schema is strictly ['inserted','deleted'];
-    // the runtime must not accept the looser aliases the schema forbids.
-    for (const side of ['insert', 'delete']) {
-      expect(() =>
-        executeTrackChangesDecide(stubAdapter(), {
-          decision: 'reject',
-          target: { kind: 'id', id: 'tc1', side } as any,
-        }),
-      ).toThrow(/must be "inserted" or "deleted"/);
-    }
-  });
-
-  it('forwards canonical id-target side "deleted" to the adapter', () => {
-    const adapter = { ...stubAdapter(), decide: mock(() => ({ success: true })) };
-    const result = executeTrackChangesDecide(adapter, {
-      decision: 'reject',
-      target: { kind: 'id', id: 'tc1', side: 'deleted' },
-    });
-    expect(result.success).toBe(true);
-    expect((adapter.decide as any).mock.calls[0][0].target.side).toBe('deleted');
-  });
-
-  it('still accepts range-target side aliases (range validation is unchanged)', () => {
-    const adapter = { ...stubAdapter(), decideRange: mock(() => ({ success: true })) };
-    const result = executeTrackChangesDecide(adapter, {
-      decision: 'reject',
-      target: {
-        kind: 'range',
-        range: { kind: 'text', segments: [{ blockId: 'p1', range: { start: 0, end: 2 } }] },
-        side: 'delete',
-      } as any,
-    });
-    expect(result.success).toBe(true);
-  });
-
   it('routes canonical range targets to decideRange', () => {
     const adapter = {
       ...stubAdapter(),
@@ -110,6 +74,7 @@ describe('executeTrackChangesDecide validation', () => {
       decision: 'accept',
       target: {
         kind: 'range',
+        coordinateSpace: 'visible',
         range: { kind: 'text', segments: [{ blockId: 'p1', range: { start: 0, end: 2 } }] },
       },
     });
@@ -118,10 +83,24 @@ describe('executeTrackChangesDecide validation', () => {
     expect(adapter.decideRange).toHaveBeenCalledWith(
       {
         decision: 'accept',
+        coordinateSpace: 'visible',
         range: { kind: 'text', segments: [{ blockId: 'p1', range: { start: 0, end: 2 } }] },
       },
       undefined,
     );
+  });
+
+  it('rejects an unknown text-range coordinate space', () => {
+    expect(() =>
+      executeTrackChangesDecide(stubAdapter(), {
+        decision: 'accept',
+        target: {
+          kind: 'range',
+          coordinateSpace: 'screen',
+          range: { kind: 'text', segments: [{ blockId: 'p1', range: { start: 0, end: 2 } }] },
+        },
+      } as any),
+    ).toThrow(/coordinateSpace must be "visible" or "tracked"/);
   });
 
   it('fails closed when canonical range targets are not supported by the adapter', () => {
@@ -137,6 +116,83 @@ describe('executeTrackChangesDecide validation', () => {
       success: false,
       failure: { code: 'CAPABILITY_UNAVAILABLE' },
     });
+  });
+
+  it('fails closed for id targets with a side selector when only legacy adapter methods are available', () => {
+    const adapter = stubAdapter();
+
+    const result = executeTrackChangesDecide(adapter, {
+      decision: 'accept',
+      target: { kind: 'id', id: 'tc-1', side: 'insert' },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+    expect(adapter.accept).not.toHaveBeenCalled();
+  });
+
+  it('normalizes a multi-id target and delegates it as one atomic decision', () => {
+    const adapter = {
+      ...stubAdapter(),
+      decide: mock(() => ({ success: true })),
+    };
+
+    const result = executeTrackChangesDecide(adapter, {
+      decision: 'accept',
+      target: { kind: 'ids', ids: ['tc-1', 'tc-2', 'tc-1'] },
+    });
+
+    expect(result.success).toBe(true);
+    expect(adapter.decide).toHaveBeenCalledWith(
+      {
+        decision: 'accept',
+        target: { kind: 'ids', ids: ['tc-1', 'tc-2'] },
+      },
+      undefined,
+    );
+  });
+
+  it('rejects empty and malformed multi-id targets', () => {
+    for (const ids of [[], ['tc-1', ''], ['tc-1', 2], 'tc-1']) {
+      expect(() =>
+        executeTrackChangesDecide(stubAdapter(), {
+          decision: 'reject',
+          target: { kind: 'ids', ids },
+        } as any),
+      ).toThrow(/non-empty.*ids|ids.*non-empty/i);
+    }
+  });
+
+  it('fails closed for multi-id targets when only legacy adapter methods are available', () => {
+    const adapter = stubAdapter();
+
+    const result = executeTrackChangesDecide(adapter, {
+      decision: 'reject',
+      target: { kind: 'ids', ids: ['tc-1', 'tc-2'] },
+    } as any);
+
+    expect(result).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+    expect(adapter.reject).not.toHaveBeenCalled();
+  });
+
+  it('honors side on legacy id targets without a kind discriminator, same as the canonical shape', () => {
+    const adapter = stubAdapter();
+
+    const result = executeTrackChangesDecide(adapter, {
+      decision: 'accept',
+      target: { id: 'tc-1', side: 'insert' },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+    expect(adapter.accept).not.toHaveBeenCalled();
   });
 
   it('routes scope: "all" targets with an explicit story filter to acceptAll/rejectAll', () => {

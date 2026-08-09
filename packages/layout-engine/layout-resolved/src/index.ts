@@ -1,5 +1,6 @@
-export { resolveLayout } from './resolveLayout.js';
-export type { ResolveLayoutInput } from './resolveLayout.js';
+export { computeBlockVersion, resolveLayout, resolvePage } from './resolveLayout.js';
+export type { ResolveLayoutInput, ResolvePageInput } from './resolveLayout.js';
+export type { BlockMapEntry } from './resolvedBlockLookup.js';
 export { resolveHeaderFooterLayout } from './resolveHeaderFooter.js';
 export {
   deriveBlockVersion,

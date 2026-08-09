@@ -5,6 +5,8 @@ import { CLASS_NAMES, fragmentStyles } from '../styles.js';
 import { applyStyles } from '../utils/apply-styles.js';
 import { createBlockImageContent } from './image-block.js';
 import type { BuildImageHyperlinkAnchor } from './types.js';
+import { applyTrackedChangeDecorations } from '../runs/tracked-changes.js';
+import type { TrackedChangesRenderConfig } from '../runs/types.js';
 
 type RenderImageFragmentOptions = {
   doc: Document | null;
@@ -23,6 +25,7 @@ type RenderImageFragmentOptions = {
   applyContainerSdtDataset: (el: HTMLElement | null, metadata?: SdtMetadata | null) => void;
   buildImageHyperlinkAnchor: BuildImageHyperlinkAnchor;
   createErrorPlaceholder: (blockId: string, error: unknown) => HTMLElement;
+  trackedConfig: TrackedChangesRenderConfig;
 };
 
 export const buildImageGeometryTransform = (attrs: {
@@ -81,6 +84,7 @@ export const renderImageFragment = ({
   applyContainerSdtDataset,
   buildImageHyperlinkAnchor,
   createErrorPlaceholder,
+  trackedConfig,
 }: RenderImageFragmentOptions): HTMLElement => {
   try {
     if (resolvedItem?.block?.kind !== 'image') {
@@ -104,6 +108,7 @@ export const renderImageFragment = ({
     }
     applySdtDataset(fragmentEl, block.attrs?.sdt);
     applyContainerSdtDataset(fragmentEl, block.attrs?.containerSdt);
+    applyTrackedChangeDecorations(fragmentEl, block, trackedConfig);
 
     if (block.id) {
       fragmentEl.setAttribute('data-sd-block-id', block.id);
@@ -121,6 +126,8 @@ export const renderImageFragment = ({
     const imgMetadata = resolvedItem?.metadata;
     if (imgMetadata && !block.attrs?.vmlWatermark) {
       fragmentEl.setAttribute('data-image-metadata', JSON.stringify(imgMetadata));
+      // docPr/@id so the resize overlay can target the Document API (images.setSize).
+      if (block.imageId) fragmentEl.setAttribute('data-sd-image-id', String(block.imageId));
     }
 
     // AIDEV-NOTE: Keep srcRect crop/zoom transforms on the image element via

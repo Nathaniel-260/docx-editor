@@ -1,7 +1,7 @@
 /**
- * Collect tracked-change mark IDs from ranges touched by a ProseMirror transaction.
+ * Collect tracked-change mark IDs from ranges touched by an editor transaction.
  *
- * @param {import('prosemirror-state').Transaction} transaction
+ * @param {import('../core/types/index.js').EditorTransactionLike} transaction
  * @param {object} [options]
  * @param {object|null} [options.trackChangesPluginKey] - The TrackChangesBasePluginKey to read metadata from
  * @returns {Set<string>} Set of tracked-change mark IDs

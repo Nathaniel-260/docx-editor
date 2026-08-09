@@ -1,5 +1,11 @@
 import type { Line, Run, TextRun } from '@superdoc/contracts';
 import { toCssFontFamily } from '@superdoc/font-utils';
+import {
+  applySemanticTrackedChangeMetadata,
+  applyTrackedChangeColorVariables,
+  TRACK_CHANGE_BASE_CLASS,
+  TRACK_CHANGE_MODIFIER_CLASS,
+} from './tracked-changes.js';
 
 export const setTextContentWithFormattingSpaceMarks = (
   element: HTMLElement,
@@ -43,6 +49,52 @@ const findLastTextRun = (runs: Run[]): { run: TextRun; index: number } | null =>
   return null;
 };
 
+const findDeletedParagraphMarkAnchorRun = (runs: Run[]): TextRun | null => {
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const run = runs[index];
+    if (
+      run &&
+      (run.kind === 'text' || run.kind === undefined) &&
+      'text' in run &&
+      run.vanish === true &&
+      run.dataAttrs?.['data-paragraph-mark-deletion-anchor'] === 'true' &&
+      run.trackedChange
+    ) {
+      return run as TextRun;
+    }
+  }
+  return null;
+};
+
+const applyDeletedParagraphMarkReview = (mark: HTMLElement, run: TextRun): void => {
+  const trackedChange = run.trackedChange;
+  if (!trackedChange) return;
+
+  const baseClass = TRACK_CHANGE_BASE_CLASS[trackedChange.kind];
+  if (baseClass) mark.classList.add(baseClass);
+  const modifier = TRACK_CHANGE_MODIFIER_CLASS[trackedChange.kind]?.review;
+  if (modifier) mark.classList.add(modifier);
+  mark.classList.add('superdoc-tracked-paragraph-mark');
+  applyTrackedChangeColorVariables(mark, trackedChange);
+  applySemanticTrackedChangeMetadata(mark, trackedChange);
+
+  mark.dataset.trackChangeId = trackedChange.id;
+  mark.dataset.trackChangeIds = trackedChange.id;
+  mark.dataset.trackChangeKind = trackedChange.kind;
+  mark.dataset.trackChangeAnchor = 'paragraph-mark';
+  mark.dataset.trackChangeStructural = 'paragraph-mark';
+  mark.dataset.trackChangeMarker = 'paragraph';
+  if (trackedChange.storyKey) mark.dataset.storyKey = trackedChange.storyKey;
+  if (trackedChange.author) mark.dataset.trackChangeAuthor = trackedChange.author;
+  if (trackedChange.authorEmail) mark.dataset.trackChangeAuthorEmail = trackedChange.authorEmail;
+  if (trackedChange.color) mark.dataset.trackChangeAuthorColor = trackedChange.color;
+  if (trackedChange.date) mark.dataset.trackChangeDate = trackedChange.date;
+
+  mark.style.display = 'inline';
+  mark.style.textDecorationColor = 'currentColor';
+  mark.style.textDecorationLine = trackedChange.kind === 'delete' ? 'line-through' : 'underline';
+};
+
 export const appendFormattingParagraphMark = (
   lineEl: HTMLElement,
   line: Line,
@@ -69,6 +121,7 @@ export const appendFormattingParagraphMark = (
   }
 
   const lastTextRun = findLastTextRun(runs);
+  const deletedParagraphMarkAnchor = findDeletedParagraphMarkAnchorRun(runs);
 
   const mark = doc.createElement('span');
   mark.classList.add('superdoc-formatting-paragraph-mark');
@@ -107,5 +160,8 @@ export const appendFormattingParagraphMark = (
   const isRtl = lineEl.dir === 'rtl' || lineEl.style.direction === 'rtl';
   const visualTextEndOffset = isRtl ? alignmentOffset : alignmentOffset + lineWidth;
   mark.style.left = `${Math.max(0, leftOffsetPx + visualTextEndOffset)}px`;
+  if (deletedParagraphMarkAnchor) {
+    applyDeletedParagraphMarkReview(mark, deletedParagraphMarkAnchor);
+  }
   lineEl.appendChild(mark);
 };

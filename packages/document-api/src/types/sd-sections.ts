@@ -97,7 +97,7 @@ export interface SDCommentThread {
 export interface SDTrackedChange {
   id: string;
   /**
-   * Tracked-change broad type. Accepts the canonical spec vocabulary
+   * Tracked-change broad type. Accepts the canonical v2 spec vocabulary
    * (`insertion` / `deletion` / `replacement` / `formatting` / `move` /
    * `structural`) and the legacy `insert` / `delete` / `format` aliases
    * during the vocabulary migration.

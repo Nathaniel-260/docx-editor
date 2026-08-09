@@ -6,6 +6,8 @@ logs
 .temp
 node_modules
 dist
+dist-cdn
+dist-devapp
 dist-ssr
 dist-types
 companion-dist
@@ -21,8 +23,6 @@ lerna-debug.log*
 
 # Editor directories and files
 .vscode/*
-!.vscode/extensions.json
-!.vscode/setings.json.sample
 .idea
 *.suo
 *.ntvs*
@@ -30,31 +30,20 @@ lerna-debug.log*
 *.sln
 *.sw?
 
-# VitePress
-.vitepress/.temp
-.vitepress/.cache
-.vitepress/dist
-
-packages/super-editor/src/editors/v1/tests/data/*/
-
 packages/word-layout/tests/**/*.js
 packages/word-layout/tests/**/*.d.ts
 packages/word-layout/tests/**/*.map
 
+# Transient prepack manifest backup (sanitize-pack-manifest.cjs); left behind
+# only when a pack is interrupted — never commit it.
+.package.json.prepack-backup
+
 # Playwright
 test-results
 *.tgz
-e2e-tests/tests/**/*darwin*
-e2e-tests/test-results/**/*darwin*
-e2e-tests/tests/visuals/layout-compare.spec.js-snapshots/*
-
-!examples/chrome-extension/dist
 
 # Coverage reports
 coverage
-coverage/
-**/coverage
-**/coverage/
 reports/
 
 **/src/**/*.d.ts.map
@@ -88,8 +77,12 @@ packages/sdk/langs/python/**/*.egg-info/
 # Generated Node SDK platform binaries staged during release/publish
 packages/sdk/langs/node/platforms/sdk-*/bin/
 
-# Local runtime state for collaboration examples
-examples/collaboration/fastapi/.superdoc-state/
+# Exported documents the collaboration examples write at runtime. Unanchored on
+# purpose: the FastAPI example has already moved once, and a checkout that ran
+# it at the old path keeps the ignored directory there after the update. A
+# path-pinned rule stops covering those files the moment the example moves,
+# which turns a stale exported document into something `git add -A` will stage.
+.superdoc-state/
 
 # Generated artifacts — run `pnpm run generate:all` to produce
 packages/document-api/generated/
@@ -98,12 +91,8 @@ apps/cli/generated/
 packages/sdk/langs/node/src/generated/
 packages/sdk/langs/python/superdoc/generated/
 packages/sdk/tools/*.json
-# Note: apps/docs/document-api/reference/ stays committed because Mintlify
-# deploys directly from git with no pre-build hook support.
 
 .playwright-cli/
 .prqrc.json
 tmp/
-
-# Local-only Promptfoo benchmark config (do not commit)
-evals/promptfooconfig.benchmark.yaml
+.tmp/

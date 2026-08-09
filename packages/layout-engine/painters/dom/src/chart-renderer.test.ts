@@ -1,12 +1,17 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { JSDOM } from 'jsdom';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
+// Fresh isolated documents from the happy-dom test environment (see
+// vitest.config.mjs) - the painter package deliberately has no jsdom
+// dependency, so a direct `import "jsdom"` fails vite's transform here
+// (persistent-page rendering preflight plan, workstream 8).
+const createTestDocument = (): Document => document.implementation.createHTMLDocument('painter-test');
+
 import { createChartElement, createChartPlaceholder, formatTickValue } from './chart-renderer.js';
 import type { ChartModel, DrawingGeometry } from '@superdoc/contracts';
 
 let doc: Document;
 
 beforeEach(() => {
-  doc = new JSDOM('<!DOCTYPE html><html><body></body></html>').window.document;
+  doc = createTestDocument();
 });
 
 const defaultGeometry: DrawingGeometry = { width: 400, height: 300, rotation: 0, flipH: false, flipV: false };
@@ -116,6 +121,10 @@ describe('createChartElement', () => {
   it('shows placeholder for missing chart data', () => {
     const el = createChartElement(doc, undefined, defaultGeometry);
     expect(el.textContent).toContain('No chart data');
+    expect(el.classList.contains('superdoc-placeholder-block')).toBe(true);
+    expect(el.dataset.placeholderDiagnosticIds).toBe('render.chart-not-supported');
+    expect(el.getAttribute('role')).toBe('img');
+    expect(el.getAttribute('aria-label')).toContain('No chart data');
   });
 
   it('shows placeholder for empty series', () => {
@@ -282,5 +291,15 @@ describe('createChartPlaceholder', () => {
     const container = doc.createElement('div');
     const el = createChartPlaceholder(doc, container, 'x');
     expect(el.style.display).toBe('flex');
+  });
+
+  it('uses projection-owned placeholder metadata when supplied', () => {
+    const container = doc.createElement('div');
+    const el = createChartPlaceholder(doc, container, 'No chart data', {
+      diagnosticIds: ['render.chart-not-supported'],
+      accessibleName: 'Quarterly sales chart',
+    });
+    expect(el.dataset.placeholderDiagnosticIds).toBe('render.chart-not-supported');
+    expect(el.getAttribute('aria-label')).toBe('Quarterly sales chart');
   });
 });

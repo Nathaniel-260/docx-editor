@@ -10,6 +10,7 @@ import type {
   TextMutationReceipt,
   TextMutationResolution,
   TextMutationRange,
+  ReceiptEffects,
   SDMutationReceipt,
   SDError,
   SelectionTarget,
@@ -40,6 +41,10 @@ export function textReceiptToSDReceipt(receipt: TextMutationReceipt): SDMutation
     return {
       success: true,
       resolution: receipt.resolution ? buildResolution(receipt.resolution) : undefined,
+      // Preserve the created-content lane (inserted text/blocks) so callers can
+      // anchor to the spans the mutation created. `resolution.target` stays the
+      // resolved insertion point; `effects` carries the post-mutation spans.
+      ...(receipt.effects ? { effects: receipt.effects } : {}),
     };
   }
 
@@ -87,6 +92,8 @@ export interface StructuralReceiptParams {
   target: MutationResolutionTarget;
   range: TextMutationRange;
   selectionTarget?: SelectionTarget;
+  /** Post-mutation created-content spans (inserted blocks / text). */
+  effects?: ReceiptEffects;
 }
 
 /**
@@ -115,7 +122,7 @@ export function buildStructuralReceipt(
   };
 
   if (success) {
-    return { success: true, resolution };
+    return { success: true, resolution, ...(params.effects ? { effects: params.effects } : {}) };
   }
 
   return {

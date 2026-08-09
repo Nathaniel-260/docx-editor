@@ -8,6 +8,15 @@ const buildPageScopedInstanceId = (positionKey, pageIndex) => {
   return `${positionKey}::page:${pageIndex}`;
 };
 
+const matchesTrackedChangePositionAlias = (positionKey, alias) => {
+  const normalizedPositionKey = String(positionKey);
+  const normalizedAlias = String(alias);
+  return (
+    normalizedPositionKey === normalizedAlias ||
+    (normalizedPositionKey.startsWith('tc::') && normalizedPositionKey.endsWith(`::${normalizedAlias}`))
+  );
+};
+
 const aggregateRectBounds = (rects) => {
   if (!Array.isArray(rects) || rects.length === 0) {
     return null;
@@ -46,7 +55,8 @@ const aggregateRectBounds = (rects) => {
 const groupRectsByPage = (rects) => {
   const groupedRects = new Map();
 
-  rects.forEach((rect) => {
+  const geometryRects = Array.isArray(rects) ? rects : [];
+  geometryRects.forEach((rect) => {
     const pageIndex = toFinitePageIndex(rect?.pageIndex);
     if (pageIndex == null) {
       return;
@@ -78,53 +88,88 @@ const isRepeatedHeaderFooterTrackedChange = (comment, positionEntry) => {
   return groupRectsByPage(positionEntry?.rects).length > 1;
 };
 
+// PDF / non-editor comments have no editor-backed positionEntry, so their
+// page index cannot be read from layout geometry. Fall back to the 1-based
+// `selection.page` carried by the PDF selection (page 1 → pageIndex 0). Only
+// applied when there is no geometry pageIndex; editor geometry stays authoritative.
+const resolveSelectionPageIndex = (comment) => {
+  const page = Number(comment?.selection?.page);
+  if (!Number.isInteger(page) || page < 1) return null;
+  return page - 1;
+};
+
 const buildSingleFloatingCommentInstance = ({ id, threadId, comment, positionKey, positionEntry }) => {
+  const geometryPageIndex = toFinitePageIndex(positionEntry?.pageIndex);
+  const fallbackPageIndex = comment?.trackedChange ? null : resolveSelectionPageIndex(comment);
+  const pageIndex = geometryPageIndex ?? fallbackPageIndex;
+
   return {
     id,
     threadId,
     comment,
     positionKey,
     positionEntry: positionEntry ?? null,
-    pageIndex: toFinitePageIndex(positionEntry?.pageIndex),
+    pageIndex,
     isPrimary: true,
   };
 };
 
-const buildRepeatedHeaderFooterInstances = ({ comment, positionKey, positionEntry }) => {
+const buildRepeatedHeaderFooterInstances = ({ comment, positionKey, positionEntry, primaryInstanceId }) => {
   const rectGroups = groupRectsByPage(positionEntry?.rects);
   if (rectGroups.length < 2) {
     return [];
   }
 
-  const primaryPageIndex = toFinitePageIndex(positionEntry?.pageIndex) ?? rectGroups[0]?.pageIndex ?? null;
-
-  return rectGroups
+  const renderableGroups = rectGroups
     .map(({ pageIndex, rects }) => {
       const bounds = aggregateRectBounds(rects);
-      if (!bounds) {
-        return null;
-      }
-
-      return {
-        id: buildPageScopedInstanceId(positionKey, pageIndex),
-        threadId: comment?.commentId ?? positionKey,
-        comment,
-        positionKey,
-        pageIndex,
-        isPrimary: pageIndex === primaryPageIndex,
-        positionEntry: {
-          ...positionEntry,
-          pageIndex,
-          rects,
-          bounds,
-        },
-      };
+      return bounds ? { pageIndex, rects, bounds } : null;
     })
     .filter(Boolean);
+  if (renderableGroups.length < 2) {
+    return [];
+  }
+
+  const geometryPageIndex = toFinitePageIndex(positionEntry?.pageIndex);
+  const primaryPageIndex = renderableGroups.some(({ pageIndex }) => pageIndex === geometryPageIndex)
+    ? geometryPageIndex
+    : (renderableGroups[0]?.pageIndex ?? null);
+
+  return renderableGroups.map(({ pageIndex, rects, bounds }) => {
+    const isPrimary = pageIndex === primaryPageIndex;
+
+    return {
+      id: isPrimary ? primaryInstanceId : buildPageScopedInstanceId(primaryInstanceId, pageIndex),
+      threadId: comment?.commentId ?? positionKey,
+      comment,
+      positionKey,
+      pageIndex,
+      isPrimary,
+      positionEntry: {
+        ...positionEntry,
+        pageIndex,
+        rects,
+        bounds,
+      },
+    };
+  });
 };
 
 export const buildFloatingCommentInstances = ({ comment, positionKey, positionEntry, fallbackId }) => {
-  const instanceId = positionKey ?? fallbackId;
+  const hasTrackedChangePositionAlias =
+    comment?.trackedChange &&
+    positionKey &&
+    fallbackId &&
+    Array.isArray(comment?.trackedChangePositionAliases) &&
+    comment.trackedChangePositionAliases.some((alias) => matchesTrackedChangePositionAlias(positionKey, alias));
+  const hasSharedTrackedChangeAnchor =
+    comment?.trackedChange &&
+    comment?.trackedChangeCanonicalId &&
+    positionKey &&
+    fallbackId &&
+    String(positionKey) !== String(fallbackId);
+  const instanceId =
+    hasTrackedChangePositionAlias || hasSharedTrackedChangeAnchor ? fallbackId : (positionKey ?? fallbackId);
   if (!instanceId) {
     return [];
   }
@@ -134,6 +179,7 @@ export const buildFloatingCommentInstances = ({ comment, positionKey, positionEn
       comment,
       positionKey,
       positionEntry,
+      primaryInstanceId: instanceId,
     });
     if (repeatedInstances.length > 0) {
       return repeatedInstances;

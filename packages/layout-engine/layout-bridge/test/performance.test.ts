@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vite-plus/test';
 import { resolveCanvas } from '../../measuring/dom/src/canvas-resolver.js';
 import { installNodeCanvasPolyfill } from '../../measuring/dom/src/setup.ts';
 import { runBenchmarkSuite } from './benchmarks/index';
@@ -8,7 +8,7 @@ const { Canvas, usingStub } = resolveCanvas();
 
 beforeAll(() => {
   if (usingStub) {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.warn(
       '[superdoc] Skipping layout-bridge benchmarks because mock canvas is active; install native deps or use Node 20 for real metrics.',
     );
@@ -57,7 +57,7 @@ describeIfRealCanvas('incremental pipeline benchmarks', () => {
 
     results.forEach((result) => {
       if (process.env.LAYOUT_BENCH_DEBUG) {
-        // eslint-disable-next-line no-console
+        // oxlint-disable-next-line no-console
         console.log(
           JSON.stringify(
             {

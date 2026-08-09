@@ -8,12 +8,15 @@
  * Out of scope by design:
  *  - list-marker / wordLayout layout (owned by the numbering-marker resolver)
  *  - drop-cap PM-node traversal (out of scope here, lives in pm-adapter)
- *  - direction-aware logical-to-physical indent mirroring (owned by the painter)
  *
  * The mapping is intentionally narrow: features the resolver cannot
  * faithfully emit without extra context (numbering markers, drop caps,
  * cell direction context) are NOT inferred here — they remain pm-adapter
  * or downstream concerns.
+ *
+ * Paragraph indent is the main exception: the shared layout contract is still
+ * V1-shaped for RTL paragraphs, so we emit the legacy visual carrier here
+ * instead of leaving a logical `w:ind` shape for the painter.
  */
 
 import type {
@@ -38,7 +41,7 @@ import { twipsToPx } from './units.js';
 import { normalizeHexColor } from './colors.js';
 
 const AUTO_SPACING_LINE_DEFAULT = 240;
-const AUTO_SPACING_DEFAULT_MULTIPLIER = 1.15;
+const AUTO_PARAGRAPH_SPACING_MULTIPLIER = 1.15;
 
 export function normalizeParagraphAttrsFromOoxml(
   props: ParagraphProperties | null | undefined,
@@ -48,7 +51,7 @@ export function normalizeParagraphAttrsFromOoxml(
 
   if (props.styleId) attrs.styleId = String(props.styleId);
 
-  const alignment = mapAlignment(props.justification);
+  const alignment = mapAlignment(props.justification, props.rightToLeft === true);
   if (alignment) attrs.alignment = alignment;
 
   const spacing = mapSpacing(props.spacing, props.numberingProperties != null);
@@ -57,12 +60,24 @@ export function normalizeParagraphAttrsFromOoxml(
   const indent = mapIndent(props);
   if (indent) attrs.indent = indent;
 
+  const directionContext = mapDirectionContext(props);
+  if (directionContext) attrs.directionContext = directionContext;
+
   if (props.keepNext) attrs.keepNext = true;
   if (props.keepLines) attrs.keepLines = true;
+  if (props.widowControl != null) attrs.widowControl = props.widowControl;
   if (props.pageBreakBefore) attrs.pageBreakBefore = true;
   if (props.contextualSpacing) attrs.contextualSpacing = true;
   if (props.runProperties?.vanish === true) {
     attrs.suppressParagraphBreak = true;
+  }
+  if (
+    typeof props.outlineLvl === 'number' &&
+    Number.isInteger(props.outlineLvl) &&
+    props.outlineLvl >= 0 &&
+    props.outlineLvl < 9
+  ) {
+    attrs.headingLevel = props.outlineLvl + 1;
   }
 
   const borders = mapParagraphBorders(props.borders);
@@ -87,8 +102,18 @@ export function normalizeParagraphAttrsFromOoxml(
   return attrs;
 }
 
-function mapAlignment(value: string | undefined): ParagraphAttrs['alignment'] | undefined {
-  if (value === 'left' || value === 'center' || value === 'right' || value === 'justify') return value;
+function mapDirectionContext(props: ParagraphProperties): ParagraphAttrs['directionContext'] | undefined {
+  if (props.rightToLeft !== true) return undefined;
+  return {
+    inlineDirection: 'rtl',
+    writingMode: 'horizontal-tb',
+  };
+}
+
+function mapAlignment(value: string | undefined, isRightToLeft: boolean): ParagraphAttrs['alignment'] | undefined {
+  if (value === 'left') return isRightToLeft ? 'right' : 'left';
+  if (value === 'right') return isRightToLeft ? 'left' : 'right';
+  if (value === 'center' || value === 'justify') return value;
   if (
     value === 'both' ||
     value === 'distribute' ||
@@ -112,10 +137,10 @@ function mapSpacing(spacing: OoxmlParagraphSpacing | undefined, isList: boolean)
   let before = spacing.before;
   let after = spacing.after;
   if (spacing.beforeAutospacing) {
-    before = isList ? undefined : (spacing.line ?? AUTO_SPACING_LINE_DEFAULT) * AUTO_SPACING_DEFAULT_MULTIPLIER;
+    before = isList ? undefined : (spacing.line ?? AUTO_SPACING_LINE_DEFAULT) * AUTO_PARAGRAPH_SPACING_MULTIPLIER;
   }
   if (spacing.afterAutospacing) {
-    after = isList ? undefined : (spacing.line ?? AUTO_SPACING_LINE_DEFAULT) * AUTO_SPACING_DEFAULT_MULTIPLIER;
+    after = isList ? undefined : (spacing.line ?? AUTO_SPACING_LINE_DEFAULT) * AUTO_PARAGRAPH_SPACING_MULTIPLIER;
   }
   if (before != null) out.before = twipsToPx(before);
   if (after != null) out.after = twipsToPx(after);
@@ -126,7 +151,7 @@ function mapSpacing(spacing: OoxmlParagraphSpacing | undefined, isList: boolean)
       out.lineUnit = 'px';
       out.lineRule = rule;
     } else if (rule === 'auto') {
-      out.line = (spacing.line * AUTO_SPACING_DEFAULT_MULTIPLIER) / AUTO_SPACING_LINE_DEFAULT;
+      out.line = spacing.line / AUTO_SPACING_LINE_DEFAULT;
       out.lineUnit = 'multiplier';
       out.lineRule = 'auto';
     } else {
@@ -142,17 +167,37 @@ function mapSpacing(spacing: OoxmlParagraphSpacing | undefined, isList: boolean)
 function mapIndent(props: ParagraphProperties): ParagraphIndent | undefined {
   const indent = props.indent;
   if (!indent) return undefined;
+  const isRightToLeft = props.rightToLeft === true;
   const out: ParagraphIndent = {};
-  // Prefer physical left/right; fall back to logical start/end as LTR-default.
-  // Direction-aware mirroring is owned by pm-adapter / DomPainter; we deliver
-  // LTR-default physical sides so the painter's mirror path remains the
-  // single source of truth.
-  if (indent.left != null) out.left = twipsToPx(indent.left);
-  else if (indent.start != null) out.left = twipsToPx(indent.start);
-  if (indent.right != null) out.right = twipsToPx(indent.right);
-  else if (indent.end != null) out.right = twipsToPx(indent.end);
-  if (indent.firstLine != null) out.firstLine = twipsToPx(indent.firstLine);
-  if (indent.hanging != null) out.hanging = twipsToPx(indent.hanging);
+  // For RTL paragraphs the layout contract still expects the legacy
+  // V1-compatible visual carriers: leading indent on the right, trailing on
+  // the left, and first-line / hanging offsets negated into the visual flow.
+  if (indent.left != null) {
+    const value = twipsToPx(indent.left);
+    if (isRightToLeft) out.right = value;
+    else out.left = value;
+  } else if (indent.start != null) {
+    const value = twipsToPx(indent.start);
+    if (isRightToLeft) out.right = value;
+    else out.left = value;
+  }
+  if (indent.right != null) {
+    const value = twipsToPx(indent.right);
+    if (isRightToLeft) out.left = value;
+    else out.right = value;
+  } else if (indent.end != null) {
+    const value = twipsToPx(indent.end);
+    if (isRightToLeft) out.left = value;
+    else out.right = value;
+  }
+  if (indent.firstLine != null) {
+    const value = twipsToPx(indent.firstLine);
+    out.firstLine = isRightToLeft ? -value : value;
+  }
+  if (indent.hanging != null) {
+    const value = twipsToPx(indent.hanging);
+    out.hanging = isRightToLeft ? -value : value;
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

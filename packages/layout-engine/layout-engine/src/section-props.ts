@@ -111,11 +111,22 @@ const _snapshotSectionProps = (block: FlowBlock): SectionProps | null => {
  * }
  * ```
  */
-export function computeNextSectionPropsAtBreak(blocks: FlowBlock[]): Map<number, SectionProps> {
+export type SectionPropsScanCheckpoint = {
+  index: number;
+  total: number;
+};
+
+export function* computeNextSectionPropsAtBreakSteps(
+  blocks: FlowBlock[],
+  checkpointEveryBlocks: number | null = null,
+): Generator<SectionPropsScanCheckpoint, Map<number, SectionProps>, void> {
   const nextSectionPropsAtBreak = new Map<number, SectionProps>();
   const docxBreakIndexes: number[] = [];
 
   for (let i = 0; i < blocks.length; i += 1) {
+    if (checkpointEveryBlocks != null && i % checkpointEveryBlocks === 0) {
+      yield { index: i, total: blocks.length };
+    }
     const block = blocks[i];
     if (!block || block.kind !== 'sectionBreak') continue;
     if (block.attrs?.source !== 'sectPr') continue;
@@ -152,14 +163,26 @@ export function computeNextSectionPropsAtBreak(blocks: FlowBlock[]): Map<number,
     return props;
   };
 
-  docxBreakIndexes.forEach((index, ordinal) => {
+  for (let ordinal = 0; ordinal < docxBreakIndexes.length; ordinal += 1) {
+    if (checkpointEveryBlocks != null && ordinal % checkpointEveryBlocks === 0) {
+      yield { index: ordinal, total: docxBreakIndexes.length };
+    }
+    const index = docxBreakIndexes[ordinal]!;
     const current = blocks[index];
     const nextIndex = docxBreakIndexes[ordinal + 1];
     // Type narrowing: we know current is a section break from the earlier filter
     const useCurrent = current?.kind === 'sectionBreak' && current.attrs?.isFirstSection;
     const source = useCurrent || typeof nextIndex !== 'number' ? current : blocks[nextIndex];
     nextSectionPropsAtBreak.set(index, snapshotProps(source));
-  });
+  }
 
   return nextSectionPropsAtBreak;
+}
+
+export function computeNextSectionPropsAtBreak(blocks: FlowBlock[]): Map<number, SectionProps> {
+  const steps = computeNextSectionPropsAtBreakSteps(blocks);
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
 }

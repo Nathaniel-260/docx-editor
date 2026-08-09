@@ -65,7 +65,7 @@ class PDFAdapter {
   constructor() {
     const proto = Object.getPrototypeOf(this);
     if (proto.constructor === PDFAdapter) {
-      throw new Error('Abstract class should not be instanciated');
+      throw new Error('Abstract class should not be instantiated');
     }
   }
 }

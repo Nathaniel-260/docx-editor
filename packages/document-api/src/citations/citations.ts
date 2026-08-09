@@ -3,6 +3,7 @@ import { normalizeMutationOptions } from '../write/write.js';
 import { DocumentApiValidationError } from '../errors.js';
 import { assertTargetPresent } from '../validation-primitives.js';
 import { validateTargetOnlyTocCreateLocation } from '../validation/create-location-validator.js';
+import { validateStoryLocator } from '../validation/story-validator.js';
 import type {
   CitationAddress,
   CitationSourceAddress,
@@ -77,6 +78,7 @@ function validateCitationTarget(target: unknown, operationName: string): asserts
       { target },
     );
   }
+  validateStoryLocator(t.story, `${operationName}.target.story`);
 }
 
 function validateCitationSourceTarget(target: unknown, operationName: string): asserts target is CitationSourceAddress {
@@ -135,6 +137,13 @@ export function executeCitationsUpdate(
   options?: MutationOptions,
 ): CitationMutationResult {
   validateCitationTarget(input.target, 'citations.update');
+  const sourceIds = input.patch.sourceIds;
+  if (sourceIds !== undefined && (!Array.isArray(sourceIds) || sourceIds.length === 0)) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      'citations.update requires a non-empty sourceIds array when provided.',
+    );
+  }
   return adapter.update(input, normalizeMutationOptions(options));
 }
 

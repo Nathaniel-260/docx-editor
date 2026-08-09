@@ -41,6 +41,11 @@ export interface ResolvedStyle {
   source: ResolvedStyleSource;
 }
 
+export interface TableSemanticStyleHints {
+  readonly normalTableStyleId?: string | null;
+  readonly tableGridStyleId?: string | null;
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -121,6 +126,7 @@ export function resolveExistingTableEffectiveStyleId(
 export function resolvePreferredNewTableStyleId(
   settingsDefaultTableStyleId: string | null | undefined,
   translatedLinkedStyles: StylesDocumentProperties | null | undefined,
+  semanticHints: TableSemanticStyleHints = {},
 ): ResolvedStyle {
   // 1. Settings default
   if (settingsDefaultTableStyleId && isKnownTableStyleId(settingsDefaultTableStyleId, translatedLinkedStyles)) {
@@ -129,13 +135,15 @@ export function resolvePreferredNewTableStyleId(
 
   // 2. Type-default (skip TableNormal — it's the OOXML base/reset style, not a visual style)
   const typeDefault = findTypeDefaultTableStyleId(translatedLinkedStyles);
-  if (typeDefault && typeDefault !== TABLE_STYLE_ID_TABLE_NORMAL) {
+  const normalTableStyleId = semanticHints.normalTableStyleId ?? TABLE_STYLE_ID_TABLE_NORMAL;
+  if (typeDefault && typeDefault !== normalTableStyleId) {
     return { styleId: typeDefault, source: 'type-default' };
   }
 
   // 3. TableGrid builtin
-  if (isKnownTableStyleId(TABLE_STYLE_ID_TABLE_GRID, translatedLinkedStyles)) {
-    return { styleId: TABLE_STYLE_ID_TABLE_GRID, source: 'builtin-fallback' };
+  const tableGridStyleId = semanticHints.tableGridStyleId ?? TABLE_STYLE_ID_TABLE_GRID;
+  if (isKnownTableStyleId(tableGridStyleId, translatedLinkedStyles)) {
+    return { styleId: tableGridStyleId, source: 'builtin-fallback' };
   }
 
   // 4. No style — use inline fallback borders

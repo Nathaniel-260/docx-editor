@@ -48,6 +48,35 @@ export type {
 } from './apply.js';
 export { executeStylesApply } from './apply.js';
 
+// Catalog: read-only style catalogue projection (`styles.getCatalog`)
+export type {
+  StyleCatalogView,
+  StyleCatalogItemType,
+  StyleCatalogFilterType,
+  StyleProvenance,
+  StyleCatalogDiagnosticSeverity,
+  StyleSourcePartStatus,
+  StyleCatalogUsageStatus,
+  StyleCatalogPreviewStatus,
+  StyleCatalogViewStatus,
+  StyleCatalogItemVisibility,
+  StyleCatalogItemUsage,
+  StyleCatalogItemPreview,
+  StyleCatalogItem,
+  StyleCatalogDefaults,
+  StyleCatalogDiagnostic,
+  StyleCatalogSourceStatus,
+  StylesGetCatalogInput,
+  StylesGetCatalogResult,
+  StylesGetCatalogAdapter,
+} from './catalog.js';
+export {
+  STYLE_CATALOG_VIEWS,
+  STYLE_CATALOG_FILTER_TYPES,
+  executeStylesGetCatalog,
+  validateStylesGetCatalogInput,
+} from './catalog.js';
+
 // Validation: exported for adapter use (excluded-key checking, patch key classification)
 export type { PatchKeyClassification } from './validation.js';
 export { validateValue, classifyPatchKey } from './validation.js';

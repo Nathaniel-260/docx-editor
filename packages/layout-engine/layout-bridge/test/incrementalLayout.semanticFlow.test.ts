@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
-import { incrementalLayout } from '../src/incrementalLayout';
+import { incrementalLayout, measureCache } from '../src/incrementalLayout';
 
 import type { FlowBlock, Measure, SectionBreakBlock } from '@superdoc/contracts';
 
@@ -122,6 +122,70 @@ describe('incrementalLayout semantic flow', () => {
     expect(result.headers).toBeUndefined();
     expect(result.footers).toBeUndefined();
     expect(headerMeasure).not.toHaveBeenCalled();
+  });
+
+  it('returns reconciled per-call bridge timing without forcing header/footer work', async () => {
+    measureCache.clear();
+    const paragraph = makeParagraph('body-1', 'Body content');
+    const measureBlock = vi.fn(async (block: FlowBlock, constraints: { maxWidth: number; maxHeight: number }) => {
+      if (block.kind !== 'paragraph') {
+        throw new Error(`Unexpected block kind in test measure: ${block.kind}`);
+      }
+      const runLength = block.runs[0]?.text?.length ?? 1;
+      return makeParagraphMeasure(20, runLength, constraints.maxWidth);
+    });
+
+    const result = await incrementalLayout(
+      [],
+      null,
+      [paragraph],
+      {
+        flowMode: 'semantic',
+        pageSize: { w: 800, h: 900 },
+        margins: { top: 40, right: 100, bottom: 40, left: 100 },
+        semantic: { contentWidth: 600, marginTop: 40, marginBottom: 40 },
+      },
+      measureBlock,
+    );
+
+    const timing = result.bridgeTiming;
+    expect(timing.totalMs).toBeGreaterThanOrEqual(0);
+    expect(timing.measureTotalMs).toBeGreaterThanOrEqual(timing.measureActualMs);
+    expect(Math.abs(timing.measureCallbackWallMs - timing.measureActualMs)).toBeLessThanOrEqual(0.1);
+    expect(timing.headerFooterPreLayoutMs).toBe(0);
+    expect(timing.finalHeaderFooterMs).toBe(0);
+    expect(timing.counters.blocksRead).toBe(1);
+    expect(timing.counters.cacheMisses).toBe(1);
+    expect(timing.counters.measuresAdopted).toBe(0);
+    expect(timing.counters.paginationPasses).toBe(1);
+    expect(timing.counters.pageTokenRelayouts).toBe(0);
+    expect(timing.counters.footnoteRelayouts).toBe(0);
+    expect(
+      timing.counters.footnoteReserveRelayouts +
+        timing.counters.footnoteGrowRelayouts +
+        timing.counters.footnoteTightenRelayouts +
+        timing.counters.footnotePreferredRelayouts +
+        timing.counters.footnoteWidowRelayouts +
+        timing.counters.footnoteRevertRelayouts +
+        timing.counters.footnoteOtherRelayouts,
+    ).toBe(timing.counters.footnoteRelayouts);
+    const additive =
+      timing.inputPreparationMs +
+      timing.measureTotalMs +
+      timing.headerFooterPreLayoutMs +
+      timing.warmStartPreparationMs +
+      timing.layoutDocumentMs +
+      timing.layoutReuseOrchestrationMs +
+      timing.pageTokenSetupMs +
+      timing.pageTokenTotalMs +
+      timing.footnoteMs +
+      timing.numberingMs +
+      timing.finalHeaderFooterMs +
+      timing.layoutExposureMs +
+      timing.unattributedMs;
+    expect(Math.abs(additive - timing.totalMs)).toBeLessThanOrEqual(0.01);
+    expect(timing.paginationMs).toBe(timing.layoutDocumentMs);
+    expect(timing.layoutReuseOrchestrationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('stamps section display numbering onto body page context without chapter prefixes', async () => {

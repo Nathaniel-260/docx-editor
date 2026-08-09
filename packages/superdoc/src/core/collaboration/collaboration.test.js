@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite-plus/test';
 import * as collaborationModule from './collaboration.js';
 import {
   initCollaborationComments,
@@ -17,6 +17,7 @@ var awarenessStatesToArrayMock;
 
 var MockYMap;
 var MockYArray;
+var MockYText;
 var MockYDoc;
 var MockWebsocketProvider;
 var MockHocuspocusProvider;
@@ -120,6 +121,32 @@ vi.mock('yjs', () => {
     }
   };
 
+  MockYText = class {
+    constructor(value = '') {
+      this.text = String(value);
+      this.formatting = [];
+    }
+
+    insert(index, text, attributes) {
+      this.text = `${this.text.slice(0, index)}${text}${this.text.slice(index)}`;
+      if (attributes) {
+        this.formatting.push({ index, length: text.length, attributes });
+      }
+    }
+
+    delete(index, length) {
+      this.text = `${this.text.slice(0, index)}${this.text.slice(index + length)}`;
+    }
+
+    toString() {
+      return this.text;
+    }
+
+    toJSON() {
+      return this.text;
+    }
+  };
+
   MockYDoc = class {
     constructor() {
       this._arrays = new Map();
@@ -140,8 +167,10 @@ vi.mock('yjs', () => {
   };
 
   return {
+    Array: MockYArray,
     Doc: MockYDoc,
     Map: MockYMap,
+    Text: MockYText,
   };
 });
 
@@ -360,7 +389,31 @@ describe('collaboration helpers', () => {
     expect(superdoc.commentsStore.hasSyncedCollaborationComments).toBe(true);
   });
 
-  it('loadCommentsFromYdoc replaces local tracked-change rows from the room payload', () => {
+  it('loadCommentsFromYdoc preserves local v2 tracked-change rows when room comments are empty', () => {
+    const trackedRow = {
+      commentId: 'tc-1',
+      trackedChange: true,
+      trackedChangeAnchorKey: 'tc::body::tc-1',
+    };
+    superdoc.editorVersion = 2;
+    superdoc.activeEditor = { editorVersion: 2 };
+    superdoc.provider.synced = true;
+    superdoc.commentsStore.commentsList = [
+      trackedRow,
+      { commentId: 'local-comment', commentText: 'room comments own this row' },
+    ];
+
+    const loaded = loadCommentsFromYdoc(superdoc);
+
+    expect(loaded).toBe(true);
+    expect(useCommentMock).not.toHaveBeenCalled();
+    expect(superdoc.commentsStore.commentsList).toEqual([trackedRow]);
+    expect(superdoc.commentsStore.hasSyncedCollaborationComments).toBe(true);
+  });
+
+  it('loadCommentsFromYdoc does not preserve tracked-change rows without v2 runtime evidence', () => {
+    superdoc.editorVersion = undefined;
+    superdoc.activeEditor = null;
     superdoc.commentsStore.commentsList = [
       {
         commentId: 'tc-1',

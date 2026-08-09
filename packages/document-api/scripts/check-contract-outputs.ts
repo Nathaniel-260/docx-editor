@@ -1,18 +1,20 @@
 /**
  * Purpose: Verify all contract-derived outputs are up to date.
  * Caller: Main CI/local gate for generated Document API artifacts.
- * Reads: Contract snapshot + generated schemas/agent artifacts/reference docs + overview.
+ * Reads: Contract snapshot + generated schemas and agent artifacts.
  * Writes: None (exit code + console output only).
- * Fails when: A tracked generated output (reference docs, overview block)
- *   is missing/extra/stale, or any artifact builder throws.
+ * Fails when: Any artifact builder throws or produces output that does not
+ *   match the contract.
  *
  * Clean-checkout safe: the schemas/ and agent/ outputs live under
- * `packages/document-api/generated/` which is gitignored. Those
- * artifacts are built in memory (so any builder error still surfaces)
- * but their on-disk presence is not required. Reference docs and the
- * overview block ARE committed and continue to be compared
- * byte-for-byte against the in-memory build. Run `pnpm generate:docapi`
- * to materialize the gitignored artifacts locally before publishing.
+ * `packages/document-api/generated/`, which is gitignored. Those artifacts are
+ * built in memory (so any builder error still surfaces) but their on-disk
+ * presence is not required. Run `pnpm generate:docapi` to materialize them
+ * locally before publishing.
+ *
+ * Documentation coverage is checked separately by
+ * `check-documented-operations.ts`. The documentation site generates its own
+ * reference from this contract, and nothing in this package writes pages.
  */
 import {
   buildStableSchemaArtifacts,
@@ -21,25 +23,15 @@ import {
   getStableSchemaRoot,
 } from './lib/contract-output-artifacts.js';
 import { checkGeneratedFiles, formatGeneratedCheckIssues, runScript } from './lib/generation-utils.js';
-import {
-  buildReferenceDocsArtifacts,
-  checkReferenceDocsExtras,
-  getReferenceDocsOutputRoot,
-} from './lib/reference-docs-artifacts.js';
 
 runScript('contract output artifacts check', async () => {
-  const files = [...buildStableSchemaArtifacts(), ...buildAgentArtifacts(), ...buildReferenceDocsArtifacts()];
+  const files = [...buildStableSchemaArtifacts(), ...buildAgentArtifacts()];
 
   const issues = await checkGeneratedFiles(files, {
-    // Tracked output: committed reference docs must match the in-memory
-    // build (existence, content, and no extras on disk).
-    roots: [getReferenceDocsOutputRoot()],
     // Gitignored: validate the builders produce the artifacts in memory,
     // but don't require the files to exist on a clean checkout.
     inMemoryRoots: [getStableSchemaRoot(), getAgentArtifactRoot()],
   });
-
-  await checkReferenceDocsExtras(files, issues);
 
   if (issues.length > 0) {
     console.error('contract output artifacts check failed');
@@ -48,5 +40,5 @@ runScript('contract output artifacts check', async () => {
     return;
   }
 
-  console.log(`contract output artifacts check passed (${files.length} generated files + overview block)`);
+  console.log(`contract output artifacts check passed (${files.length} generated files)`);
 });

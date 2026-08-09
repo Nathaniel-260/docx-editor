@@ -13,35 +13,26 @@ Today this audit runs in **inventory mode**: it walks the public surface,
 prints a tiered breakdown of findings, and always exits 0. It does NOT
 gate CI yet.
 
-The facade landed in SD-3212 PR C (`packages/superdoc/src/public/index.ts`
-is now the root contract, with `src/public/legacy/*` for legacy subpaths).
-But the audit still walks every entry in `package.json#exports`, including
-the broad legacy `./super-editor` raw export. Excluding it drops findings
-from ~1,835 to ~1,510; the remainder is dominated by curated root exports
-(SuperDoc, Editor, PresentationEditor, SuperToolbar) pulling deep
-implementation types (Pinia stores, EventEmitter, editor/toolbar config).
+The v2 facade lives at `packages/superdoc/src/public/index.ts` and is now the
+root contract. The package export map is limited to the root entry and
+stylesheet assets, so the audit should be scoped to the curated root facade
+rather than historical compatibility paths.
 
 Gating on either number would recreate the prior allowlist problem
 (see "Why no allowlist file is checked in (yet)" below).
 
 The remaining work, tracked under SD-3213 follow-up:
 
-1. Drain the residual `tier-4-public-contract` finding
-   (`SuperConverter[key: string]: any`) via SD-3235. SD-3213c reduced the
-   bucket from 16 findings to 1 by fully typing DocxZipper and partially
-   typing SuperConverter's constructor + named statics.
-2. Improve audit attribution per entry/bucket so findings can be
-   distinguished as "supported-root leak" vs "legacy compat reach".
-3. Scope the audit to curated facade entries (everything routing through
-   `src/public/**` except `./super-editor`), then make it strict.
+1. Improve audit attribution per entry/bucket so findings can be tied to the
+   root facade member that exposes them.
+2. Scope the audit to curated v2 facade entries, then make it strict.
 
 ## What "fully compliant" means (final state)
 
 The umbrella's success definition:
 
 - deep audit allowlist reaches **0 owned findings against the curated
-  public facade** (`src/public/**`, scoped to exclude broad legacy raw
-  exports like `./super-editor`)
+  public facade**
 - the public facade is intentionally defined, not inherited from
   accidental barrel reachability
 - anything outside the facade is internal and is not part of the
@@ -104,22 +95,17 @@ churn it.
 
 ## Attribution (SD-3213d)
 
-Each report now prints three breakdowns alongside the historical tier
+Each report prints export-entry and root-bucket breakdowns alongside the historical tier
 and top-files tables, and writes a machine-readable JSON to
 `tmp/deep-type-audit-attribution.json` (gitignored). The point is to
-distinguish supported-root leaks from legacy compat reach from raw
-`./super-editor` noise, so PR 3 can scope a strict gate to the curated
-facade subset without guessing.
+distinguish supported-root leaks from legacy compat reach so strict gates can
+be scoped without guessing.
 
 The tables in a typical run look like:
 
 ```
 [audit] By export entry (reachedFrom; one finding can count under several):
    1237  .
-    728  ./super-editor
-     79  ./ui/react
-     70  ./headless-toolbar
-     56  ./types
      ...
 
 [audit] By root bucket (only for findings reached from root '.'):
@@ -127,10 +113,6 @@ The tables in a typical run look like:
     190  legacy-root
      97  internal-candidate
 
-[audit] Curated facade entries vs raw ./super-editor reach:
-   1089  reached only from curated facade entries
-    324  reached only from ./super-editor
-    404  reached from both
 ```
 
 How to read these:
@@ -146,12 +128,6 @@ How to read these:
   top-level parser fails or the symbol isn't in the classification, the
   finding is counted as `unknown-root-export` so the parse failure rate
   is visible.
-- **Curated facade vs raw** partitions every distinct finding into one
-  of three buckets (sums to the distinct total). "Curated facade
-  entries" means every public entry except `./super-editor` — i.e. the
-  set of entries routing through `src/public/**`. PR 3's strict scope
-  will live somewhere in this partition.
-
 The JSON artifact mirrors the text breakdown and also lists every
 finding with its `reachedFrom` and `rootBuckets` sets, so downstream
 tooling (e.g. PR 3's strict-scope selector) does not need to re-run the
@@ -168,10 +144,9 @@ supported public API) and compares them against a committed allowlist.
 - **The allowlist is current known debt, not accepted API quality.**
   Drain PRs reduce it; the gate fails on stale entries to force the
   reduction to be recorded.
-- Excludes `legacy-root`, `internal-candidate`, and raw `./super-editor`
-  reach. Each has its own drain story (legacy = compat, internal-candidate
-  = should be hidden, raw = redesign) and would obscure the
-  supported-root signal if mixed in.
+- Excludes `legacy-root` and `internal-candidate` reach. Each has its own drain
+  story (legacy = compat, internal-candidate = should be hidden) and would
+  obscure the supported-root signal if mixed in.
 - CI invokes one command (`--strict-supported-root`) that prints the
   broad inventory AND runs the gate. No second workflow step.
 - Top offender files + symbols are printed on every run so drain PRs
@@ -197,7 +172,7 @@ already covers the concern.
 | `typecheck-matrix.mjs` | Consumer `tsc --noEmit` across module modes (Bundler / Node16 / NodeNext). Catches **resolution errors and missing exports**. |
 | `deep-type-audit.mjs` | Recursive `any` detection on every type reachable from public exports. Owns the **supported-root strict gate** (`--strict-supported-root`). |
 | `package-shape-gate.mjs` | `publint` + `attw --pack`. Catches **manifest issues**: condition ordering, masquerading ESM, missing CDN files, unpublished `source` paths. |
-| `snapshot.mjs` | Drift detection on three export inventories (super-editor package keys, legacy subpath resolved exports, root 4-source inventory). Catches **silent surface growth**. |
+| `snapshot.mjs` | V2-only resolution absence gate plus root facade symbol inventory. Catches **silent surface growth** and legacy subpath reintroduction. |
 | `check-root-classification-closure.mjs` | Dependency-closure rule: no `supported-root` or `legacy-root` export references an `internal-candidate` type in its declared public type. |
 | `verify-public-facade-emit.cjs` | Curated `src/public/**` facade ↔ emitted `.d.ts` parity (symbol set, ESM/CJS parity, leak grep, command signatures). Runs at postbuild. |
 | `audit-declarations.cjs` | Private workspace specifier leaks (`@superdoc/*`) and declaration-emit hygiene. Runs at postbuild. |
@@ -273,20 +248,9 @@ default `auto-seeded from inventory` rationale.
 - **tier-3-helpers** (~61 entries): `trackChangesHelpers` and
   `fieldAnnotationHelpers`. JS files exported via the `helpers` namespace
   with no JSDoc. Best fix is probably JS to TS conversion.
-- **tier-4-public-contract**: currently **1 residual finding**
-  (`SuperConverter.d.ts`'s `[key: string]: any` catchall). Historically
-  included two classes of finding: (1) the hand-written shim files
-  `SuperConverter.d.ts` and `DocxZipper.d.ts`
-  (`constructor(...args: any[])`, `[key: string]: any`) — partially
-  drained in SD-3213c (DocxZipper fully typed; SuperConverter constructor
-  + named statics typed); (2) curated entries in `core/types/index.ts`
-  like `transaction: any` that should import `Transaction` from
-  `prosemirror-state`. The residual `SuperConverter[key: string]: any`
-  cannot be removed without converting `SuperConverter.js` to TypeScript
-  (or formalizing a public/internal contract split) because internal
-  callers across `Editor.ts`, `PresentationEditor.ts`,
-  `HeaderFooterRegistry.ts`, and list-level helpers read dozens of
-  instance members through it. Tracked as a follow-up to SD-3213.
+- **tier-4-public-contract**: curated root facade entries whose declaration
+  shapes still need stronger concrete typing before the audit can become a
+  strict gate.
 - **tier-5-other**: catchall for anything that doesn't match the patterns
   above.
 
@@ -301,8 +265,8 @@ default `auto-seeded from inventory` rationale.
   sources currently 200 names, runtime sources 41) and drift on any of the
   four fails the gate. Cross-source mismatches (typed-only, runtime-only,
   ESM vs CJS) are reported in the companion `.md` as evidence, not blockers.
-  CI calls the unified `snapshot.mjs --all --check` which runs this family
-  plus the `legacy` and `super-editor-package` families.
+  CI calls the unified `snapshot.mjs --all --check`, which runs the root
+  inventory and v2-only absence families.
 - `verify-public-facade-emit.cjs`: verifies the curated `src/public/**`
   facade matches the emitted `.d.ts` (symbol set, ESM/CJS parity, leak
   grep, command-signature probe).
@@ -319,7 +283,6 @@ typedef block in `packages/superdoc/src/index.js`.)
 
 ## CI wiring
 
-Runs in `.github/workflows/ci-superdoc.yml` and
-`.github/workflows/release-superdoc.yml` after the matrix step (which packs
+Runs in `.github/workflows/ci-superdoc.yml` after the matrix step (which packs
 and installs the tarball into this fixture). The audit runs without
 `--pack` because the matrix already prepared the fixture.

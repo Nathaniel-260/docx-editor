@@ -3,26 +3,27 @@
 // Verdana-bug class - a font-offerings change that regenerates the list in a CI working tree but
 // merges without the committed update, so the published list silently drifts.
 //
-// Skips when the font-system source is absent (a standalone install cannot recompute the set); in the
-// monorepo it runs and a real import error fails loudly. Run via
-// `pnpm --filter @superdoc-dev/fonts check:families`.
-import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Inside the monorepo a missing font-system source is a failure, not a skip: skipping there would
+// make this check green while checking nothing. Outside it, absence is expected. See
+// `font-system-source.mjs`.
+import { pathToFileURL } from 'node:url';
+import { FONT_SYSTEM_OFFERINGS, resolveFontSystemPath } from './font-system-source.mjs';
 import { BUNDLED_FAMILY_NAMES } from '../src/bundled-families';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const fontSystemSource = resolve(here, '../../../shared/font-system/src/font-offerings.ts');
-
-if (!existsSync(fontSystemSource)) {
-  console.log(
-    '[@superdoc-dev/fonts] font-system source not present (standalone install); skipping curation-drift check',
-  );
-  process.exit(0);
+const source = resolveFontSystemPath(FONT_SYSTEM_OFFERINGS, 'source');
+if (!source.ok) {
+  if (source.skip) {
+    console.log(`${source.message}; skipping curation-drift check`);
+    process.exit(0);
+  }
+  console.error(source.message);
+  process.exit(1);
 }
 
-// eslint-disable-next-line import-x/no-relative-packages -- build-only script (not shipped); @superdoc-dev/fonts stays a dependency-free runtime package and font-system exposes no /src export, so reading its source relatively here is intentional
-const { getBundledFamilyNames } = await import('../../../shared/font-system/src/font-offerings');
+// The path is resolved above rather than written literally, so a move updates one
+// constant instead of this specifier too. Importing by file URL keeps it working
+// from any cwd.
+const { getBundledFamilyNames } = await import(pathToFileURL(FONT_SYSTEM_OFFERINGS).href);
 const expected = [...getBundledFamilyNames()].sort();
 const committed = [...BUNDLED_FAMILY_NAMES].sort();
 
@@ -30,12 +31,12 @@ if (JSON.stringify(expected) !== JSON.stringify(committed)) {
   const missing = expected.filter((name) => !committed.includes(name));
   const extra = committed.filter((name) => !expected.includes(name));
   console.error(
-    '[@superdoc-dev/fonts] src/bundled-families.ts is STALE: it no longer matches the font-system curation set.',
+    '[@superdoc/fonts] src/bundled-families.ts is STALE: it no longer matches the font-system curation set.',
   );
   if (missing.length) console.error(`  missing (in offerings, not committed): ${missing.join(', ')}`);
   if (extra.length) console.error(`  extra (committed, not in offerings):    ${extra.join(', ')}`);
-  console.error('  Fix: run `pnpm --filter @superdoc-dev/fonts generate` and commit src/bundled-families.ts');
+  console.error('  Fix: run `pnpm --filter @superdoc/fonts generate` and commit src/bundled-families.ts');
   process.exit(1);
 }
 
-console.log(`[@superdoc-dev/fonts] curation list in sync with font-system (${committed.length} families)`);
+console.log(`[@superdoc/fonts] curation list in sync with font-system (${committed.length} families)`);

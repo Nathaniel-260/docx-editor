@@ -53,6 +53,7 @@ export interface SuperDocFontsOptions {
 export interface SuperDocFontsConfig {
   resolveAssetUrl: BundledFontAssetResolver;
   bundled?: { include?: string[]; exclude?: string[] };
+  [key: string]: unknown;
 }
 
 /**
@@ -69,7 +70,7 @@ export function resolveCuration(options: SuperDocFontsOptions = {}): {
   // clearly) rather than picking one arbitrarily.
   if (include && exclude) {
     throw new Error(
-      '[@superdoc-dev/fonts] createSuperDocFonts: pass `include` OR `exclude`, not both. ' +
+      '[@superdoc/fonts] createSuperDocFonts: pass `include` OR `exclude`, not both. ' +
         '`include` is an allow-list (only those families resolve and appear in the toolbar); ' +
         '`exclude` keeps everything but the named families.',
     );
@@ -88,12 +89,12 @@ export function resolveCuration(options: SuperDocFontsOptions = {}): {
 function normalizeNameList(value: readonly string[] | undefined, field: 'include' | 'exclude'): string[] | undefined {
   if (value == null) return undefined;
   if (!Array.isArray(value)) {
-    throw new Error(`[@superdoc-dev/fonts] createSuperDocFonts: \`${field}\` must be an array of Word font names.`);
+    throw new Error(`[@superdoc/fonts] createSuperDocFonts: \`${field}\` must be an array of Word font names.`);
   }
   const names = value.map((name) => (typeof name === 'string' ? name.trim() : '')).filter(Boolean);
   if (names.length !== value.length) {
     throw new Error(
-      `[@superdoc-dev/fonts] createSuperDocFonts: \`${field}\` must contain only non-empty font name strings ` +
+      `[@superdoc/fonts] createSuperDocFonts: \`${field}\` must contain only non-empty font name strings ` +
         `(e.g. ["Calibri", "Cambria"]).`,
     );
   }
@@ -151,7 +152,7 @@ function assertKnownFamilies(names: readonly string[], field: 'include' | 'exclu
     return suggestion ? `"${name}" (did you mean "${suggestion}"?)` : `"${name}"`;
   });
   throw new Error(
-    `[@superdoc-dev/fonts] createSuperDocFonts: \`${field}\` names a font SuperDoc does not bundle: ${hints.join(', ')}. ` +
+    `[@superdoc/fonts] createSuperDocFonts: \`${field}\` names a font SuperDoc does not bundle: ${hints.join(', ')}. ` +
       `Curate by Word family name. Bundled families: ${BUNDLED_FAMILY_NAMES.join(', ')}.`,
   );
 }

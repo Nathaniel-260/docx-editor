@@ -1,5 +1,6 @@
 import {
   getParagraphInlineDirection,
+  trackedChangeMetaSignature,
   type DrawingBlock,
   type FlowBlock,
   type ImageBlock,
@@ -14,6 +15,7 @@ import {
   type Run,
 } from '@superdoc/contracts';
 import { fieldAnnotationKey } from './field-annotation-key.js';
+import { inlineBoxKey } from './inline-box-key.js';
 import { hasTrackedChange, resolveTrackedChangesEnabled } from './tracked-changes-utils.js';
 import { hashParagraphBorders, hashTableBorders, hashCellBorders } from './paragraph-hash-utils.js';
 import { hashRunVisualMarks } from './run-visual-marks.js';
@@ -191,7 +193,6 @@ const hashDrawingBlock = (block: DrawingBlock): string => {
       JSON.stringify(block.customGeometry ?? null),
       JSON.stringify(block.lineEnds ?? null),
       JSON.stringify(block.effectExtent ?? null),
-      JSON.stringify(block.effects ?? null),
       JSON.stringify(block.textContent ?? null),
       block.textAlign ?? '',
       block.textVerticalAlign ?? '',
@@ -286,6 +287,15 @@ const hashNonParagraphCellBlock = (block: Exclude<FlowBlock, ParagraphBlock>): s
  * @param block - The flow block to generate a hash for
  * @returns A string hash representing the block's run content and formatting
  */
+/**
+ * Content identity used by the measure cache's key (P8.4: also the adoption
+ * key for previous-pass measures when block ids churn). Measures are a pure
+ * function of (content, constraints, font signature); this hash IS the
+ * content component of that key, so adopting a previous measure on hash
+ * equality is exactly as sound as a cache hit.
+ */
+export const hashMeasureContent = (block: FlowBlock): string => hashRuns(block);
+
 const hashRuns = (block: FlowBlock): string => {
   // FIX: For table blocks and paragraphs, include content AND formatting properties in hash.
   // Formatting properties that affect measurement: fontSize, fontFamily, bold, italic, color.
@@ -304,6 +314,18 @@ const hashRuns = (block: FlowBlock): string => {
       // Safety: Check that cells array exists before iterating
       if (!row.cells) {
         continue;
+      }
+      if (row.attrs?.trackedChange) {
+        cellHashes.push(`rtc:${trackedChangeMetaSignature(row.attrs.trackedChange)}`);
+      }
+      // Explicit row height (w:trHeight) drives row geometry. Like columnWidths
+      // it lives on the block, not in a hashed border/text field, so a pure
+      // row-height drag (setRowHeight) would otherwise yield an identical hash,
+      // hit the shared header/footer measure cache, and not paint until an
+      // unrelated edit. Round to absorb sub-pixel float jitter.
+      if (row.attrs?.rowHeight) {
+        const rh = row.attrs.rowHeight;
+        cellHashes.push(`rh:${Math.round(rh.value)}:${rh.rule ?? 'auto'}`);
       }
 
       for (const cell of row.cells) {
@@ -324,6 +346,9 @@ const hashRuns = (block: FlowBlock): string => {
           }
           if (cellAttrs.background) {
             cellAttrParts.push(`bg:${cellAttrs.background}`);
+          }
+          if (cellAttrs.trackedChange) {
+            cellAttrParts.push(`tc:${trackedChangeMetaSignature(cellAttrs.trackedChange)}`);
           }
           if (cellAttrParts.length > 0) {
             cellHashes.push(`ca:${cellAttrParts.join(':')}`);
@@ -347,6 +372,22 @@ const hashRuns = (block: FlowBlock): string => {
           }
 
           for (const run of paragraphBlock.runs) {
+            // Inline image / math runs carry dimensions that drive the cell's
+            // content height (and therefore an auto-height row's geometry).
+            // Mirror the non-table paragraph path below so resizing an in-cell
+            // inline image invalidates the table measure cache; otherwise the
+            // hash is identical to the pre-resize hash and the row keeps its
+            // stale cached height until an unrelated edit perturbs the key.
+            if (run.kind === 'image') {
+              const imgRun = run as ImageRun;
+              cellHashes.push(`img:${imgRun.src.slice(0, 50)}:${imgRun.width}x${imgRun.height}`);
+              continue;
+            }
+            if (run.kind === 'math') {
+              cellHashes.push(`math:${run.textContent}:${run.width}:${run.height}`);
+              continue;
+            }
+
             // Text is used verbatim without normalization - whitespace affects measurements
             // (Fix for PR #1551: previously /\s+/g normalization caused cache collisions)
             const text = 'text' in run && typeof run.text === 'string' ? run.text : '';
@@ -361,10 +402,7 @@ const hashRuns = (block: FlowBlock): string => {
             // Include tracked change metadata in hash
             let trackedKey = '';
             if (hasTrackedChange(run)) {
-              const tc = run.trackedChange;
-              const beforeHash = tc.before ? JSON.stringify(tc.before) : '';
-              const afterHash = tc.after ? JSON.stringify(tc.after) : '';
-              trackedKey = `|tc:${tc.kind ?? ''}:${tc.id ?? ''}:${tc.author ?? ''}:${tc.date ?? ''}:${beforeHash}:${afterHash}`;
+              trackedKey = `|tc:${trackedChangeMetaSignature(run.trackedChange)}`;
             }
 
             const commentKey = commentHash ? `|cm:${commentHash}` : '';
@@ -420,6 +458,9 @@ const hashRuns = (block: FlowBlock): string => {
               cellHashes.push(`pa:${parts.join(':')}`);
             }
           }
+          if (paragraphBlock.inlineBoxes?.length) {
+            cellHashes.push(`ib:${paragraphBlock.inlineBoxes.map(inlineBoxKey).join(';')}`);
+          }
         }
       }
     }
@@ -448,14 +489,30 @@ const hashRuns = (block: FlowBlock): string => {
       }
     }
 
+    // Column widths drive table geometry but live on the block, not block.attrs.
+    // Without them in the key, a pure column-width resize (which changes no
+    // border/text/attr) yields an identical hash, so the shared header/footer
+    // measure cache returns a stale TableMeasure and the resize only appears
+    // after an unrelated edit (e.g. typing) perturbs the hash. Round to absorb
+    // sub-pixel float jitter between the resolver path (unrounded twips*px) and
+    // the readTableColumnWidthsPx fallback (Math.round).
+    let columnWidthsKey = '';
+    if (tableBlock.columnWidths?.length) {
+      columnWidthsKey = `|cw:${tableBlock.columnWidths.map((w) => Math.round(w)).join(',')}`;
+    }
+
     const contentHash = cellHashes.join('|');
-    return `${block.id}:table:${contentHash}${tableAttrsKey}`;
+    return `${block.id}:table:${contentHash}${tableAttrsKey}${columnWidthsKey}`;
   }
 
-  if (block.kind !== 'paragraph') {
-    return hashNonParagraphCellBlock(block as Exclude<FlowBlock, ParagraphBlock>);
-  }
+  // Top-level drawings keep stable block ids across property-only mutations
+  // (for example a textbox resize). Their geometry and visual payload must be
+  // part of the shared measure-cache key; keying only by id reuses the old
+  // DrawingMeasure after canonical OOXML has already changed. Table-cell
+  // drawings take the same hash through hashNonParagraphCellBlock above.
+  if (block.kind === 'drawing') return `${block.id}:${hashDrawingBlock(block)}`;
 
+  if (block.kind !== 'paragraph') return block.id;
   const trackedMode =
     (block.attrs && 'trackedChangesMode' in block.attrs && block.attrs.trackedChangesMode) || 'review';
   const trackedEnabled = resolveTrackedChangesEnabled(block.attrs, true);
@@ -487,10 +544,7 @@ const hashRuns = (block: FlowBlock): string => {
       // Include tracked change metadata in hash
       let trackedKey = '';
       if (hasTrackedChange(run)) {
-        const tc = run.trackedChange;
-        const beforeHash = tc.before ? JSON.stringify(tc.before) : '';
-        const afterHash = tc.after ? JSON.stringify(tc.after) : '';
-        trackedKey = `|tc:${tc.kind ?? ''}:${tc.id ?? ''}:${tc.author ?? ''}:${tc.date ?? ''}:${beforeHash}:${afterHash}`;
+        trackedKey = `|tc:${trackedChangeMetaSignature(run.trackedChange)}`;
       }
 
       return `${text}:${marks}${trackedKey}`;
@@ -578,6 +632,7 @@ const hashRuns = (block: FlowBlock): string => {
     // Pagination properties
     if (attrs.keepNext) parts.push('kn');
     if (attrs.keepLines) parts.push('kl');
+    if (attrs.widowControl === false) parts.push('wc:0');
 
     // Float alignment
     if (attrs.floatAlignment) parts.push(`fa:${attrs.floatAlignment}`);
@@ -609,7 +664,8 @@ const hashRuns = (block: FlowBlock): string => {
     }
   }
 
-  return `${trackedMode}:${trackedEnabled ? 'on' : 'off'}|${runsHash}${numberingKey}${paragraphAttrsKey}`;
+  const inlineBoxesKey = block.inlineBoxes?.length ? `|ib:${block.inlineBoxes.map(inlineBoxKey).join(';')}` : '';
+  return `${trackedMode}:${trackedEnabled ? 'on' : 'off'}|${runsHash}${numberingKey}${paragraphAttrsKey}${inlineBoxesKey}`;
 };
 
 /**

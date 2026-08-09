@@ -1,5 +1,5 @@
-import type { TableBlock, TableBorders, TableRowProperties, TableWidthAttr } from '@superdoc/contracts';
-import { OOXML_PCT_DIVISOR, getBorderBandWidthPx, resolveTableWidthAttr } from '@superdoc/contracts';
+import type { TableBlock, TableRowProperties, TableWidthAttr } from '@superdoc/contracts';
+import { OOXML_PCT_DIVISOR, resolveTableWidthAttr } from '@superdoc/contracts';
 import type {
   AutoFitCellInput,
   AutoFitLayoutMode,
@@ -70,25 +70,17 @@ export type WorkingTableGridInput = {
    */
   preserveAutoGrid?: boolean;
   /**
+   * Imported AutoFit tables with an explicit auto width and a complete uniform
+   * authored grid use content-independent authored widths as stable geometry.
+   * Cell `tcW` values may shape columns, but live text content must not.
+   */
+  stableAutoGrid?: boolean;
+  /**
    * AutoFit tables with explicit tblW and a complete authored grid that matches
    * tblW should keep that grid as preferred geometry unless content minimums
    * force growth.
    */
   preserveExplicitAutoGrid?: boolean;
-  /**
-   * Pure-auto tables (autofit layout, auto/nil/absent tblW, and no cell anywhere
-   * carrying a concrete width preference) content-size like Word: the stored grid
-   * is not a Word layout cache for these, so the solver targets content demand
-   * instead of the authored grid sum. (SD-3309)
-   */
-  contentSizeAutoTable?: boolean;
-  /**
-   * Per-column vertical border band allowances for content-sized pure-auto tables:
-   * each column owns its LEFT gridline band, the last column also the right edge
-   * (single-owner model). Border-box cells subtract these from the text box, so
-   * content-sized columns must reserve them or text wraps earlier than Word. (SD-3309)
-   */
-  columnBandAllowances?: number[];
   /**
    * AutoFit tables with auto-width semantics and a complete authored grid that
    * fits the available width should use the grid sum as their outer width
@@ -137,7 +129,7 @@ export type WorkingTableCellInput = AutoFitCellInput & {
  * compatibility with the current AutoFit runtime path while also exposing the
  * fully placed logical row needed by the rework.
  */
-export type WorkingTableRowInput = AutoFitRowInput & {
+export type WorkingTableRowInput = Omit<AutoFitRowInput, 'cells'> & {
   /** All skipped columns in this row with explicit logical positions. */
   skippedColumns: WorkingTableSkippedColumnInput[];
   /** All concrete cells with explicit logical start columns. */
@@ -155,7 +147,7 @@ export type WorkingTableRowInput = AutoFitRowInput & {
  * - it does not compute final widths
  * - it does not mutate the source block
  *
- * @param block - Runtime table block from `pm-adapter`.
+ * @param block - Runtime table block from `layout-adapter`.
  * @param constraints - Width constraints for percentage resolution.
  * @returns Pure working-grid input for AutoFit width resolution.
  */
@@ -187,54 +179,49 @@ export function buildAutoFitWorkingGridInput(
     preferredTableWidth,
     gridColumnCount,
   });
-  const preserveAutoGrid = shouldPreserveAutoGrid({
-    layoutMode,
-    preferredColumnWidths,
-    preferredTableWidth,
-    gridColumnCount,
-    rows,
-  });
-  const preserveExplicitAutoGrid = shouldPreserveExplicitAutoGrid({
+  const stableAutoGrid = shouldUseStableAutoGrid({
     layoutMode,
     tableWidth,
     preferredColumnWidths,
     preferredTableWidth,
     gridColumnCount,
-    rows,
-  });
-  const contentSizeAutoTable = resolveContentSizeAutoTable({
-    layoutMode,
-    tableWidth,
-    preferredTableWidth,
-    preferredColumnWidths,
     maxTableWidth,
     rows,
-    preserveAutoGrid,
-    preserveExplicitAutoGrid,
   });
-  const columnBandAllowances = contentSizeAutoTable
-    ? resolveColumnBandAllowances(block.attrs?.borders as TableBorders | null | undefined, gridColumnCount)
-    : undefined;
-  const autoGridWidthBudget = contentSizeAutoTable
-    ? undefined
-    : resolveAutoGridWidthBudget({
-        layoutMode,
-        tableWidth,
-        preferredColumnWidths,
-        preferredTableWidth,
-        gridColumnCount,
-        maxTableWidth,
-      });
+  const preserveStableAutoGrid = stableAutoGrid && rowsMatchAuthoredGrid(rows, preferredColumnWidths, gridColumnCount);
+  const preserveAutoGrid =
+    preserveStableAutoGrid ||
+    shouldPreserveAutoGrid({
+      layoutMode,
+      preferredColumnWidths,
+      preferredTableWidth,
+      gridColumnCount,
+    });
+  const preserveExplicitAutoGrid = shouldPreserveExplicitAutoGrid({
+    layoutMode,
+    preferredColumnWidths,
+    preferredTableWidth,
+    gridColumnCount,
+    rows,
+  });
+  const autoGridWidthBudget = resolveAutoGridWidthBudget({
+    layoutMode,
+    tableWidth,
+    preferredColumnWidths,
+    preferredTableWidth,
+    gridColumnCount,
+    maxTableWidth,
+    rows,
+  });
 
   return {
     layoutMode,
     maxTableWidth,
     ...(preserveAuthoredGrid ? { preserveAuthoredGrid } : {}),
     ...(preserveAutoGrid ? { preserveAutoGrid } : {}),
+    ...(stableAutoGrid ? { stableAutoGrid } : {}),
     ...(preserveExplicitAutoGrid ? { preserveExplicitAutoGrid } : {}),
     ...(autoGridWidthBudget != null ? { autoGridWidthBudget } : {}),
-    ...(contentSizeAutoTable ? { contentSizeAutoTable } : {}),
-    ...(columnBandAllowances ? { columnBandAllowances } : {}),
     preferredTableWidth,
     preferredColumnWidths,
     gridColumnCount,
@@ -272,131 +259,94 @@ function shouldPreserveAutoGrid(args: {
   preferredColumnWidths: number[];
   preferredTableWidth: number | undefined;
   gridColumnCount: number;
-  rows: WorkingTableRowInput[];
 }): boolean {
-  const { layoutMode, preferredColumnWidths, preferredTableWidth, gridColumnCount, rows } = args;
+  const { layoutMode, preferredColumnWidths, preferredTableWidth, gridColumnCount } = args;
   if (layoutMode !== 'autofit') return false;
   if (preferredTableWidth != null) return false;
   if (preferredColumnWidths.length === 0 || preferredColumnWidths.length !== gridColumnCount) return false;
-  // A single-column grid with no concrete cell width anywhere is not a Word layout
-  // cache: Word recomputes and content-sizes the table on open (verified against
-  // Word renders of single-cell auto tables with a stale w:tblGrid, SD-3308). Let
-  // the content-size path claim it. With a tcW present the grid IS a cache: keep it.
-  if (preferredColumnWidths.length === 1 && !hasConcreteCellWidthRequest(rows)) return false;
   if (!hasNonUniformGrid(preferredColumnWidths)) return false;
   return true;
 }
 
-function shouldPreserveExplicitAutoGrid(args: {
+function shouldUseStableAutoGrid(args: {
   layoutMode: AutoFitLayoutMode;
   tableWidth: TableWidthAttr | undefined;
   preferredColumnWidths: number[];
   preferredTableWidth: number | undefined;
   gridColumnCount: number;
+  maxTableWidth: number;
   rows: WorkingTableRowInput[];
 }): boolean {
-  const { layoutMode, tableWidth, preferredColumnWidths, preferredTableWidth, gridColumnCount, rows } = args;
+  const { layoutMode, tableWidth, preferredColumnWidths, preferredTableWidth, gridColumnCount, maxTableWidth, rows } =
+    args;
+  if (layoutMode !== 'autofit' || !hasAutoTableWidthSemantics(tableWidth)) return false;
+  if (preferredTableWidth != null) return false;
+  if (preferredColumnWidths.length === 0 || preferredColumnWidths.length !== gridColumnCount) return false;
+  if (hasNonUniformGrid(preferredColumnWidths)) return false;
+
+  const gridWidth = sumWidths(preferredColumnWidths);
+  if (gridWidth <= 0 || gridWidth > maxTableWidth + 0.5) return false;
+  if (rows.length === 0) return false;
+
+  return rows.every((row) => row.logicalColumnCount === gridColumnCount);
+}
+
+function rowsMatchAuthoredGrid(
+  rows: WorkingTableRowInput[],
+  preferredColumnWidths: number[],
+  gridColumnCount: number,
+): boolean {
+  const gridOffsets = buildWidthOffsets(preferredColumnWidths);
+  return rows.every((row) => rowMatchesAuthoredGrid(row, gridColumnCount, gridOffsets));
+}
+
+/** Prefix sums keep span-width validation linear in grid columns plus cells. */
+function buildWidthOffsets(widths: number[]): number[] {
+  const offsets = new Array<number>(widths.length + 1);
+  offsets[0] = 0;
+  for (let index = 0; index < widths.length; index++) {
+    offsets[index + 1] = offsets[index] + widths[index];
+  }
+  return offsets;
+}
+
+function rowMatchesAuthoredGrid(row: WorkingTableRowInput, gridColumnCount: number, gridOffsets: number[]): boolean {
+  if (row.logicalColumnCount !== gridColumnCount || row.skippedColumns.length > 0 || row.cells.length === 0) {
+    return false;
+  }
+
+  let cursor = 0;
+  for (const cell of row.cells) {
+    const span = Math.max(1, cell.span ?? 1);
+    const endColumn = cell.startColumn + span;
+    if (cell.startColumn !== cursor || endColumn > gridColumnCount || cell.preferredWidth == null) {
+      return false;
+    }
+
+    const authoredWidth = gridOffsets[endColumn] - gridOffsets[cell.startColumn];
+    if (!approximatelyEqual(cell.preferredWidth, authoredWidth)) {
+      return false;
+    }
+    cursor = endColumn;
+  }
+
+  return cursor === gridColumnCount;
+}
+
+function shouldPreserveExplicitAutoGrid(args: {
+  layoutMode: AutoFitLayoutMode;
+  preferredColumnWidths: number[];
+  preferredTableWidth: number | undefined;
+  gridColumnCount: number;
+  rows: WorkingTableRowInput[];
+}): boolean {
+  const { layoutMode, preferredColumnWidths, preferredTableWidth, gridColumnCount, rows } = args;
   if (layoutMode !== 'autofit') return false;
   if (preferredTableWidth == null || preferredTableWidth <= 0) return false;
   if (preferredColumnWidths.length === 0 || preferredColumnWidths.length !== gridColumnCount) return false;
   if (!hasNonUniformGrid(preferredColumnWidths) && !hasConcreteCellWidthRequest(rows)) return false;
 
-  // A pct-width table re-resolves its absolute width against the CURRENT available width, so the
-  // authored grid sum (from authoring-time twips) legitimately differs from the resolved table
-  // width while the grid PROPORTIONS stay authoritative. Word honors those proportions (300dpi
-  // probes, SD-3309); the solver scales the preferred widths to preferredTableWidth. For dxa/px
-  // the grid sum already equals the table width, so the equality check below still gates those.
-  if (isPercentTableWidth(tableWidth)) return true;
-
   return approximatelyEqual(sumWidths(preferredColumnWidths), preferredTableWidth);
-}
-
-/** True when the table preferred width is percentage-based (`tblW type="pct"`). */
-function isPercentTableWidth(tableWidth: TableWidthAttr | undefined): boolean {
-  return (
-    typeof tableWidth === 'object' &&
-    tableWidth != null &&
-    typeof tableWidth.type === 'string' &&
-    tableWidth.type.toLowerCase() === 'pct'
-  );
-}
-
-/**
- * A "pure auto" table: autofit layout, auto/nil/absent tblW, and no cell anywhere
- * carrying a concrete width preference. For these the stored w:tblGrid is not a
- * Word layout cache (Word recomputes and content-sizes such tables on open), so
- * the solver should target content demand instead of the authored grid sum.
- * Tables already claimed by a preserve policy keep that behavior. (SD-3309)
- */
-function resolveContentSizeAutoTable(args: {
-  layoutMode: AutoFitLayoutMode;
-  tableWidth: TableWidthAttr | undefined;
-  preferredTableWidth: number | undefined;
-  preferredColumnWidths: number[];
-  maxTableWidth: number;
-  rows: WorkingTableRowInput[];
-  preserveAutoGrid: boolean;
-  preserveExplicitAutoGrid: boolean;
-}): boolean {
-  const {
-    layoutMode,
-    tableWidth,
-    preferredTableWidth,
-    preferredColumnWidths,
-    maxTableWidth,
-    rows,
-    preserveAutoGrid,
-    preserveExplicitAutoGrid,
-  } = args;
-  if (layoutMode !== 'autofit') return false;
-  if (preferredTableWidth != null) return false;
-  if (preserveAutoGrid || preserveExplicitAutoGrid) return false;
-  if (!isAutoOrNilTableWidth(tableWidth)) return false;
-  if (hasConcreteCellWidthRequest(rows)) return false;
-  // An authored grid WIDER than the available width is preserved as an overflow
-  // (overhang) table; Word keeps those wide (SD-1239, SD-1513). Content sizing
-  // only applies when the grid fits the page.
-  if (sumWidths(preferredColumnWidths) > maxTableWidth + 0.5) return false;
-  return true;
-}
-
-/** Auto-width semantics for content sizing: absent tblW, type=auto with no positive width, or type=nil. */
-function isAutoOrNilTableWidth(tableWidth: TableWidthAttr | undefined): boolean {
-  if (tableWidth == null) return true;
-  if (hasAutoTableWidthSemantics(tableWidth)) return true;
-  if (typeof tableWidth === 'object' && typeof tableWidth.type === 'string') {
-    return tableWidth.type.toLowerCase() === 'nil';
-  }
-  return false;
-}
-
-/**
- * Vertical border band widths owed per column on the content-size path. Table-level
- * borders only (left edge, insideV dividers, right edge); cell-level vertical
- * variation is rare in pure-auto tables and at most under-reserves slightly.
- *
- * Word-measured rule (band-scaling probes, SD-3308): each vertical gridline grants
- * HALF its band width to each adjacent column. The painted band then sits fully
- * inside the cell box, eating the other half back from the content area, so the
- * content span shrinks by exactly the band delta while the column grows by half a
- * band per edge. A single-column table therefore widens by ONE band (half left +
- * half right), matching Word's measured column = text + margins + band.
- */
-function resolveColumnBandAllowances(
-  borders: TableBorders | null | undefined,
-  gridColumnCount: number,
-): number[] | undefined {
-  if (gridColumnCount <= 0) return undefined;
-  const left = getBorderBandWidthPx(borders?.left);
-  const insideV = getBorderBandWidthPx(borders?.insideV);
-  const right = getBorderBandWidthPx(borders?.right);
-  const allowances: number[] = [];
-  for (let i = 0; i < gridColumnCount; i++) {
-    const edgeLeft = i === 0 ? left : insideV;
-    const edgeRight = i === gridColumnCount - 1 ? right : insideV;
-    allowances.push((edgeLeft + edgeRight) / 2);
-  }
-  return allowances.some((a) => a > 0) ? allowances : undefined;
 }
 
 function resolveAutoGridWidthBudget(args: {
@@ -406,8 +356,10 @@ function resolveAutoGridWidthBudget(args: {
   preferredTableWidth: number | undefined;
   gridColumnCount: number;
   maxTableWidth: number;
+  rows: WorkingTableRowInput[];
 }): number | undefined {
-  const { layoutMode, tableWidth, preferredColumnWidths, preferredTableWidth, gridColumnCount, maxTableWidth } = args;
+  const { layoutMode, tableWidth, preferredColumnWidths, preferredTableWidth, gridColumnCount, maxTableWidth, rows } =
+    args;
   if (layoutMode !== 'autofit') return undefined;
   if (!hasAutoTableWidthSemantics(tableWidth)) return undefined;
   if (preferredTableWidth != null) return undefined;
@@ -416,6 +368,11 @@ function resolveAutoGridWidthBudget(args: {
   const gridWidth = sumWidths(preferredColumnWidths);
   if (gridWidth <= 0) return undefined;
   if (gridWidth > maxTableWidth + 0.5) return undefined;
+
+  const rowPreferredWidth = deriveFullySpecifiedRowPreferredWidth(rows);
+  if (rowPreferredWidth != null && rowPreferredWidth > 0 && rowPreferredWidth + 0.01 < gridWidth) {
+    return rowPreferredWidth;
+  }
 
   return gridWidth;
 }
@@ -438,6 +395,51 @@ function hasNonUniformGrid(widths: number[]): boolean {
 
 function hasConcreteCellWidthRequest(rows: WorkingTableRowInput[]): boolean {
   return rows.some((row) => row.cells.some((cell) => cell.preferredWidth != null));
+}
+
+function deriveFullySpecifiedRowPreferredWidth(rows: WorkingTableRowInput[]): number | undefined {
+  for (const row of rows) {
+    const rowWidth = resolveFullySpecifiedRowPreferredWidth(row);
+    if (rowWidth != null) return rowWidth;
+  }
+
+  return undefined;
+}
+
+function resolveFullySpecifiedRowPreferredWidth(row: WorkingTableRowInput): number | undefined {
+  if (row.logicalColumnCount <= 0) {
+    return undefined;
+  }
+
+  const segments = [
+    ...(row.skippedColumns ?? []).map((column) => ({
+      startColumn: column.columnIndex,
+      span: 1,
+      preferredWidth: sanitizeNonNegativeNumber(column.preferredWidth),
+    })),
+    ...(row.cells ?? []).map((cell) => ({
+      startColumn: cell.startColumn,
+      span: Math.max(1, cell.span ?? 1),
+      preferredWidth: sanitizeNonNegativeNumber(cell.preferredWidth),
+    })),
+  ].sort((left, right) => left.startColumn - right.startColumn);
+
+  if (segments.length === 0) {
+    return undefined;
+  }
+
+  let cursor = 0;
+  let totalWidth = 0;
+  for (const segment of segments) {
+    if (segment.startColumn !== cursor || segment.preferredWidth == null) {
+      return undefined;
+    }
+
+    totalWidth += segment.preferredWidth;
+    cursor += segment.span;
+  }
+
+  return cursor === row.logicalColumnCount ? totalWidth : undefined;
 }
 
 function trimTrailingUnoccupiedPlaceholderColumns(widths: number[], occupiedGridColumnCount: number): number[] {

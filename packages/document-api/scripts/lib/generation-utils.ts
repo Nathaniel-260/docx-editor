@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { format as prettierFormat, resolveConfig as prettierResolveConfig } from 'prettier';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
 export interface GeneratedFile {
   path: string;
@@ -41,10 +44,27 @@ export function normalizeFileContent(content: string): string {
   return content.endsWith('\n') ? content : `${content}\n`;
 }
 
+/**
+ * Format with the workspace formatter, keyed by the output path.
+ *
+ * The generated file has to come out the way `vp fmt` wants it, or the format
+ * step of `vp check` rewrites it on the next run and `docapi:check` reports a
+ * drift the generator caused. `--stdin-filepath` is how Oxfmt is told which
+ * parser and which `fmt` block options apply, so the answer is the repository's
+ * own rather than a second set of defaults maintained here.
+ */
 async function formatGeneratedContent(file: GeneratedFile): Promise<GeneratedFile> {
   if (!file.path.endsWith('.json')) return file;
-  const config = await prettierResolveConfig(resolveWorkspacePath(file.path));
-  const formatted = await prettierFormat(file.content, { ...config, parser: 'json' });
+  // Run the JavaScript CLI through Node so pnpm's Windows `.cmd` shim is never involved.
+  const vitePlusCli = fileURLToPath(import.meta.resolve('vite-plus/bin'));
+  const formatted = execFileSync(process.execPath, [vitePlusCli, 'fmt', '--stdin-filepath', file.path], {
+    cwd: PUBLIC_ROOT,
+    input: file.content,
+    encoding: 'utf8',
+    // The contract snapshot is over a megabyte, and the default 1 MB buffer
+    // fails it with ENOBUFS rather than a formatting error.
+    maxBuffer: 64 * 1024 * 1024,
+  });
   return { ...file, content: formatted };
 }
 
@@ -93,7 +113,7 @@ async function pathExists(path: string): Promise<boolean> {
  * - `roots`: tracked directories whose committed contents must match the
  *   in-memory build. Files under these roots are checked for existence,
  *   content equality, and "extras on disk that should not be there."
- *   Use for outputs that live in the repo (e.g. `apps/docs/.../reference/`).
+ *   Use for outputs that are committed to the repository.
  * - `inMemoryRoots`: directories whose contents are gitignored. Files
  *   under these roots are NOT checked for existence, content, or extras
  *   on disk. A clean checkout has none, and a developer who ran

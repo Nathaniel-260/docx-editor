@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import {
   DOM_CLASS_NAMES,
@@ -23,6 +23,7 @@ describe('@superdoc/dom-contract', () => {
     expect(DOM_CLASS_NAMES).toEqual({
       PAGE: 'superdoc-page',
       FRAGMENT: 'superdoc-fragment',
+      FLOATING_FRAGMENT: 'superdoc-floating-fragment',
       LINE: 'superdoc-line',
       INLINE_SDT_WRAPPER: 'superdoc-structured-content-inline',
       INLINE_SDT_LABEL: 'superdoc-structured-content-inline__label',
@@ -31,13 +32,11 @@ describe('@superdoc/dom-contract', () => {
       TABLE_FRAGMENT: 'superdoc-table-fragment',
       DOCUMENT_SECTION: 'superdoc-document-section',
       SDT_GROUP_HOVER: 'sdt-group-hover',
-      SDT_CONTAINER_SELECTED: 'sdt-container-selected',
-      SDT_ANCESTOR_SELECTED: 'sdt-ancestor-selected',
-      TOC_ENTRY: 'superdoc-toc-entry',
-      TOC_GROUP_HOVER: 'toc-group-hover',
       IMAGE_FRAGMENT: 'superdoc-image-fragment',
       INLINE_IMAGE: 'superdoc-inline-image',
       LIST_MARKER: 'superdoc-list-marker',
+      TOC_ENTRY: 'superdoc-toc-entry',
+      TOC_GROUP_HOVER: 'toc-group-hover',
       INLINE_IMAGE_CLIP_WRAPPER: 'superdoc-inline-image-clip-wrapper',
       ANNOTATION: 'annotation',
       ANNOTATION_CONTENT: 'annotation-content',
@@ -96,10 +95,12 @@ describe('@superdoc/dom-contract', () => {
     expect(encodeLayoutStoryDataset({ kind: 'body' })).toBe('body');
     expect(encodeLayoutStoryDataset({ kind: 'header', id: 'rId4' })).toBe('header:rId4');
     expect(encodeLayoutStoryDataset({ kind: 'footer' })).toBe('footer');
+    expect(encodeLayoutStoryDataset({ kind: 'textbox', id: 'tb0' })).toBe('textbox:tb0');
 
     expect(decodeLayoutStoryDataset('body')).toEqual({ kind: 'body' });
     expect(decodeLayoutStoryDataset('header:rId4')).toEqual({ kind: 'header', id: 'rId4' });
     expect(decodeLayoutStoryDataset('footnote:1')).toEqual({ kind: 'footnote', id: '1' });
+    expect(decodeLayoutStoryDataset('textbox:tb0')).toEqual({ kind: 'textbox', id: 'tb0' });
     expect(decodeLayoutStoryDataset(undefined)).toEqual({ kind: 'unknown' });
     expect(decodeLayoutStoryDataset('garbage:xyz')).toEqual({ kind: 'unknown' });
   });

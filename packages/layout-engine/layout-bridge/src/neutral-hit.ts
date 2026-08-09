@@ -89,10 +89,9 @@ export type LayoutHit = {
   /**
    * Legacy PM-shaped position hit.
    *
-   * AIDEV-NOTE: compat-fallback - v1 callers (PresentationEditor,
-   * super-editor selection) still consume `pmPosition`. Retire once the v2
-   * provider stops relying on PM positions to map this hit back to a v2
-   * ref. Do not gate new editor-neutral behavior on this field.
+   * AIDEV-NOTE: compat-fallback - callers may still consume `pmPosition`.
+   * Retire once providers stop relying on PM positions to map this hit back to
+   * a document ref. Do not gate new editor-neutral behavior on this field.
    */
   legacyPm?: PositionHit;
 };

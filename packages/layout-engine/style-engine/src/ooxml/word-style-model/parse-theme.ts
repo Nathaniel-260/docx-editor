@@ -2,6 +2,8 @@
  * Editor-neutral translator for `word/theme/theme1.xml`. Produces a
  * concrete color palette plus the major/minor font scheme map.
  */
+import { js2xml } from 'xml-js';
+
 import { findChild, findChildren, type OoxmlElement } from './parse-xml.js';
 
 export interface WordThemeColorPalette {
@@ -17,6 +19,12 @@ export interface WordThemeFontFamily {
   readonly latin?: string;
   readonly ea?: string;
   readonly cs?: string;
+}
+
+/** Authored DrawingML fill definitions, indexed by `a:fillRef/@idx`. */
+export interface WordThemeFormatScheme {
+  readonly fillStyles: readonly string[];
+  readonly backgroundFillStyles: readonly string[];
 }
 
 export const DEFAULT_WORD_THEME_PALETTE: WordThemeColorPalette = {
@@ -92,9 +100,31 @@ function parseFontScheme(theme: OoxmlElement | null | undefined): WordThemeFontS
   return { major, minor };
 }
 
+function serializeElement(element: OoxmlElement): string {
+  return js2xml({ elements: [element] }, { compact: false, spaces: 0 });
+}
+
+function parseFormatScheme(theme: OoxmlElement | null | undefined): WordThemeFormatScheme | undefined {
+  if (!theme) return undefined;
+  const themeElements = findChild(theme, 'a:themeElements');
+  const formatScheme = findChild(themeElements, 'a:fmtScheme');
+  if (!formatScheme) return undefined;
+  const fillStyles =
+    findChild(formatScheme, 'a:fillStyleLst')
+      ?.elements?.filter((element) => element.type === 'element')
+      .map(serializeElement) ?? [];
+  const backgroundFillStyles =
+    findChild(formatScheme, 'a:bgFillStyleLst')
+      ?.elements?.filter((element) => element.type === 'element')
+      .map(serializeElement) ?? [];
+  if (fillStyles.length === 0 && backgroundFillStyles.length === 0) return undefined;
+  return { fillStyles, backgroundFillStyles };
+}
+
 export interface ThemeParseResult {
   palette?: WordThemeColorPalette;
   fontScheme?: WordThemeFontScheme;
+  formatScheme?: WordThemeFormatScheme;
 }
 
 /**
@@ -113,6 +143,8 @@ export function compileThemeFromRoot(root: OoxmlElement | null | undefined): The
   if (palette) out.palette = palette;
   const fontScheme = parseFontScheme(themeRoot);
   if (fontScheme) out.fontScheme = fontScheme;
+  const formatScheme = parseFormatScheme(themeRoot);
+  if (formatScheme) out.formatScheme = formatScheme;
   return out;
 }
 

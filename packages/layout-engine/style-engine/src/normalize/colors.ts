@@ -35,6 +35,10 @@ export function normalizeHexColor(value: string | undefined | null): string | un
  * caller to fall back gracefully without throwing.
  */
 const THEME_COLOR_ALIASES: Readonly<Record<string, string>> = {
+  bg1: 'lt1',
+  tx1: 'dk1',
+  bg2: 'lt2',
+  tx2: 'dk2',
   background1: 'lt1',
   text1: 'dk1',
   background2: 'lt2',

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig } from 'vite-plus';
 import vue from '@vitejs/plugin-vue';
 import baseConfig from '../../vitest.baseConfig';
 

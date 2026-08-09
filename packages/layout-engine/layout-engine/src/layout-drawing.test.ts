@@ -842,70 +842,6 @@ describe('layoutDrawingBlock', () => {
       expect(fragment.x).toBe(400);
     });
 
-    it('should center inline textboxShape drawings using paragraph alignment metadata', () => {
-      const context = createMockContext(
-        {
-          drawingKind: 'textboxShape',
-          attrs: {
-            pmStart: 10,
-            pmEnd: 11,
-            wrap: { type: 'Inline' },
-            inlineParagraphAlignment: 'center',
-          },
-        },
-        { width: 200, height: 150 },
-      );
-      const state = context.ensurePage();
-
-      layoutDrawingBlock(context);
-
-      const fragment = state.page.fragments[0] as DrawingFragment;
-      // alignBox = 600, extra = 600 - 200 = 400, x = 0 + 200 = 200
-      expect(fragment.x).toBe(200);
-    });
-
-    it('should right-align inline textboxShape drawings using paragraph alignment metadata', () => {
-      const context = createMockContext(
-        {
-          drawingKind: 'textboxShape',
-          attrs: {
-            pmStart: 10,
-            pmEnd: 11,
-            wrap: { type: 'Inline' },
-            inlineParagraphAlignment: 'right',
-          },
-        },
-        { width: 200, height: 150 },
-      );
-      const state = context.ensurePage();
-
-      layoutDrawingBlock(context);
-
-      const fragment = state.page.fragments[0] as DrawingFragment;
-      expect(fragment.x).toBe(400);
-    });
-
-    it('should not apply paragraph alignment metadata when textboxShape is not inline', () => {
-      const context = createMockContext(
-        {
-          drawingKind: 'textboxShape',
-          attrs: {
-            pmStart: 10,
-            pmEnd: 11,
-            wrap: { type: 'Square' },
-            inlineParagraphAlignment: 'center',
-          },
-        },
-        { width: 200, height: 150 },
-      );
-      const state = context.ensurePage();
-
-      layoutDrawingBlock(context);
-
-      const fragment = state.page.fragments[0] as DrawingFragment;
-      expect(fragment.x).toBe(0);
-    });
-
     it('should not apply paragraph alignment metadata when shapeGroup is not inline', () => {
       const context = createMockContext(
         {
@@ -995,6 +931,53 @@ describe('layoutDrawingBlock', () => {
       const fragment = state.page.fragments[0] as DrawingFragment;
       // alignBox = 600 - 96 = 504, extra = 504 - 200 = 304, x = 0 + 96 + 304 = 400
       expect(fragment.x).toBe(400);
+    });
+
+    it('should place a left-aligned inline shapeGroup at the paragraph left indent', () => {
+      const context = createMockContext(
+        {
+          drawingKind: 'shapeGroup',
+          attrs: {
+            pmStart: 10,
+            pmEnd: 11,
+            wrap: { type: 'Inline' },
+            paragraphIndentLeft: 96,
+            paragraphIndentRight: 24,
+          },
+        },
+        { width: 400, height: 150 },
+      );
+      const state = context.ensurePage();
+
+      layoutDrawingBlock(context);
+
+      const fragment = state.page.fragments[0] as DrawingFragment;
+      expect(fragment.x).toBe(96);
+      expect(fragment.width).toBe(400);
+    });
+
+    it('should scale an inline shapeGroup to the indented paragraph width', () => {
+      const context = createMockContext(
+        {
+          drawingKind: 'shapeGroup',
+          attrs: {
+            pmStart: 10,
+            pmEnd: 11,
+            wrap: { type: 'Inline' },
+            paragraphIndentLeft: 96,
+            paragraphIndentRight: 24,
+          },
+        },
+        { width: 600, height: 300 },
+      );
+      const state = context.ensurePage();
+
+      layoutDrawingBlock(context);
+
+      const fragment = state.page.fragments[0] as DrawingFragment;
+      expect(fragment.x).toBe(96);
+      expect(fragment.width).toBe(480);
+      expect(fragment.height).toBe(240);
     });
 
     it('should not offset when alignment is left or justify', () => {

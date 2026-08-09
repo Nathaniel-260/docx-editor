@@ -25,6 +25,12 @@ import {
   type ParagraphBlock,
   type SectionMetadata,
 } from '@superdoc/contracts';
+import {
+  checkpointLayoutExecution,
+  layoutExecutionCheckpointEveryBlocks,
+  type LayoutExecutionCheckpoint,
+  type LayoutExecutionControl,
+} from './execution.js';
 export { formatPageNumber, formatPageNumberFieldValue, formatSectionPageNumberText };
 export type { PageNumberFormat };
 
@@ -149,10 +155,17 @@ function getBlockIdFromFragment(fragment: unknown): string | undefined {
   return undefined;
 }
 
-function buildBlockById(blocks: FlowBlock[] | ReadonlyMap<string, FlowBlock>): ReadonlyMap<string, FlowBlock> {
+function* buildBlockByIdSteps(
+  blocks: FlowBlock[] | ReadonlyMap<string, FlowBlock>,
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutExecutionCheckpoint, ReadonlyMap<string, FlowBlock>, void> {
   const blockById = new Map<string, FlowBlock>();
   if (Array.isArray(blocks)) {
-    for (const block of blocks) {
+    for (let index = 0; index < blocks.length; index += 1) {
+      if (checkpointEveryBlocks != null && index % checkpointEveryBlocks === 0) {
+        yield { phase: 'numbering-context:chapter', index, total: blocks.length };
+      }
+      const block = blocks[index]!;
       blockById.set(block.id, block);
     }
     return blockById;
@@ -183,15 +196,20 @@ function clearChildChapterNumberText(activeChapterByStyle: Map<number, string>, 
   }
 }
 
-export function buildChapterContextByPage(
+function* buildChapterContextByPageSteps(
   layout: Layout,
   blocks: FlowBlock[] | ReadonlyMap<string, FlowBlock>,
   sections: SectionMetadata[],
-): Map<number, ChapterPageInfo> {
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutExecutionCheckpoint, Map<number, ChapterPageInfo>, void> {
   const chapterStyles = new Set<number>();
   let maxChapterStyle = 0;
   const sectionByIndex = new Map<number, SectionMetadata>();
-  for (const section of sections) {
+  for (let sectionOrdinal = 0; sectionOrdinal < sections.length; sectionOrdinal += 1) {
+    if (checkpointEveryBlocks != null && sectionOrdinal % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:chapter', index: sectionOrdinal, total: sections.length };
+    }
+    const section = sections[sectionOrdinal]!;
     sectionByIndex.set(section.sectionIndex, section);
     const chapterStyle = section.numbering?.chapterStyle;
     if (typeof chapterStyle === 'number' && Number.isInteger(chapterStyle) && chapterStyle > 0) {
@@ -205,11 +223,20 @@ export function buildChapterContextByPage(
     return chapterInfoByPage;
   }
 
-  const blockById = buildBlockById(blocks);
+  const blockById = yield* buildBlockByIdSteps(blocks, checkpointEveryBlocks);
   const activeChapterByStyle = new Map<number, string>();
 
-  for (const page of layout.pages) {
+  let fragmentOrdinal = 0;
+  for (let pageIndex = 0; pageIndex < layout.pages.length; pageIndex += 1) {
+    if (checkpointEveryBlocks != null && pageIndex % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:chapter', index: pageIndex, total: layout.pages.length };
+    }
+    const page = layout.pages[pageIndex]!;
     for (const fragment of page.fragments) {
+      if (checkpointEveryBlocks != null && fragmentOrdinal % checkpointEveryBlocks === 0) {
+        yield { phase: 'numbering-context:chapter', index: fragmentOrdinal };
+      }
+      fragmentOrdinal += 1;
       const blockId = getBlockIdFromFragment(fragment);
       if (!blockId) {
         continue;
@@ -245,6 +272,41 @@ export function buildChapterContextByPage(
   }
 
   return chapterInfoByPage;
+}
+
+export function buildChapterContextByPage(
+  layout: Layout,
+  blocks: FlowBlock[] | ReadonlyMap<string, FlowBlock>,
+  sections: SectionMetadata[],
+): Map<number, ChapterPageInfo> {
+  const steps = buildChapterContextByPageSteps(layout, blocks, sections, null);
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+export async function buildChapterContextByPageCooperatively(
+  layout: Layout,
+  blocks: FlowBlock[] | ReadonlyMap<string, FlowBlock>,
+  sections: SectionMetadata[],
+  execution?: LayoutExecutionControl,
+): Promise<Map<number, ChapterPageInfo>> {
+  const steps = buildChapterContextByPageSteps(
+    layout,
+    blocks,
+    sections,
+    layoutExecutionCheckpointEveryBlocks(execution),
+  );
+  try {
+    while (true) {
+      const step = steps.next();
+      if (step.done) return step.value;
+      await checkpointLayoutExecution(execution, step.value);
+    }
+  } finally {
+    steps.return?.(undefined as never);
+  }
 }
 /**
  * Computes section-aware display page numbers for all pages in a document.
@@ -287,11 +349,12 @@ export function buildChapterContextByPage(
  * // displayInfo[2]: { physicalPage: 3, displayNumber: 1, displayText: "1", sectionIndex: 1 }
  * ```
  */
-export function computeDisplayPageNumber(
+function* computeDisplayPageNumberSteps(
   pages: Page[],
   sections: SectionMetadata[],
   chapterInfoByPage?: ReadonlyMap<number, ChapterPageInfo>,
-): DisplayPageInfo[] {
+  checkpointEveryBlocks: number | null = null,
+): Generator<LayoutExecutionCheckpoint, DisplayPageInfo[], void> {
   const result: DisplayPageInfo[] = [];
 
   if (pages.length === 0) {
@@ -300,12 +363,20 @@ export function computeDisplayPageNumber(
 
   // Build a map from sectionIndex to section metadata for fast lookup
   const sectionMap = new Map<number, SectionMetadata>();
-  for (const section of sections) {
+  for (let sectionOrdinal = 0; sectionOrdinal < sections.length; sectionOrdinal += 1) {
+    if (checkpointEveryBlocks != null && sectionOrdinal % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:page', index: sectionOrdinal, total: sections.length };
+    }
+    const section = sections[sectionOrdinal]!;
     sectionMap.set(section.sectionIndex, section);
   }
 
   const sectionPageCounts = new Map<number, number>();
-  for (const page of pages) {
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    if (checkpointEveryBlocks != null && pageIndex % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:page', index: pageIndex, total: pages.length };
+    }
+    const page = pages[pageIndex]!;
     const sectionIndex = page.sectionIndex ?? 0;
     sectionPageCounts.set(sectionIndex, (sectionPageCounts.get(sectionIndex) ?? 0) + 1);
   }
@@ -317,6 +388,9 @@ export function computeDisplayPageNumber(
   let _pagesInCurrentSection = 0;
 
   for (let i = 0; i < pages.length; i++) {
+    if (checkpointEveryBlocks != null && i % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:page', index: i, total: pages.length };
+    }
     const page = pages[i];
 
     // Determine which section this page belongs to using page.sectionIndex
@@ -377,4 +451,39 @@ export function computeDisplayPageNumber(
   }
 
   return result;
+}
+
+export function computeDisplayPageNumber(
+  pages: Page[],
+  sections: SectionMetadata[],
+  chapterInfoByPage?: ReadonlyMap<number, ChapterPageInfo>,
+): DisplayPageInfo[] {
+  const steps = computeDisplayPageNumberSteps(pages, sections, chapterInfoByPage);
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+export async function computeDisplayPageNumberCooperatively(
+  pages: Page[],
+  sections: SectionMetadata[],
+  chapterInfoByPage: ReadonlyMap<number, ChapterPageInfo> | undefined,
+  execution?: LayoutExecutionControl,
+): Promise<DisplayPageInfo[]> {
+  const steps = computeDisplayPageNumberSteps(
+    pages,
+    sections,
+    chapterInfoByPage,
+    layoutExecutionCheckpointEveryBlocks(execution),
+  );
+  try {
+    while (true) {
+      const step = steps.next();
+      if (step.done) return step.value;
+      await checkpointLayoutExecution(execution, step.value);
+    }
+  } finally {
+    steps.return?.(undefined as never);
+  }
 }

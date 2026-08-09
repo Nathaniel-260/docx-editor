@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { warnOnce, createDeprecatedEditorProxy, unwrapEditor } from './deprecation.js';
 
 const RAW_EDITOR = Symbol.for('superdoc:rawEditor');
@@ -80,7 +80,7 @@ describe('createDeprecatedEditorProxy', () => {
       const proxy = createDeprecatedEditorProxy(editor);
 
       for (const key of DEPRECATED_KEYS) {
-        // eslint-disable-next-line no-unused-expressions
+        // oxlint-disable-next-line no-unused-expressions
         proxy[key];
       }
 
@@ -95,10 +95,10 @@ describe('createDeprecatedEditorProxy', () => {
       const editor = createMockEditor();
       const proxy = createDeprecatedEditorProxy(editor);
 
-      // eslint-disable-next-line no-unused-expressions
+      // oxlint-disable-next-line no-unused-expressions
       proxy.state;
       const callCount = console.warn.mock.calls.length;
-      // eslint-disable-next-line no-unused-expressions
+      // oxlint-disable-next-line no-unused-expressions
       proxy.state;
       expect(console.warn).toHaveBeenCalledTimes(callCount);
     });
@@ -109,9 +109,9 @@ describe('createDeprecatedEditorProxy', () => {
       const editor = createMockEditor();
       const proxy = createDeprecatedEditorProxy(editor);
 
-      // eslint-disable-next-line no-unused-expressions
+      // oxlint-disable-next-line no-unused-expressions
       proxy.doc;
-      // eslint-disable-next-line no-unused-expressions
+      // oxlint-disable-next-line no-unused-expressions
       proxy.on;
 
       expect(console.warn).not.toHaveBeenCalled();

@@ -136,6 +136,22 @@ function makeAdapters() {
       before: { bold: 'inherit' as const },
       after: { bold: 'on' as const },
     })),
+    getCatalog: () => ({
+      version: 'style-catalog/v1' as const,
+      revision: null,
+      view: 'all' as const,
+      defaults: { paragraphStyleId: null, characterStyleId: null, tableStyleId: null },
+      items: [],
+      styles: [],
+      sourceStatus: {
+        styles: 'present' as const,
+        settings: 'present' as const,
+        usage: 'unsupported' as const,
+        preview: 'unsupported' as const,
+        view: 'supported' as const,
+      },
+      diagnostics: [],
+    }),
   };
   // templates.apply is the first async Document API operation (SD-3247): the
   // adapter resolves a Promise<TemplatesApplyReceipt>.

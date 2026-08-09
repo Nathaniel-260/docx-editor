@@ -9,7 +9,7 @@
  */
 
 import type { BlockNodeAddress, BlockNodeType, NodeAddress } from './base.js';
-import type { SelectionTarget } from './address.js';
+import type { SelectionTarget, TextCoordinateSpace } from './address.js';
 import type { TextSelector, NodeSelector } from './query.js';
 import type { DiscoveryItem, DiscoveryOutput, DiscoveryResult } from './discovery.js';
 import type { InlineToggleDirective } from './style-policy.types.js';
@@ -92,6 +92,8 @@ export interface MatchStyle {
 export interface MatchRun {
   /** Block-relative character offsets. */
   range: { start: number; end: number };
+  /** Coordinate space for `range`. Omitted means `visible`. */
+  coordinateSpace?: TextCoordinateSpace;
   /** The text content of this run. */
   text: string;
   /**
@@ -120,6 +122,8 @@ export interface MatchBlock {
   nodeType: BlockNodeType | string;
   /** Block-relative character offsets of the match within this block. */
   range: { start: number; end: number };
+  /** Coordinate space for `range`. Omitted means `visible`. */
+  coordinateSpace?: TextCoordinateSpace;
   /** The matched text within this block. */
   text: string;
   /**
@@ -163,12 +167,20 @@ export interface TextMatchDomain {
    * or `doc.format.apply({ target, inline })` for cross-block mutations.
    */
   target: SelectionTarget;
+  /** Coordinate space for `target` and `blocks`. Omitted means `visible`. */
+  coordinateSpace?: TextCoordinateSpace;
   /** Matched text plus surrounding context (D11). */
   snippet: string;
   /** Character offsets within `snippet` identifying the matched text (D17). */
   highlightRange: HighlightRange;
   /** Block decomposition of the match, in document order (D16). */
   blocks: [MatchBlock, ...MatchBlock[]];
+  /**
+   * Regex-mode only: capture groups from the match, index `i` holding group
+   * `i + 1` (`null` for non-participating groups). Absent for plain
+   * (`contains`) text matches.
+   */
+  groups?: readonly (string | null)[];
 }
 
 /**
@@ -220,8 +232,8 @@ export interface QueryMatchMeta {
 // ---------------------------------------------------------------------------
 
 export interface QueryMatchInput {
-  /** Text selector for query.match intentionally omits `includeDeletedText` — raw search is not supported here. */
-  select: Omit<TextSelector, 'includeDeletedText'> | NodeSelector;
+  /** Selector for query.match. Text selectors may opt into deleted tracked text via `includeDeletedText`. */
+  select: TextSelector | NodeSelector;
   within?: BlockNodeAddress;
   /** Restrict matching to a specific story. Omit for body (backward compatible). */
   in?: StoryLocator;

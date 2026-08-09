@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { FlowBlock, Layout, Measure } from '@superdoc/contracts';
 
 const layoutEngineMocks = vi.hoisted(() => ({

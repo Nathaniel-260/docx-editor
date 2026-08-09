@@ -415,7 +415,7 @@ describe('NumberingManager - calculateCounter error handling', () => {
   });
 });
 
-describe('NumberingManager - super-editor parity scenarios (no abstractId)', () => {
+describe('NumberingManager - no abstractId scenarios', () => {
   it('restarts level 1 when a new level 0 item appears with default restart rules', () => {
     const manager = createNumberingManager();
     manager.setStartSettings('list1', 0, 1);
@@ -960,5 +960,50 @@ describe('NumberingManager - clearAllState', () => {
     manager.setCounter('num', 0, 15, val2, 'abs2');
 
     expect(val2).toBe(1);
+  });
+
+  describe('ensureStartSettings', () => {
+    it('writes a start setting when none exists for (numId, level)', () => {
+      const manager = createNumberingManager();
+      manager.ensureStartSettings('num', 0, 2);
+      // First emitted paragraph at level 0 should now start at 2.
+      const value = manager.calculateCounter('num', 0, 5, 'abs');
+      expect(value).toBe(2);
+    });
+
+    it('does not overwrite an existing start setting', () => {
+      const manager = createNumberingManager();
+      manager.setStartSettings('num', 0, 9);
+      manager.ensureStartSettings('num', 0, 2);
+      const value = manager.calculateCounter('num', 0, 5, 'abs');
+      // setStartSettings(9) must win — ensure is register-if-absent only.
+      expect(value).toBe(9);
+    });
+
+    it('primes ancestor fallback start so getAncestorsPath uses it when no counter exists', () => {
+      const manager = createNumberingManager();
+      // Level 0 has only a primed start (no emitted paragraph / counter).
+      manager.ensureStartSettings('num', 0, 2);
+      manager.setStartSettings('num', 1, 1);
+      // First emitted paragraph is at level 1.
+      const child = manager.calculateCounter('num', 1, 10, 'abs');
+      manager.setCounter('num', 1, 10, child, 'abs');
+      const path = manager.calculatePath('num', 1, 10);
+      expect(child).toBe(1);
+      expect(path).toEqual([2, 1]);
+    });
+
+    it('lets a real ancestor counter override the primed fallback start', () => {
+      const manager = createNumberingManager();
+      manager.ensureStartSettings('num', 0, 2);
+      manager.setStartSettings('num', 1, 1);
+      // A real level 0 paragraph is emitted at pos 5 with counter 4.
+      manager.setCounter('num', 0, 5, 4, 'abs');
+      const child = manager.calculateCounter('num', 1, 10, 'abs');
+      manager.setCounter('num', 1, 10, child, 'abs');
+      const path = manager.calculatePath('num', 1, 10);
+      // Ancestor path segment comes from the real counter (4), not the start (2).
+      expect(path).toEqual([4, 1]);
+    });
   });
 });

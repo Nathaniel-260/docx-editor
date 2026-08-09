@@ -1,5 +1,4 @@
 import type {
-  BorderSpec,
   CellBorders,
   DrawingBlock,
   ImageDrawing,
@@ -14,6 +13,7 @@ import type {
   PartialRowInfo,
   SdtMetadata,
   TableBlock,
+  TableCell,
   TableFragment,
   TableMeasure,
   WrapExclusion,
@@ -23,19 +23,23 @@ import {
   effectiveTableCellSpacing,
   rescaleColumnWidths,
   normalizeZIndex,
+  resolveFloatingZIndex,
   getCellSpacingPx,
-  getBorderBandProfile,
-  getSdtContainerKey,
+  buildLayoutSourceIdentity,
   resolveAnchoredGraphicY,
 } from '@superdoc/contracts';
 import type { ResolvePhysicalFamily } from '@superdoc/font-system';
 import type { MinimalWordLayout } from '@superdoc/common/list-marker-utils';
+import { DOM_CLASS_NAMES } from '@superdoc/dom-contract';
 import type { FragmentRenderContext, RenderedLineInfo } from '../renderer.js';
+import { applyLayoutIdentityDataset } from '../utils/layout-identity.js';
+import { applySourceAnchorDataset } from '../utils/source-anchor.js';
 import { applySquareWrapExclusionsToLines } from '../utils/anchor-helpers';
 import { createBlockImageContent } from '../images/image-block.js';
 import { buildImageHyperlinkAnchor } from '../images/hyperlink.js';
 import {
-  getSdtSiblingBoundariesWithOwnContainers,
+  getSdtContainerKeyForBlock,
+  getSdtSiblingBoundaries,
   type SdtAncestorOptions,
   type SdtBoundaryOptions,
 } from '../sdt/container.js';
@@ -45,7 +49,7 @@ import { renderParagraphContent } from '../paragraph/renderParagraphContent.js';
 
 type TableRowMeasure = TableMeasure['rows'][number];
 type TableCellMeasure = TableRowMeasure['cells'][number];
-type TableCellBlock = ParagraphBlock | ImageBlock | DrawingBlock | TableBlock;
+type TableCellBlock = NonNullable<TableCell['blocks']>[number];
 type TableCellBlockMeasure = NonNullable<TableCellMeasure['blocks']>[number];
 
 type ResolveCellAnchoredTopParams = {
@@ -57,32 +61,6 @@ type ResolveCellAnchoredTopParams = {
   globalToLine: number;
   paddingTop: number;
   objectHeight: number;
-};
-
-const getCellBlockSdtBoundaryKey = (block: ParagraphBlock | TableBlock): string | null => {
-  return getSdtContainerKey(block.attrs?.containerSdt) ?? getSdtContainerKey(block.attrs?.sdt);
-};
-
-const getCellBlockOwnSdtBoundaryKey = (block: ParagraphBlock | TableBlock): string | null => {
-  return getSdtContainerKey(block.attrs?.sdt);
-};
-
-const narrowSdtBoundaryFlags = (
-  boundary: SdtBoundaryOptions | undefined,
-  isFirstSlice: boolean,
-  isLastSlice: boolean,
-): SdtBoundaryOptions | undefined => {
-  if (!boundary) return undefined;
-
-  return {
-    ...boundary,
-    isStart: (boundary.isStart ?? true) && isFirstSlice,
-    isEnd: (boundary.isEnd ?? true) && isLastSlice,
-    showLabel: boundary.showLabel === undefined ? undefined : boundary.showLabel && isFirstSlice,
-    ownIsStart: boundary.ownIsStart === undefined ? undefined : boundary.ownIsStart && isFirstSlice,
-    ownIsEnd: boundary.ownIsEnd === undefined ? undefined : boundary.ownIsEnd && isLastSlice,
-    ownShowLabel: boundary.ownShowLabel === undefined ? undefined : boundary.ownShowLabel && isFirstSlice,
-  };
 };
 
 /**
@@ -403,6 +381,12 @@ const applyInlineStyles = (el: HTMLElement, styles: Partial<CSSStyleDeclaration>
   });
 };
 
+const applyTableImageInteractionDataset = (element: HTMLElement, block: ImageBlock): void => {
+  element.classList.add(DOM_CLASS_NAMES.IMAGE_FRAGMENT);
+  if (block.id) element.dataset.sdBlockId = block.id;
+  if (block.imageId) element.dataset.sdImageId = String(block.imageId);
+};
+
 /**
  * Parameters for rendering a nested table inside a table cell.
  *
@@ -437,7 +421,7 @@ type EmbeddedTableRenderParams = {
     options?: { inTableParagraph?: boolean; wrapperEl?: HTMLElement },
   ) => void;
   /** Optional callback to render drawing content (shapes, etc.) */
-  renderDrawingContent?: (block: DrawingBlock) => HTMLElement;
+  renderDrawingContent?: (block: DrawingBlock, interactionHost: HTMLElement, measure: DrawingMeasure) => HTMLElement;
   /** Function to apply SDT metadata as data attributes */
   applySdtDataset: (el: HTMLElement | null, metadata?: SdtMetadata | null) => void;
   /** Built-in SDT chrome rendering mode. */
@@ -701,7 +685,14 @@ function renderPartialEmbeddedTable(params: {
   }
 
   const visibleHeight = computeVisibleHeight(tableMeasure.rows, embeddedFromRow, embeddedToRow, partialRowInfo);
-  const effectiveSdtBoundary = narrowSdtBoundaryFlags(sdtBoundary, localFrom === 0, localTo >= totalTableSegments);
+  const effectiveSdtBoundary = sdtBoundary
+    ? {
+        ...sdtBoundary,
+        isStart: (sdtBoundary.isStart ?? true) && localFrom === 0,
+        isEnd: (sdtBoundary.isEnd ?? true) && localTo >= totalTableSegments,
+        showLabel: sdtBoundary.showLabel === undefined ? undefined : sdtBoundary.showLabel && localFrom === 0,
+      }
+    : undefined;
 
   const tableWrapper = doc.createElement('div');
   tableWrapper.style.position = 'relative';
@@ -715,7 +706,12 @@ function renderPartialEmbeddedTable(params: {
     table: block,
     measure: tableMeasure,
     availableWidth: contentWidthPx,
-    context: { ...context, section: 'body' },
+    // Preserve the inherited section (and story): nested table content in a
+    // header/footer belongs to that furniture story, not the body. Forcing
+    // 'body' here previously misclassified furniture-table runs for position
+    // validation (SD-3715 follow-up). This changes only editor identity and
+    // validation metadata; table geometry and visual layout are unchanged.
+    context,
     renderLine,
     captureLineSnapshot,
     renderDrawingContent,
@@ -762,12 +758,6 @@ type TableCellRenderDependencies = {
   cell?: TableBlock['rows'][number]['cells'][number];
   /** Resolved borders for this cell */
   borders?: CellBorders;
-  /**
-   * Per-side CSS band width overrides in px. Interior compound bands straddle the
-   * gridline (Word model, SD-3308): each adjacent cell carries HALF the band as its
-   * transparent border instead of the owner carrying it all.
-   */
-  borderBandOverridesPx?: { left?: number; right?: number };
   /** Whether to apply default border if no borders specified */
   useDefaultBorder?: boolean;
   /** Function to render a line of paragraph content */
@@ -792,7 +782,7 @@ type TableCellRenderDependencies = {
    * The returned element will have width: 100% and height: 100% styles applied automatically.
    * If undefined, a placeholder element with diagonal stripes pattern is rendered instead.
    */
-  renderDrawingContent?: (block: DrawingBlock) => HTMLElement;
+  renderDrawingContent?: (block: DrawingBlock, interactionHost: HTMLElement, measure: DrawingMeasure) => HTMLElement;
   /** Rendering context */
   context: FragmentRenderContext;
   /** Function to apply SDT metadata as data attributes */
@@ -911,13 +901,11 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
     ancestorContainerKeys,
     ancestorContainerSdts,
     onSdtContainerChrome,
-    tableIndent,
     isRtl,
     cellWidth,
     fromLine,
     toLine,
     resolvePhysical,
-    borderBandOverridesPx,
   } = deps;
 
   const attrs = cell?.attrs;
@@ -929,30 +917,9 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
   ): HTMLElement => buildImageHyperlinkAnchor(doc, imageEl, hyperlink, display);
 
   // RTL: swap left↔right cell margins (ECMA-376 Part 4 §14.3.3–14.3.4, §14.3.7–14.3.8)
-  // Word eats half of a border band back from the cell padding on that side
-  // (band-scaling probe measurements: leftover margin = padding - band/2, floored
-  // at 0). Scoped to compound bands (double, triple, thinThick*): for single-rule
-  // borders the difference is sub-pixel and not worth disturbing existing layouts.
-  // The matching column growth lives in measuring resolveColumnBandAllowances. (SD-3308)
-  // The eaten amount is the painted band in THIS cell minus the half-band the
-  // column was granted: a boundary band (fully inside) eats band/2; a straddled
-  // interior band (half inside, see borderBandOverridesPx) eats nothing.
-  const compoundBandEats = (border: BorderSpec | undefined, bandInCellPx?: number): number => {
-    const profile = border ? getBorderBandProfile(border) : null;
-    if (!profile) return 0;
-    const bandInCell = bandInCellPx ?? profile.band;
-    return Math.max(0, bandInCell - profile.band / 2);
-  };
-  const paddingLeft = Math.max(
-    0,
-    (isRtl ? (padding.right ?? 4) : (padding.left ?? 4)) - compoundBandEats(borders?.left, borderBandOverridesPx?.left),
-  );
+  const paddingLeft = isRtl ? (padding.right ?? 4) : (padding.left ?? 4);
   const paddingTop = padding.top ?? 0;
-  const paddingRight = Math.max(
-    0,
-    (isRtl ? (padding.left ?? 4) : (padding.right ?? 4)) -
-      compoundBandEats(borders?.right, borderBandOverridesPx?.right),
-  );
+  const paddingRight = isRtl ? (padding.left ?? 4) : (padding.right ?? 4);
   const paddingBottom = padding.bottom ?? 0;
 
   const cellEl = doc.createElement('div');
@@ -971,7 +938,7 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
   cellEl.style.paddingBottom = `${paddingBottom}px`;
 
   if (borders) {
-    applyCellBorders(cellEl, borders, borderBandOverridesPx);
+    applyCellBorders(cellEl, borders);
   } else if (useDefaultBorder) {
     cellEl.style.border = '1px solid rgba(0,0,0,0.6)';
   }
@@ -984,12 +951,9 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
   const cellBlocks = cell?.blocks ?? (cell?.paragraph ? [cell.paragraph] : []);
   const blockMeasures = cellMeasure?.blocks ?? (cellMeasure?.paragraph ? [cellMeasure.paragraph] : []);
   const sdtContainerKeys = cellBlocks.map((block) =>
-    block.kind === 'paragraph' || block.kind === 'table' ? getCellBlockSdtBoundaryKey(block) : null,
+    block.kind === 'paragraph' || block.kind === 'table' ? getSdtContainerKeyForBlock(block) : null,
   );
-  const sdtOwnContainerKeys = cellBlocks.map((block) =>
-    block.kind === 'paragraph' || block.kind === 'table' ? getCellBlockOwnSdtBoundaryKey(block) : null,
-  );
-  const sdtBoundaries = getSdtSiblingBoundariesWithOwnContainers(sdtContainerKeys, sdtOwnContainerKeys);
+  const sdtBoundaries = getSdtSiblingBoundaries(sdtContainerKeys);
 
   if (cellBlocks.length > 0 && blockMeasures.length > 0) {
     // Content is a child of the cell, positioned relative to it
@@ -1114,6 +1078,7 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
         imageWrapper.style.flexShrink = '0';
         imageWrapper.style.maxWidth = '100%';
         imageWrapper.style.boxSizing = 'border-box';
+        applyTableImageInteractionDataset(imageWrapper, block as ImageBlock);
         applySdtDataset(imageWrapper, (block as ImageBlock).attrs?.sdt);
 
         imageWrapper.appendChild(
@@ -1182,7 +1147,11 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
           );
         } else if (renderDrawingContent) {
           // Use the callback for other drawing types (vectorShape, shapeGroup, etc.)
-          const drawingContent = renderDrawingContent(block as DrawingBlock);
+          const drawingContent = renderDrawingContent(
+            block as DrawingBlock,
+            drawingWrapper,
+            blockMeasure as DrawingMeasure,
+          );
           drawingContent.style.width = '100%';
           drawingContent.style.height = '100%';
           drawingInner.appendChild(drawingContent);
@@ -1238,13 +1207,41 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
         paraWrapper.style.position = 'relative';
         paraWrapper.style.left = '0';
         paraWrapper.style.width = '100%';
-        const sdtBoundary = narrowSdtBoundaryFlags(
-          sdtBoundaries[i],
-          localStartLine === 0,
-          localEndLine >= blockLineCount,
-        );
+        const baseSdtBoundary = sdtBoundaries[i];
+        const sdtBoundary = baseSdtBoundary
+          ? {
+              ...baseSdtBoundary,
+              isStart: (baseSdtBoundary.isStart ?? true) && localStartLine === 0,
+              isEnd: (baseSdtBoundary.isEnd ?? true) && localEndLine >= blockLineCount,
+              showLabel:
+                baseSdtBoundary.showLabel === undefined ? undefined : baseSdtBoundary.showLabel && localStartLine === 0,
+            }
+          : undefined;
 
         content.appendChild(paraWrapper);
+
+        // V2 projection: stamp the cell paragraph wrapper with editor-neutral
+        // layout identity + source anchor so host hit-testing can address this
+        // specific cell paragraph (caret placement / selection / structural
+        // editing) instead of falling back to the table-level identity. Guarded
+        // on `block.sourceAnchor` so this is v2-projection-specific and does not
+        // change v1 rendering. `context.story` keeps header/footer table cells
+        // from being addressed as body cells.
+        if (block.sourceAnchor) {
+          applySourceAnchorDataset(paraWrapper, block.sourceAnchor);
+          applyLayoutIdentityDataset(
+            paraWrapper,
+            buildLayoutSourceIdentity({
+              blockId: block.id,
+              kind: 'para',
+              fromLine: localStartLine,
+              toLine: localEndLine,
+              sourceAnchor: block.sourceAnchor,
+              ...(context.story ? { story: context.story } : {}),
+            }),
+          );
+        }
+
         const result = renderParagraphContent({
           doc,
           frameEl: paraWrapper,
@@ -1273,7 +1270,7 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
           applySdtDataset,
           resolvePhysical,
           renderLine: ({ block, line, lineIndex, isLastLine, resolvedListTextStartPx }) =>
-            renderLine(block, line, { ...context, section: 'body' }, lineIndex, isLastLine, resolvedListTextStartPx),
+            renderLine(block, line, context, lineIndex, isLastLine, resolvedListTextStartPx),
           convertFinalParagraphMark: isLastBlockInCell,
           lineTopOffset: flowCursorY,
         });
@@ -1288,7 +1285,15 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
 
     // Handle anchor elements
     const verticalAlign = cell?.attrs?.verticalAlign;
-    const remainingSpace = contentHeightPx - flowCursorY;
+    // The measurer includes paragraph-relative floating objects in cellMeasure.height
+    // when layoutInCell is enabled. Use that measured footprint for vertical alignment:
+    // flex layout only sees in-flow children, so basing this on flowCursorY alone can
+    // center the anchor paragraph while pushing a cell-sized object out of the row.
+    // An exact-height row must therefore consume the larger measured footprint even
+    // though the anchored object remains absolutely positioned.
+    const measuredContentHeightPx = Math.max(0, cellMeasure.height - paddingTop - paddingBottom);
+    const alignmentContentHeight = Math.max(flowCursorY, measuredContentHeightPx);
+    const remainingSpace = contentHeightPx - alignmentContentHeight;
     const alignmentOffsetY =
       verticalAlign === 'center'
         ? Math.max(0, remainingSpace / 2)
@@ -1309,8 +1314,20 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
       const objectHeight = anchoredMeasure.height;
 
       const baseLeft = anchor.offsetH ?? 0;
-      const indentOffset = typeof tableIndent === 'number' && Number.isFinite(tableIndent) ? tableIndent : 0;
-      const left = anchor.hRelativeFrom === 'column' ? baseLeft - x - indentOffset : baseLeft;
+      // Word probes (SD-3626, real Word 16 PDF-measured): a cell-anchored object with
+      // hRelativeFrom="column" is positioned offsetH from the CELL CONTENT BOX - not from the
+      // page text column - and layoutInCell (1 or 0) does not change that base. Square-wrapped
+      // objects are additionally CLAMPED so the right edge stays inside the cell content box,
+      // while wrapNone objects overflow freely (both probed). The clamp is deliberately limited
+      // to Square: it is the only wrap type probed AND the only one this function builds cell
+      // wrap exclusions for, so widening it would move objects without wrapping text around
+      // them. Probe Tight/Through/TopAndBottom before extending.
+      const clampsToCell = anchoredBlock.wrap?.type === 'Square';
+      const clampedLeft =
+        clampsToCell && baseLeft + objectWidth > contentWidthPx ? Math.max(0, contentWidthPx - objectWidth) : baseLeft;
+      // Omitted hRelativeFrom defaults to column, matching the shared body-path model
+      // (resolveAnchoredGraphicX in @superdoc/contracts uses the same default).
+      const left = (anchor.hRelativeFrom ?? 'column') === 'column' ? clampedLeft : baseLeft;
       const anchorParagraphId =
         typeof anchoredBlock.attrs?.anchorParagraphId === 'string' ? anchoredBlock.attrs.anchorParagraphId : undefined;
       const resolvedTop = resolveCellAnchoredTop({
@@ -1335,10 +1352,15 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
 
       const behindDoc =
         anchor.behindDoc === true || (anchoredBlock.wrap?.type === 'None' && anchoredBlock.wrap?.behindDoc);
-      const zIndex =
+      // Match top-level anchored media: a non-behind object must remain above
+      // the cell/page paint even when OOXML relativeHeight normalizes to zero.
+      // Using the raw block value here made such drawings un-hittable because
+      // z-index: 0 placed them behind the page's stacking background.
+      const rawZIndex =
         typeof anchoredBlock.zIndex === 'number'
           ? anchoredBlock.zIndex
-          : (normalizeZIndex(anchoredBlock.attrs?.originalAttributes) ?? (behindDoc ? -1 : 1));
+          : normalizeZIndex(anchoredBlock.attrs?.originalAttributes);
+      const zIndex = resolveFloatingZIndex(Boolean(behindDoc), rawZIndex);
 
       const wrap = anchoredBlock.wrap;
       if (!behindDoc && wrap?.type === 'Square') {
@@ -1366,6 +1388,7 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
         imageWrapper.style.maxWidth = '100%';
         imageWrapper.style.boxSizing = 'border-box';
         imageWrapper.style.zIndex = String(zIndex);
+        applyTableImageInteractionDataset(imageWrapper, anchoredBlock);
         applySdtDataset(imageWrapper, anchoredBlock.attrs?.sdt);
 
         imageWrapper.appendChild(
@@ -1413,7 +1436,11 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
             }),
           );
         } else if (renderDrawingContent) {
-          const drawingContent = renderDrawingContent(anchoredBlock as DrawingBlock);
+          const drawingContent = renderDrawingContent(
+            anchoredBlock as DrawingBlock,
+            drawingWrapper,
+            anchoredMeasure as DrawingMeasure,
+          );
           drawingContent.style.width = '100%';
           drawingContent.style.height = '100%';
           drawingInner.appendChild(drawingContent);
@@ -1449,7 +1476,7 @@ export const renderTableCell = (deps: TableCellRenderDependencies): TableCellRen
           continue;
         }
         const wrapperEl = rendered.el.classList.contains('superdoc-line') ? undefined : rendered.el;
-        captureLineSnapshot(candidateLine, { ...context, section: 'body' }, { inTableParagraph: false, wrapperEl });
+        captureLineSnapshot(candidateLine, context, { inTableParagraph: false, wrapperEl });
       }
     }
   }

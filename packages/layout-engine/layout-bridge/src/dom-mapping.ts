@@ -3,13 +3,13 @@
  * COMPATIBILITY ONLY — DO NOT USE FOR NEW CODE
  * ===================================================================
  *
- * The production implementation of DOM pointer mapping now lives in:
- *   packages/super-editor/src/editors/v1/dom-observer/DomPointerMapping.ts
+ * The production implementation of DOM pointer mapping lives with the editor
+ * runtime's DOM observer.
  *
  * This file is retained only for backward compatibility with existing
  * layout-bridge consumers. It will be removed in a later cleanup PR.
  *
- * Do NOT import from this file in super-editor production code.
+ * Do NOT import from this file in editor runtime production code.
  * ===================================================================
  *
  * DOM-based click-to-position mapping utilities.
@@ -21,7 +21,7 @@
  * after document operations like paragraph joins.
  *
  * @module dom-mapping
- * @deprecated Use DomPointerMapping from super-editor/dom-observer instead.
+ * @deprecated Use the editor runtime's DOM observer mapping instead.
  */
 
 import { DOM_CLASS_NAMES, STRUCTURED_CONTENT_CHROME_LABEL_CLASS_NAMES } from '@superdoc/dom-contract';

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { render, cleanup, waitFor } from '@testing-library/react';
 import { createRef, StrictMode } from 'react';
 import { SuperDocEditor } from './SuperDocEditor';
@@ -6,6 +6,26 @@ import type { SuperDocRef } from './types';
 
 const SUPERDOC_READY_WAIT_TIMEOUT = 10000;
 const SUPERDOC_READY_TEST_TIMEOUT = 15000;
+
+/** Capture the config the component hands to the SuperDoc constructor. */
+const captureConfig = async (element: React.ReactElement): Promise<Record<string, unknown>> => {
+  const superdocModule = await import('superdoc');
+  const seen: Record<string, unknown>[] = [];
+  const spy = vi.spyOn(superdocModule, 'SuperDoc').mockImplementation(function SuperDocStub(
+    this: Record<string, unknown>,
+    config: Record<string, unknown>,
+  ) {
+    seen.push(config);
+    this.destroy = vi.fn();
+    this.on = vi.fn();
+    this.off = vi.fn();
+  } as never);
+
+  render(element);
+  await waitFor(() => expect(seen.length).toBeGreaterThan(0), { timeout: SUPERDOC_READY_WAIT_TIMEOUT });
+  spy.mockRestore();
+  return seen[0];
+};
 
 describe('SuperDocEditor', () => {
   beforeEach(() => {
@@ -29,6 +49,56 @@ describe('SuperDocEditor', () => {
       const { container } = render(<SuperDocEditor hideToolbar />);
 
       expect(container.querySelector('.superdoc-toolbar-container')).toBeFalsy();
+    });
+
+    it('should hide toolbar when ui={false}', () => {
+      // The application owns the interface, so React must not render a
+      // toolbar container the core config says nothing should mount into.
+      const { container } = render(<SuperDocEditor ui={false} />);
+
+      expect(container.querySelector('.superdoc-toolbar-container')).toBeFalsy();
+    });
+
+    it('should hide toolbar when ui.toolbar={false}', () => {
+      const { container } = render(<SuperDocEditor ui={{ toolbar: false }} />);
+
+      expect(container.querySelector('.superdoc-toolbar-container')).toBeFalsy();
+    });
+
+    it('should suppress a consumer toolbar container when hideToolbar is set', async () => {
+      // Withholding React's own container is not enough: an external
+      // `ui.toolbar.container` would still give the core somewhere to mount,
+      // so `hideToolbar` has to rewrite the forwarded config.
+      const config = await captureConfig(
+        <SuperDocEditor hideToolbar ui={{ toolbar: { container: '#external' }, comments: false }} />,
+      );
+
+      expect((config.ui as { toolbar?: unknown }).toolbar).toBe(false);
+      expect((config.ui as { comments?: unknown }).comments).toBe(false);
+    });
+
+    it('should not render its own container when the consumer names one', () => {
+      // Core mounts the toolbar into the consumer's container, so an internal
+      // host would sit empty in the layout.
+      const { container } = render(<SuperDocEditor ui={{ toolbar: { container: '#mine' } }} />);
+
+      expect(container.querySelector('.superdoc-toolbar-container')).toBeFalsy();
+    });
+
+    it('should keep the toolbar when ui disables a different surface', () => {
+      // Per-surface config is additive: turning comments off says nothing
+      // about the toolbar.
+      const { container } = render(<SuperDocEditor ui={{ comments: false }} />);
+
+      expect(container.querySelector('.superdoc-toolbar-container')).toBeTruthy();
+    });
+
+    it('should keep rendering the toolbar by default', () => {
+      // React's default experience is unchanged: no ui prop still means a
+      // toolbar container.
+      const { container } = render(<SuperDocEditor />);
+
+      expect(container.querySelector('.superdoc-toolbar-container')).toBeTruthy();
     });
 
     it('should apply className and style props', () => {
@@ -522,6 +592,83 @@ describe('SuperDocEditor', () => {
         await waitFor(() => expect(onEditorDestroy).toHaveBeenCalled(), { timeout: SUPERDOC_READY_WAIT_TIMEOUT });
         await waitFor(() => expect(onReady).toHaveBeenCalledTimes(2), { timeout: SUPERDOC_READY_WAIT_TIMEOUT });
         expect(ref.current?.getInstance()).not.toBe(instanceBefore);
+      },
+      SUPERDOC_READY_TEST_TIMEOUT,
+    );
+
+    it.each([
+      ['id', { id: 'contract-editor' }, { id: 'review-editor' }],
+      ['contained', { contained: false }, { contained: true }],
+    ] as const)(
+      'rebuilds when the React-specific %s prop changes',
+      async (_prop, initialProps, updatedProps) => {
+        const ref = createRef<SuperDocRef>();
+        const onReady = vi.fn();
+        const onEditorDestroy = vi.fn();
+
+        const { rerender } = render(
+          <SuperDocEditor ref={ref} {...initialProps} onReady={onReady} onEditorDestroy={onEditorDestroy} />,
+        );
+
+        await waitFor(() => expect(onReady).toHaveBeenCalled(), { timeout: SUPERDOC_READY_WAIT_TIMEOUT });
+        const instanceBefore = ref.current?.getInstance();
+
+        rerender(<SuperDocEditor ref={ref} {...updatedProps} onReady={onReady} onEditorDestroy={onEditorDestroy} />);
+
+        await waitFor(() => expect(onEditorDestroy).toHaveBeenCalled(), { timeout: SUPERDOC_READY_WAIT_TIMEOUT });
+        await waitFor(() => expect(onReady).toHaveBeenCalledTimes(2), { timeout: SUPERDOC_READY_WAIT_TIMEOUT });
+        expect(ref.current?.getInstance()).not.toBe(instanceBefore);
+      },
+      SUPERDOC_READY_TEST_TIMEOUT,
+    );
+
+    it(
+      'updates documentMode without rebuilding',
+      async () => {
+        const ref = createRef<SuperDocRef>();
+        const onReady = vi.fn();
+        const onEditorDestroy = vi.fn();
+
+        const { rerender } = render(
+          <SuperDocEditor ref={ref} documentMode='editing' onReady={onReady} onEditorDestroy={onEditorDestroy} />,
+        );
+
+        await waitFor(() => expect(onReady).toHaveBeenCalled(), { timeout: SUPERDOC_READY_WAIT_TIMEOUT });
+        const instanceBefore = ref.current?.getInstance();
+        expect(instanceBefore).toBeTruthy();
+        const setDocumentMode = vi.spyOn(instanceBefore!, 'setDocumentMode');
+
+        rerender(
+          <SuperDocEditor ref={ref} documentMode='viewing' onReady={onReady} onEditorDestroy={onEditorDestroy} />,
+        );
+
+        await waitFor(() => expect(setDocumentMode).toHaveBeenCalledWith('viewing'), {
+          timeout: SUPERDOC_READY_WAIT_TIMEOUT,
+        });
+        expect(ref.current?.getInstance()).toBe(instanceBefore);
+        expect(onEditorDestroy).not.toHaveBeenCalled();
+      },
+      SUPERDOC_READY_TEST_TIMEOUT,
+    );
+
+    it(
+      'keeps initialization-only props from rebuilding the current instance',
+      async () => {
+        const ref = createRef<SuperDocRef>();
+        const onReady = vi.fn();
+        const onEditorDestroy = vi.fn();
+
+        const { rerender } = render(
+          <SuperDocEditor ref={ref} rulers onReady={onReady} onEditorDestroy={onEditorDestroy} />,
+        );
+
+        await waitFor(() => expect(onReady).toHaveBeenCalled(), { timeout: SUPERDOC_READY_WAIT_TIMEOUT });
+        const instanceBefore = ref.current?.getInstance();
+
+        rerender(<SuperDocEditor ref={ref} rulers={false} onReady={onReady} onEditorDestroy={onEditorDestroy} />);
+
+        expect(ref.current?.getInstance()).toBe(instanceBefore);
+        expect(onEditorDestroy).not.toHaveBeenCalled();
       },
       SUPERDOC_READY_TEST_TIMEOUT,
     );

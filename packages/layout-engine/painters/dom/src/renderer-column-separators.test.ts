@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vite-plus/test';
 import { createTestPainter as createDomPainter } from './_test-utils.js';
 import type { ColumnRegion, Fragment, Layout, Page } from '@superdoc/contracts';
 

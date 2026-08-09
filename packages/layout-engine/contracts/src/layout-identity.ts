@@ -43,7 +43,7 @@ export type LayoutFragmentId = string;
  * neutral boundary). Consumers MUST treat `'unknown'` as a diagnostic
  * fallback, not as a default value.
  */
-export type LayoutStoryKind = 'body' | 'header' | 'footer' | 'footnote' | 'endnote' | 'unknown';
+export type LayoutStoryKind = 'body' | 'header' | 'footer' | 'footnote' | 'endnote' | 'textbox' | 'unknown';
 
 /**
  * Story locator carried alongside every neutral identity.

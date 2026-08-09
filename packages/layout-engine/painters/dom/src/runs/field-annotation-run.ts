@@ -2,13 +2,13 @@ import type { FieldAnnotationRun } from '@superdoc/contracts';
 import { resolvePhysicalFamily } from '@superdoc/font-system';
 import { sanitizeHref, isValidImageDataUrl } from '@superdoc/url-validation';
 import { DOM_CLASS_NAMES } from '../constants.js';
-import { assertPmPositions } from '../pm-position-validation.js';
 import type { RunRenderContext } from './types.js';
 import { BROWSER_DEFAULT_FONT_SIZE } from './text-run.js';
 import { allowFontSynthesis } from './font-synthesis.js';
 
 /**
- * Renders a FieldAnnotationRun as an inline "pill" element matching super-editor's visual appearance.
+ * Renders a FieldAnnotationRun as an inline "pill" element matching SuperDoc's
+ * visual appearance.
  *
  * Field annotations are styled inline elements that display form fields with:
  * - Outer span with border, border-radius, padding, and background color
@@ -28,7 +28,7 @@ export const renderFieldAnnotationRun = (run: FieldAnnotationRun, context: RunRe
     return hidden;
   }
 
-  // Default styling values (matching super-editor's FieldAnnotationView)
+  // Default styling values for SuperDoc field annotations.
   const defaultBorderColor = '#b015b3';
   const defaultFieldColor = '#980043';
 
@@ -48,7 +48,7 @@ export const renderFieldAnnotationRun = (run: FieldAnnotationRun, context: RunRe
 
     // Apply background color with alpha
     const fieldColor = run.fieldColor || defaultFieldColor;
-    // Add alpha to make it semi-transparent (matching super-editor's behavior)
+    // Add alpha to make it semi-transparent.
     const bgColor = fieldColor.length === 7 ? `${fieldColor}33` : fieldColor;
     // textHighlight takes precedence over fieldColor
     if (run.textHighlight) {
@@ -230,9 +230,6 @@ export const renderFieldAnnotationRun = (run: FieldAnnotationRun, context: RunRe
   if (run.fieldType) {
     annotation.dataset.fieldType = run.fieldType;
   }
-
-  // Assert PM positions are present for cursor fallback
-  assertPmPositions(run, 'field annotation run');
 
   // Apply PM position tracking
   if (run.pmStart != null) {

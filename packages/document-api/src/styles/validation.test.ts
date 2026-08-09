@@ -1,6 +1,7 @@
 import { describe, it, expect, mock } from 'bun:test';
 import {
   executeStylesApply,
+  executeStylesGetCatalog,
   PROPERTY_REGISTRY,
   EXCLUDED_KEYS,
   type StylesAdapter,
@@ -19,6 +20,42 @@ function makeAdapter(): StylesAdapter {
       (): StylesApplyReceipt => ({
         success: true,
         changed: true,
+        resolution: {
+          scope: 'docDefaults',
+          channel: 'run',
+          xmlPart: 'word/styles.xml',
+          xmlPath: 'w:styles/w:docDefaults/w:rPrDefault/w:rPr',
+        },
+        dryRun: false,
+        before: {},
+        after: {},
+      }),
+    ),
+    getCatalog: () => ({
+      version: 'style-catalog/v1',
+      revision: null,
+      view: 'all',
+      defaults: { paragraphStyleId: null, characterStyleId: null, tableStyleId: null },
+      items: [],
+      styles: [],
+      sourceStatus: {
+        styles: 'present',
+        settings: 'present',
+        usage: 'unsupported',
+        preview: 'unsupported',
+        view: 'supported',
+      },
+      diagnostics: [],
+    }),
+  };
+}
+
+function makeApplyOnlyAdapter(): StylesAdapter {
+  return {
+    apply: mock(
+      (): StylesApplyReceipt => ({
+        success: true,
+        changed: false,
         resolution: {
           scope: 'docDefaults',
           channel: 'run',
@@ -101,6 +138,41 @@ describe('styles.apply validation: registry-driven property acceptance', () => {
       ).not.toThrow();
     });
   }
+});
+
+describe('styles.getCatalog validation', () => {
+  it('accepts an omitted input object for the default catalogue request', () => {
+    const adapter = makeAdapter();
+    expect(() => executeStylesGetCatalog(adapter)).not.toThrow();
+  });
+
+  it('accepts every declared catalogue view', () => {
+    const adapter = makeAdapter();
+    for (const view of ['quickGallery', 'recommended', 'currentDocument', 'all', 'inUse'] as const) {
+      expect(() => executeStylesGetCatalog(adapter, { view })).not.toThrow();
+    }
+  });
+
+  it('rejects null input instead of treating it as the default request', () => {
+    const adapter = makeAdapter();
+    expectValidationError(() => executeStylesGetCatalog(adapter, null as never), 'INVALID_INPUT', /non-null object/);
+  });
+
+  it('fails closed when an apply-only styles adapter omits the catalogue hook', () => {
+    const adapter = makeApplyOnlyAdapter();
+
+    expectValidationError(
+      () => executeStylesGetCatalog(adapter),
+      'CAPABILITY_UNAVAILABLE',
+      /styles\.getCatalog is not available/,
+    );
+  });
+
+  it('validates input before checking for the optional catalogue hook', () => {
+    const adapter = makeApplyOnlyAdapter();
+
+    expectValidationError(() => executeStylesGetCatalog(adapter, null as never), 'INVALID_INPUT', /non-null object/);
+  });
 });
 
 // ---------------------------------------------------------------------------

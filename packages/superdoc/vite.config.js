@@ -1,18 +1,25 @@
 import path from 'path';
+import { existsSync } from 'node:fs';
 import copy from 'rollup-plugin-copy'
 import dts from 'vite-plugin-dts'
 import sirv from 'sirv';
-import { defineConfig } from 'vite'
-import { configDefaults } from 'vitest/config'
+import { defineConfig } from 'vite-plus'
+import { configDefaults } from 'vite-plus'
 import { createRequire } from 'node:module';
 import { fileURLToPath, URL } from 'node:url';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import { visualizer } from 'rollup-plugin-visualizer';
 import vue from '@vitejs/plugin-vue'
 import layeredCssPlugin from './vite-plugin-layered-css.mjs';
+import { preserveV2WorkerAssetPlugin } from './vite-plugin-v2-worker-asset.mjs';
 
 import { version } from './package.json';
 import sourceResolve from '../../vite.sourceResolve';
+import {
+  resolveEnginePackageRoot,
+  resolveSuperDocV2RuntimeMode,
+} from './vite.v2-runtime-mode.mjs';
+import { resolveDisableTrackedChangeLoading } from './vite.tracked-change-loading.mjs';
 
 // SD-2864: derive the dts include list from the canonical type-surface
 // config so vite, ensure-types, audit, and the tsconfig parity check
@@ -29,34 +36,11 @@ const typeSurface = cjsRequire('./scripts/type-surface.config.cjs');
 // TODO: Remove once rolldown supports trailing-slash imports or node-stdlib-browser drops them.
 const require = createRequire(import.meta.url);
 const stdlibRequire = createRequire(require.resolve('node-stdlib-browser/package.json'));
-const repoRequire = createRequire(path.resolve(__dirname, '../../package.json'));
-const superEditorRequire = createRequire(path.resolve(__dirname, '../super-editor/package.json'));
 const punycodeEntry = stdlibRequire.resolve('punycode/punycode.js');
 const nodePolyfillShimAliases = ['buffer', 'global', 'process'].map((name) => ({
   find: `vite-plugin-node-polyfills/shims/${name}`,
   replacement: fileURLToPath(import.meta.resolve(`vite-plugin-node-polyfills/shims/${name}`)),
 }));
-
-const resolvePackageEsmEntry = (pkg, resolver = repoRequire) => {
-  const resolved = resolver.resolve(pkg);
-  if (resolved.endsWith(`${path.sep}index.cjs`)) {
-    return resolved.slice(0, -'index.cjs'.length) + 'index.js';
-  }
-  return resolved;
-};
-
-// y-prosemirror cursor/selection plugins return DecorationSet instances that must share
-// identity with the EditorView's prosemirror-view copy. If multiple ProseMirror module
-// instances are bundled, `instanceof DecorationSet` checks fail and collaborative startup
-// can crash during the first Yjs rerender.
-// In the pnpm workspace these packages are installed under super-editor, not necessarily
-// at the repo root, so resolve them from the package that owns the dependency edges.
-const proseMirrorSingletonAliases = [
-  { find: 'prosemirror-model', replacement: resolvePackageEsmEntry('prosemirror-model', superEditorRequire) },
-  { find: 'prosemirror-state', replacement: resolvePackageEsmEntry('prosemirror-state', superEditorRequire) },
-  { find: 'prosemirror-transform', replacement: resolvePackageEsmEntry('prosemirror-transform', superEditorRequire) },
-  { find: 'prosemirror-view', replacement: resolvePackageEsmEntry('prosemirror-view', superEditorRequire) },
-];
 
 const visualizerConfig = {
   filename: './dist/bundle-analysis.html',
@@ -66,52 +50,84 @@ const visualizerConfig = {
   open: true
 }
 
+function resolveV2DistRelativeImportsPlugin(v2Root) {
+  const v2DistRoot = path.resolve(v2Root, 'dist');
+  const isRelativeImport = (specifier) => specifier.startsWith('./') || specifier.startsWith('../');
+  const normalizeId = (id) => {
+    let clean = id.split('?')[0];
+    if (clean.startsWith('\0')) clean = clean.slice(1);
+    if (clean.startsWith('file://')) clean = fileURLToPath(clean);
+    return path.isAbsolute(clean) ? clean : path.resolve(__dirname, clean);
+  };
+
+  return {
+    name: 'superdoc-resolve-v2-dist-relative-imports',
+    enforce: 'pre',
+    resolveId(source, importer) {
+      if (!importer || !isRelativeImport(source)) return null;
+      const importerPath = normalizeId(importer);
+      if (!importerPath.startsWith(`${v2DistRoot}${path.sep}`)) return null;
+
+      const resolved = path.resolve(path.dirname(importerPath), source);
+      if (existsSync(resolved)) return { id: resolved };
+      if (existsSync(`${resolved}.js`)) return { id: `${resolved}.js` };
+      return null;
+    },
+  };
+}
+
 // Internal @superdoc/ paths that map to ./src/ (not workspace packages).
 // Rolldown doesn't support regex capture groups ($1) in alias replacements,
 // so we list these explicitly instead of using /^@superdoc\/(.*)$/.
 // Update this list when adding new src/ subdirectories imported via @superdoc/.
 const superdocSrcAliases = ['components', 'composables', 'core', 'helpers', 'stores', 'dev', 'icons.js', 'index.js'];
 
-export const getAliases = (_isDev) => {
+// V2 branch: the customer `superdoc` package consumes the internal v2 runtime
+// through the stable `@superdoc/docx-engine` contract. `superdoc/v2` is a SEPARATE pnpm
+// workspace, so its private implementation packages cannot be node-resolved
+// here in source mode. The dual-mode resolver decides how `@superdoc/docx-engine*`
+// resolves:
+//   - package mode (default for build/pack/release/public clone): node
+//     resolution of the installed dist-only `@superdoc/docx-engine`, or a built
+//     `superdoc/v2/dist` local substitute. NEVER aliases into v2 source.
+//   - source mode (Orbit dev only, opt-in): aliases into `superdoc/v2/**/src`
+//     for full v2 + public HMR.
+// The engine is the supported runtime dependency. Its implementation packages
+// never survive as public dependencies, exports, or unresolved imports.
+//
+const V2_ROOT = resolveEnginePackageRoot(import.meta.url);
+const LAYOUT_ENGINE_ROOT = path.resolve(__dirname, '../layout-engine');
+
+let loggedV2Mode = false;
+export const getV2Resolution = (command) => {
+  const resolution = resolveSuperDocV2RuntimeMode({
+    command,
+    env: process.env,
+    packageRoot: __dirname,
+    v2Root: V2_ROOT,
+    layoutEngineRoot: LAYOUT_ENGINE_ROOT,
+  });
+  if (!loggedV2Mode) {
+    // One concise line so build logs record the selected mode and why.
+    console.log(`[superdoc] v2 runtime mode: ${resolution.mode} - ${resolution.reason}`);
+    loggedV2Mode = true;
+  }
+  return resolution;
+};
+
+export const getAliases = (command, v2Resolution = getV2Resolution(command)) => {
   const aliases = [
-    ...proseMirrorSingletonAliases,
+    ...v2Resolution.aliases,
     ...nodePolyfillShimAliases,
 
     // Workspace packages (source paths for dev)
     { find: '@stores', replacement: fileURLToPath(new URL('./src/stores', import.meta.url)) },
-
-    // Force super-editor to resolve from source (not dist) so builds always use latest code
-    { find: '@superdoc/super-editor/docx-zipper', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/core/DocxZipper.js') },
-    { find: '@superdoc/super-editor/toolbar', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/components/toolbar/Toolbar.vue') },
-    { find: '@superdoc/super-editor/file-zipper', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/core/super-converter/zipper.js') },
-    { find: '@superdoc/super-editor/converter/internal', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/core/super-converter') },
-    { find: '@superdoc/super-editor/converter', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/core/super-converter/SuperConverter.js') },
-    { find: '@superdoc/super-editor/editor', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/core/Editor.ts') },
-    { find: '@superdoc/super-editor/blank-docx', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/core/blank-docx.ts') },
-    { find: '@superdoc/super-editor/document-api-adapters', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/document-api-adapters/index.ts') },
-    { find: '@superdoc/super-editor/markdown', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/core/helpers/markdown/index.ts') },
-    { find: '@superdoc/super-editor/parts-runtime', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/core/parts/init-parts-runtime.ts') },
-    { find: '@superdoc/super-editor/super-input', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/components/SuperInput.vue') },
-    { find: '@superdoc/super-editor/ai-writer', replacement: path.resolve(__dirname, '../super-editor/src/editors/v1/components/toolbar/AIWriter.vue') },
-    { find: '@superdoc/super-editor/style.css', replacement: path.resolve(__dirname, '../super-editor/src/style.css') },
-    { find: '@superdoc/super-editor/headless-toolbar/react', replacement: path.resolve(__dirname, '../super-editor/src/headless-toolbar/react.ts') },
-    { find: '@superdoc/super-editor/headless-toolbar/vue', replacement: path.resolve(__dirname, '../super-editor/src/headless-toolbar/vue.ts') },
-    { find: '@superdoc/super-editor/presentation-editor', replacement: path.resolve(__dirname, '../super-editor/src/index.ts') },
-    // The longer `/ui/react` alias must come before `/ui` so the
-    // prefix match resolves it first; otherwise `/ui` would swallow
-    // `/ui/react` and the React entry would resolve to the controller.
-    { find: '@superdoc/super-editor/ui/react', replacement: path.resolve(__dirname, '../super-editor/src/ui/react/index.ts') },
-    { find: '@superdoc/super-editor/ui', replacement: path.resolve(__dirname, '../super-editor/src/ui/index.ts') },
-    { find: '@superdoc/super-editor', replacement: path.resolve(__dirname, '../super-editor/src/index.ts') },
 
     // Map @superdoc/<name> to ./src/<name> for internal paths
     ...superdocSrcAliases.map(name => ({
       find: `@superdoc/${name}`,
       replacement: path.resolve(__dirname, `./src/${name}`),
     })),
-
-    // Super Editor aliases
-    { find: '@', replacement: '@superdoc/super-editor' },
     ...sourceResolve.alias,
   ];
 
@@ -121,21 +137,49 @@ export const getAliases = (_isDev) => {
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode, command }) => {
+  const v2Resolution = getV2Resolution(command);
+  const disableTrackedChangeLoading = resolveDisableTrackedChangeLoading({
+    command,
+    runtimeMode: v2Resolution.mode,
+    env: process.env,
+  });
+  if (disableTrackedChangeLoading) {
+    console.warn('[superdoc] tracked-change loading: disabled for this dev server');
+  }
   const skipDts = process.env.SUPERDOC_SKIP_DTS === '1';
+  const stringDecoderEntry = stdlibRequire.resolve('string_decoder/lib/string_decoder.js');
   const plugins = [
+    resolveV2DistRelativeImportsPlugin(V2_ROOT),
+    // Rolldown treats trailing-slash imports (`punycode/`, `string_decoder/`) as
+    // directory paths and fails to load them. node-stdlib-browser and
+    // readable-stream use that form. The optimizeDeps fix below only covers dep
+    // pre-bundling (dev); the production build needs the same redirect so the
+    // bundled v2 runtime graph (which pulls these polyfills transitively) builds.
+    {
+      name: 'fix-node-stdlib-trailing-slash',
+      enforce: 'pre',
+      resolveId(source) {
+        if (source === 'punycode/' || source === 'punycode') return { id: punycodeEntry };
+        if (source === 'string_decoder/' || source === 'string_decoder') return { id: stringDecoderEntry };
+      },
+    },
     vue(),
     layeredCssPlugin(),
+    preserveV2WorkerAssetPlugin(),
     !skipDts && dts({
-      // Foundational sources (superdoc, super-editor, document-api) are
+      // Foundational sources (superdoc, document-api) are
       // always included; relocation patterns come from the canonical
       // type-surface config (SD-2864). Each `relocations` entry pairs the
       // ensure-types rewriter rule with the vite include patterns so the
       // two cannot drift.
       include: [
         'src/**/*',
-        '../super-editor/src/**/*',
         '../document-api/src/**/*',
         ...typeSurface.relocations.flatMap((r) => r.viteIncludes),
+      ],
+      exclude: [
+        'src/dev/**',
+        'src/components/SuperToolbar/**',
       ],
       outDir: 'dist',
       // vite-plugin-dts still gathers diagnostics for this mixed JS/Vue source
@@ -172,6 +216,12 @@ export default defineConfig(({ mode, command }) => {
   ].filter(Boolean);
   if (mode !== 'test') plugins.push(nodePolyfills());
   const isDev = command === 'serve';
+  const v2FsAllow = v2Resolution.mode === 'source'
+    ? [V2_ROOT]
+    : [
+        path.resolve(V2_ROOT, 'dist'),
+        path.resolve(V2_ROOT, 'headless', 'dist'),
+      ];
 
   // Use emoji marker instead of ANSI colors to avoid reporter layout issues
   const projectLabel = '🦋 @superdoc';
@@ -180,6 +230,7 @@ export default defineConfig(({ mode, command }) => {
     define: {
       __APP_VERSION__: JSON.stringify(version),
       __IS_DEBUG__: true,
+      __SUPERDOC_DISABLE_TRACKED_CHANGE_LOADING__: JSON.stringify(disableTrackedChangeLoading),
     },
     plugins,
     test: {
@@ -187,6 +238,10 @@ export default defineConfig(({ mode, command }) => {
       globals: true,
       // Use happy-dom for faster tests (set VITEST_DOM=jsdom to use jsdom)
       environment: process.env.VITEST_DOM || 'happy-dom',
+      // Vitest 4 keeps spy call history across tests, so a `vi.spyOn` in a
+      // `beforeEach` accumulates over the whole file. Restore per test to keep
+      // the isolation these suites were written against.
+      restoreMocks: true,
       retry: 2,
       testTimeout: 20000,
       hookTimeout: 10000,
@@ -203,18 +258,6 @@ export default defineConfig(({ mode, command }) => {
           'src/dev/**',
           'src/index.js',
           'src/main.js',
-          'src/types.ts',
-          'src/super-editor.js',
-          'src/headless-toolbar.js',
-          'src/headless-toolbar-react.js',
-          'src/headless-toolbar-vue.js',
-          'src/ui.js',
-          // Same pattern as the other public re-export barrels above:
-          // `ui-react.js` is a thin pass-through to
-          // `@superdoc/super-editor/ui/react`. The provider / hook
-          // implementations are tested in the super-editor package
-          // (`src/ui/react/*.test.tsx`).
-          'src/ui-react.js',
           // Pure JSDoc typedef files (body is `export {}`, no runtime code)
           'src/core/types/**',
           '**/types.js',
@@ -234,58 +277,14 @@ export default defineConfig(({ mode, command }) => {
       rollupOptions: {
         input: {
           'superdoc': 'src/index.js',
-          'headless-toolbar': 'src/headless-toolbar.js',
-          'headless-toolbar-react': 'src/headless-toolbar-react.js',
-          'headless-toolbar-vue': 'src/headless-toolbar-vue.js',
-          'ui': 'src/ui.js',
-          'ui-react': 'src/ui-react.js',
-          'super-editor': 'src/super-editor.js',
-          'types': 'src/types.ts',
-          'super-editor/docx-zipper': '@core/DocxZipper',
-          'super-editor/converter': '@core/super-converter/SuperConverter',
-          'super-editor/file-zipper': '@core/super-converter/zipper.js',
-          // SD-3178 (Phase 3 of SD-3175): explicit public facade entries.
-          // Build emits the artifacts alongside the existing entries so the
-          // facade declarations are available for postbuild verification.
-          // AIDEV-NOTE: `package.json#exports` is intentionally not yet
-          // updated to point at these entries. Phase 4 (a separate child
-          // of SD-3175) owns the contract switch. Adding `./public` or
-          // `./public/...` entries here without that ticket ships new
-          // public subpaths under the radar.
-          'public': 'src/public/index.ts',
-          // SD-3179: legacy headless-toolbar facade entry. Classified as
-          // legacy public compatibility surface in
-          // `docs/architecture/package-boundaries.md` Decision 4. New
-          // custom UI integrations should use the `superdoc/ui` /
-          // `superdoc/ui/react` entries instead.
-          'public/legacy/headless-toolbar': 'src/public/legacy/headless-toolbar.ts',
-          // SD-3207: legacy headless-toolbar framework helpers. Paired
-          // with the root above; same legacy classification. Each entry
-          // re-exports `useHeadlessToolbar` only.
-          'public/legacy/headless-toolbar-react': 'src/public/legacy/headless-toolbar-react.ts',
-          'public/legacy/headless-toolbar-vue': 'src/public/legacy/headless-toolbar-vue.ts',
-          // SD-3180: legacy leaf facade entries mirroring the existing
-          // single-export legacy subpaths. Same classification as
-          // headless-toolbar above.
-          'public/legacy/converter': 'src/public/legacy/converter.ts',
-          'public/legacy/docx-zipper': 'src/public/legacy/docx-zipper.ts',
-          'public/legacy/file-zipper': 'src/public/legacy/file-zipper.ts',
-          // SD-3182: first supported-surface facade entry. The
-          // `superdoc/ui/react` subpath is the strategic React binding
-          // surface. SD-3147 classification: 12 public + 1 legacy/public-compat.
-          'public/ui-react': 'src/public/ui-react.ts',
-          // SD-3183: ui controller facade. 70 symbols (49 public + 21
-          // legacy/public-compat per SD-3147). Re-export source MUST stay
-          // `@superdoc/super-editor/ui` (narrow), not the root barrel —
-          // `audit-bundle.cjs` enforces shape on `dist/public/ui.es.js`.
+          // v2-native public UI controller + React bindings. Emitted as their
+          // own bundles so `superdoc/ui` and `superdoc/ui/react` resolve
+          // without dragging in the app-shell/main bundle. `react` is external.
           'public/ui': 'src/public/ui.ts',
-          // SD-3184: types facade — type-only entry. 116 names, all
-          // `export type { ... }`. The existing `./types` subpath has
-          // split types.import/types.require declarations, so this
-          // facade adds a `public/types.d.cts` shim via ensure-types.cjs.
-          'public/types': 'src/public/types.ts',
+          'public/ui-react': 'src/public/ui-react.ts',
         },
         external: [
+          ...(v2Resolution.mode === 'package' ? [/^@superdoc\/docx-engine(?:\/.*)?$/] : []),
           'yjs',
           '@hocuspocus/provider',
           'pdfjs-dist',
@@ -295,6 +294,15 @@ export default defineConfig(({ mode, command }) => {
           'react',
           'react/jsx-runtime',
           'vue',
+          // V2 collaboration/runtime peers the host app provides (kept as one
+          // shared copy across the page, matching the v2 external-peer policy).
+          'y-protocols',
+          'y-protocols/awareness',
+          'y-protocols/awareness.js',
+          'lib0',
+          'y-websocket',
+          '@liveblocks/client',
+          '@liveblocks/yjs',
         ],
         output: [
           {
@@ -347,7 +355,7 @@ export default defineConfig(({ mode, command }) => {
     resolve: {
       // Under Vitest and the dev server (command 'serve'), alias @superdoc/font-system to its
       // source: cdn-entry.test.js needs it for the import cdn-entry.js makes, and the dev
-      // playground imports it transitively via layout-engine/super-editor source. font-system
+      // playground imports it transitively through layout rendering. font-system
       // lives under shared/, so it is NOT covered by vite.sourceResolve's packages/** aliases.
       // The production CDN build aliases it in vite.config.cdn.js; the ES build never imports
       // cdn-entry. Kept OUT of getAliases so the vite-plugin-dts build (command 'build') is
@@ -359,11 +367,11 @@ export default defineConfig(({ mode, command }) => {
               { find: '@superdoc/font-system', replacement: path.resolve(__dirname, '../../shared/font-system/src/index.ts') },
             ]
           : []),
-        ...getAliases(isDev),
+        ...getAliases(command, v2Resolution),
       ],
-      dedupe: ['prosemirror-model', 'prosemirror-state', 'prosemirror-transform', 'prosemirror-view', 'y-prosemirror'],
+      dedupe: ['yjs'],
       extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
-      conditions: ['source'],
+      conditions: v2Resolution.conditions,
       preserveSymlinks: false,
     },
     css: {
@@ -374,8 +382,8 @@ export default defineConfig(({ mode, command }) => {
       host: '0.0.0.0',
       fs: {
         allow: [
-          path.resolve(__dirname, '../super-editor'),
           path.resolve(__dirname, '../layout-engine'),
+          ...v2FsAllow,
           '../',
           '../../',
         ],

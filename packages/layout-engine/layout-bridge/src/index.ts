@@ -20,7 +20,7 @@ import {
   getFirstLineIndentOffset,
 } from '@superdoc/contracts';
 import { describeCellRenderBlocks, computeCellSliceContentHeight, getEmbeddedRowLines } from '@superdoc/layout-engine';
-import { measureCharacterX } from './text-measurement.js';
+import { findCharacterAtX, measureCharacterX } from './text-measurement.js';
 import { clickToPositionDom, findPageElement } from './dom-mapping.js';
 import {
   isListItem,
@@ -66,6 +66,11 @@ export {
   getBucketRepresentative,
 } from './layoutHeaderFooter';
 export type { HeaderFooterBatch, DigitBucket } from './layoutHeaderFooter';
+export {
+  resolveHeaderFooterTokens,
+  PROVISIONAL_PAGE_COUNT_PLACEHOLDER,
+  type ResolveHeaderFooterTokensOptions,
+} from './resolveHeaderFooterTokens';
 export { findWordBoundaries, findParagraphBoundaries } from './text-boundaries';
 export type { BoundaryRange } from './text-boundaries';
 export {
@@ -80,8 +85,24 @@ export type {
   HeaderFooterRefs,
   SectionAwareHeaderFooterMeasurementGroup,
 } from './sectionAwareHeaderFooter';
-export { incrementalLayout, measureCache, normalizeMargin } from './incrementalLayout';
-export type { HeaderFooterLayoutResult, IncrementalLayoutResult, FootnoteReserveSeed } from './incrementalLayout';
+export { clearIncrementalModuleState, incrementalLayout, measureCache, normalizeMargin } from './incrementalLayout';
+export { hydrateTableTextboxMeasures } from './hydrateTableTextboxMeasures';
+export { hashMeasureContent } from './cache';
+export type {
+  HeaderFooterLayoutResult,
+  IncrementalLayoutBridgeTiming,
+  IncrementalLayoutResult,
+  IncrementalLayoutExecutionControl,
+  IncrementalMeasureReuseProof,
+  IncrementalLayoutReuseOptions,
+  IncrementalLayoutReuseSummary,
+  IncrementalSectionPageNumberTransform,
+  IncrementalLayoutTailAdoption,
+  IncrementalLayoutTailDisposition,
+  IncrementalPaginationProof,
+  LayoutPositionTransform,
+  FootnoteReserveSeed,
+} from './incrementalLayout';
 export {
   collectFootnoteLedgers,
   getPreferredReserveCandidates,
@@ -100,13 +121,14 @@ export type {
 // Re-export computeDisplayPageNumber from layout-engine for section-aware page numbering
 export { computeDisplayPageNumber } from '@superdoc/layout-engine';
 export type { DisplayPageInfo, HeaderFooterConstraints } from '@superdoc/layout-engine';
-export { remeasureParagraph } from './remeasure';
-export { measureCharacterX } from './text-measurement';
+export { clearRemeasureTextCaches, remeasureParagraph } from './remeasure';
+export { findCharacterAtX, measureCharacterX } from './text-measurement';
 export { sliceRunsForLine } from '@superdoc/contracts';
 export { clickToPositionDom, findPageElement } from './dom-mapping';
 export { isListItem, getWordLayoutConfig, calculateTextStartIndent, extractParagraphIndent } from './list-indent-utils';
 export type { TextIndentCalculationParams } from './list-indent-utils';
 export { LayoutVersionLogger } from './instrumentation';
+export type { LayoutMetrics } from './instrumentation';
 export { hitTestTextboxFragment, resolveTextboxContentHit } from './position-hit.js';
 export type { TextboxHitResult } from './position-hit.js';
 
@@ -208,6 +230,22 @@ export type {
   PmOpaqueRange,
 } from './neutral-hit.js';
 export { hitTestNeutral, mapRangeToFragmentsNeutral } from './neutral-hit.js';
+
+// Editor-neutral measured segment-geometry readback (Phase 1 / 001).
+//
+// Promotes the per-line / per-segment geometry the measure + layout pipeline
+// already computes to a first-class neutral output a host can use to resolve
+// caret x/baseline/height and selection rects without DOM ratio math. Additive
+// only — the v1 selection/caret entry points remain unchanged.
+export { collectSegmentGeometry } from './neutral-segment-geometry.js';
+export type { CollectSegmentGeometryOptions } from './neutral-segment-geometry.js';
+
+// Pure RTL text-geometry substrate (direction-aware visual<->logical mapping).
+export {
+  lineHasComplexBidiContent,
+  logicalAdvanceToContainerX,
+  containerXToLogicalAdvance,
+} from './rtl-text-geometry.js';
 
 // Position-hit types and helpers (re-exported from position-hit.ts)
 export type {
@@ -461,8 +499,8 @@ const readLayoutEpochFromDom = (domContainer: HTMLElement, clientX: number, clie
  * Compatibility wrapper — delegates to resolvePositionHitFromDomPosition and
  * clickToPositionGeometry from position-hit.ts.
  *
- * Production super-editor callers should use resolvePointerPositionHit (from
- * PositionHitResolver.ts) instead. This wrapper exists so that external
+ * Production editor-runtime callers should use resolvePointerPositionHit from
+ * their pointer resolver instead. This wrapper exists so that external
  * consumers and tests that import clickToPosition from @superdoc/layout-bridge
  * continue to work unchanged.
  */

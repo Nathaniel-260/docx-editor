@@ -174,19 +174,8 @@ function countMentionsIn(rootDir, allNames, exts) {
   return counts;
 }
 
-function inPackageBoundaries(allNames) {
-  const file = resolve(REPO_ROOT, 'docs/architecture/package-boundaries.md');
-  if (!existsSync(file)) return new Set();
-  const src = readFileSync(file, 'utf8');
-  const set = new Set();
-  for (const n of allNames) {
-    if (new RegExp('\\b' + n + '\\b').test(src)) set.add(n);
-  }
-  return set;
-}
-
 function tick(v) { return v ? '✓' : ' '; }
-function renderMarkdown(snapshot, allNames, inDts, inDcts, inEsm, inCjs, fixtureCounts, jsdocSet, docCounts, exampleCounts, demoCounts, inBoundaries) {
+function renderMarkdown(snapshot, allNames, inDts, inDcts, inEsm, inCjs, fixtureCounts, jsdocSet, docCounts, exampleCounts, demoCounts) {
   const lines = [];
   lines.push('# superdoc root export inventory (SD-3212 PR A0)');
   lines.push('');
@@ -227,13 +216,13 @@ function renderMarkdown(snapshot, allNames, inDts, inDcts, inEsm, inCjs, fixture
   }
   lines.push('## Evidence table');
   lines.push('');
-  lines.push('| Name | dts | dcts | esm | cjs | fixtures | jsdoc | docs | examples | demos | boundaries |');
-  lines.push('|---|---|---|---|---|---|---|---|---|---|---|');
+  lines.push('| Name | dts | dcts | esm | cjs | fixtures | jsdoc | docs | examples | demos |');
+  lines.push('|---|---|---|---|---|---|---|---|---|---|');
   for (const n of allNames) {
     lines.push(
       `| \`${n}\` | ${tick(inDts.has(n))} | ${tick(inDcts.has(n))} | ${tick(inEsm.has(n))} | ${tick(inCjs.has(n))} | ` +
       `${fixtureCounts.get(n) || 0} | ${tick(jsdocSet.has(n))} | ${docCounts.get(n) || 0} | ${exampleCounts.get(n) || 0} | ` +
-      `${demoCounts.get(n) || 0} | ${tick(inBoundaries.has(n))} |`,
+      `${demoCounts.get(n) || 0} |`,
     );
   }
   return lines.join('\n') + '\n';
@@ -352,13 +341,11 @@ export function run({ mode }) {
   if (mode === 'write') {
     const fixtureCounts = countFixtureImports(allNames);
     const jsdocSet = readJsdocTypedefs();
-    const docCounts = countMentionsIn(resolve(REPO_ROOT, 'apps/docs'), allNames, ['.md', '.mdx', '.ts', '.tsx']);
+    const docCounts = countMentionsIn(resolve(REPO_ROOT, 'apps/docs/content'), allNames, ['.md', '.mdx', '.ts', '.tsx']);
     const exampleCounts = countMentionsIn(resolve(REPO_ROOT, 'examples'), allNames, ['.js', '.ts', '.tsx', '.vue', '.md']);
     const demoCounts = countMentionsIn(resolve(REPO_ROOT, 'demos'), allNames, ['.js', '.ts', '.tsx', '.vue', '.md']);
-    const inBoundaries = inPackageBoundaries(allNames);
-
     writeFileSync(SNAPSHOT_JSON, JSON.stringify(snapshot, null, 2) + '\n');
-    writeFileSync(SNAPSHOT_MD, renderMarkdown(snapshot, allNames, inDts, inDcts, inEsm, inCjs, fixtureCounts, jsdocSet, docCounts, exampleCounts, demoCounts, inBoundaries));
+    writeFileSync(SNAPSHOT_MD, renderMarkdown(snapshot, allNames, inDts, inDcts, inEsm, inCjs, fixtureCounts, jsdocSet, docCounts, exampleCounts, demoCounts));
     console.log(`[SD-3212] Wrote ${relative(REPO_ROOT, SNAPSHOT_JSON)}`);
     console.log(`[SD-3212] Wrote ${relative(REPO_ROOT, SNAPSHOT_MD)}`);
     console.log('Counts:');

@@ -55,7 +55,7 @@ export function computeFixedTableColumnWidths(input: WorkingTableGridInput): Fix
   const defaultAddedColumnWidth = resolveDefaultAddedColumnWidth(input.preferredColumnWidths, preferredTableWidth);
   const columnWidths = buildInitialGrid(input.preferredColumnWidths, gridColumnCount, defaultAddedColumnWidth);
 
-  if (input.preserveAuthoredGrid === true) {
+  if (input.preserveAuthoredGrid === true || input.preserveAutoGrid === true) {
     return {
       columnWidths,
       totalWidth: sumWidths(columnWidths),

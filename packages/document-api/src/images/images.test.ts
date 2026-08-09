@@ -117,4 +117,62 @@ describe('executeCreateImage', () => {
     const adapter = stubCreateAdapter();
     expect(() => executeCreateImage(adapter, { src: 'data:image/png;base64,abc' })).not.toThrow();
   });
+
+  it.each(['before', 'after'] as const)('rejects mismatched stories for tracked %s placement', (kind) => {
+    const adapter = stubCreateAdapter();
+
+    let thrown: unknown;
+    try {
+      executeCreateImage(
+        adapter,
+        {
+          src: 'data:image/png;base64,abc',
+          in: { kind: 'story', storyType: 'body' },
+          at: {
+            kind,
+            target: {
+              kind: 'block',
+              nodeType: 'paragraph',
+              nodeId: 'HDR00001',
+              story: { kind: 'story', storyType: 'headerFooterPart', refId: 'rId100' },
+            },
+          },
+        },
+        { changeMode: 'tracked' },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(DocumentApiValidationError);
+    expect((thrown as DocumentApiValidationError).code).toBe('STORY_MISMATCH');
+    expect(adapter.image).not.toHaveBeenCalled();
+  });
+
+  it('allows a header/footer slot container with a physical target story', () => {
+    const adapter = stubCreateAdapter();
+
+    expect(() =>
+      executeCreateImage(adapter, {
+        src: 'data:image/png;base64,abc',
+        in: {
+          kind: 'story',
+          storyType: 'headerFooterSlot',
+          section: { kind: 'section', sectionId: 'section-1' },
+          headerFooterKind: 'header',
+          variant: 'default',
+        },
+        at: {
+          kind: 'inParagraph',
+          target: {
+            kind: 'block',
+            nodeType: 'paragraph',
+            nodeId: 'HDR00001',
+            story: { kind: 'story', storyType: 'headerFooterPart', refId: 'rId100' },
+          },
+        },
+      }),
+    ).not.toThrow();
+    expect(adapter.image).toHaveBeenCalledTimes(1);
+  });
 });

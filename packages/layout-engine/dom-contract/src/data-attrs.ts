@@ -113,7 +113,7 @@ export const DATASET_KEYS = {
  * dependency on the contracts package from dom-contract.
  */
 export const encodeLayoutStoryDataset = (story: {
-  kind: 'body' | 'header' | 'footer' | 'footnote' | 'endnote' | 'unknown';
+  kind: 'body' | 'header' | 'footer' | 'footnote' | 'endnote' | 'textbox' | 'unknown';
   id?: string;
 }): string => (story.kind === 'body' ? 'body' : story.id ? `${story.kind}:${story.id}` : story.kind);
 
@@ -126,7 +126,7 @@ export const encodeLayoutStoryDataset = (story: {
  */
 export const decodeLayoutStoryDataset = (
   raw: string | undefined | null,
-): { kind: 'body' | 'header' | 'footer' | 'footnote' | 'endnote' | 'unknown'; id?: string } => {
+): { kind: 'body' | 'header' | 'footer' | 'footnote' | 'endnote' | 'textbox' | 'unknown'; id?: string } => {
   if (!raw) return { kind: 'unknown' };
   if (raw === 'body') return { kind: 'body' };
   const idx = raw.indexOf(':');
@@ -138,6 +138,7 @@ export const decodeLayoutStoryDataset = (
     case 'footer':
     case 'footnote':
     case 'endnote':
+    case 'textbox':
       return id ? { kind, id } : { kind };
     default:
       return { kind: 'unknown' };

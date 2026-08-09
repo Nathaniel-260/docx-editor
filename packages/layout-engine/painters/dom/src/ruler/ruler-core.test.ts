@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import {
   generateRulerDefinition,
   generateRulerDefinitionFromPx,
@@ -740,5 +740,91 @@ describe('createHandleStates', () => {
 
     expect(handles.left.initialX).toBe(144);
     expect(handles.right.initialX).toBe(672);
+  });
+});
+
+describe('measurement unit (cm)', () => {
+  it('defaults to inch ticks when no unit is given (unchanged behaviour)', () => {
+    const inchDefault = generateRulerDefinitionFromPx({
+      pageWidthPx: 8.5 * 96,
+      pageHeightPx: 11 * 96,
+      leftMarginPx: 96,
+      rightMarginPx: 96,
+    });
+    const inchExplicit = generateRulerDefinitionFromPx({
+      pageWidthPx: 8.5 * 96,
+      pageHeightPx: 11 * 96,
+      leftMarginPx: 96,
+      rightMarginPx: 96,
+      unit: 'in',
+    });
+    // 8 full inches (8 ticks each) + last half inch (5 ticks) = 69, as in inch mode.
+    expect(inchDefault.ticks.length).toBe(69);
+    expect(inchDefault.ticks).toEqual(inchExplicit.ticks);
+  });
+
+  it('labels main ticks in whole centimetres, spaced ppi/2.54 apart', () => {
+    const ruler = generateRulerDefinitionFromPx({
+      pageWidthPx: 8.5 * 96, // 816px ≈ 21.59 cm
+      pageHeightPx: 11 * 96,
+      leftMarginPx: 96,
+      rightMarginPx: 96,
+      unit: 'cm',
+    });
+    const cmPx = 96 / 2.54;
+    const mainTicks = ruler.ticks.filter((t) => t.size === 'main');
+    // 816px / (96/2.54) ≈ 21.59 → main ticks at 0..21 cm = 22 labels.
+    expect(mainTicks.length).toBe(22);
+    expect(mainTicks[0]).toMatchObject({ label: 0, x: 0 });
+    expect(mainTicks[1].label).toBe(1);
+    expect(mainTicks[1].x).toBeCloseTo(cmPx, 6);
+    expect(mainTicks[2].x).toBeCloseTo(2 * cmPx, 6);
+    // Half-cm ticks fall between the whole-cm mains.
+    const halfTicks = ruler.ticks.filter((t) => t.size === 'half');
+    expect(halfTicks[0].x).toBeCloseTo(cmPx / 2, 6);
+    // cm mode never emits the inch-only eighth ticks.
+    expect(ruler.ticks.some((t) => t.size === 'eighth')).toBe(false);
+  });
+
+  it('spaces inch ticks by ppi/8 for a non-96 ppi', () => {
+    // At ppi=144 the eighth-inch spacing is 144/8 = 18px, so main ticks land
+    // on multiples of 144 and eighth ticks on multiples of 18.
+    const ppi = 144;
+    const eighthPx = ppi / 8; // 18
+    const ruler = generateRulerDefinition({
+      pageSize: { width: 3, height: 11 },
+      pageMargins: { left: 0, right: 0, top: 0, bottom: 0 },
+      ppi,
+      unit: 'in',
+    });
+
+    // First tick at the origin.
+    expect(ruler.ticks[0]).toMatchObject({ size: 'main', label: 0, x: 0 });
+    // Eighth tick immediately after the first main tick sits at one eighth.
+    expect(ruler.ticks[1]).toMatchObject({ size: 'eighth', x: eighthPx });
+
+    // Main ticks fall on whole-inch multiples of ppi (0, 144, 288...).
+    const mainTicks = ruler.ticks.filter((t) => t.size === 'main');
+    expect(mainTicks.map((t) => t.x)).toEqual([0, ppi, 2 * ppi]);
+    expect(mainTicks.map((t) => t.label)).toEqual([0, 1, 2]);
+
+    // Half ticks fall exactly midway between the whole-inch mains.
+    const halfTicks = ruler.ticks.filter((t) => t.size === 'half');
+    expect(halfTicks.map((t) => t.x)).toEqual([ppi / 2, ppi + ppi / 2, 2 * ppi + ppi / 2]);
+  });
+
+  it('keeps inch tick positions byte-identical to the historical 12px spacing at ppi=96', () => {
+    // Guards that the ppi-aware inch spacing reproduces the old fixed 12px
+    // spacing (96/8) exactly when no custom ppi is supplied.
+    const config: RulerConfig = {
+      pageSize: { width: 2, height: 11 },
+      pageMargins: { left: 0, right: 0, top: 0, bottom: 0 },
+    };
+    const explicit96 = generateRulerDefinition({ ...config, ppi: 96 });
+    const defaultPpi = generateRulerDefinition(config);
+
+    expect(defaultPpi.ticks).toEqual(explicit96.ticks);
+    // Spot-check the first few positions against the literal 12px grid.
+    expect(defaultPpi.ticks.slice(0, 5).map((t) => t.x)).toEqual([0, 12, 24, 36, 48]);
   });
 });

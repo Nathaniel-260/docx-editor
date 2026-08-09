@@ -27,7 +27,67 @@ export type FontInfo = {
 export type FontMetricsResult = {
   ascent: number;
   descent: number;
+  /** Word-compatible natural single-line height used by `w:lineRule="auto"`. */
+  naturalSingleLine?: number;
 };
+
+/**
+ * Word-native single-line calibration for fonts whose Canvas metrics omit or
+ * disagree with Word's intrinsic leading. Values are ratios of CSS font size.
+ *
+ * The Microsoft-family values come from the reviewed SD-2735 Word fixtures.
+ * Aptos is additionally confirmed by SD-43's Word PDF (12.24 pt pitch at
+ * 10 pt); Helvetica is 9.6 pt at 8 pt in the same evidence set. Keep this list
+ * deliberately small; SD-3296 owns replacing it with generated fixtures.
+ */
+const WORD_NATURAL_LINE_MULTIPLIER: Readonly<Record<string, number>> = Object.freeze({
+  aptos: 1.224,
+  'aptos display': 1.224,
+  calibri: 1.219,
+  'calibri light': 1.219,
+  cambria: 1.219,
+  helvetica: 1.2,
+  // SD-4125 Word mutation: an 11pt Symbol list marker makes its first
+  // baseline 13.44pt tall. Marker faces participate in Word's shared line
+  // envelope even though the glyph is painted in the hanging-indent gutter.
+  symbol: 1.2218181818181817,
+  // SD-1331 Word PDF: 11pt Nunito Sans baselines are 15.12pt apart.
+  'nunito sans': 1.374545,
+});
+
+/**
+ * Word-native pitch for an empty body-story paragraph whose paragraph mark is
+ * formatted with Arial. The value is measured from paired 0-line/10-line DOCX
+ * mutations in Word so marker-line geometry cancels out. Word 2010 and Word
+ * 2013 compatibility modes both resolve 10pt and 13.5pt Arial to 1.15x.
+ *
+ * Keep the physical substitute in the same family contract: the projected
+ * OOXML face is still Arial even when the browser resolves Liberation Sans.
+ */
+const WORD_BODY_EMPTY_LINE_MULTIPLIER: Readonly<Record<string, number>> = Object.freeze({
+  arial: 1.15,
+  'liberation sans': 1.15,
+});
+
+function primaryFontFamily(fontFamily: string): string {
+  const first = fontFamily.split(',')[0] ?? '';
+  return first
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .toLowerCase();
+}
+
+export function getCalibratedNaturalSingleLine(fontFamily: string, fontSize: number): number | undefined {
+  const multiplier = WORD_NATURAL_LINE_MULTIPLIER[primaryFontFamily(fontFamily)];
+  if (multiplier == null || !Number.isFinite(fontSize) || fontSize <= 0) return undefined;
+  return multiplier * fontSize;
+}
+
+export function getCalibratedBodyEmptyLine(fontFamily: string, fontSize: number): number | undefined {
+  const multiplier = WORD_BODY_EMPTY_LINE_MULTIPLIER[primaryFontFamily(fontFamily)];
+  if (multiplier == null || !Number.isFinite(fontSize) || fontSize <= 0) return undefined;
+  return multiplier * fontSize;
+}
 
 /**
  * Measurement configuration for deterministic mode.
@@ -36,12 +96,6 @@ type MeasurementFonts = {
   deterministicFamily: string;
   fallbackStack: string[];
 };
-
-/**
- * Cache for font metrics to avoid repeated measurements.
- * Key format: "fontFamily|fontSize|bold|italic"
- */
-const fontMetricsCache = new Map<string, FontMetricsResult>();
 
 /**
  * Maximum cache size to prevent memory issues.
@@ -57,29 +111,6 @@ const MAX_CACHE_SIZE = 1000;
  * - Accented capitals for maximum ascent
  */
 const METRICS_TEST_STRING = 'MHgypbdlÁÉÍ';
-
-/**
- * Generates a cache key for font metrics.
- *
- * Creates a deterministic string key from font information for efficient cache lookups.
- * The key format ensures that different font configurations (size, weight, style) produce
- * unique keys while identical configurations always produce the same key.
- *
- * @param fontInfo - Font configuration to generate key from
- * @returns Cache key in format "fontFamily|fontSize|bold|italic"
- *
- * @example
- * ```typescript
- * getFontKey({ fontFamily: 'Arial', fontSize: 16, bold: true, italic: false })
- * // Returns: "Arial|16|true|false"
- *
- * getFontKey({ fontFamily: 'Times New Roman', fontSize: 12 })
- * // Returns: "Times New Roman|12|false|false"
- * ```
- */
-function getFontKey(fontInfo: FontInfo): string {
-  return `${fontInfo.fontFamily}|${fontInfo.fontSize}|${fontInfo.bold ?? false}|${fontInfo.italic ?? false}`;
-}
 
 /**
  * Builds a CSS font string from font info.
@@ -129,6 +160,78 @@ function buildFontStringForMetrics(
 
   return parts.join(' ');
 }
+
+/** Surface-owned font metrics cache. The exact CSS font string and pinned
+ * font generation are both part of identity, so a newly available face can
+ * never inherit ascent/descent measured against its fallback. */
+export class FontMetricsMeasurementCache {
+  private entries = new Map<string, FontMetricsResult>();
+  private disposed = false;
+
+  get(
+    ctx: CanvasRenderingContext2D,
+    fontInfo: FontInfo,
+    mode: 'browser' | 'deterministic',
+    fonts: MeasurementFonts,
+    fontSignature = '',
+  ): FontMetricsResult {
+    if (this.disposed) throw new Error('FontMetricsMeasurementCache has been disposed');
+    const font = buildFontStringForMetrics(fontInfo, mode, fonts);
+    const key = `${fontSignature}\u0000${font}`;
+    const cached = this.entries.get(key);
+    if (cached) return cached;
+
+    ctx.font = font;
+    const textMetrics = ctx.measureText(METRICS_TEST_STRING);
+    const glyphMetrics: FontMetricsResult =
+      typeof textMetrics.actualBoundingBoxAscent === 'number' &&
+      typeof textMetrics.actualBoundingBoxDescent === 'number' &&
+      textMetrics.actualBoundingBoxAscent > 0
+        ? {
+            ascent: textMetrics.actualBoundingBoxAscent,
+            descent: textMetrics.actualBoundingBoxDescent,
+          }
+        : {
+            ascent: fontInfo.fontSize * 0.8,
+            descent: fontInfo.fontSize * 0.2,
+          };
+
+    let naturalSingleLine = getCalibratedNaturalSingleLine(fontInfo.fontFamily, fontInfo.fontSize);
+    if (
+      naturalSingleLine == null &&
+      typeof textMetrics.fontBoundingBoxAscent === 'number' &&
+      typeof textMetrics.fontBoundingBoxDescent === 'number' &&
+      textMetrics.fontBoundingBoxAscent > 0
+    ) {
+      naturalSingleLine = textMetrics.fontBoundingBoxAscent + textMetrics.fontBoundingBoxDescent;
+    }
+    const result: FontMetricsResult = { ...glyphMetrics, naturalSingleLine };
+
+    if (this.entries.size >= MAX_CACHE_SIZE) {
+      const firstKey = this.entries.keys().next().value;
+      if (firstKey !== undefined) this.entries.delete(firstKey);
+    }
+    this.entries.set(key, result);
+    return result;
+  }
+
+  clear(): void {
+    if (this.disposed) throw new Error('FontMetricsMeasurementCache has been disposed');
+    this.entries.clear();
+  }
+
+  size(): number {
+    return this.entries.size;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.entries.clear();
+    this.disposed = true;
+  }
+}
+
+const defaultFontMetricsCache = new FontMetricsMeasurementCache();
 
 /**
  * Gets font metrics (ascent/descent) for the given font configuration.
@@ -188,50 +291,7 @@ export function getFontMetrics(
     throw new TypeError(`Mode must be 'browser' or 'deterministic', got: ${mode}`);
   }
 
-  const key = getFontKey(fontInfo);
-
-  // Check cache first
-  const cached = fontMetricsCache.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  // Measure using Canvas API
-  const font = buildFontStringForMetrics(fontInfo, mode, fonts);
-  ctx.font = font;
-  const textMetrics = ctx.measureText(METRICS_TEST_STRING);
-
-  let ascent: number;
-  let descent: number;
-
-  // Use actual bounding box metrics if available (modern browsers)
-  // These give the precise pixel dimensions of the rendered glyphs
-  if (
-    typeof textMetrics.actualBoundingBoxAscent === 'number' &&
-    typeof textMetrics.actualBoundingBoxDescent === 'number' &&
-    textMetrics.actualBoundingBoxAscent > 0
-  ) {
-    ascent = textMetrics.actualBoundingBoxAscent;
-    descent = textMetrics.actualBoundingBoxDescent;
-  } else {
-    // Fallback to approximations for legacy browsers
-    ascent = fontInfo.fontSize * 0.8;
-    descent = fontInfo.fontSize * 0.2;
-  }
-
-  const result: FontMetricsResult = { ascent, descent };
-
-  // Cache the result (with size limit)
-  if (fontMetricsCache.size >= MAX_CACHE_SIZE) {
-    // Remove oldest entry (first key)
-    const firstKey = fontMetricsCache.keys().next().value;
-    if (firstKey) {
-      fontMetricsCache.delete(firstKey);
-    }
-  }
-  fontMetricsCache.set(key, result);
-
-  return result;
+  return defaultFontMetricsCache.get(ctx, fontInfo, mode, fonts);
 }
 
 /**
@@ -259,7 +319,7 @@ export function getFontMetrics(
  * ```
  */
 export function clearFontMetricsCache(): void {
-  fontMetricsCache.clear();
+  defaultFontMetricsCache.clear();
 }
 
 /**
@@ -290,5 +350,5 @@ export function clearFontMetricsCache(): void {
  * ```
  */
 export function getFontMetricsCacheSize(): number {
-  return fontMetricsCache.size;
+  return defaultFontMetricsCache.size();
 }

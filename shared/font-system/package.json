@@ -24,13 +24,14 @@
   ],
   "scripts": {
     "build": "tsc --project tsconfig.json --emitDeclarationOnly",
-    "test": "vitest",
+    "test": "vp test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   },
   "dependencies": {
     "@docfonts/fallbacks": "0.16.0"

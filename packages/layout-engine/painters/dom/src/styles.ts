@@ -47,31 +47,16 @@ export const containerStyles: Partial<CSSStyleDeclaration> = {
   isolation: 'isolate',
 };
 
-export const containerStylesHorizontal: Partial<CSSStyleDeclaration> = {
-  display: 'flex',
-  flexDirection: 'row',
-  alignItems: 'flex-start',
-  justifyContent: 'safe center',
-  background: 'transparent',
-  padding: '0',
-  // gap is set dynamically by renderer based on pageGap option (default: 20px for horizontal)
-  overflowX: 'auto',
-  minHeight: '100%',
-  isolation: 'isolate',
-};
-
-export const spreadStyles: Partial<CSSStyleDeclaration> = {
-  display: 'flex',
-  flexDirection: 'row',
-  alignItems: 'center',
-  gap: '0px',
-};
-
 export const pageStyles = (width: number, height: number, overrides?: PageStyles): Partial<CSSStyleDeclaration> => {
   const merged = { ...DEFAULT_PAGE_STYLES, ...(overrides || {}) };
 
   return {
     position: 'relative',
+    // Resolved page dimensions describe the physical outer page. Keep visual
+    // chrome (notably the canonical 1px border) inside that exact box so a
+    // virtualized window occupies the same extent regardless of how many
+    // pages are currently mounted.
+    boxSizing: 'border-box',
     width: `${width}px`,
     height: `${height}px`,
     minWidth: `${width}px`,
@@ -163,6 +148,48 @@ const DOCUMENT_SURFACE_STYLES = `
 
 .${CLASS_NAMES.container} .${CLASS_NAMES.page} .${CLASS_NAMES.textRun}:not([data-bookmark-marker]) {
   color: inherit;
+}
+
+/* OOXML w:sz is the complete double-border band: stroke + equal gap + stroke.
+ * CSS cannot visibly separate that pattern below 3px, so keep the authored
+ * width for box geometry and make the native border transparent. The visible
+ * strokes live in an unclipped sibling SVG with a Word-like screen-pixel floor. */
+.${CLASS_NAMES.container} .superdoc-thin-double-border {
+  background-image: none;
+}
+`;
+
+const TEXT_EFFECT_STYLES = `
+/* DrawingML text reflections are paint-only generated content. Keeping the
+ * reflected copy in ::after means it cannot enter selection, clipboard text,
+ * accessibility text, PM positions, or layout measurement. Its transform is
+ * resolved from actual Canvas glyph bounds by text-effects.ts. */
+.${CLASS_NAMES.container} .superdoc-text-reflection::after {
+  content: attr(data-superdoc-reflection-text);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: max-content;
+  white-space: pre;
+  pointer-events: none;
+  user-select: none;
+  font: inherit;
+  font-kerning: inherit;
+  font-synthesis: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-transform: inherit;
+  color: inherit;
+  -webkit-text-stroke: inherit;
+  text-shadow: inherit;
+  background-image: var(--sd-text-effect-fill-image, none);
+  background-clip: text;
+  -webkit-background-clip: text;
+  transform-origin: 0 0;
+  transform: var(--sd-text-reflection-transform);
+  filter: blur(var(--sd-text-reflection-blur, 0px));
+  mask-image: var(--sd-text-reflection-mask);
+  -webkit-mask-image: var(--sd-text-reflection-mask);
 }
 `;
 
@@ -289,7 +316,7 @@ const LINK_AND_TOC_STYLES = `
   outline: none;
 }
 
-/* TOC hover. .toc-group-hover is set by PresentationEditor on every entry
+/* TOC hover. .toc-group-hover is set by runtime coordination on every entry
    sharing a data-toc-id so the whole TOC greys out together. The ::after
    stripe (height set via --toc-gap-below) fills the paragraph-spacing gap
    between adjacent entries so the hover reads as one continuous block. */
@@ -330,9 +357,9 @@ const TRACK_CHANGE_STYLES = `
 }
 
 .superdoc-layout .track-insert-dec.highlighted {
-  border-top: var(--sd-tracked-changes-insert-border-width, 1px) dashed var(--sd-tracked-changes-insert-border, #00853d);
-  border-bottom: var(--sd-tracked-changes-insert-border-width, 1px) dashed var(--sd-tracked-changes-insert-border, #00853d);
-  background-color: var(--sd-tracked-changes-insert-background, #399c7222);
+  border-top: var(--sd-tracked-changes-insert-border-width, 1px) dashed var(--sd-tracked-changes-insert-border, #1f6feb);
+  border-bottom: var(--sd-tracked-changes-insert-border-width, 1px) dashed var(--sd-tracked-changes-insert-border, #1f6feb);
+  background-color: var(--sd-tracked-changes-insert-background, #1f6feb22);
   color: var(--sd-tracked-changes-insert-text, currentColor);
   text-decoration-line: var(--sd-tracked-changes-insert-decoration-line, none);
   text-decoration-color: var(--sd-tracked-changes-insert-text, currentColor);
@@ -356,12 +383,124 @@ const TRACK_CHANGE_STYLES = `
   border-bottom: 2px solid var(--sd-tracked-changes-format-border, gold);
 }
 
+.superdoc-layout .superdoc-paragraph-property-review-marker {
+  position: absolute;
+  left: var(--sd-tracked-changes-paragraph-property-marker-left, -10px);
+  top: var(--sd-tracked-changes-paragraph-property-marker-top, 2px);
+  bottom: var(--sd-tracked-changes-paragraph-property-marker-bottom, 2px);
+  width: var(--sd-tracked-changes-paragraph-property-marker-width, 2px);
+  min-height: var(--sd-tracked-changes-paragraph-property-marker-min-height, 14px);
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--sd-tracked-changes-paragraph-property-marker-radius, 1px);
+  background: var(--sd-tracked-changes-format-border, #5f6368);
+  cursor: pointer;
+}
+
+.superdoc-layout
+  .superdoc-fragment[data-track-change-anchor='paragraph-property'][data-track-change-id][data-track-change-marker-visible='true']::before {
+  content: '';
+  position: absolute;
+  left: var(--sd-tracked-changes-paragraph-property-marker-left, -10px);
+  top: var(--sd-tracked-changes-paragraph-property-marker-top, 2px);
+  bottom: var(--sd-tracked-changes-paragraph-property-marker-bottom, 2px);
+  width: var(--sd-tracked-changes-paragraph-property-marker-width, 2px);
+  min-height: var(--sd-tracked-changes-paragraph-property-marker-min-height, 14px);
+  box-sizing: border-box;
+  border-radius: var(--sd-tracked-changes-paragraph-property-marker-radius, 1px);
+  background: var(--sd-tracked-changes-format-border, #5f6368);
+  pointer-events: none;
+}
+
+.superdoc-layout
+  .superdoc-fragment[data-track-change-anchor='paragraph-property'][data-track-change-id][data-track-change-marker-visible='true'][data-track-change-kind='insert']::before {
+  background: var(--sd-tracked-changes-insert-border, #1f6feb);
+}
+
+.superdoc-layout
+  .superdoc-fragment[data-track-change-anchor='paragraph-property'][data-track-change-id][data-track-change-marker-visible='true'][data-track-change-kind='delete']::before {
+  background: var(--sd-tracked-changes-delete-border, #cb0e47);
+}
+
+.superdoc-layout
+  .superdoc-fragment[data-track-change-anchor='paragraph-property'][data-track-change-id][data-track-change-marker-visible='true'][data-track-change-kind='format']::before {
+  background: var(--sd-tracked-changes-format-border, gold);
+}
+
+.superdoc-layout .superdoc-paragraph-property-review-marker.track-insert-dec.highlighted,
+.superdoc-layout .superdoc-paragraph-property-review-marker.track-delete-dec.highlighted,
+.superdoc-layout .superdoc-paragraph-property-review-marker.track-format-dec.highlighted {
+  border: 0;
+  background: var(--sd-tracked-changes-format-border, #5f6368);
+  color: inherit;
+  text-decoration: none;
+}
+
+.superdoc-layout .superdoc-paragraph-property-review-marker.track-insert-dec.highlighted {
+  background: var(--sd-tracked-changes-insert-border, #1f6feb);
+}
+
+.superdoc-layout .superdoc-paragraph-property-review-marker.track-delete-dec.highlighted {
+  background: var(--sd-tracked-changes-delete-border, #cb0e47);
+}
+
+.superdoc-layout .superdoc-paragraph-property-review-marker.track-format-dec.highlighted {
+  background: var(--sd-tracked-changes-format-border, gold);
+}
+
+.superdoc-layout .superdoc-paragraph-property-review-marker.track-change-focused {
+  width: var(--sd-tracked-changes-paragraph-property-marker-focused-width, 3px);
+}
+
+.superdoc-layout .superdoc-section-break-review-marker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 18px;
+  padding: 1px 4px;
+  margin: 1px 0;
+  color: var(--sd-section-break-marker-color, #5f6368);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.superdoc-layout .superdoc-section-break-review-marker::before,
+.superdoc-layout .superdoc-section-break-review-marker::after {
+  content: '';
+  flex: 1 1 auto;
+  min-width: 16px;
+  border-top: 1px dotted currentColor;
+}
+
+.superdoc-layout .superdoc-inline-image.track-insert-dec.highlighted[data-track-change-target-kind='image'],
+.superdoc-layout .superdoc-inline-image-clip-wrapper.track-insert-dec.highlighted[data-track-change-target-kind='image'] {
+  outline: var(--sd-tracked-changes-insert-border-width, 1px) dashed var(--sd-tracked-changes-insert-border, #1f6feb);
+  outline-offset: 2px;
+}
+
+.superdoc-layout .superdoc-inline-image.track-delete-dec.highlighted[data-track-change-target-kind='image'],
+.superdoc-layout .superdoc-inline-image-clip-wrapper.track-delete-dec.highlighted[data-track-change-target-kind='image'] {
+  outline: var(--sd-tracked-changes-delete-border-width, 1px) dashed var(--sd-tracked-changes-delete-border, #cb0e47);
+  outline-offset: 2px;
+}
+
+.superdoc-layout .superdoc-inline-image.track-format-dec.highlighted[data-track-change-target-kind='image'],
+.superdoc-layout .superdoc-inline-image-clip-wrapper.track-format-dec.highlighted[data-track-change-target-kind='image'] {
+  outline: var(--sd-tracked-changes-format-border-width, 2px) solid var(--sd-tracked-changes-format-border, gold);
+  outline-offset: 2px;
+}
+
 .superdoc-layout .track-insert-dec.highlighted.track-change-focused {
   border-left: none;
   border-right: none;
   border-top-style: solid;
   border-bottom-style: solid;
-  background-color: var(--sd-tracked-changes-insert-background-focused, #399c7244);
+  background-color: var(--sd-tracked-changes-insert-background-focused, #1f6feb44);
 }
 
 .superdoc-layout .track-delete-dec.highlighted.track-change-focused {
@@ -372,10 +511,47 @@ const TRACK_CHANGE_STYLES = `
   background-color: var(--sd-tracked-changes-delete-background-focused, #cb0e4744);
 }
 
+.superdoc-layout .track-insert-dec.highlighted[data-track-change-semantic-color-key='move-to'] {
+  border: none;
+  background-color: transparent;
+  color: var(--sd-tracked-changes-move-to-text, #00853d) !important;
+  text-decoration:
+    underline
+    double
+    var(--sd-tracked-changes-move-to-text, #00853d) !important;
+  text-decoration-skip-ink: none;
+  text-underline-offset: var(--sd-tracked-changes-insert-underline-offset, 2px);
+}
+
+.superdoc-layout .track-insert-dec.highlighted.track-change-focused[data-track-change-semantic-color-key='move-to'] {
+  border: none;
+  background-color: var(--sd-tracked-changes-move-to-background-focused, #00853d44);
+}
+
+.superdoc-layout .track-delete-dec.highlighted[data-track-change-semantic-color-key='move-from'] {
+  border: none;
+  background-color: transparent;
+  color: var(--sd-tracked-changes-move-from-text, #00853d) !important;
+  text-decoration:
+    line-through
+    double
+    var(--sd-tracked-changes-move-from-text, #00853d) !important;
+}
+
+.superdoc-layout .track-delete-dec.highlighted.track-change-focused[data-track-change-semantic-color-key='move-from'] {
+  border: none;
+  background-color: var(--sd-tracked-changes-move-from-background-focused, #00853d44);
+}
+
+.superdoc-layout .track-list-marker-dec.highlighted[data-track-change-semantic-color-key='move-from'],
+.superdoc-layout .track-list-marker-dec.highlighted[data-track-change-semantic-color-key='move-to'] {
+  text-decoration: none !important;
+}
+
 .superdoc-layout .track-overlap-insert-delete-dec.track-insert-dec.track-delete-dec.highlighted {
-  border-top: var(--sd-tracked-changes-insert-border-width, 1px) dashed var(--sd-tracked-changes-insert-border, #00853d);
-  border-bottom: var(--sd-tracked-changes-insert-border-width, 1px) dashed var(--sd-tracked-changes-insert-border, #00853d);
-  background-color: var(--sd-tracked-changes-insert-background, #399c7222);
+  border-top: var(--sd-tracked-changes-insert-border-width, 1px) dashed var(--sd-tracked-changes-insert-border, #1f6feb);
+  border-bottom: var(--sd-tracked-changes-insert-border-width, 1px) dashed var(--sd-tracked-changes-insert-border, #1f6feb);
+  background-color: var(--sd-tracked-changes-insert-background, #1f6feb22);
   color: var(--sd-tracked-changes-insert-text, currentColor);
   text-decoration:
     line-through
@@ -389,7 +565,7 @@ const TRACK_CHANGE_STYLES = `
   border-right: none;
   border-top-style: solid;
   border-bottom-style: solid;
-  background-color: var(--sd-tracked-changes-insert-background-focused, #399c7244);
+  background-color: var(--sd-tracked-changes-insert-background-focused, #1f6feb44);
   color: var(--sd-tracked-changes-insert-text, currentColor);
   text-decoration:
     line-through
@@ -418,11 +594,11 @@ const TRACK_CHANGE_STYLES = `
  * disappear, matching inline behavior.
  */
 .superdoc-layout .track-row-cell-dec.track-insert-dec.highlighted {
-  background-color: var(--sd-tracked-changes-insert-background, #399c7222);
+  background-color: var(--sd-tracked-changes-insert-background, #1f6feb22);
   border-top: var(--sd-tracked-changes-insert-border-width, 2px) solid
-    var(--sd-tracked-changes-insert-border, #00853d);
+    var(--sd-tracked-changes-insert-border, #1f6feb);
   border-bottom: var(--sd-tracked-changes-insert-border-width, 2px) solid
-    var(--sd-tracked-changes-insert-border, #00853d);
+    var(--sd-tracked-changes-insert-border, #1f6feb);
 }
 
 .superdoc-layout .track-row-cell-dec.track-delete-dec.highlighted {
@@ -433,12 +609,127 @@ const TRACK_CHANGE_STYLES = `
     var(--sd-tracked-changes-delete-border, #cb0e47);
 }
 
-.superdoc-layout .track-row-cell-dec.track-delete-dec.highlighted .superdoc-line {
+/*
+ * The strikethrough must live on the text runs, not the line container: the
+ * line div collapses whitespace with font-size: 0, and a text-decoration
+ * declared there draws with the LINE's (zero) font metrics - a hairline at the
+ * baseline instead of a strike through the glyphs (SD-3714 design QA). Runs
+ * carry the real font size, so the decoration positions like Word's deleted
+ * text.
+ */
+.superdoc-layout .track-row-cell-dec.track-delete-dec.highlighted .superdoc-line .superdoc-text-run {
   text-decoration:
     line-through
     solid
     var(--sd-tracked-changes-delete-text, #cb0e47)
     var(--sd-tracked-changes-delete-decoration-thickness, 2px);
+}
+
+/*
+ * Structural cell-level tracked changes (SD-3481 TableCellAttrs.trackedChange:
+ * cell insertion/deletion, merge, split).
+ *
+ * The painter renders a cell as an absolutely-positioned <div>, so a tracked
+ * cell carries the broad base class (track-insert-dec / track-delete-dec /
+ * track-format-dec) + modifier (highlighted / hidden) plus the cell marker
+ * class track-cell-dec. These rules reuse the same
+ * --sd-tracked-changes-insert-* / -delete-* / -format-* CSS variable families
+ * as the inline and row-level paths, so the resolved tracked-change visual
+ * color flows through identically. They are scoped to
+ * track-cell-dec so they never affect inline spans or row-level
+ * (track-row-cell-dec) decorations.
+ *
+ * Inserted/deleted cells get a visible cell-level tint + borders analogous to
+ * row-level styling; merge/split (kind === 'format') paint through the format
+ * variable family. When a row-level decoration is also present, row styling
+ * keeps visual precedence and these cell tint/border rules do not apply;
+ * metadata/classes/independent CSS vars are still stamped by the painter.
+ * 'hidden' mode collapses the cell via the existing .track-insert-dec.hidden /
+ * .track-delete-dec.hidden { display: none } rule.
+ */
+.superdoc-layout .track-cell-dec.track-insert-dec.highlighted:not(.track-row-cell-dec) {
+  background-color: var(--sd-tracked-changes-insert-background, #1f6feb22);
+  border-top: var(--sd-tracked-changes-insert-border-width, 2px) solid
+    var(--sd-tracked-changes-insert-border, #1f6feb);
+  border-bottom: var(--sd-tracked-changes-insert-border-width, 2px) solid
+    var(--sd-tracked-changes-insert-border, #1f6feb);
+}
+
+.superdoc-layout .track-cell-dec.track-delete-dec.highlighted:not(.track-row-cell-dec) {
+  background-color: var(--sd-tracked-changes-delete-background, #cb0e4722);
+  border-top: var(--sd-tracked-changes-delete-border-width, 2px) solid
+    var(--sd-tracked-changes-delete-border, #cb0e47);
+  border-bottom: var(--sd-tracked-changes-delete-border-width, 2px) solid
+    var(--sd-tracked-changes-delete-border, #cb0e47);
+}
+
+/* Runs, not the font-size:0 line container - see the row-level rule above. */
+.superdoc-layout .track-cell-dec.track-delete-dec.highlighted:not(.track-row-cell-dec) .superdoc-line .superdoc-text-run {
+  text-decoration:
+    line-through
+    solid
+    var(--sd-tracked-changes-delete-text, #cb0e47)
+    var(--sd-tracked-changes-delete-decoration-thickness, 2px);
+}
+
+.superdoc-layout .track-cell-dec.track-format-dec.highlighted:not(.track-row-cell-dec) {
+  background-color: var(--sd-tracked-changes-format-background-focused, #ffd70033);
+  border-top: var(--sd-tracked-changes-format-border-width, 2px) solid
+    var(--sd-tracked-changes-format-border, gold);
+  border-bottom: var(--sd-tracked-changes-format-border-width, 2px) solid
+    var(--sd-tracked-changes-format-border, gold);
+}
+
+/*
+ * CSS-only table-structure semantic categories (SD-3481): whole-table and
+ * table-row insertion/deletion plus table-split. Unlike the JS-configurable
+ * categories (whose resolved color the painter stamps as inline element
+ * variables), these carry NO JS-resolved color — the painter deliberately
+ * skips inline var stamping for them, so the reassignments below own the
+ * paint and a host :root override of the --sd-tracked-changes-table-*
+ * variables always wins. Each rule feeds the same generic insert/delete
+ * variable chain the row/cell/inline rules above already consume, so borders,
+ * tints, focused backgrounds, and delete strikethrough all follow.
+ *
+ * Keyed on the semantic CLASS, not the data-track-change-semantic-color-key
+ * dataset: when a cell-level tracked change overlaps a row/table carrier on
+ * the same cell element, the single-valued dataset is overwritten by the cell
+ * key while classes accumulate — the class keeps the category paint (and any
+ * host variable override) applying on overlapping cells.
+ */
+.superdoc-layout .table-insertion {
+  --sd-tracked-changes-insert-border: var(--sd-tracked-changes-table-insertion-border, #1f6feb);
+  --sd-tracked-changes-insert-background: var(--sd-tracked-changes-table-insertion-background, #1f6feb22);
+  --sd-tracked-changes-insert-background-focused: var(--sd-tracked-changes-table-insertion-background-focused, #1f6feb44);
+  --sd-tracked-changes-insert-text: var(--sd-tracked-changes-table-insertion-text, currentColor);
+}
+
+.superdoc-layout .table-row-insertion {
+  --sd-tracked-changes-insert-border: var(--sd-tracked-changes-table-row-insertion-border, #1f6feb);
+  --sd-tracked-changes-insert-background: var(--sd-tracked-changes-table-row-insertion-background, #1f6feb22);
+  --sd-tracked-changes-insert-background-focused: var(--sd-tracked-changes-table-row-insertion-background-focused, #1f6feb44);
+  --sd-tracked-changes-insert-text: var(--sd-tracked-changes-table-row-insertion-text, currentColor);
+}
+
+.superdoc-layout .table-deletion {
+  --sd-tracked-changes-delete-border: var(--sd-tracked-changes-table-deletion-border, #cb0e47);
+  --sd-tracked-changes-delete-background: var(--sd-tracked-changes-table-deletion-background, #cb0e4722);
+  --sd-tracked-changes-delete-background-focused: var(--sd-tracked-changes-table-deletion-background-focused, #cb0e4744);
+  --sd-tracked-changes-delete-text: var(--sd-tracked-changes-table-deletion-text, #cb0e47);
+}
+
+.superdoc-layout .table-row-deletion {
+  --sd-tracked-changes-delete-border: var(--sd-tracked-changes-table-row-deletion-border, #cb0e47);
+  --sd-tracked-changes-delete-background: var(--sd-tracked-changes-table-row-deletion-background, #cb0e4722);
+  --sd-tracked-changes-delete-background-focused: var(--sd-tracked-changes-table-row-deletion-background-focused, #cb0e4744);
+  --sd-tracked-changes-delete-text: var(--sd-tracked-changes-table-row-deletion-text, #cb0e47);
+}
+
+.superdoc-layout .table-split {
+  --sd-tracked-changes-insert-border: var(--sd-tracked-changes-table-split-border, #bc4c00);
+  --sd-tracked-changes-insert-background: var(--sd-tracked-changes-table-split-background, #bc4c0022);
+  --sd-tracked-changes-insert-background-focused: var(--sd-tracked-changes-table-split-background-focused, #bc4c0044);
+  --sd-tracked-changes-insert-text: var(--sd-tracked-changes-table-split-text, #bc4c00);
 }
 `;
 
@@ -524,7 +815,7 @@ const FORMATTING_MARKS_STYLES = `
  * SDT Container Styles - Styling for document sections and structured content containers.
  *
  * These CSS rules provide visual styling for Structured Document Tag (SDT) containers,
- * matching the appearance in super-editor. SDTs are Word/OOXML content controls that
+ * matching SuperDoc's appearance. SDTs are Word/OOXML content controls that
  * wrap regions of the document to provide semantic structure and metadata.
  *
  * **Supported SDT Types:**
@@ -670,7 +961,7 @@ const SDT_CONTAINER_STYLES = `
   border-color: var(--sd-content-controls-block-hover-border, transparent);
 }
 
-/* Group hover (JavaScript-coordinated via PresentationEditor) */
+/* Group hover (JavaScript-coordinated by the document runtime) */
 .superdoc-structured-content-block.sdt-group-hover:not(.ProseMirror-selectednode)::before {
   background-color: var(--sd-content-controls-block-hover-bg, #f2f2f2);
 }
@@ -684,14 +975,6 @@ const SDT_CONTAINER_STYLES = `
 }
 
 .superdoc-structured-content-block.ProseMirror-selectednode::after {
-  border-color: var(--sd-content-controls-block-border, #629be7);
-}
-
-.superdoc-structured-content-block.sdt-container-selected::after {
-  border-color: var(--sd-content-controls-block-border, #629be7);
-}
-
-.superdoc-structured-content-block.sdt-ancestor-selected::after {
   border-color: var(--sd-content-controls-block-border, #629be7);
 }
 
@@ -754,7 +1037,10 @@ const SDT_CONTAINER_STYLES = `
   display: inline-flex;
 }
 
-.superdoc-structured-content-block.sdt-ancestor-selected .superdoc-structured-content__label {
+/* SD-3779: reveal the block SDT tag on hover so it is grabbable as a
+ * drag-and-drop handle. V2 has no ProseMirror node-selection to key the reveal
+ * on, so hover is the discoverable trigger for the drag handle. */
+.superdoc-structured-content-block:hover .superdoc-structured-content__label {
   display: inline-flex;
 }
 
@@ -790,30 +1076,6 @@ const SDT_CONTAINER_STYLES = `
 .superdoc-structured-content-block:not([data-sdt-container-start="true"]):not([data-sdt-container-end="true"])::after {
   border-top: none;
   border-bottom: none;
-}
-
-.superdoc-structured-content-block[data-sdt-own-container-nested="true"][data-sdt-own-container-start="true"]:not(.ProseMirror-selectednode)::after {
-  border-top: none;
-}
-
-.superdoc-structured-content-block[data-sdt-next-own-container-starts-nested="true"]::after {
-  border-bottom: none;
-}
-
-.superdoc-structured-content-block.sdt-ancestor-selected[data-sdt-next-own-container-starts-nested="true"]::after {
-  border-bottom: 1px solid var(--sd-content-controls-block-border, #629be7);
-}
-
-.superdoc-structured-content-block.sdt-container-selected:not(.ProseMirror-selectednode):not(.sdt-ancestor-selected)::after {
-  border-top: none;
-}
-
-.superdoc-structured-content-block.ProseMirror-selectednode[data-sdt-container-start="false"]::after {
-  border-top: none;
-}
-
-.superdoc-structured-content-block.ProseMirror-selectednode[data-sdt-own-container-nested="true"][data-sdt-own-container-end="true"]::after {
-  border-bottom: 1px solid var(--sd-content-controls-block-border, #629be7);
 }
 
 /* Structured Content Inline - Inline wrapper with blue border */
@@ -897,8 +1159,25 @@ const SDT_CONTAINER_STYLES = `
   display: inline-flex;
 }
 
+/* SD-3779: reveal the inline SDT tag on hover so it is grabbable as a
+ * drag-and-drop handle (previously hidden on hover; V2 has no node-selection to
+ * key the reveal on). */
 .superdoc-structured-content-inline:not(.ProseMirror-selectednode):hover .superdoc-structured-content-inline__label {
-  display: none;
+  display: inline-flex;
+}
+
+.superdoc-structured-content-inline[data-track-change-content-control-deletion='true'] {
+  border-color: var(--sd-tracked-changes-delete-border, #cb0e47);
+}
+
+.superdoc-structured-content-block[data-track-change-content-control-deletion='true']::after {
+  border-color: var(--sd-tracked-changes-delete-border, #cb0e47);
+}
+
+.superdoc-structured-content-inline[data-track-change-content-control-deletion='true'] .superdoc-structured-content-inline__label,
+.superdoc-structured-content-block[data-track-change-content-control-deletion='true'] .superdoc-structured-content__label {
+  border-color: var(--sd-tracked-changes-delete-border, #cb0e47);
+  background-color: var(--sd-tracked-changes-delete-border, #cb0e47);
 }
 
 /* Hidden appearance per ECMA-376 (w15:appearance val="hidden"). SDT
@@ -1018,9 +1297,7 @@ const SDT_CONTAINER_STYLES = `
 .superdoc-cc-chrome-none .superdoc-structured-content-block::after,
 .superdoc-cc-chrome-none .superdoc-structured-content-block:hover::after,
 .superdoc-cc-chrome-none .superdoc-structured-content-block.sdt-group-hover::after,
-.superdoc-cc-chrome-none .superdoc-structured-content-block.ProseMirror-selectednode::after,
-.superdoc-cc-chrome-none .superdoc-structured-content-block.sdt-container-selected::after,
-.superdoc-cc-chrome-none .superdoc-structured-content-block.sdt-ancestor-selected::after {
+.superdoc-cc-chrome-none .superdoc-structured-content-block.ProseMirror-selectednode::after {
   border: none;
 }
 
@@ -1271,7 +1548,7 @@ const FOOTNOTE_STYLES = `
 }
 
 /* SD-3400: while a note session is open, highlight the note's fragments at the
- * page bottom so the focus change is visible. Applied by PresentationEditor on
+ * page bottom so the focus change is visible. Applied by the document runtime on
  * activation, re-applied after each paint, removed on session exit. The pulse
  * draws the eye when focus jumps from the body reference to the note. */
 .sd-note-session-active {
@@ -1290,41 +1567,146 @@ const FOOTNOTE_STYLES = `
 }
 `;
 
-const ensureStyleElement = (doc: Document | null | undefined, markerAttribute: string, cssText: string) => {
+/**
+ * Revision stamp for injected style elements: a content hash of the CSS text,
+ * stamped as `data-superdoc-style-rev`. Deduplication stays first-wins (see
+ * below), so under HMR or mixed bundle versions an older stylesheet can
+ * survive while newer code expects different CSS — the revision mismatch is
+ * the only observable trace of that skew.
+ */
+const STYLE_REV_ATTRIBUTE = 'data-superdoc-style-rev';
+
+const styleRevisionOf = (cssText: string): string => {
+  // djb2 — tiny, deterministic, dependency-free; collisions only risk a
+  // MISSED warning, never wrong CSS (content is still first-wins).
+  let hash = 5381;
+  for (let i = 0; i < cssText.length; i += 1) {
+    hash = ((hash << 5) + hash + cssText.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
+};
+
+const warnedStyleRevisionMarkers = new Set<string>();
+
+const warnStyleRevisionSkew = (markerAttribute: string, existingRev: string | null, expectedRev: string): void => {
+  // Development/test observability only: production bundles typically lack a
+  // `process` global (or run with NODE_ENV=production) and stay silent. The
+  // painter is a browser package without node type definitions, so the
+  // global is reached through globalThis.
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  if (!env || env.NODE_ENV === 'production') return;
+  if (warnedStyleRevisionMarkers.has(markerAttribute)) return;
+  warnedStyleRevisionMarkers.add(markerAttribute);
+  console.warn(
+    `[SuperDoc][painter-dom] style marker ${markerAttribute} already installed with revision ${existingRev ?? '(unstamped)'} but this bundle expects ${expectedRev}; keeping the existing stylesheet (first-wins). Two style bundle versions are live in this document (HMR or mixed bundles?)`,
+  );
+};
+
+/**
+ * Idempotent document-head style injection. First-wins by marker: an existing
+ * marker element is kept as-is (replacing style elements mid-paint can thrash
+ * head nodes and create two-live-version ambiguity under HMR); a revision
+ * mismatch against the surviving element warns once per marker in
+ * development/test contexts instead.
+ */
+const ensureStyleElement = (
+  doc: Document | null | undefined,
+  markerAttribute: string,
+  cssText: string,
+  revision: string,
+) => {
   if (!doc?.head) return;
-  if (doc.head.querySelector(`[${markerAttribute}="true"]`)) return;
+  const existing = doc.head.querySelector(`[${markerAttribute}="true"]`);
+  if (existing) {
+    const existingRevision = existing.getAttribute(STYLE_REV_ATTRIBUTE);
+    if (existingRevision !== revision) {
+      warnStyleRevisionSkew(markerAttribute, existingRevision, revision);
+    }
+    return;
+  }
   const styleEl = doc.createElement('style');
   styleEl.setAttribute(markerAttribute, 'true');
+  styleEl.setAttribute(STYLE_REV_ATTRIBUTE, revision);
   styleEl.textContent = cssText;
   doc.head.appendChild(styleEl);
 };
 
+/** One document-scoped stylesheet the paint surface requires: head marker attribute + CSS payload. */
+export type SurfaceStylePreflightEntry = {
+  markerAttribute: string;
+  cssText: string;
+};
+
+type SurfaceStyleDefinition = SurfaceStylePreflightEntry & {
+  revision: string;
+};
+
+const defineSurfaceStyle = (markerAttribute: string, cssText: string): SurfaceStyleDefinition => ({
+  markerAttribute,
+  cssText,
+  // Precomputed once at module load. Repeat paints must not re-hash the full
+  // stylesheet text before discovering the marker is already installed.
+  revision: styleRevisionOf(cssText),
+});
+
+const PRINT_STYLE = defineSurfaceStyle('data-superdoc-print-styles', PRINT_STYLES);
+const DOCUMENT_SURFACE_STYLE = defineSurfaceStyle('data-superdoc-document-surface-styles', DOCUMENT_SURFACE_STYLES);
+const TEXT_EFFECT_STYLE = defineSurfaceStyle('data-superdoc-text-effect-styles', TEXT_EFFECT_STYLES);
+const LINK_STYLE = defineSurfaceStyle('data-superdoc-link-styles', LINK_AND_TOC_STYLES);
+const TRACK_CHANGE_STYLE = defineSurfaceStyle('data-superdoc-track-change-styles', TRACK_CHANGE_STYLES);
+const FORMATTING_MARKS_STYLE = defineSurfaceStyle('data-superdoc-formatting-marks-styles', FORMATTING_MARKS_STYLES);
+const SDT_CONTAINER_STYLE = defineSurfaceStyle('data-superdoc-sdt-container-styles', SDT_CONTAINER_STYLES);
+const FIELD_ANNOTATION_STYLE = defineSurfaceStyle('data-superdoc-field-annotation-styles', FIELD_ANNOTATION_STYLES);
+const IMAGE_SELECTION_STYLE = defineSurfaceStyle('data-superdoc-image-selection-styles', IMAGE_SELECTION_STYLES);
+const MATH_MENCLOSE_STYLE = defineSurfaceStyle('data-superdoc-math-menclose-styles', MATH_MENCLOSE_STYLES);
+const FOOTNOTE_STYLE = defineSurfaceStyle('data-superdoc-footnote-styles', FOOTNOTE_STYLES);
+
 export const ensurePrintStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-print-styles', PRINT_STYLES);
+  ensureStyleElement(doc, PRINT_STYLE.markerAttribute, PRINT_STYLE.cssText, PRINT_STYLE.revision);
 };
 
 export const ensureDocumentSurfaceStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-document-surface-styles', DOCUMENT_SURFACE_STYLES);
+  ensureStyleElement(
+    doc,
+    DOCUMENT_SURFACE_STYLE.markerAttribute,
+    DOCUMENT_SURFACE_STYLE.cssText,
+    DOCUMENT_SURFACE_STYLE.revision,
+  );
 };
 
 export const ensureLinkStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-link-styles', LINK_AND_TOC_STYLES);
+  ensureStyleElement(doc, LINK_STYLE.markerAttribute, LINK_STYLE.cssText, LINK_STYLE.revision);
 };
 
 export const ensureTrackChangeStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-track-change-styles', TRACK_CHANGE_STYLES);
+  ensureStyleElement(doc, TRACK_CHANGE_STYLE.markerAttribute, TRACK_CHANGE_STYLE.cssText, TRACK_CHANGE_STYLE.revision);
 };
 
 export const ensureFormattingMarksStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-formatting-marks-styles', FORMATTING_MARKS_STYLES);
+  ensureStyleElement(
+    doc,
+    FORMATTING_MARKS_STYLE.markerAttribute,
+    FORMATTING_MARKS_STYLE.cssText,
+    FORMATTING_MARKS_STYLE.revision,
+  );
 };
 
 export const ensureSdtContainerStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-sdt-container-styles', SDT_CONTAINER_STYLES);
+  ensureStyleElement(
+    doc,
+    SDT_CONTAINER_STYLE.markerAttribute,
+    SDT_CONTAINER_STYLE.cssText,
+    SDT_CONTAINER_STYLE.revision,
+  );
 };
 
 export const ensureFieldAnnotationStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-field-annotation-styles', FIELD_ANNOTATION_STYLES);
+  ensureStyleElement(
+    doc,
+    FIELD_ANNOTATION_STYLE.markerAttribute,
+    FIELD_ANNOTATION_STYLE.cssText,
+    FIELD_ANNOTATION_STYLE.revision,
+  );
 };
 
 /**
@@ -1334,7 +1716,12 @@ export const ensureFieldAnnotationStyles = (doc: Document | null | undefined) =>
  * @returns {void}
  */
 export const ensureImageSelectionStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-image-selection-styles', IMAGE_SELECTION_STYLES);
+  ensureStyleElement(
+    doc,
+    IMAGE_SELECTION_STYLE.markerAttribute,
+    IMAGE_SELECTION_STYLE.cssText,
+    IMAGE_SELECTION_STYLE.revision,
+  );
 };
 
 /**
@@ -1343,7 +1730,12 @@ export const ensureImageSelectionStyles = (doc: Document | null | undefined) => 
  * MATH_MENCLOSE_STYLES for the full rationale.
  */
 export const ensureMathMencloseStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-math-menclose-styles', MATH_MENCLOSE_STYLES);
+  ensureStyleElement(
+    doc,
+    MATH_MENCLOSE_STYLE.markerAttribute,
+    MATH_MENCLOSE_STYLE.cssText,
+    MATH_MENCLOSE_STYLE.revision,
+  );
 };
 
 /**
@@ -1351,5 +1743,48 @@ export const ensureMathMencloseStyles = (doc: Document | null | undefined) => {
  * into the document head. Injected once per document lifecycle. (SD-3400)
  */
 export const ensureFootnoteStyles = (doc: Document | null | undefined) => {
-  ensureStyleElement(doc, 'data-superdoc-footnote-styles', FOOTNOTE_STYLES);
+  ensureStyleElement(doc, FOOTNOTE_STYLE.markerAttribute, FOOTNOTE_STYLE.cssText, FOOTNOTE_STYLE.revision);
+};
+
+/**
+ * The document-level style preflight contract shared by BOTH paint entries
+ * (persistent-page rendering preflight plan, 2026-07-07). Every stylesheet a
+ * painted document needs regardless of which pages are mounted lives in this
+ * manifest, and dense/persistent painting install it through ONE helper
+ * — never through hand-maintained per-path call lists. The previous
+ * hand-maintained lists are exactly how tracked-change styling silently
+ * dropped out of the product persistent-page path: dense paint installed ten
+ * stylesheets, the window path installed three, and page-DOM oracles cannot
+ * see `document.head`.
+ *
+ * Adding a document-scoped stylesheet = add its entry here; both paths and
+ * every parity oracle (painter unit tests, performance pipeline head
+ * preflight) pick it up automatically.
+ */
+const SURFACE_STYLE_PREFLIGHT_DEFINITIONS: readonly SurfaceStyleDefinition[] = [
+  PRINT_STYLE,
+  DOCUMENT_SURFACE_STYLE,
+  TEXT_EFFECT_STYLE,
+  LINK_STYLE,
+  TRACK_CHANGE_STYLE,
+  FORMATTING_MARKS_STYLE,
+  FIELD_ANNOTATION_STYLE,
+  SDT_CONTAINER_STYLE,
+  IMAGE_SELECTION_STYLE,
+  MATH_MENCLOSE_STYLE,
+  FOOTNOTE_STYLE,
+];
+
+export const SURFACE_STYLE_PREFLIGHT: readonly SurfaceStylePreflightEntry[] = SURFACE_STYLE_PREFLIGHT_DEFINITIONS;
+
+/**
+ * Installs the full document-scoped style preflight (idempotent, one
+ * `head.querySelector` per marker). The ONLY sanctioned way for a paint entry
+ * to install document-level styles — per-path `ensure*Styles()` call lists
+ * are the drift mechanism this helper exists to kill.
+ */
+export const ensureSurfaceStylePreflight = (doc: Document | null | undefined): void => {
+  for (const entry of SURFACE_STYLE_PREFLIGHT_DEFINITIONS) {
+    ensureStyleElement(doc, entry.markerAttribute, entry.cssText, entry.revision);
+  }
 };

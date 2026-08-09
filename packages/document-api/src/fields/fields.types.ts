@@ -12,10 +12,10 @@ export interface FieldAddress {
   occurrenceIndex: number;
   nestingDepth: number;
   /**
-   * Optional session-stable story id. When present together with `fieldId`, the
-   * adapter resolves the field by its stable identity first and only falls back
-   * to the legacy `blockId + occurrenceIndex + nestingDepth` lookup when no
-   * stable handle is bound.
+   * Optional session-stable story id for v2 callers. When present together
+   * with `fieldId`, the v2 runtime resolves the field by its stable identity
+   * first and only falls back to the legacy `blockId + occurrenceIndex +
+   * nestingDepth` lookup when no stable handle is bound.
    *
    * Stability is session-scoped: the handle survives common structural edits
    * that insert, rebuild, or remove other fields in the same story. True
@@ -24,9 +24,9 @@ export interface FieldAddress {
    */
   storyId?: string;
   /**
-   * Optional session-stable field id. See `storyId` for the stability contract.
-   * The legacy fields remain required so v1 callers and the shared schema keep
-   * their existing shape.
+   * Optional session-stable field id for v2 callers. See `storyId` for the
+   * stability contract. The legacy fields remain required so v1 callers and
+   * the shared schema keep their existing shape.
    */
   fieldId?: string;
 }

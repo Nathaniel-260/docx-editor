@@ -16,7 +16,7 @@
  * (≤ 28px = separatorSpacingBefore 12 + dividerHeight 6 + topPadding 6 + 4px slack).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure } from '@superdoc/contracts';
 import { incrementalLayout } from '../src/incrementalLayout';
 
@@ -391,7 +391,7 @@ describe('SD-3049: body break consults anchored footnote demand', () => {
     // Baseline outcome (no preferred-reserve scorer acceptance): 3 pages.
     // Per-page-recharge bug (now fixed): 4 pages.
     //
-    // SD-2656 (post-Vivienne+Carlsbad p43): with the +1-page-if-eliminates-split
+    // SD-2656: with the +1-page-if-eliminates-split
     // relaxation, the scorer now accepts a one-page growth to fully fit the
     // 5-line footnote on the anchor page (previously split). New outcome is 4
     // pages — the same as the recharge bug numerically but for a different,

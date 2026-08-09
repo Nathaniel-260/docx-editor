@@ -343,15 +343,50 @@ export function snapToNearestFragment(
  * When paragraphs split across pages, continuation fragments get suffixed IDs
  * (e.g., "5-paragraph-1") while the blocks array uses the base ID ("5-paragraph").
  */
+// Identity-memoized block-id indexes. Hit/geometry mapping calls
+// findBlockIndexByFragmentId once per FRAGMENT while iterating pages, and the
+// linear findIndex made that O(fragments × blocks) — ~13M comparisons
+// (~125ms of self time) per caret update on a 136-page document. The blocks
+// array is stable between committed passes (the retained chain reuses it), so
+// one map per array identity amortizes to a plain lookup. Entries release
+// with the arrays (WeakMap).
+type BlockIndexLookup = {
+  /** First index per id, skipping page/section breaks (findIndex parity). */
+  firstIndexById: Map<string, number>;
+  /** Paragraph indices per id, in document order (split-suffix fallback). */
+  paragraphIndicesById: Map<string, number[]>;
+};
+const blockIndexLookupMemo = new WeakMap<FlowBlock[], BlockIndexLookup>();
+
+function blockIndexLookup(blocks: FlowBlock[]): BlockIndexLookup {
+  const memoized = blockIndexLookupMemo.get(blocks);
+  if (memoized) return memoized;
+  const firstIndexById = new Map<string, number>();
+  const paragraphIndicesById = new Map<string, number[]>();
+  for (let idx = 0; idx < blocks.length; idx += 1) {
+    const block = blocks[idx];
+    if (block.kind !== 'pageBreak' && block.kind !== 'sectionBreak' && !firstIndexById.has(block.id)) {
+      firstIndexById.set(block.id, idx);
+    }
+    if (block.kind === 'paragraph') {
+      const list = paragraphIndicesById.get(block.id);
+      if (list) list.push(idx);
+      else paragraphIndicesById.set(block.id, [idx]);
+    }
+  }
+  const lookup: BlockIndexLookup = { firstIndexById, paragraphIndicesById };
+  blockIndexLookupMemo.set(blocks, lookup);
+  return lookup;
+}
+
 export function findBlockIndexByFragmentId(
   blocks: FlowBlock[],
   fragmentBlockId: string,
   targetPmRange?: { from: number; to: number },
 ): number {
-  const index = blocks.findIndex(
-    (block) => block.id === fragmentBlockId && block.kind !== 'pageBreak' && block.kind !== 'sectionBreak',
-  );
-  if (index !== -1) {
+  const lookup = blockIndexLookup(blocks);
+  const index = lookup.firstIndexById.get(fragmentBlockId);
+  if (index !== undefined) {
     return index;
   }
 
@@ -360,12 +395,7 @@ export function findBlockIndexByFragmentId(
     return -1;
   }
 
-  const matchingIndices: number[] = [];
-  blocks.forEach((block, idx) => {
-    if (block.id === baseBlockId && block.kind === 'paragraph') {
-      matchingIndices.push(idx);
-    }
-  });
+  const matchingIndices = lookup.paragraphIndicesById.get(baseBlockId) ?? [];
 
   if (matchingIndices.length === 0) {
     return -1;
@@ -737,9 +767,8 @@ export const resolveTextboxContentHit = (
   pageIndex: number,
   point: Point,
 ): TextboxHitResult | null => {
-  const fragmentWithContent = fragment as DrawingFragment & { contentMeasures?: ParagraphMeasure[] };
-  const contentMeasures = Array.isArray(fragmentWithContent.contentMeasures)
-    ? fragmentWithContent.contentMeasures
+  const contentMeasures = Array.isArray(fragment.contentMeasures)
+    ? fragment.contentMeasures
     : Array.isArray(block.contentMeasures)
       ? block.contentMeasures
       : [];
@@ -753,7 +782,11 @@ export const resolveTextboxContentHit = (
   // Mirror the painter's flex justifyContent offset for center/bottom alignment
   // (renderer.ts renderTextboxContent sets justifyContent on the inset container).
   const totalContentHeight = contentMeasures.reduce(
-    (sum, m) => sum + (m?.kind === 'paragraph' ? (m.totalHeight ?? 0) : 0),
+    (sum, contentMeasure) =>
+      sum +
+      (contentMeasure?.kind === 'paragraph' || contentMeasure?.kind === 'table'
+        ? (contentMeasure.totalHeight ?? 0)
+        : 0),
     0,
   );
   const availableHeight = Math.max(0, fragment.height - insets.top - insets.bottom);
@@ -776,6 +809,9 @@ export const resolveTextboxContentHit = (
     const contentBlock = contentBlocks[i];
     const contentMeasure = contentMeasures[i];
     if (contentBlock?.kind !== 'paragraph' || contentMeasure?.kind !== 'paragraph') {
+      if (contentBlock?.kind === 'table' && contentMeasure?.kind === 'table') {
+        paragraphStartY += contentMeasure.totalHeight;
+      }
       continue;
     }
 

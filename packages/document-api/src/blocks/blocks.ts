@@ -7,6 +7,12 @@ import type {
   BlocksListResult,
   BlocksDeleteRangeInput,
   BlocksDeleteRangeResult,
+  BlocksMergeInput,
+  BlocksMergeResult,
+  BlocksMoveInput,
+  BlocksMoveResult,
+  BlocksSplitInput,
+  BlocksSplitResult,
 } from '../types/blocks.types.js';
 import { BLOCK_NODE_TYPES, DELETABLE_BLOCK_NODE_TYPES } from '../types/base.js';
 import { storyLocatorToKey, type StoryLocator } from '../types/story.types.js';
@@ -19,11 +25,22 @@ export interface BlocksApi {
   list(input?: BlocksListInput): BlocksListResult;
   delete(input: BlocksDeleteInput, options?: MutationOptions): BlocksDeleteResult;
   deleteRange(input: BlocksDeleteRangeInput, options?: MutationOptions): BlocksDeleteRangeResult;
+  /** Split a paragraph at a visible-text offset. */
+  split(input: BlocksSplitInput, options?: MutationOptions): BlocksSplitResult;
+  /** Merge two adjacent paragraphs in the same story. */
+  merge(input: BlocksMergeInput, options?: MutationOptions): BlocksMergeResult;
+  /** Move a paragraph within the same story. */
+  move(input: BlocksMoveInput, options?: MutationOptions): BlocksMoveResult;
 }
 export interface BlocksAdapter {
   list(input?: BlocksListInput): BlocksListResult;
   delete(input: BlocksDeleteInput, options?: MutationOptions): BlocksDeleteResult;
   deleteRange(input: BlocksDeleteRangeInput, options?: MutationOptions): BlocksDeleteRangeResult;
+  /** Structural block operations. Engines that don't support them
+   * may reject with CAPABILITY_UNAVAILABLE. */
+  split?(input: BlocksSplitInput, options?: MutationOptions): BlocksSplitResult;
+  merge?(input: BlocksMergeInput, options?: MutationOptions): BlocksMergeResult;
+  move?(input: BlocksMoveInput, options?: MutationOptions): BlocksMoveResult;
 }
 // ---------------------------------------------------------------------------
 // Shared constants
@@ -202,4 +219,113 @@ export function executeBlocksDeleteRange(
 ): BlocksDeleteRangeResult {
   validateBlocksDeleteRangeInput(input);
   return adapter.deleteRange(input, normalizeMutationOptions(options));
+}
+// ---------------------------------------------------------------------------
+// blocks.split / blocks.merge / blocks.move validation
+// ---------------------------------------------------------------------------
+const PARAGRAPH_SHAPE_TYPES = new Set<string>(['paragraph', 'heading', 'listItem']);
+function validateBlockNodeAddressParagraph(address: unknown, operationLabel: string, field: string): void {
+  if (!address || typeof address !== 'object') {
+    throw new DocumentApiValidationError('INVALID_INPUT', `${operationLabel} requires a ${field}.`, {
+      fields: [field],
+    });
+  }
+  const addr = address as Record<string, unknown>;
+  if (addr.kind !== 'block') {
+    throw new DocumentApiValidationError('INVALID_INPUT', `${operationLabel} ${field}.kind must be "block".`, {
+      fields: [`${field}.kind`],
+    });
+  }
+  if (!addr.nodeId || typeof addr.nodeId !== 'string') {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      `${operationLabel} ${field}.nodeId must be a non-empty string.`,
+      { fields: [`${field}.nodeId`] },
+    );
+  }
+  if (typeof addr.nodeType !== 'string' || !PARAGRAPH_SHAPE_TYPES.has(addr.nodeType)) {
+    throw new DocumentApiValidationError(
+      'INVALID_TARGET',
+      `${operationLabel} ${field}.nodeType must be paragraph, heading, or listItem; got "${String(addr.nodeType)}".`,
+      { fields: [`${field}.nodeType`] },
+    );
+  }
+  validateStoryLocator(addr.story, `${field}.story`);
+}
+function validateBlocksSplitInput(input: BlocksSplitInput): void {
+  if (!input || typeof input !== 'object') {
+    throw new DocumentApiValidationError('INVALID_INPUT', 'blocks.split requires an input object.', {
+      fields: ['input'],
+    });
+  }
+  validateBlockNodeAddressParagraph(input.target, 'blocks.split', 'target');
+  if (typeof input.offset !== 'number' || !Number.isInteger(input.offset) || input.offset < 0) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      `blocks.split offset must be a non-negative integer, got ${JSON.stringify(input.offset)}.`,
+      { fields: ['offset'] },
+    );
+  }
+}
+function validateBlocksMergeInput(input: BlocksMergeInput): void {
+  if (!input || typeof input !== 'object') {
+    throw new DocumentApiValidationError('INVALID_INPUT', 'blocks.merge requires an input object.', {
+      fields: ['input'],
+    });
+  }
+  validateBlockNodeAddressParagraph(input.first, 'blocks.merge', 'first');
+  validateBlockNodeAddressParagraph(input.second, 'blocks.merge', 'second');
+}
+function validateBlocksMoveInput(input: BlocksMoveInput): void {
+  if (!input || typeof input !== 'object') {
+    throw new DocumentApiValidationError('INVALID_INPUT', 'blocks.move requires an input object.', {
+      fields: ['input'],
+    });
+  }
+  validateBlockNodeAddressParagraph(input.source, 'blocks.move', 'source');
+  validateBlockNodeAddressParagraph(input.destination, 'blocks.move', 'destination');
+  if (input.placement !== 'before' && input.placement !== 'after') {
+    throw new DocumentApiValidationError('INVALID_INPUT', 'blocks.move placement must be "before" or "after".', {
+      fields: ['placement'],
+    });
+  }
+}
+function unavailableBlocksResult<TResult extends BlocksSplitResult | BlocksMergeResult | BlocksMoveResult>(
+  operationName: string,
+): TResult {
+  return {
+    success: false,
+    failure: {
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: `${operationName} is not available. The host engine has not provided an adapter for this capability.`,
+      details: { operation: operationName },
+    },
+  } as TResult;
+}
+export function executeBlocksSplit(
+  adapter: BlocksAdapter,
+  input: BlocksSplitInput,
+  options?: MutationOptions,
+): BlocksSplitResult {
+  validateBlocksSplitInput(input);
+  if (!adapter.split) return unavailableBlocksResult<BlocksSplitResult>('blocks.split');
+  return adapter.split(input, normalizeMutationOptions(options));
+}
+export function executeBlocksMerge(
+  adapter: BlocksAdapter,
+  input: BlocksMergeInput,
+  options?: MutationOptions,
+): BlocksMergeResult {
+  validateBlocksMergeInput(input);
+  if (!adapter.merge) return unavailableBlocksResult<BlocksMergeResult>('blocks.merge');
+  return adapter.merge(input, normalizeMutationOptions(options));
+}
+export function executeBlocksMove(
+  adapter: BlocksAdapter,
+  input: BlocksMoveInput,
+  options?: MutationOptions,
+): BlocksMoveResult {
+  validateBlocksMoveInput(input);
+  if (!adapter.move) return unavailableBlocksResult<BlocksMoveResult>('blocks.move');
+  return adapter.move(input, normalizeMutationOptions(options));
 }

@@ -11,7 +11,8 @@
  * - Max 5,000 SVG elements per chart
  */
 
-import type { ChartModel, ChartSeriesData, DrawingGeometry } from '@superdoc/contracts';
+import type { ChartModel, ChartSeriesData, DrawingGeometry, RenderPlaceholder } from '@superdoc/contracts';
+import { applyRenderPlaceholderSemantics } from './images/render-placeholder.js';
 
 // ============================================================================
 // Performance Guardrails (§11)
@@ -52,6 +53,7 @@ export function createChartElement(
   doc: Document,
   chartData: ChartModel | undefined,
   geometry: DrawingGeometry,
+  placeholder?: RenderPlaceholder,
 ): HTMLElement {
   const container = doc.createElement('div');
   container.classList.add('superdoc-chart');
@@ -60,7 +62,7 @@ export function createChartElement(
   container.style.position = 'relative';
 
   if (!chartData || !chartData.series?.length) {
-    return createChartPlaceholder(doc, container, 'No chart data');
+    return createChartPlaceholder(doc, container, 'No chart data', placeholder);
   }
 
   if (chartData.chartType === 'barChart') {
@@ -101,7 +103,16 @@ export function createChartElement(
  * Create a placeholder for charts with missing data or unsupported types.
  * Preserves layout dimensions and is print-visible.
  */
-export function createChartPlaceholder(doc: Document, container: HTMLElement, label: string): HTMLElement {
+export function createChartPlaceholder(
+  doc: Document,
+  container: HTMLElement,
+  label: string,
+  placeholder: RenderPlaceholder = {
+    diagnosticIds: ['render.chart-not-supported'],
+    accessibleName: `Chart unavailable: ${label}`,
+  },
+): HTMLElement {
+  applyRenderPlaceholderSemantics(container, placeholder);
   container.style.display = 'flex';
   container.style.alignItems = 'center';
   container.style.justifyContent = 'center';

@@ -6,7 +6,7 @@
  * transition semantics.
  *
  * Consumed by: contract validation, SDK, CLI, docs, conformance tests,
- * and (transitively) the PM-binding layer in super-editor.
+ * and document-engine adapter layers.
  */
 
 // Property identifiers

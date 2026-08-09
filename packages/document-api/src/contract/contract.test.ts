@@ -48,6 +48,48 @@ function expectArrayToIncludeValues(
   expect(missing, `${label} missing expected codes`).toEqual([]);
 }
 
+type ContractTestSchemaShape = {
+  additionalProperties?: boolean;
+  required?: string[];
+  properties?: Record<string, ContractTestSchemaShape>;
+  items?: ContractTestSchemaShape;
+  oneOf?: ContractTestSchemaShape[];
+  const?: unknown;
+  enum?: unknown[];
+  type?: string;
+};
+
+function collectUnknownPropertySchemaErrors(
+  schema: ContractTestSchemaShape | undefined,
+  value: unknown,
+  path = '$',
+): string[] {
+  if (!schema) return [`${path}: missing schema`];
+  if (schema.type === 'array') {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item, index) => collectUnknownPropertySchemaErrors(schema.items, item, `${path}[${index}]`));
+  }
+  if (schema.type !== 'object' || value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return [];
+  }
+  const properties = schema.properties ?? {};
+  const errors: string[] = [];
+  for (const key of Object.keys(value)) {
+    const childPath = `${path}.${key}`;
+    const propertySchema = properties[key];
+    if (!propertySchema) {
+      if (schema.additionalProperties === false) {
+        errors.push(`${childPath}: unknown property`);
+      }
+      continue;
+    }
+    errors.push(
+      ...collectUnknownPropertySchemaErrors(propertySchema, (value as Record<string, unknown>)[key], childPath),
+    );
+  }
+  return errors;
+}
+
 describe('document-api contract catalog', () => {
   it('keeps operation ids explicit and format-valid', () => {
     expect([...new Set(OPERATION_IDS)]).toHaveLength(OPERATION_IDS.length);
@@ -113,6 +155,33 @@ describe('document-api contract catalog', () => {
       if (inputSchema.type !== 'object') continue;
       expect(inputSchema.additionalProperties).toBe(false);
     }
+  });
+
+  it('publishes list mutation receipt metadata on continuePrevious success', () => {
+    const schemas = buildInternalContractSchemas();
+    const outputSchema = schemas.operations['lists.continuePrevious'].output as ContractTestSchemaShape;
+    const successSchema = outputSchema.oneOf?.find((schema) => schema.properties?.success?.const === true);
+
+    expect(successSchema).toBeDefined();
+    expect(successSchema!.additionalProperties).toBe(false);
+    expect(Object.keys(successSchema!.properties!).sort()).toEqual([
+      'affectedStories',
+      'changed',
+      'item',
+      'remappedRefs',
+      'success',
+      'textRangeShifts',
+      'txId',
+    ]);
+    expect(
+      collectUnknownPropertySchemaErrors(successSchema, {
+        success: true,
+        item: { kind: 'block', nodeType: 'listItem', nodeId: 'LIST0001' },
+        affectedStories: [{ kind: 'story', storyType: 'body' }],
+        txId: 'lists.continuePrevious-1',
+        changed: true,
+      }),
+    ).toEqual([]);
   });
 
   it('declares insert input as a text or structural-content union', () => {
@@ -203,6 +272,83 @@ describe('document-api contract catalog', () => {
     expect((textTarget.properties?.story as { $ref?: string }).$ref).toBe('#/$defs/StoryLocator');
     expect(textTarget.required).toEqual(['kind', 'segments']);
     expect(textTarget.additionalProperties).toBe(false);
+  });
+
+  it('publishes story-scoped range resolution input in the contract schema', () => {
+    const schemas = buildInternalContractSchemas();
+    const resolveRangeInput = schemas.operations['ranges.resolve'].input as {
+      properties?: Record<string, { $ref?: string } | unknown>;
+      required?: string[];
+      additionalProperties?: boolean;
+    };
+
+    expect(resolveRangeInput.properties).toHaveProperty('in');
+    expect((resolveRangeInput.properties?.in as { $ref?: string }).$ref).toBe('#/$defs/StoryLocator');
+    expect(resolveRangeInput.required).toEqual(['start', 'end']);
+    expect(resolveRangeInput.additionalProperties).toBe(false);
+  });
+
+  it('publishes the public story locator on citation addresses', () => {
+    const schemas = buildInternalContractSchemas();
+    const citationInsertOutput = schemas.operations['citations.insert'].output as {
+      oneOf?: Array<{
+        properties?: {
+          citation?: {
+            properties?: Record<string, { $ref?: string } | unknown>;
+          };
+        };
+      }>;
+    };
+    const success = citationInsertOutput.oneOf?.find((variant) => variant.properties?.citation);
+    const story = success?.properties?.citation?.properties?.story as { $ref?: string } | undefined;
+
+    expect(story?.$ref).toBe('#/$defs/StoryLocator');
+  });
+
+  it('describes ranges.resolve refs as nullable until mutation-ready', () => {
+    const description = OPERATION_DESCRIPTION_MAP['ranges.resolve'];
+    const expectedResult = OPERATION_EXPECTED_RESULT_MAP['ranges.resolve'];
+
+    expect(description).toContain('handle.ref is nullable');
+    expect(description).toContain('mutation-ready');
+    expect(description).toContain('handle.ref !== null');
+    expect(description).toContain('coversFullTarget');
+    expect(expectedResult).toContain('handle.ref may be null');
+    expect(expectedResult).toContain('coversFullTarget');
+  });
+
+  it('documents reachable ranges.resolve story and ref-resolution validation failures', () => {
+    expectArrayToIncludeValues(
+      OPERATION_DEFINITIONS['ranges.resolve'].metadata.throws.preApply,
+      ['STORY_MISMATCH', 'AMBIGUOUS_MATCH', 'ADDRESS_STALE'],
+      'ranges.resolve throws.preApply',
+    );
+  });
+
+  it('publishes selectionTarget and structured content-control preset inputs in the contract schema', () => {
+    const schemas = buildInternalContractSchemas();
+    const selectionCurrentOutput = schemas.operations['selection.current'].output as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+    const createContentControlInput = schemas.operations['create.contentControl'].input as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+    const contentControlInfo = schemas.operations['contentControls.get'].output as {
+      properties?: Record<string, unknown>;
+    };
+
+    expect(selectionCurrentOutput.properties).toHaveProperty('selectionTarget');
+    expect(
+      (selectionCurrentOutput.properties?.selectionTarget as { oneOf?: Array<{ $ref?: string } | { type?: string }> })
+        .oneOf,
+    ).toEqual([{ $ref: '#/$defs/SelectionTarget' }, { type: 'null' }]);
+    expect(createContentControlInput.required).toEqual(['kind']);
+    expect((createContentControlInput.properties?.html as { type?: string }).type).toBe('string');
+    expect(createContentControlInput.properties).toHaveProperty('json');
+    expect(contentControlInfo.properties).toHaveProperty('selectionTarget');
+    expect(contentControlInfo.properties).toHaveProperty('isEmpty', { type: 'boolean' });
   });
 
   it('publishes cached field insert inputs in the contract schema', () => {
@@ -365,6 +511,22 @@ describe('document-api contract catalog', () => {
     expect(listVariants.some((variant) => variant.type === 'null')).toBe(true);
   });
 
+  it('publishes explicit tracked-change conversation provenance independently of spatial linkage', () => {
+    const schemas = buildInternalContractSchemas();
+    const getProperties = (schemas.operations['comments.get'].output as { properties?: Record<string, unknown> })
+      .properties;
+    const listProperties = (
+      schemas.operations['comments.list'].output as {
+        properties?: { items?: { items?: { properties?: Record<string, unknown> } } };
+      }
+    ).properties?.items?.items?.properties;
+
+    expect(getProperties).toHaveProperty('trackedChangeParentId');
+    expect(getProperties).toHaveProperty('trackedChangeThreadParentId');
+    expect(listProperties).toHaveProperty('trackedChangeParentId');
+    expect(listProperties).toHaveProperty('trackedChangeThreadParentId');
+  });
+
   it('publishes replacement in comment tracked-change enums for get/list and link defs', () => {
     const schemas = buildInternalContractSchemas();
     const commentInfoSchema = schemas.operations['comments.get'].output as {
@@ -408,6 +570,48 @@ describe('document-api contract catalog', () => {
     expect(defs.CommentTrackedChangeLink?.properties?.trackedChangeType?.enum).toEqual(
       expect.arrayContaining(['insert', 'delete', 'replacement', 'format']),
     );
+  });
+
+  it('publishes the create id alias, durable external identity, authorship, and metadata', () => {
+    const schemas = buildInternalContractSchemas();
+    const createProperties = (
+      schemas.operations['comments.create'].input as {
+        properties?: Record<string, unknown>;
+      }
+    ).properties;
+    const getProperties = (
+      schemas.operations['comments.get'].output as {
+        properties?: Record<string, unknown>;
+      }
+    ).properties;
+    const listProperties = (
+      schemas.operations['comments.list'].output as {
+        properties?: { items?: { items?: { properties?: Record<string, unknown> } } };
+      }
+    ).properties?.items?.items?.properties;
+
+    expect(createProperties).toEqual(
+      expect.objectContaining({
+        commentId: expect.any(Object),
+        externalId: expect.any(Object),
+        author: expect.any(Object),
+        authorId: expect.any(Object),
+        authorEmail: expect.any(Object),
+        authorImage: expect.any(Object),
+        metadata: expect.any(Object),
+      }),
+    );
+    for (const properties of [getProperties, listProperties]) {
+      expect(properties).toEqual(
+        expect.objectContaining({
+          externalId: expect.any(Object),
+          metadata: expect.any(Object),
+          creatorId: expect.any(Object),
+          creatorEmail: expect.any(Object),
+          creatorImage: expect.any(Object),
+        }),
+      );
+    }
   });
 
   it('requires id on comments.create success receipts', () => {
@@ -608,6 +812,105 @@ describe('document-api contract catalog', () => {
     );
   });
 
+  it('publishes the structured list semantic delta facts on trackChanges.get/list output schemas and keeps them closed (TC-LIST-003/004)', () => {
+    const schemas = buildInternalContractSchemas();
+    const getOutput = schemas.operations['trackChanges.get'].output as ContractTestSchemaShape;
+    const listOutput = schemas.operations['trackChanges.list'].output as ContractTestSchemaShape;
+    const listItem = listOutput.properties?.items?.items;
+    const validMemberDelta = {
+      kind: 'list-add',
+      from: { hasNumPr: false, numId: null, ilvl: null, styleKind: null },
+      to: { hasNumPr: true, numId: '7', ilvl: 0, styleKind: 'number' },
+    };
+    const validListFactPayload = {
+      listDeltas: [validMemberDelta],
+      listDeltaSummary: { uniformKind: 'list-add', counts: { 'list-add': 1 } },
+      targetIsListItem: true,
+      listActionKind: 'merge-items',
+    };
+    const unknownFieldPayloads = [
+      { ...validListFactPayload, unexpectedRowField: true },
+      {
+        ...validListFactPayload,
+        listDeltas: [{ ...validMemberDelta, unexpectedMemberField: true }],
+      },
+      {
+        ...validListFactPayload,
+        listDeltas: [
+          {
+            ...validMemberDelta,
+            from: { ...validMemberDelta.from, unexpectedSideField: true },
+          },
+        ],
+      },
+      {
+        ...validListFactPayload,
+        listDeltaSummary: {
+          ...validListFactPayload.listDeltaSummary,
+          counts: { ...validListFactPayload.listDeltaSummary.counts, unexpectedKind: 1 },
+        },
+      },
+    ];
+
+    for (const surface of [getOutput, listItem]) {
+      expect(surface).toBeDefined();
+      const memberDelta = surface!.properties?.listDeltas?.items;
+      expect(memberDelta?.properties?.kind?.enum).toEqual([
+        'list-add',
+        'list-remove',
+        'list-level',
+        'list-style',
+        'list-restart',
+        'indent',
+        'other-format',
+      ]);
+      // The new fields are accepted while the schemas stay CLOSED: unknown
+      // fields on the row, the member delta, its sides, and the summary
+      // counts are all still rejected.
+      expect(surface!.additionalProperties).toBe(false);
+      expect(memberDelta?.additionalProperties).toBe(false);
+      expect(memberDelta?.required).toEqual(['kind', 'from', 'to']);
+      expect(memberDelta?.properties?.from?.additionalProperties).toBe(false);
+      const summary = surface!.properties?.listDeltaSummary;
+      expect(summary?.additionalProperties).toBe(false);
+      expect(summary?.properties?.counts?.additionalProperties).toBe(false);
+      expect(surface!.properties?.targetIsListItem?.type).toBe('boolean');
+      expect(surface!.properties?.listActionKind?.enum).toEqual(['merge-items']);
+
+      expect(collectUnknownPropertySchemaErrors(surface, validListFactPayload)).toEqual([]);
+      for (const payload of unknownFieldPayloads) {
+        expect(collectUnknownPropertySchemaErrors(surface, payload).length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('publishes closed custom tracked-change attributes on list and get', () => {
+    const schemas = buildInternalContractSchemas();
+    const getOutput = schemas.operations['trackChanges.get'].output as ContractTestSchemaShape;
+    const listOutput = schemas.operations['trackChanges.list'].output as ContractTestSchemaShape;
+    const listItem = listOutput.properties?.items?.items;
+    const value = [
+      {
+        name: 'ext:reason',
+        namespaceUri: 'https://example.test/ns/edit',
+        localName: 'reason',
+        value: 'customer-request',
+      },
+    ];
+
+    for (const surface of [getOutput, listItem]) {
+      const attribute = surface?.properties?.customAttributes?.items;
+      expect(attribute?.additionalProperties).toBe(false);
+      expect(attribute?.required).toEqual(['name', 'namespaceUri', 'localName', 'value']);
+      expect(collectUnknownPropertySchemaErrors(surface, { customAttributes: value })).toEqual([]);
+      expect(
+        collectUnknownPropertySchemaErrors(surface, {
+          customAttributes: [{ ...value[0], unexpected: true }],
+        }),
+      ).toHaveLength(1);
+    }
+  });
+
   it('includes global.history in capabilities.get output schema', () => {
     const schemas = buildInternalContractSchemas();
     const capabilitiesOutput = schemas.operations['capabilities.get'].output as {
@@ -665,6 +968,29 @@ describe('document-api contract catalog', () => {
 
     expect(setBorderInput.properties?.target?.$ref).toBe('#/$defs/TableOrCellAddress');
     expect(insertRowSuccess.properties?.table?.$ref).toBe('#/$defs/TableAddress');
+  });
+
+  it('allows tables.setStyle to omit styleId for clear-style parity', () => {
+    const schemas = buildInternalContractSchemas();
+    const setStyleInput = schemas.operations['tables.setStyle'].input as {
+      properties?: { styleId?: { type?: string } };
+      required?: string[];
+      oneOf?: Array<{ required?: string[] }>;
+    };
+
+    expect(setStyleInput.properties?.styleId?.type).toBe('string');
+    expect(setStyleInput.required ?? []).not.toContain('styleId');
+    expect(setStyleInput.oneOf).toEqual([{ required: ['target'] }, { required: ['nodeId'] }]);
+  });
+
+  it('requires at least one tables.sort key', () => {
+    const schemas = buildInternalContractSchemas();
+    const sortInput = schemas.operations['tables.sort'].input as {
+      properties?: { keys?: { type?: string; minItems?: number } };
+    };
+
+    expect(sortInput.properties?.keys?.type).toBe('array');
+    expect(sortInput.properties?.keys?.minItems).toBe(1);
   });
 
   it('preserves row-locator constraints in row operation schemas', () => {
@@ -777,15 +1103,18 @@ describe('document-api contract catalog', () => {
       'contentControls',
       'bookmarks',
       'footnotes',
+      'clipboard',
       'crossRefs',
       'index',
       'captions',
       'fields',
       'citations',
       'authorities',
+      'clipboard',
       'ranges',
       'selection',
       'diff',
+      'export',
       'protection',
       'permissionRanges',
       'customXml',

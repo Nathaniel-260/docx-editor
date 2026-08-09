@@ -18,7 +18,7 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vp test run"
   },
   "dependencies": {
     "@superdoc/common": "workspace:*",
@@ -26,12 +26,15 @@
     "@superdoc/dom-contract": "workspace:*",
     "@superdoc/font-system": "workspace:*",
     "@superdoc/font-utils": "workspace:*",
+    "@superdoc/geometry-utils": "workspace:*",
     "@superdoc/preset-geometry": "workspace:*",
     "@superdoc/url-validation": "workspace:*"
   },
   "devDependencies": {
     "@superdoc/layout-engine": "workspace:*",
     "@superdoc/layout-resolved": "workspace:*",
-    "vitest": "catalog:"
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

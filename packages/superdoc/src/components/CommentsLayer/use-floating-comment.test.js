@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { isRef, isReactive } from 'vue';
 import { useFloatingComment } from './use-floating-comment.js';
 

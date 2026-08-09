@@ -25,7 +25,13 @@ import {
   executeListsSetLevelLayout,
   executeListsSetLevelAlignment,
   executeListsSetLevelRestart,
+  executeListsApply,
+  executeListsContinueV2,
+  executeListsGetState,
+  executeListsRemoveV2,
+  executeListsRestartV2,
 } from './lists.js';
+import { LIST_PRESET_IDS, LIST_PRESET_MARKERS } from './lists.types.js';
 
 const validTarget = { kind: 'block' as const, nodeType: 'listItem' as const, nodeId: 'li-1' };
 
@@ -112,6 +118,34 @@ describe('validateListItemTarget (strict listItem)', () => {
     const adapter = stubAdapter();
     executeListsIndent(adapter, { target: validTarget });
     expect(adapter.indent).toHaveBeenCalled();
+  });
+});
+
+describe('v2 list capability fallbacks', () => {
+  it('returns CAPABILITY_UNAVAILABLE when legacy adapters omit v2 numbering-aware hooks', () => {
+    const adapter = stubAdapter();
+    const target = { kind: 'block' as const, nodeType: 'paragraph' as const, nodeId: 'p1' };
+
+    expect(executeListsGetState(adapter, { target })).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+    expect(executeListsApply(adapter, { target, seed: 'ordered' })).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+    expect(executeListsContinueV2(adapter, { target })).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+    expect(executeListsRestartV2(adapter, { target, startAt: 1 })).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+    expect(executeListsRemoveV2(adapter, { target })).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
   });
 });
 
@@ -861,5 +895,34 @@ describe('lists.list validates query', () => {
     const adapter = stubAdapter();
     executeListsList(adapter, { kind: 'ordered', level: 0 });
     expect(adapter.list).toHaveBeenCalled();
+  });
+});
+
+describe('LIST_PRESET_MARKERS (canonical preset → OOXML marker map)', () => {
+  it('defines a marker for every preset id, with no extras', () => {
+    const markerKeys = Object.keys(LIST_PRESET_MARKERS).sort();
+    expect(markerKeys).toEqual([...LIST_PRESET_IDS].sort());
+  });
+
+  it('maps ordered presets to the expected numFmt/lvlText and start=1', () => {
+    expect(LIST_PRESET_MARKERS.decimal).toEqual({ numFmt: 'decimal', lvlText: '%1.', start: 1 });
+    // The two paren variants share numFmt but differ from their dot variants by lvlText.
+    expect(LIST_PRESET_MARKERS.decimalParenthesis).toEqual({ numFmt: 'decimal', lvlText: '%1)', start: 1 });
+    expect(LIST_PRESET_MARKERS.upperLetter).toEqual({ numFmt: 'upperLetter', lvlText: '%1.', start: 1 });
+    expect(LIST_PRESET_MARKERS.upperLetterParenthesis).toEqual({ numFmt: 'upperLetter', lvlText: '%1)', start: 1 });
+    expect(LIST_PRESET_MARKERS.lowerLetter).toEqual({ numFmt: 'lowerLetter', lvlText: '%1.', start: 1 });
+    expect(LIST_PRESET_MARKERS.lowerLetterParenthesis).toEqual({ numFmt: 'lowerLetter', lvlText: '%1)', start: 1 });
+    expect(LIST_PRESET_MARKERS.upperRoman).toEqual({ numFmt: 'upperRoman', lvlText: '%1.', start: 1 });
+    expect(LIST_PRESET_MARKERS.lowerRoman).toEqual({ numFmt: 'lowerRoman', lvlText: '%1.', start: 1 });
+  });
+
+  it('maps bullet presets to numFmt=bullet with a distinct glyph and no start', () => {
+    expect(LIST_PRESET_MARKERS.disc).toEqual({ numFmt: 'bullet', lvlText: '•' });
+    expect(LIST_PRESET_MARKERS.circle).toEqual({ numFmt: 'bullet', lvlText: 'o' });
+    expect(LIST_PRESET_MARKERS.square).toEqual({ numFmt: 'bullet', lvlText: '▪' });
+    expect(LIST_PRESET_MARKERS.dash).toEqual({ numFmt: 'bullet', lvlText: '-' });
+    for (const bullet of ['disc', 'circle', 'square', 'dash'] as const) {
+      expect(LIST_PRESET_MARKERS[bullet].start).toBeUndefined();
+    }
   });
 });

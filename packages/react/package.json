@@ -1,6 +1,6 @@
 {
   "name": "@superdoc-dev/react",
-  "version": "1.16.0",
+  "version": "2.0.0-next.5",
   "description": "Official React wrapper for the SuperDoc document editor",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -18,12 +18,12 @@
     }
   },
   "scripts": {
-    "build": "vite build",
-    "dev": "vite build --watch",
-    "test": "vitest run",
-    "pretype-check": "node ../../apps/cli/scripts/ensure-superdoc-build.js --types",
+    "build": "vp build",
+    "dev": "vp build --watch",
+    "test": "vp test run",
+    "pretype-check": "pnpm --prefix ../superdoc run build:es",
     "type-check": "tsc --noEmit",
-    "lint": "eslint src --ext .ts,.tsx",
+    "lint": "pnpm -w exec vp lint packages/react/src",
     "prepublishOnly": "pnpm run build"
   },
   "keywords": [
@@ -36,34 +36,31 @@
   ],
   "license": "AGPL-3.0",
   "dependencies": {
-    "superdoc": ">=1.0.0"
+    "superdoc": "workspace:2.4.0-next.64"
   },
   "peerDependencies": {
     "react": ">=16.8.0",
     "react-dom": ">=16.8.0",
-    "superdoc": ">=1.0.0"
+    "superdoc": "workspace:2.4.0-next.64"
   },
   "devDependencies": {
     "@testing-library/react": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
-    "@typescript-eslint/eslint-plugin": "catalog:",
-    "@typescript-eslint/parser": "catalog:",
-    "eslint": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
     "happy-dom": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plugin-dts": "catalog:",
-    "@vitejs/plugin-react": "catalog:",
+    "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
   "files": [
     "dist",
-    "style.css",
-    "README.md"
+    "style.css"
   ],
   "publishConfig": {
     "access": "public"
@@ -76,5 +73,5 @@
   "bugs": {
     "url": "https://github.com/superdoc/docx-editor/issues"
   },
-  "homepage": "https://github.com/superdoc/docx-editor/tree/main/packages/react#readme"
+  "homepage": "https://github.com/superdoc/docx-editor/tree/main/packages/react"
 }

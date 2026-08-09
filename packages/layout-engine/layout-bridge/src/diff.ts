@@ -21,9 +21,11 @@ import type {
   TabStop,
   DropCapDescriptor,
   ParagraphFrame,
+  TableBlock,
 } from '@superdoc/contracts';
-import { getParagraphInlineDirection } from '@superdoc/contracts';
+import { getParagraphInlineDirection, trackedChangeMetaSignature } from '@superdoc/contracts';
 import { fieldAnnotationKey } from './field-annotation-key.js';
+import { inlineBoxKey } from './inline-box-key.js';
 import { hashRunVisualMarks } from './run-visual-marks.js';
 import { hasTrackedChange, resolveTrackedChangesEnabled } from './tracked-changes-utils.js';
 
@@ -63,6 +65,12 @@ export type DirtyRegion = {
   lastStableIndex: number;
   insertedBlockIds: string[];
   deletedBlockIds: string[];
+  /**
+   * Existing blocks whose render-relevant content changed. This is distinct
+   * from insertion/deletion churn and lets pagination establish the complete
+   * affected frontier without guessing from only the first dirty ordinal.
+   */
+  changedBlockIds: string[];
   stableBlockIds: Set<string>;
 };
 
@@ -125,6 +133,10 @@ export const computeDirtyRegions = (previous: FlowBlock[], next: FlowBlock[]): D
 
   const deletedBlockIds = previous.filter((block) => !nextMap.has(block.id)).map((block) => block.id);
 
+  const changedBlockIds = next
+    .filter((block) => prevMap.has(block.id) && !stableBlockIds.has(block.id))
+    .map((block) => block.id);
+
   if (firstDirtyIndex === next.length && previous.length !== next.length) {
     firstDirtyIndex = Math.min(prevPointer, nextPointer);
   }
@@ -134,6 +146,7 @@ export const computeDirtyRegions = (previous: FlowBlock[], next: FlowBlock[]): D
     lastStableIndex,
     insertedBlockIds,
     deletedBlockIds,
+    changedBlockIds,
     stableBlockIds,
   };
 };
@@ -153,7 +166,65 @@ const shallowEqual = (a: FlowBlock, b: FlowBlock): boolean => {
     return drawingBlocksEqual(a, b);
   }
 
+  if (a.kind === 'table' && b.kind === 'table') {
+    return tableBlocksEqual(a, b);
+  }
+
   return false;
+};
+
+/**
+ * Compare the canonical, render-relevant table tree while deliberately
+ * ignoring source anchors and paragraph PM coordinates. Those coordinates
+ * shift after an earlier text edit without changing table geometry; treating
+ * every unchanged table as dirty widens the affected frontier and defeats the
+ * admitted table checkpoint profile.
+ */
+const tableBlocksEqual = (a: TableBlock, b: TableBlock): boolean => {
+  if (a === b) return true;
+  if (!jsonEqual(a.attrs, b.attrs)) return false;
+  if (!jsonEqual(a.columnWidths, b.columnWidths)) return false;
+  if (!jsonEqual(a.anchor, b.anchor)) return false;
+  if (!jsonEqual(a.wrap, b.wrap)) return false;
+  if (a.rows.length !== b.rows.length) return false;
+
+  for (let rowIndex = 0; rowIndex < a.rows.length; rowIndex += 1) {
+    const rowA = a.rows[rowIndex]!;
+    const rowB = b.rows[rowIndex]!;
+    if (rowA.id !== rowB.id || !jsonEqual(rowA.attrs, rowB.attrs) || rowA.cells.length !== rowB.cells.length) {
+      return false;
+    }
+    for (let cellIndex = 0; cellIndex < rowA.cells.length; cellIndex += 1) {
+      const cellA = rowA.cells[cellIndex]!;
+      const cellB = rowB.cells[cellIndex]!;
+      if (
+        cellA.id !== cellB.id ||
+        cellA.rowSpan !== cellB.rowSpan ||
+        cellA.colSpan !== cellB.colSpan ||
+        !jsonEqual(cellA.attrs, cellB.attrs)
+      ) {
+        return false;
+      }
+      if (!optionalFlowBlocksEqual(cellA.blocks, cellB.blocks)) return false;
+      if (!optionalFlowBlockEqual(cellA.paragraph, cellB.paragraph)) return false;
+    }
+  }
+  return true;
+};
+
+const optionalFlowBlockEqual = (a: FlowBlock | undefined, b: FlowBlock | undefined): boolean => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.id === b.id && shallowEqual(a, b);
+};
+
+const optionalFlowBlocksEqual = (a: FlowBlock[] | undefined, b: FlowBlock[] | undefined): boolean => {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (!optionalFlowBlockEqual(a[index], b[index])) return false;
+  }
+  return true;
 };
 
 /**
@@ -165,10 +236,7 @@ const shallowEqual = (a: FlowBlock, b: FlowBlock): boolean => {
  */
 const getTrackedChangeKey = (run: Run): string => {
   if (hasTrackedChange(run)) {
-    const tc = run.trackedChange;
-    const beforeHash = tc.before ? JSON.stringify(tc.before) : '';
-    const afterHash = tc.after ? JSON.stringify(tc.after) : '';
-    return `${tc.kind ?? ''}:${tc.id ?? ''}:${tc.author ?? ''}:${tc.date ?? ''}:${beforeHash}:${afterHash}`;
+    return trackedChangeMetaSignature(run.trackedChange);
   }
   return '';
 };
@@ -372,6 +440,7 @@ const paragraphAttrsEqual = (a?: ParagraphAttrs, b?: ParagraphAttrs): boolean =>
     a.tabIntervalTwips !== b.tabIntervalTwips ||
     a.keepNext !== b.keepNext ||
     a.keepLines !== b.keepLines ||
+    (a.widowControl !== false) !== (b.widowControl !== false) ||
     getParagraphInlineDirection(a) !== getParagraphInlineDirection(b) ||
     a.floatAlignment !== b.floatAlignment
   ) {
@@ -415,6 +484,13 @@ const paragraphBlocksEqual = (a: FlowBlock & { kind: 'paragraph' }, b: FlowBlock
 
   // Check paragraph-level visual attributes (alignment, spacing, indent, borders, etc.)
   if (!paragraphAttrsEqual(a.attrs, b.attrs)) return false;
+
+  const aInlineBoxes = a.inlineBoxes ?? [];
+  const bInlineBoxes = b.inlineBoxes ?? [];
+  if (aInlineBoxes.length !== bInlineBoxes.length) return false;
+  for (let i = 0; i < aInlineBoxes.length; i += 1) {
+    if (inlineBoxKey(aInlineBoxes[i]!) !== inlineBoxKey(bInlineBoxes[i]!)) return false;
+  }
 
   // Check runs
   if (a.runs.length !== b.runs.length) return false;
@@ -465,8 +541,6 @@ const imageRunsEqual = (a: ImageRun, b: ImageRun): boolean => {
     a.alt === b.alt &&
     a.title === b.title &&
     a.clipPath === b.clipPath &&
-    a.shapeClipPath === b.shapeClipPath &&
-    a.objectFit === b.objectFit &&
     a.distTop === b.distTop &&
     a.distBottom === b.distBottom &&
     a.distLeft === b.distLeft &&
@@ -529,7 +603,6 @@ const drawingBlocksEqual = (a: DrawingBlock, b: DrawingBlock): boolean => {
     return (
       drawingGeometryEqual(a.geometry, b.geometry) &&
       a.shapeKind === b.shapeKind &&
-      jsonEqual(a.customGeometry, b.customGeometry) &&
       a.fillColor === b.fillColor &&
       a.strokeColor === b.strokeColor &&
       a.strokeWidth === b.strokeWidth &&
@@ -537,8 +610,8 @@ const drawingBlocksEqual = (a: DrawingBlock, b: DrawingBlock): boolean => {
       a.textVerticalAlign === b.textVerticalAlign &&
       jsonEqual(a.textInsets, b.textInsets) &&
       jsonEqual(a.textContent, b.textContent) &&
+      jsonEqual(a.customGeometry, b.customGeometry) &&
       jsonEqual(a.lineEnds, b.lineEnds) &&
-      jsonEqual(a.effects, b.effects) &&
       jsonEqual(a.effectExtent, b.effectExtent) &&
       textboxContentEqual
     );
@@ -547,7 +620,6 @@ const drawingBlocksEqual = (a: DrawingBlock, b: DrawingBlock): boolean => {
   if (a.drawingKind === 'shapeGroup' && b.drawingKind === 'shapeGroup') {
     return (
       drawingGeometryEqual(a.geometry, b.geometry) &&
-      jsonEqual(a.effectExtent, b.effectExtent) &&
       shapeGroupTransformEqual(a.groupTransform, b.groupTransform) &&
       shapeGroupSizeEqual(a.size, b.size) &&
       shapeGroupChildrenEqual(a.shapes, b.shapes)
@@ -644,10 +716,7 @@ const shapeGroupTransformEqual = (a?: ShapeGroupTransform, b?: ShapeGroupTransfo
     a.childWidth === b.childWidth &&
     a.childHeight === b.childHeight &&
     a.childOriginXEmu === b.childOriginXEmu &&
-    a.childOriginYEmu === b.childOriginYEmu &&
-    (a.rotation ?? 0) === (b.rotation ?? 0) &&
-    Boolean(a.flipH) === Boolean(b.flipH) &&
-    Boolean(a.flipV) === Boolean(b.flipV)
+    a.childOriginYEmu === b.childOriginYEmu
   );
 };
 

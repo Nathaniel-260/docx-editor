@@ -6,7 +6,7 @@
  * dispatch chain, not synthetic calls.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { createTestPainter as createDomPainter } from './_test-utils.js';
 import { DomPainter } from './renderer.js';
 import type { FlowBlock, Measure, Layout } from '@superdoc/contracts';

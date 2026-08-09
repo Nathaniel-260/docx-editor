@@ -7,6 +7,11 @@ import { normalizeDocumentEntry } from '@superdoc/core/helpers/file.js';
 import useDocument from '@superdoc/composables/use-document';
 import BlankDOCX from '@superdoc/common/data/blank.docx?url';
 
+// Default measurement unit for rulers and measurement fields (Word's en-US
+// default). Shared by init() and reset() so a fresh load always starts at
+// inches, even after a prior document switched to cm.
+const DEFAULT_MEASUREMENT_UNIT = 'in';
+
 export const useSuperdocStore = defineStore('superdoc', () => {
   const currentConfig = ref(null);
   let exceptionHandler = null;
@@ -19,6 +24,10 @@ export const useSuperdocStore = defineStore('superdoc', () => {
   const activeZoom = ref(100);
   /** @type {import('vue').Ref<import('@superdoc/core/types/index.js').SuperDocZoomMode>} */
   const zoomMode = ref('manual');
+  // Document-wide measurement unit for rulers and measurement fields (Word's
+  // "measurement units" preference). Defaults to inches (Word's en-US default).
+  /** @type {import('vue').Ref<import('@superdoc/core/types/index.js').SuperDocMeasurementUnit>} */
+  const measurementUnit = ref(DEFAULT_MEASUREMENT_UNIT);
   // Latest viewport measurements (availableWidth / documentWidth / fitZoom),
   // written by the viewport-fit composable; null until editors mount.
   /** @type {import('vue').Ref<import('@superdoc/core/types/index.js').SuperDocViewportMetrics | null>} */
@@ -50,6 +59,12 @@ export const useSuperdocStore = defineStore('superdoc', () => {
     user.email = null;
     Object.assign(modules, {});
     activeSelection.value = null;
+    // Restore the measurement unit to its default so a prior 'cm' does not
+    // survive into a later default document. init() re-applies any explicit
+    // config.measurementUnit after this reset. This intentionally diverges
+    // from zoom (which persists) to honor the documented reset-to-inches
+    // behavior for measurement units.
+    measurementUnit.value = DEFAULT_MEASUREMENT_UNIT;
   };
 
   const documentScroll = reactive({
@@ -88,6 +103,15 @@ export const useSuperdocStore = defineStore('superdoc', () => {
         zoomMode.value = mode;
       } else {
         console.warn("[SuperDoc] zoom.mode expects 'manual' or 'fit-width'");
+      }
+    }
+
+    if (config.measurementUnit !== undefined) {
+      const unit = config.measurementUnit;
+      if (unit === 'in' || unit === 'cm') {
+        measurementUnit.value = unit;
+      } else {
+        console.warn("[SuperDoc] measurementUnit expects 'in' or 'cm'");
       }
     }
 
@@ -254,6 +278,48 @@ export const useSuperdocStore = defineStore('superdoc', () => {
   });
 
   const getDocument = (documentId) => documents.value.find((doc) => doc.id === documentId);
+
+  /**
+   * Remove one mounted document by id and prune shell-owned state tied to it.
+   *
+   * @param {string} documentId
+   * @returns {import('@superdoc/core/types/index.js').RuntimeDocument | null}
+   */
+  const removeDocument = (documentId) => {
+    const normalizedDocumentId = documentId != null ? String(documentId) : null;
+    if (!normalizedDocumentId) return null;
+
+    const docIndex = documents.value.findIndex((doc) => String(doc?.id ?? '') === normalizedDocumentId);
+    if (docIndex === -1) return null;
+
+    commentsStore.removeCommentsForDocument?.(normalizedDocumentId);
+
+    if (
+      activeSelection.value?.documentId != null &&
+      String(activeSelection.value.documentId) === normalizedDocumentId
+    ) {
+      activeSelection.value = null;
+      selectionPosition.value = {
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+        source: null,
+      };
+    }
+
+    delete pages[normalizedDocumentId];
+
+    const [removed] = documents.value.splice(docIndex, 1);
+
+    const configDocs = currentConfig.value?.documents;
+    if (Array.isArray(configDocs)) {
+      const configIndex = configDocs.findIndex((doc) => String(doc?.id ?? '') === normalizedDocumentId);
+      if (configIndex !== -1) configDocs.splice(configIndex, 1);
+    }
+
+    return removed ?? null;
+  };
   const getPageBounds = (documentId, page) => {
     const matchedPage = pages[documentId];
     if (!matchedPage) return;
@@ -290,6 +356,7 @@ export const useSuperdocStore = defineStore('superdoc', () => {
     users,
     activeZoom,
     zoomMode,
+    measurementUnit,
     viewportMetrics,
     documentScroll,
     isInternal,
@@ -311,6 +378,7 @@ export const useSuperdocStore = defineStore('superdoc', () => {
     reset,
     handlePageReady,
     getDocument,
+    removeDocument,
     getPageBounds,
   };
 });

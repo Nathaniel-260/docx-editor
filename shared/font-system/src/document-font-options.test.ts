@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import {
   BASELINE_BUNDLED,
   FULLY_ACTIVE_BUNDLED,
   buildDocumentFontOptions,
   buildFontFamilyOptions,
+  createBundledActivation,
   type FontFaceRequest,
   type FontLoadStatus,
   type FontRegistry,
@@ -190,5 +191,82 @@ describe('buildFontFamilyOptions (custom UI font picker rows)', () => {
     const options = buildFontFamilyOptions([{ logicalFamily: 'Calibri', previewFamily: 'Carlito' }]);
     const calibri = options.find((option) => option.label === 'Calibri');
     expect(calibri).toMatchObject({ label: 'Calibri', value: 'Calibri', previewFamily: 'Carlito' });
+  });
+
+  it('canonicalizes a document CSS-stack family to its first family and dedupes against the baseline', () => {
+    // A document run can carry a fallback stack as its family. The picker must advertise the
+    // logical font ("Arial"), not the stack, and must not list both "Arial" and "Arial, sans-serif".
+    const options = buildFontFamilyOptions([
+      { logicalFamily: 'Arial, sans-serif', previewFamily: 'Arial' },
+      { logicalFamily: '"Times New Roman", serif', previewFamily: 'Times New Roman' },
+    ]);
+    expect(options.map((o) => o.label)).toEqual(['Arial', 'Courier New', 'Times New Roman']);
+    expect(options.filter((o) => o.label === 'Arial')).toHaveLength(1);
+    expect(options.filter((o) => o.label === 'Times New Roman')).toHaveLength(1);
+    // The applied value is the canonical family, never the raw stack.
+    expect(options.find((o) => o.label === 'Arial')).toMatchObject({ value: 'Arial' });
+    expect(options.some((o) => o.value.includes(','))).toBe(false);
+  });
+
+  it('lists a document stack font absent from the baseline under its canonical first family', () => {
+    const options = buildFontFamilyOptions([{ logicalFamily: 'Brand Sans, sans-serif', previewFamily: 'Brand Sans' }]);
+    const brand = options.find((o) => o.label === 'Brand Sans');
+    expect(brand).toMatchObject({ label: 'Brand Sans', value: 'Brand Sans', previewFamily: 'Brand Sans' });
+    expect(options.some((o) => o.label === 'Brand Sans, sans-serif')).toBe(false);
+  });
+
+  // The font-config matrix (SD-3515): the picker list each scenario advertises. Baseline and the
+  // full pack are covered above; these pin the include / exclude / custom + full scenarios. Every
+  // scenario must stay free of duplicate canonical families and raw fallback-stack labels.
+  const noStacksNoDupes = (options: ReturnType<typeof buildFontFamilyOptions>): void => {
+    expect(options.some((o) => o.label.includes(',') || o.value.includes(','))).toBe(false);
+    const labels = options.map((o) => o.label);
+    expect(new Set(labels).size).toBe(labels.length);
+  };
+
+  it('include: advertises exactly the listed bundled families (the include list is exhaustive)', () => {
+    const activation = createBundledActivation({ packConfigured: true, include: ['Georgia', 'Verdana'] });
+    const options = buildFontFamilyOptions([], activation);
+    expect(options.map((o) => o.label)).toEqual(['Georgia', 'Verdana']);
+    // A bundled family not in the include list is absent (incl. the browser-safe baseline names,
+    // which are bundled families gated by the same predicate).
+    expect(options.some((o) => o.label === 'Tahoma')).toBe(false);
+    expect(options.some((o) => o.label === 'Arial')).toBe(false);
+    noStacksNoDupes(options);
+  });
+
+  it('exclude: drops the listed families and keeps the rest of the pack', () => {
+    const activation = createBundledActivation({ packConfigured: true, exclude: ['Georgia', 'Verdana'] });
+    const options = buildFontFamilyOptions([], activation);
+    const full = buildFontFamilyOptions([], FULLY_ACTIVE_BUNDLED);
+    expect(options.some((o) => o.label === 'Georgia')).toBe(false);
+    expect(options.some((o) => o.label === 'Verdana')).toBe(false);
+    expect(options.some((o) => o.label === 'Tahoma')).toBe(true);
+    expect(options).toHaveLength(full.length - 2);
+    noStacksNoDupes(options);
+  });
+
+  it('full + custom: both bundled families and the document custom font appear, deduped and clean', () => {
+    const options = buildFontFamilyOptions(
+      [{ logicalFamily: 'Acme Custom', previewFamily: 'Acme Custom' }],
+      FULLY_ACTIVE_BUNDLED,
+    );
+    expect(options.some((o) => o.label === 'Acme Custom')).toBe(true);
+    expect(options.some((o) => o.label === 'Verdana')).toBe(true);
+    expect(options.find((o) => o.label === 'Acme Custom')).toMatchObject({ value: 'Acme Custom' });
+    noStacksNoDupes(options);
+  });
+
+  it('preserves an internal comma in a quoted first family (does not truncate at the comma)', () => {
+    const options = buildFontFamilyOptions([
+      { logicalFamily: '"Acme, Inc Sans", sans-serif', previewFamily: 'Acme, Inc Sans' },
+      { logicalFamily: "'Foo, Bar', serif", previewFamily: 'Foo, Bar' },
+    ]);
+    const acme = options.find((o) => o.label === 'Acme, Inc Sans');
+    expect(acme).toMatchObject({ label: 'Acme, Inc Sans', value: 'Acme, Inc Sans' });
+    expect(options.some((o) => o.label === 'Foo, Bar')).toBe(true);
+    // The leading family is taken whole, never split to "Acme" / "Foo".
+    expect(options.some((o) => o.label === 'Acme')).toBe(false);
+    expect(options.some((o) => o.label === 'Foo')).toBe(false);
   });
 });

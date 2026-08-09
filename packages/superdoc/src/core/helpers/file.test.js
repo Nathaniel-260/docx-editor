@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { extractBrowserFile, normalizeDocumentEntry } from './file.js';
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';

@@ -3,7 +3,7 @@
  * These are used when rendering cropped images (a:srcRect / inset clip-path).
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { resolveClipPath, applyImageClipPath } from './image-clip-path.js';
 
 describe('resolveClipPath', () => {

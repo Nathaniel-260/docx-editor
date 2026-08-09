@@ -6,7 +6,7 @@
  * the passed geometry parameter, not always block.geometry.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import { createTestPainter as createDomPainter } from './_test-utils.js';
 import type { FlowBlock, Measure, Layout, DrawingGeometry } from '@superdoc/contracts';
 

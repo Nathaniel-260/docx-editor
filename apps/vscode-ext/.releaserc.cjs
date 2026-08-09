@@ -1,4 +1,3 @@
-/* eslint-env node */
 const {
   createCommitAnalyzer,
   createReleaseNotesGenerator,
@@ -11,9 +10,10 @@ const {
  * semantic-release-commit-filter — do not use both (the filter restricts
  * to CWD, which undoes the expansion).
  *
- * Keep in sync with .github/workflows/release-vscode-ext.yml paths: trigger.
+ * The public release-vscode-ext.yml was removed from the v2 tree; the v1
+ * marketplace train runs from Orbit main, which keeps its own copy.
  */
-const RELEASE_PATHS = [
+require('../../scripts/semantic-release/patch-commit-filter.cjs')([
   'apps/vscode-ext',
   'packages/superdoc',
   'packages/super-editor',
@@ -22,9 +22,7 @@ const RELEASE_PATHS = [
   'packages/preset-geometry',
   'shared',
   'pnpm-workspace.yaml',
-];
-
-require('../../scripts/semantic-release/patch-commit-filter.cjs')(RELEASE_PATHS);
+]);
 
 const branch = process.env.GITHUB_REF_NAME || process.env.CI_COMMIT_BRANCH;
 
@@ -35,28 +33,16 @@ const branches = [
 
 const isPrerelease = branches.some((b) => typeof b === 'object' && b.name === branch && b.prerelease);
 
-// GitHub Releases are stable-only; prerelease tags still proceed on main.
-const shouldPublishGitHubRelease = Boolean(branch) && !isPrerelease;
-// Linear release comments remain the shipped-version breadcrumb, so
-// prereleases link to their Git tags when no GitHub Release exists.
+// stable -> main syncs (real merges) re-attribute prereleases to PRs already shipped on @latest.
+// Gate per-PR/issue success comments off on prereleases to avoid duplicate "shipped" comments.
+const shouldCommentOnRelease = !isPrerelease;
+// Linear release comments are the shipped-version breadcrumb inside Linear
+// itself, so keep them on for prereleases even while GitHub PR comments stay
+// gated separately.
 const shouldCommentOnLinearRelease = true;
 
 // Use AI-powered notes for stable releases, conventional generator for prereleases
-const notesPlugin = isPrerelease
-  ? createReleaseNotesGenerator()
-  : [
-      'semantic-release-ai-notes',
-      {
-        style: 'concise',
-        scope: {
-          name: 'SuperDoc for VS Code',
-          paths: RELEASE_PATHS,
-          audience: 'VS Code users editing documents with the SuperDoc extension',
-          instructions:
-            'This extension bundles the SuperDoc editor. Only mention editor/engine changes when they change what a VS Code user sees or can do inside the editor.',
-        },
-      },
-    ];
+const notesPlugin = isPrerelease ? createReleaseNotesGenerator() : ['semantic-release-ai-notes', { style: 'concise' }];
 
 const config = {
   branches,
@@ -79,9 +65,16 @@ const config = {
   ],
 };
 
-// VS Code Marketplace doesn't support semver prerelease versions, so only
-// stable releases build and publish a .vsix.
-if (!isPrerelease) {
+// VS Code Marketplace doesn't support semver prerelease versions (e.g., 0.0.1-next.1)
+// Only publish stable releases to marketplace; prereleases get GitHub release with .vsix attached
+if (isPrerelease) {
+  config.plugins.push([
+    '@semantic-release/exec',
+    {
+      prepareCmd: 'pnpm run package', // Creates .vsix file only
+    },
+  ]);
+} else {
   config.plugins.push([
     '@semantic-release/exec',
     {
@@ -110,15 +103,14 @@ config.plugins.push([
   },
 ]);
 
-if (shouldPublishGitHubRelease) {
-  config.plugins.push([
-    '@semantic-release/github',
-    {
-      assets: [{ path: '*.vsix', label: 'VS Code Extension' }],
-      successComment:
-        ':tada: This ${issue.pull_request ? "PR" : "issue"} is included in **vscode-ext** v${nextRelease.version}',
-    },
-  ]);
-}
+config.plugins.push([
+  '@semantic-release/github',
+  {
+    assets: [{ path: '*.vsix', label: 'VS Code Extension' }],
+    successComment:
+      ':tada: This ${issue.pull_request ? "PR" : "issue"} is included in **vscode-ext** v${nextRelease.version}',
+    successCommentCondition: shouldCommentOnRelease ? undefined : false,
+  },
+]);
 
 module.exports = config;

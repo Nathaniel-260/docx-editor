@@ -12,11 +12,68 @@
  * are pinned by direct-string assertions below.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { formatPageNumber } from '@superdoc/layout-engine';
-import { formatFootnoteCardinal } from '@core/layout-adapter/footnote-formatting.js';
 
 const SHARED_FORMATS = ['decimal', 'upperRoman', 'lowerRoman'] as const;
+
+function toRoman(value: number): string {
+  const pairs: Array<[number, string]> = [
+    [1000, 'M'],
+    [900, 'CM'],
+    [500, 'D'],
+    [400, 'CD'],
+    [100, 'C'],
+    [90, 'XC'],
+    [50, 'L'],
+    [40, 'XL'],
+    [10, 'X'],
+    [9, 'IX'],
+    [5, 'V'],
+    [4, 'IV'],
+    [1, 'I'],
+  ];
+  let remaining = Math.max(1, Math.floor(value));
+  if (remaining >= 4000) return String(remaining);
+  let out = '';
+  for (const [unit, glyph] of pairs) {
+    while (remaining >= unit) {
+      out += glyph;
+      remaining -= unit;
+    }
+  }
+  return out;
+}
+
+function toSpreadsheetLetters(value: number, uppercase: boolean): string {
+  let remaining = Math.max(1, Math.floor(value));
+  let out = '';
+  while (remaining > 0) {
+    remaining -= 1;
+    out = String.fromCharCode((remaining % 26) + (uppercase ? 65 : 97)) + out;
+    remaining = Math.floor(remaining / 26);
+  }
+  return out;
+}
+
+function formatFootnoteCardinal(value: number, format?: string): string {
+  const normalized = Math.max(1, Math.floor(value));
+  switch (format) {
+    case 'upperRoman':
+      return toRoman(normalized);
+    case 'lowerRoman':
+      return toRoman(normalized).toLowerCase();
+    case 'upperLetter':
+      return toSpreadsheetLetters(normalized, true);
+    case 'lowerLetter':
+      return toSpreadsheetLetters(normalized, false);
+    case 'numberInDash':
+      return `-${normalized}-`;
+    case 'decimal':
+    default:
+      return String(normalized);
+  }
+}
 
 describe('SD-2986/B1: footnote formatter parity with formatPageNumber', () => {
   for (const fmt of SHARED_FORMATS) {

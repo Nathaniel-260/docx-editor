@@ -13,6 +13,7 @@
     { "path": "../../contracts/tsconfig.json" },
     { "path": "../../geometry-utils/tsconfig.json" },
     { "path": "../../../word-layout/tsconfig.json" },
-    { "path": "../../../../shared/common/tsconfig.json" }
+    { "path": "../../../../shared/common/tsconfig.json" },
+    { "path": "../../../../shared/font-system/tsconfig.json" }
   ]
 }

@@ -1,4 +1,12 @@
-import type { BlockNodeType, ReceiptFailure, ReceiptInsert, TextAddress } from '../types/index.js';
+import type {
+  AffectedRefRemapping,
+  BlockNodeType,
+  ReceiptFailure,
+  ReceiptInsert,
+  StoryLocator,
+  TextAddress,
+  TextRangeShift,
+} from '../types/index.js';
 import type { DiscoveryOutput } from '../types/discovery.js';
 // ---------------------------------------------------------------------------
 // Address types
@@ -37,7 +45,9 @@ export type ListPresetId =
   | 'decimal'
   | 'decimalParenthesis'
   | 'lowerLetter'
+  | 'lowerLetterParenthesis'
   | 'upperLetter'
+  | 'upperLetterParenthesis'
   | 'lowerRoman'
   | 'upperRoman'
   | 'disc'
@@ -54,7 +64,9 @@ export const LIST_PRESET_IDS = [
   'decimal',
   'decimalParenthesis',
   'lowerLetter',
+  'lowerLetterParenthesis',
   'upperLetter',
+  'upperLetterParenthesis',
   'lowerRoman',
   'upperRoman',
   'disc',
@@ -62,6 +74,35 @@ export const LIST_PRESET_IDS = [
   'square',
   'dash',
 ] as const satisfies readonly ListPresetId[];
+/**
+ * Canonical OOXML marker shape for each list preset. This is the single source
+ * of truth for what glyph/number-format a preset materializes into, consumed by
+ * the v2 adapter (numbering-definition mutation) and the v2 host (variant
+ * comparison for style-aware list toggling). Keep this aligned with the toolbar
+ * style-key map in the SuperDoc package.
+ */
+export interface ListPresetMarker {
+  /** OOXML `w:numFmt` value (`decimal`, `upperLetter`, `bullet`, ...). */
+  numFmt: string;
+  /** OOXML `w:lvlText` template (`%1.`, `%1)`, `•`, ...). */
+  lvlText: string;
+  /** First number for ordered presets; omitted for bullets. */
+  start?: number;
+}
+export const LIST_PRESET_MARKERS: Record<ListPresetId, ListPresetMarker> = {
+  decimal: { numFmt: 'decimal', lvlText: '%1.', start: 1 },
+  decimalParenthesis: { numFmt: 'decimal', lvlText: '%1)', start: 1 },
+  lowerLetter: { numFmt: 'lowerLetter', lvlText: '%1.', start: 1 },
+  lowerLetterParenthesis: { numFmt: 'lowerLetter', lvlText: '%1)', start: 1 },
+  upperLetter: { numFmt: 'upperLetter', lvlText: '%1.', start: 1 },
+  upperLetterParenthesis: { numFmt: 'upperLetter', lvlText: '%1)', start: 1 },
+  lowerRoman: { numFmt: 'lowerRoman', lvlText: '%1.', start: 1 },
+  upperRoman: { numFmt: 'upperRoman', lvlText: '%1.', start: 1 },
+  disc: { numFmt: 'bullet', lvlText: '•' },
+  circle: { numFmt: 'bullet', lvlText: 'o' },
+  square: { numFmt: 'bullet', lvlText: '▪' },
+  dash: { numFmt: 'bullet', lvlText: '-' },
+};
 // ---------------------------------------------------------------------------
 // Failure code enums
 // ---------------------------------------------------------------------------
@@ -413,6 +454,13 @@ export interface ListsInsertSuccessResult {
 export interface ListsMutateItemSuccessResult {
   success: true;
   item: ListItemAddress;
+  /** Tracked changes authored by this mutation when `changeMode` is tracked. */
+  trackedChangeRefs?: ReceiptInsert[];
+  affectedStories?: StoryLocator[];
+  remappedRefs?: AffectedRefRemapping[];
+  textRangeShifts?: TextRangeShift[];
+  txId?: string;
+  changed?: boolean;
 }
 export interface ListsCreateSuccessResult {
   success: true;
@@ -485,3 +533,55 @@ export interface ListsDeleteSuccessResult {
   deletedCount: number;
 }
 export type ListsDeleteResult = ListsDeleteSuccessResult | ListsFailureResult;
+// ---------------------------------------------------------------------------
+// v2 numbering-aware list operation surface.
+// ---------------------------------------------------------------------------
+/**
+ * Target shape accepted by the v2 list operations. We accept paragraph
+ * blocks (the substrate identifies them by w14:paraId; the public type
+ * surfaces them under both `paragraph` and `listItem` node types so callers
+ * can pass refs obtained from `blocks.list` or from `lists.get*`).
+ */
+export type ListsBlockTarget =
+  | { kind: 'block'; nodeType: 'paragraph'; nodeId: string }
+  | { kind: 'block'; nodeType: 'listItem'; nodeId: string };
+export interface ListsGetStateInput {
+  target: ListsBlockTarget;
+}
+export interface ListsGetStateSuccessResult {
+  success: true;
+  isListItem: boolean;
+  /** numId; null when the paragraph is not a list item. */
+  numId: string | null;
+  /** Level (`ilvl`); 0 when the paragraph is not a list item or has no ilvl. */
+  ilvl: number;
+  /** abstractNumId from the catalog; null when unknown. */
+  abstractNumId: string | null;
+  /** Level number format at the resolved level; null when unknown. */
+  numFmt: string | null;
+  /** Level text template at the resolved level; null when unknown. */
+  lvlText: string | null;
+  /** Coarse seed classification; null when unknown. */
+  seed: 'bullet' | 'ordered' | null;
+}
+export type ListsGetStateResult = ListsGetStateSuccessResult | ListsFailureResult;
+export interface ListsApplyInput {
+  target: ListsBlockTarget;
+  /** `'bullet'` or `'ordered'`. Used when materializing a new abstract num. */
+  seed: ListKind;
+  /** Optional existing numId to attach the paragraph to instead of seeding a new one. */
+  reuseNumId?: string;
+  /** Optional ilvl; defaults to 0. */
+  ilvl?: number;
+}
+export interface ListsContinueV2Input {
+  target: ListsBlockTarget;
+}
+export interface ListsRestartV2Input {
+  target: ListsBlockTarget;
+  /** First number to restart at; defaults to 1. */
+  startAt?: number;
+}
+export interface ListsRemoveV2Input {
+  target: ListsBlockTarget;
+}

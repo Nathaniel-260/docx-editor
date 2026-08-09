@@ -1,4 +1,4 @@
-import type { WorkingTableGridInput } from './autofit-normalize.js';
+import type { WorkingTableGridInput, WorkingTableRowInput } from './autofit-normalize.js';
 import { computeFixedTableColumnWidths, type FixedLayoutResult } from './fixed-table-columns.js';
 
 /**
@@ -45,8 +45,6 @@ export type AutoFitCellInput = {
   maxContentWidth?: number;
   /** Preferred width hint equivalent to `tcW`, in pixels. */
   preferredWidth?: number;
-  /** Horizontal padding + cell-border insets baked into the content widths, in pixels. */
-  horizontalInsets?: number;
 };
 
 /**
@@ -78,8 +76,6 @@ export type AutoFitContentMetricsCell = {
   minContentWidth: number;
   /** Maximum outer cell width, in pixels. */
   maxContentWidth: number;
-  /** Horizontal padding + cell-border insets baked into the content widths, in pixels. */
-  horizontalInsets?: number;
 };
 
 /**
@@ -170,7 +166,6 @@ type NormalizedCell = {
   preferredWidth?: number;
   minContentWidth: number;
   maxContentWidth: number;
-  horizontalInsets: number;
 };
 
 type NormalizedRow = {
@@ -207,7 +202,15 @@ export function computeAutoFitColumnWidths(input: AutoFitInput): AutoFitResult {
   const { workingInput, fixedLayout, rowMetrics, minColumnWidth } = context;
 
   if (workingInput.layoutMode === 'fixed') {
-    return finalizeResult('fixed', fixedLayout.columnWidths, minColumnWidth);
+    return finalizeResult(workingInput.layoutMode, fixedLayout.columnWidths, minColumnWidth);
+  }
+  if (workingInput.stableAutoGrid === true) {
+    const widthBudget = sanitizeOptionalWidth(workingInput.autoGridWidthBudget);
+    const stableWidths =
+      widthBudget != null && sumWidths(fixedLayout.columnWidths) > widthBudget
+        ? scaleToTargetWidth(fixedLayout.columnWidths, widthBudget)
+        : fixedLayout.columnWidths;
+    return finalizeResult(workingInput.layoutMode, stableWidths, minColumnWidth);
   }
 
   const gridColumnCount = fixedLayout.gridColumnCount;
@@ -219,7 +222,6 @@ export function computeAutoFitColumnWidths(input: AutoFitInput): AutoFitResult {
   const currentWidths = fixedLayout.columnWidths.slice(0, gridColumnCount);
   const minBounds = new Array<number>(gridColumnCount).fill(0);
   const maxBounds = new Array<number>(gridColumnCount).fill(0);
-  const textBounds = new Array<number>(gridColumnCount).fill(0);
   const preferredOverrides = new Array<number | undefined>(gridColumnCount).fill(undefined);
   const multiSpanCells: NormalizedCell[] = [];
 
@@ -227,7 +229,6 @@ export function computeAutoFitColumnWidths(input: AutoFitInput): AutoFitResult {
     rows: normalizedRows,
     minBounds,
     maxBounds,
-    textBounds,
     preferredOverrides,
     multiSpanCells,
   });
@@ -242,9 +243,15 @@ export function computeAutoFitColumnWidths(input: AutoFitInput): AutoFitResult {
   let resolvedWidths = currentWidths.slice();
   const preferredTableWidth = sanitizeOptionalWidth(workingInput.preferredTableWidth);
   const autoGridWidthBudget = sanitizeOptionalWidth(workingInput.autoGridWidthBudget);
+  const implicitPreferredTableWidth =
+    preferredTableWidth == null && autoGridWidthBudget == null
+      ? deriveImplicitPreferredTableWidthFromRows(workingInput)
+      : undefined;
   let targetTableWidth =
     preferredTableWidth ??
-    (autoGridWidthBudget != null ? Math.min(fixedLayout.totalWidth, autoGridWidthBudget) : fixedLayout.totalWidth);
+    (autoGridWidthBudget != null
+      ? Math.min(fixedLayout.totalWidth, autoGridWidthBudget)
+      : (implicitPreferredTableWidth ?? fixedLayout.totalWidth));
   const canOverflowAvailableWidth =
     preferredTableWidth != null || (autoGridWidthBudget == null && hasCompleteAuthoredGrid(workingInput));
   const maxResolvedTableWidth = canOverflowAvailableWidth
@@ -261,40 +268,7 @@ export function computeAutoFitColumnWidths(input: AutoFitInput): AutoFitResult {
     targetTableWidth = Math.min(targetTableWidth, maxResolvedTableWidth);
   } else {
     targetTableWidth = Math.min(targetTableWidth, maxResolvedTableWidth);
-    if (workingInput.contentSizeAutoTable === true) {
-      // Pure-auto tables content-size like Word: each column takes its max-content
-      // width and the table ends at the content demand, capped by the available
-      // width (the shrink below redistributes overflow). The authored grid sum is
-      // deliberately ignored here; it is not a Word layout cache for this shape.
-      // (SD-3309)
-      const columnBandAllowances = workingInput.columnBandAllowances;
-      // Word band rule (SD-3308 probes): the column grows by half a band per edge
-      // (the allowance); the painted band then consumes the other half from the
-      // padding. Padding compresses but TEXT never clips, so the column is floored
-      // at text + the full bands (2x the allowance).
-      resolvedWidths = maxBounds.map((max, index) => {
-        const allowance = columnBandAllowances?.[index] ?? 0;
-        const withAllowance = Math.max(max, minBounds[index]) + allowance;
-        const textFloor = textBounds[index] + allowance * 2;
-        return Math.max(withAllowance, textFloor);
-      });
-      // Spanning cells must keep their max-content demand: the proportional spread in
-      // applyMultiSpanMaximums can leave the covered columns collectively short (span
-      // padding is per cell, not per column), which wraps the span text where Word
-      // keeps one line. Top up the covered columns evenly. (SD-3309)
-      for (const spanCell of multiSpanCells) {
-        const covered = resolvedWidths.slice(spanCell.startColumn, spanCell.startColumn + spanCell.span);
-        const currentTotal = sumWidths(covered);
-        const demand = spanCell.preferredWidth ?? spanCell.maxContentWidth;
-        if (currentTotal < demand && covered.length > 0) {
-          const topUp = (demand - currentTotal) / covered.length;
-          for (let index = 0; index < covered.length; index++) {
-            resolvedWidths[spanCell.startColumn + index] += topUp;
-          }
-        }
-      }
-      targetTableWidth = Math.min(sumWidths(resolvedWidths), maxResolvedTableWidth);
-    } else if (!shouldPreservePreferredGrid) {
+    if (!shouldPreservePreferredGrid) {
       resolvedWidths = redistributeTowardMaximumsWithinCurrentTable(resolvedWidths, minBounds, maxBounds);
       resolvedWidths = redistributeTowardContentWeightedShape(resolvedWidths, minBounds, maxBounds);
     }
@@ -325,6 +299,59 @@ function hasCompleteAuthoredGrid(workingInput: WorkingTableGridInput): boolean {
   }
 
   return workingInput.rows.some((row) => row.logicalColumnCount >= authoredColumnCount);
+}
+
+function deriveImplicitPreferredTableWidthFromRows(workingInput: WorkingTableGridInput): number | undefined {
+  if (hasCompleteAuthoredGrid(workingInput)) {
+    return undefined;
+  }
+
+  for (const row of workingInput.rows) {
+    const rowWidth = resolveFullySpecifiedRowPreferredWidth(row);
+    if (rowWidth != null) {
+      return rowWidth;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveFullySpecifiedRowPreferredWidth(row: WorkingTableRowInput): number | undefined {
+  if (row.logicalColumnCount <= 0) {
+    return undefined;
+  }
+
+  const segments = [
+    ...(row.skippedColumns ?? []).map((column) => ({
+      startColumn: column.columnIndex,
+      span: 1,
+      preferredWidth: sanitizeOptionalWidth(column.preferredWidth),
+    })),
+    ...(row.cells ?? []).map((cell) => {
+      const placedCell = cell as { startColumn: number; span?: number; preferredWidth?: number };
+      return {
+        startColumn: placedCell.startColumn,
+        span: Math.max(1, placedCell.span ?? 1),
+        preferredWidth: sanitizeOptionalWidth(placedCell.preferredWidth),
+      };
+    }),
+  ].sort((left, right) => left.startColumn - right.startColumn);
+
+  if (segments.length === 0) {
+    return undefined;
+  }
+
+  let cursor = 0;
+  let totalWidth = 0;
+  for (const segment of segments) {
+    if (segment.startColumn !== cursor || segment.preferredWidth == null) {
+      return undefined;
+    }
+    totalWidth += segment.preferredWidth;
+    cursor += segment.span;
+  }
+
+  return cursor === row.logicalColumnCount ? totalWidth : undefined;
 }
 
 /**
@@ -374,7 +401,6 @@ function resolveAutoFitContext(input: AutoFitInput): AutoFitContext {
       preferredWidth: cell.preferredWidth,
       minContentWidth: cell.minContentWidth,
       maxContentWidth: cell.maxContentWidth,
-      horizontalInsets: cell.horizontalInsets,
     })),
   }));
 
@@ -423,7 +449,6 @@ function normalizeLegacyRows(rows: AutoFitRowInput[]): NormalizedRow[] {
         preferredWidth: sanitizeOptionalWidth(cell.preferredWidth),
         minContentWidth: Math.max(0, cell.minContentWidth ?? 0),
         maxContentWidth: Math.max(0, cell.maxContentWidth ?? cell.minContentWidth ?? 0),
-        horizontalInsets: Math.max(0, cell.horizontalInsets ?? 0),
       });
       columnIndex += span;
     }
@@ -471,7 +496,6 @@ function buildNormalizedRows(
           preferredWidth: sanitizeOptionalWidth(metrics?.preferredWidth ?? placedCell.preferredWidth),
           minContentWidth: Math.max(0, metrics?.minContentWidth ?? 0),
           maxContentWidth: Math.max(0, metrics?.maxContentWidth ?? metrics?.minContentWidth ?? 0),
-          horizontalInsets: Math.max(0, metrics?.horizontalInsets ?? 0),
         };
       }),
       skippedColumns: (workingRow.skippedColumns ?? []).map((skipped) => ({
@@ -492,11 +516,10 @@ function accumulateBounds(args: {
   rows: NormalizedRow[];
   minBounds: number[];
   maxBounds: number[];
-  textBounds: number[];
   preferredOverrides: Array<number | undefined>;
   multiSpanCells: NormalizedCell[];
 }): void {
-  const { rows, minBounds, maxBounds, textBounds, preferredOverrides, multiSpanCells } = args;
+  const { rows, minBounds, maxBounds, preferredOverrides, multiSpanCells } = args;
 
   for (const row of rows) {
     for (const skipped of row.skippedColumns) {
@@ -511,13 +534,6 @@ function accumulateBounds(args: {
       if (cell.span === 1) {
         minBounds[cell.startColumn] = Math.max(minBounds[cell.startColumn], cell.minContentWidth);
         maxBounds[cell.startColumn] = Math.max(maxBounds[cell.startColumn], cell.maxContentWidth);
-        // Text-only demand (content width minus padding/cell-border insets), used by
-        // the content-size band floor: padding may compress under a fat border band
-        // but the text itself never loses space. (SD-3308)
-        textBounds[cell.startColumn] = Math.max(
-          textBounds[cell.startColumn],
-          Math.max(0, cell.maxContentWidth - cell.horizontalInsets),
-        );
         if (preferredOverrides[cell.startColumn] == null && cell.preferredWidth != null) {
           preferredOverrides[cell.startColumn] = cell.preferredWidth;
         }
@@ -868,7 +884,7 @@ function redistributeTowardMaximumsWithinCurrentTable(
  * using a content-demand-weighted target shape.
  *
  * Word does not always stop once every column reaches its measured no-wrap
- * width. In customer documents such as `test-blank-autofit2.docx`, Word keeps
+ * width. In documents with placeholder grid widths, Word keeps
  * the table at the same total width but still shifts more width into the
  * highest-demand column, producing a visually different distribution from a
  * strict `max-content` stop. This phase models that behavior by:

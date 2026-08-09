@@ -8,7 +8,7 @@
  * This test catches TypeScript/import errors in the extension host code
  * without requiring the full monorepo build.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { build, type BuildResult } from 'esbuild';
 import { resolve } from 'node:path';
 

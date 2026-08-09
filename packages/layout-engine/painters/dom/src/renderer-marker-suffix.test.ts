@@ -4,7 +4,7 @@
  * Tests all suffix types: 'tab', 'space', 'nothing', and edge cases for gutterWidthPx
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { createTestPainter as createDomPainter } from './_test-utils.js';
 import type { FlowBlock, Measure, Layout, WordParagraphLayoutOutput } from '@superdoc/contracts';
 

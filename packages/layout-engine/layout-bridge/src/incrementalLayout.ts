@@ -1,52 +1,71 @@
+import {
+  areValidPageCheckpointDependencyClasses,
+  cloneColumnLayout,
+  collectSectionBoundaryFillerBlockIds,
+  doesFlowBlockProduceLayoutFragment,
+  formatSectionPageNumberText,
+  getColumnGeometry,
+  getColumnX,
+  isPageRelativeAnchor,
+  normalizeColumnLayout,
+  rescaleColumnWidths,
+} from '@superdoc/contracts';
 import type {
+  NonFlowingPageRelativeAnchorDependencyProof,
+  PageCheckpointDependencyClass,
   FlowBlock,
   FootnotePageLedger,
+  Fragment,
   Layout,
+  LayoutBlockResumeCheckpoint,
   Measure,
+  Page,
   HeaderFooterLayout,
   SectionMetadata,
   ParagraphBlock,
   ParagraphMeasure,
+  TableMeasure,
   ColumnLayout,
   SectionBreakBlock,
   NormalizedColumnLayout,
   PageNumberChapterSeparator,
   PageNumberFormat,
-  TextboxDrawing,
-} from '@superdoc/contracts';
-import { layoutTextboxContent } from '@superdoc/layout-engine';
-import {
-  cloneColumnLayout,
-  formatSectionPageNumberText,
-  getColumnGeometry,
-  getColumnX,
-  normalizeColumnLayout,
-  rescaleColumnWidths,
+  ParagraphLineRegion,
 } from '@superdoc/contracts';
 import type { FontMeasureContext } from '@superdoc/font-system';
 import {
   layoutDocument,
+  layoutDocumentCooperatively,
   type LayoutOptions,
   type HeaderFooterConstraints,
   computeDisplayPageNumber,
   resolvePageNumberTokens,
+  resolvePageNumberTokensCooperatively,
+  checkpointLayoutExecution,
+  throwIfLayoutExecutionAborted,
+  type LayoutExecutionCheckpoint,
+  type LayoutExecutionControl,
   type NumberingContext,
   buildChapterContextByPage,
+  buildChapterContextByPageCooperatively,
   type ChapterPageInfo,
+  computeDisplayPageNumberCooperatively,
   normalizeChapterMarkerText,
   SEMANTIC_PAGE_HEIGHT_PX,
   SINGLE_COLUMN_DEFAULT,
   resolveTableFrame,
 } from '@superdoc/layout-engine';
-import { remeasureParagraph } from './remeasure';
+import { clearRemeasureTextCaches, remeasureParagraph } from './remeasure';
 import { computeDirtyRegions } from './diff';
-import { MeasureCache } from './cache';
+import { MeasureCache, hashMeasureContent } from './cache';
 import {
   layoutHeaderFooterWithCache,
   HeaderFooterLayoutCache,
   type HeaderFooterBatch,
+  type HeaderFooterLayoutExecution,
   type PageResolver,
 } from './layoutHeaderFooter';
+import type { ResolveHeaderFooterTokensOptions } from './resolveHeaderFooterTokens';
 import {
   buildSectionAwareHeaderFooterLayoutKey,
   buildSectionAwareHeaderFooterMeasurementGroups,
@@ -54,7 +73,13 @@ import {
 import { FeatureFlags } from './featureFlags';
 import { PageTokenLogger, HeaderFooterCacheLogger, globalMetrics } from './instrumentation';
 import { HeaderFooterCacheState, invalidateHeaderFooterCache } from './cacheInvalidation';
-import { getPreferredReserveCandidates, getPreferredReserveTrialTargets, scoreFootnoteWindow } from './footnote-scorer';
+import { hydrateTableTextboxMeasures } from './hydrateTableTextboxMeasures';
+import {
+  getPreferredReserveCandidates,
+  getPreferredReserveTrialTargets,
+  scoreFootnoteWindow,
+  shouldAbsorbOneLineFootnoteWidow,
+} from './footnote-scorer';
 
 export type HeaderFooterMeasureFn = (
   block: FlowBlock,
@@ -87,14 +112,28 @@ export type HeaderFooterLayoutResult = {
  */
 export type FootnoteReserveSeed = {
   reserves: number[];
+  /** Sparse page indexes that held a reserve, ledger, or injected note slice. */
+  notePageIndexes?: number[];
   separatorSpacingBefore: number | undefined;
   fontSignature: string;
   measurementWidth: number;
   measurementHeight: number;
+  /** Exact note measurement width retained with unchanged section geometry. */
+  footnoteMeasurementWidth?: number;
+  /** Section-column inputs used to derive the retained note measurement width. */
+  sectionColumnsByIndex?: Map<number, ColumnLayout>;
+  /** Exact note block objects retained by the host's authoritative note-bundle proof. */
+  noteBlocksByBlockId?: Map<string, FlowBlock>;
+  /** Measures paired with `noteBlocksByBlockId`; object identity is revalidated before reuse. */
+  noteMeasuresByBlockId?: Map<string, Measure>;
+  noteBodyHeightById?: Map<string, number>;
+  noteFirstLineHeightById?: Map<string, number>;
 };
 
 export type IncrementalLayoutResult = {
   layout: Layout;
+  /** Pass-owned block plane after derived layout annotations are attached. */
+  blocks: FlowBlock[];
   measures: Measure[];
   dirty: ReturnType<typeof computeDirtyRegions>;
   headers?: HeaderFooterLayoutResult[];
@@ -111,11 +150,315 @@ export type IncrementalLayoutResult = {
    * out no footnotes) — the next run then starts cold.
    */
   footnoteReserveSeed?: FootnoteReserveSeed | null;
+  /** Canonical pre-layout furniture heights that can affect body margins. */
+  headerFooterGeometryFingerprint: string;
+  layoutReuse?: IncrementalLayoutReuseSummary;
+  measureReuse?: {
+    mode: 'full-scan' | 'proved-dirty-only' | 'body-stable';
+    blocksMeasured: number;
+    measuresAdopted: number;
+    reason: string;
+  };
+  /**
+   * Per-call bridge-owned timing. This is returned with the canonical layout
+   * result so callers do not need to read the process-global metrics collector.
+   * Substage fields are non-overlapping for the top-level reconciliation:
+   * `measureTotalMs` includes cache lookup and actual measurement details,
+   * and `pageTokenTotalMs` includes token remeasure/relayout details.
+   */
+  bridgeTiming: IncrementalLayoutBridgeTiming;
+};
+
+export type IncrementalLayoutBridgeTiming = {
+  totalMs: number;
+  inputPreparationMs: number;
+  measureTotalMs: number;
+  /** Union wall time spent inside caller-owned measure callbacks across body and furniture. */
+  measureCallbackWallMs: number;
+  measureCacheLookupMs: number;
+  measureActualMs: number;
+  headerFooterPreLayoutMs: number;
+  headerPreLayoutMs: number;
+  footerPreLayoutMs: number;
+  warmStartPreparationMs: number;
+  /** Wall time inside the initial body `layoutDocument` invocation only. */
+  layoutDocumentMs: number;
+  /** Initial body-layout wrapper work outside `layoutDocument` (proof, slice, convergence, splice). */
+  layoutReuseOrchestrationMs: number;
+  paginationMs: number;
+  pageTokenSetupMs: number;
+  pageTokenTotalMs: number;
+  pageTokenRemeasureMs: number;
+  pageTokenRelayoutMs: number;
+  footnoteMs: number;
+  numberingMs: number;
+  finalHeaderFooterMs: number;
+  layoutExposureMs: number;
+  unattributedMs: number;
+  counters: {
+    blocksRead: number;
+    cacheHits: number;
+    cacheMisses: number;
+    measuresAdopted: number;
+    pagesPaginated: number | null;
+    pagesSplicedByReuse: number;
+    paginationPasses: number;
+    pageTokenRelayouts: number;
+    footnoteRelayouts: number;
+    footnoteReserveRelayouts: number;
+    footnoteGrowRelayouts: number;
+    footnoteTightenRelayouts: number;
+    footnotePreferredRelayouts: number;
+    footnoteWidowRelayouts: number;
+    footnoteRevertRelayouts: number;
+    footnoteOtherRelayouts: number;
+  };
+};
+
+/**
+ * Structural discriminator for what happened to the document tail (SD-3772
+ * D5). Consumers branch on THIS, never on the diagnostic `reason` string:
+ * - `none`: no retained tail exists (full recompute).
+ * - `adopted-source-tail`: a convergence page was proved and the source tail
+ *   was adopted; `tailAdoption` is non-null and range-valid.
+ * - `relaid-to-document-end`: the bounded slice reached the exact end of the
+ *   document and every terminal page was freshly paginated; `tailAdoption`
+ *   is null. Every other combination fails closed before publication.
+ */
+export type IncrementalLayoutTailDisposition = 'none' | 'adopted-source-tail' | 'relaid-to-document-end';
+
+export type IncrementalLayoutReuseSummary = {
+  mode: 'full' | 'prefix-resume' | 'tail-splice';
+  /** Diagnostic label only; never drives product behavior (SD-3772 D5). */
+  reason: string;
+  tailDisposition: IncrementalLayoutTailDisposition;
+  checkpointPageIndex: number | null;
+  /** Last prior page that can be affected by the dirty content/dependencies. */
+  affectedFrontierPageIndex: number | null;
+  /** Last source-generation page covered by the dirty content. */
+  sourceAffectedFrontierPageIndex: number | null;
+  convergencePageIndex: number | null;
+  /** Source-generation page adopted at convergence (may differ after page-count shifts). */
+  sourceConvergencePageIndex: number | null;
+  pagesPaginated: number | null;
+  pagesSplicedByReuse: number;
+  /**
+   * Proof for a retained tail. Pages in this interval remain byte-for-byte
+   * retained; consumers apply the position transforms only when a page enters
+   * the active paint window.
+   */
+  tailAdoption: IncrementalLayoutTailAdoption | null;
+};
+
+/**
+ * Exact dirty-measure proof that is useful even when pagination reuse is
+ * independently vetoed. Keeping it separate prevents a global layout
+ * dependency from forcing an O(document) measurement-preparation scan.
+ */
+export type IncrementalMeasureReuseProof = Pick<
+  IncrementalLayoutReuseOptions,
+  | 'provedDirtyRegion'
+  | 'dependencyProof'
+  | 'previousBlockIndexById'
+  | 'currentBlockIndexById'
+  | 'provedDirtyMeasureConstraints'
+>;
+
+export type LayoutPositionTransform = {
+  atChar: number;
+  delta: number;
+};
+
+export type IncrementalSectionPageNumberTransform = {
+  /** Section whose retained pages need rebasing before its next boundary. */
+  sectionIndex: number;
+  /** Difference between target and source section-relative page positions. */
+  delta: number;
+};
+
+export type IncrementalDisplayPageNumberTransform = {
+  /** First section whose retained display-page values inherit the local page delta. */
+  startSectionIndex: number;
+  /** First later section with an explicit numbering restart. */
+  endSectionIndexExclusive: number;
+  delta: number;
+};
+
+export type IncrementalLayoutTailAdoption = {
+  startPageIndex: number;
+  endPageIndexExclusive: number;
+  sourcePageStartIndex: number;
+  sourcePageEndIndexExclusive: number;
+  pageIndexDelta: number;
+  sectionPageNumberTransform: IncrementalSectionPageNumberTransform | null;
+  displayPageNumberTransform?: IncrementalDisplayPageNumberTransform | null;
+  /** Exact proof that PAGEREF page/numbering locations are unchanged in the adopted tail. */
+  pageReferenceLocationsStable: boolean;
+  sourceLayoutEpoch: number | null;
+  positionTransforms: readonly LayoutPositionTransform[];
+  /** Lazy old->current block-id rekeys for an ordinal-changing structural splice. */
+  blockIdRewrites?: ReadonlyMap<string, string> | null;
+};
+
+function roundTimingMs(value: number): number {
+  return Math.round(Math.max(0, value) * 1000) / 1000;
+}
+
+function buildHeaderFooterGeometryFingerprint(input: {
+  headerContentHeights?: Partial<Record<'default' | 'first' | 'even' | 'odd', number>>;
+  footerContentHeights?: Partial<Record<'default' | 'first' | 'even' | 'odd', number>>;
+  headerContentHeightsByRId?: ReadonlyMap<string, number>;
+  headerContentHeightsBySectionRef?: ReadonlyMap<string, number>;
+  footerContentHeightsByRId?: ReadonlyMap<string, number>;
+  footerContentHeightsBySectionRef?: ReadonlyMap<string, number>;
+}): string {
+  const variants = (values: Partial<Record<'default' | 'first' | 'even' | 'odd', number>> | undefined) =>
+    (['default', 'first', 'even', 'odd'] as const).map((key) => [key, values?.[key] ?? null]);
+  const entries = (values: ReadonlyMap<string, number> | undefined) =>
+    values ? [...values].sort(([left], [right]) => left.localeCompare(right)) : null;
+  return JSON.stringify({
+    headers: variants(input.headerContentHeights),
+    footers: variants(input.footerContentHeights),
+    headersByRId: entries(input.headerContentHeightsByRId),
+    headersBySectionRef: entries(input.headerContentHeightsBySectionRef),
+    footersByRId: entries(input.footerContentHeightsByRId),
+    footersBySectionRef: entries(input.footerContentHeightsBySectionRef),
+  });
+}
+
+function computeTimingUnionMs(intervals: readonly { start: number; end: number }[]): number {
+  if (intervals.length === 0) return 0;
+  const sorted = [...intervals].sort((left, right) => left.start - right.start || left.end - right.end);
+  let start = sorted[0]!.start;
+  let end = sorted[0]!.end;
+  let total = 0;
+  for (let index = 1; index < sorted.length; index += 1) {
+    const interval = sorted[index]!;
+    if (interval.start <= end) {
+      end = Math.max(end, interval.end);
+      continue;
+    }
+    total += Math.max(0, end - start);
+    start = interval.start;
+    end = interval.end;
+  }
+  return total + Math.max(0, end - start);
+}
+
+type IncrementalPaginationProofBase = {
+  blockIdsUnchanged: true;
+  blockIdsUnique: true;
+  renderInputsUnchanged: true;
+  /** The retained dependency scan proved that no body or furniture PAGE_REF token exists. */
+  pageReferencesAbsent: boolean;
+  pageReferenceDependencyClosure?: {
+    referenceBlockIds: readonly string[];
+    targetBookmarkIds: readonly string[];
+  };
+};
+
+export type IncrementalPaginationProof = IncrementalPaginationProofBase &
+  (
+    | {
+        profile: 'single-section-local-text';
+        globalDependenciesAbsent: true;
+        globalDependenciesFencedByDocumentStart?: never;
+      }
+    | {
+        /** Stable dependency-rich documents must replay from a page-zero checkpoint. */
+        profile: 'document-start-local-text';
+        globalDependenciesAbsent: false;
+        globalDependenciesFencedByDocumentStart: true;
+        multiColumnSectionsProvedNonBalanceable: true;
+      }
+    | {
+        /** Stable dependency-rich documents may replay from an engine-seeded page checkpoint. */
+        profile: 'page-checkpoint-local-text';
+        globalDependenciesAbsent: false;
+        globalDependenciesFencedByPageCheckpoint: true;
+        admittedDependencyClasses: readonly PageCheckpointDependencyClass[];
+        nonFlowingPageRelativeAnchorDependency?: NonFlowingPageRelativeAnchorDependencyProof;
+        localKeepDependencyClosure?: {
+          checkpointPageIndex: number;
+          checkpointBlockId: string | null;
+          predecessorBlockId: string | null;
+        };
+        /**
+         * SD-3772 D1: the host proved (via the shared
+         * `hasGenuinelyUnequalExplicitColumnWidths` predicate) that no
+         * potentially balanceable multi-column section exists anywhere in the
+         * retained document. Balancing is a post-pagination finalizer that a
+         * mid-section checkpoint cannot seed; a packet without this proof
+         * fails validation and takes the canonical full layout.
+         */
+        multiColumnSectionsProvedNonBalanceable: true;
+      }
+  );
+
+export type IncrementalLayoutReuseOptions = {
+  previousLayout: Layout | null;
+  /** Epoch that produced every retained page/index/key in this reuse packet. */
+  retainedMetadataSourceLayoutEpoch?: number | null;
+  previousPageStartKeys: readonly string[] | null;
+  previousBlockPageIndex: Map<string, { firstPage: number; lastPage: number }> | null;
+  maxRelaidPages?: number;
+  requireDocumentStartCheckpoint?: boolean;
+  allowBlockIdChurn?: boolean;
+  pmShift?: LayoutPositionTransform | null;
+  /** Exact dirty identities from the commit envelope when already available. */
+  dirtyBlockIds?: readonly string[];
+  /** Exact retained block index, required to align a structural ±1 measure plane. */
+  previousBlockIndexById?: ReadonlyMap<string, number> | null;
+  /** Optional retained ordinal index, avoiding a whole-array checkpoint lookup. */
+  currentBlockIndexById?: ReadonlyMap<string, number> | null;
+  /** Inverse identity proof for ordinal-scoped ids shifted by a structural edit. */
+  blockIdRewrites?: {
+    previousToCurrent: ReadonlyMap<string, string>;
+    currentToPrevious: ReadonlyMap<string, string>;
+  } | null;
+  /** Retained dependency proof; avoids rescanning every block on a warm edit. */
+  dependencyProof?: IncrementalPaginationProof | null;
+  /** Exact retained dirty analysis; bypasses computeDirtyRegions on a proved warm edit. */
+  provedDirtyRegion?: ReturnType<typeof computeDirtyRegions> | null;
+  /** Cold-observed exact section constraints for each dirty block. */
+  provedDirtyMeasureConstraints?: ReadonlyMap<string, { maxWidth: number; maxHeight: number }> | null;
+  /** Retained key index used for O(1) convergence candidate lookup. */
+  previousPageStartKeyIndex?: ReadonlyMap<string, readonly number[]> | null;
+  /**
+   * Host-proved note-only refresh. Body ids are unchanged reference anchors;
+   * only the named note projections may differ from the retained note plane.
+   */
+  provedNoteOnlyRefresh?: {
+    noteIds: readonly string[];
+    bodyReferenceBlockIds: readonly string[];
+  };
+  /**
+   * Host-proved header/footer-only refresh. The bridge still compares the
+   * current pre-layout height fingerprint before retaining body pagination.
+   */
+  provedHeaderFooterOnlyRefresh?: {
+    bodyProjectionRetainedExact: true;
+    bodyLayoutInputsUnchanged: true;
+    previousGeometryFingerprint: string;
+  };
 };
 
 export const measureCache = new MeasureCache<Measure>();
 const headerMeasureCache = new HeaderFooterLayoutCache();
 const headerFooterCacheState = new HeaderFooterCacheState();
+
+/**
+ * Reset every module-global cache this bridge holds (measure cache,
+ * header/footer measure cache, header/footer invalidation state). A clean
+ * cold-recompute oracle must start from exactly the state a fresh worker
+ * would have; clearing only the measure cache leaves warm header/footer
+ * state that can legally shift page geometry.
+ */
+export function clearIncrementalModuleState(): void {
+  measureCache.clear();
+  headerMeasureCache.clear();
+  headerFooterCacheState.reset();
+}
 
 const layoutDebugEnabled =
   typeof process !== 'undefined' && typeof process.env !== 'undefined' && Boolean(process.env.SD_DEBUG_LAYOUT);
@@ -162,6 +505,28 @@ type FootnotesLayoutInput = {
   topPadding?: number;
   dividerHeight?: number;
   separatorSpacingBefore?: number;
+};
+
+type ProvedNoteOnlyLayoutFinalization = {
+  extraBlocks: FlowBlock[];
+  extraMeasures: Measure[];
+  footnoteReserveSeed: FootnoteReserveSeed;
+};
+
+type PreparedNoteOnlyLayoutReuse = {
+  previousBlocks: readonly FlowBlock[];
+  footnotes: FootnotesLayoutInput;
+  currentNoteMeasures: ReadonlyMap<string, Measure>;
+  warmSeed: FootnoteReserveSeed;
+};
+
+type PreparedHeaderFooterOnlyLayoutReuse = {
+  currentGeometryFingerprint: string;
+  bodyMeasuresRetainedExact: true;
+  footnotes: FootnotesLayoutInput | null;
+  warmSeed: FootnoteReserveSeed | null;
+  noteMeasurePlaneRetainedExact: boolean;
+  retainedFootnoteExtras: { blocks: FlowBlock[]; measures: Measure[] } | null;
 };
 
 const isFootnotesLayoutInput = (value: unknown): value is FootnotesLayoutInput => {
@@ -295,8 +660,13 @@ const resolveSectionColumnsByIndex = (options: LayoutOptions, blocks?: FlowBlock
   return result;
 };
 
-const resolvePageColumns = (layout: Layout, options: LayoutOptions, blocks?: FlowBlock[]): Map<number, PageColumns> => {
-  const sectionColumns = resolveSectionColumnsByIndex(options, blocks);
+const resolvePageColumns = (
+  layout: Layout,
+  options: LayoutOptions,
+  blocks?: FlowBlock[],
+  retainedSectionColumns?: ReadonlyMap<number, ColumnLayout>,
+): Map<number, PageColumns> => {
+  const sectionColumns = retainedSectionColumns ?? resolveSectionColumnsByIndex(options, blocks);
   const result = new Map<number, PageColumns>();
 
   for (let pageIndex = 0; pageIndex < layout.pages.length; pageIndex += 1) {
@@ -968,6 +1338,7 @@ async function measureNoteBlocks(
     blocks.map(async (block) => {
       const cached = measureCache.get(block, constraints.maxWidth, constraints.maxHeight, fontSignature);
       if (cached) {
+        hydrateTabRunWidthsFromMeasure(block, cached);
         measuresById.set(block.id, cached);
         return;
       }
@@ -977,6 +1348,93 @@ async function measureNoteBlocks(
     }),
   );
   return { blocks, measuresById };
+}
+
+function validateRetainedNoteMeasurePlane(
+  blocksByNoteId: ReadonlyMap<string, readonly FlowBlock[]>,
+  seed: FootnoteReserveSeed | null,
+): Map<string, Measure> | null {
+  const retainedBlocks = seed?.noteBlocksByBlockId;
+  const retainedMeasures = seed?.noteMeasuresByBlockId;
+  if (!retainedBlocks || !retainedMeasures || retainedBlocks.size !== retainedMeasures.size) return null;
+  let observed = 0;
+  for (const blocks of blocksByNoteId.values()) {
+    for (const block of blocks) {
+      if (
+        !block?.id ||
+        !retainedBlocks.has(block.id) ||
+        retainedBlocks.get(block.id) !== block ||
+        !retainedMeasures.has(block.id)
+      )
+        return null;
+      observed += 1;
+    }
+  }
+  return observed === retainedBlocks.size ? retainedMeasures : null;
+}
+
+/**
+ * Re-stamp tab-run widths onto a block's runs from the measure's per-line
+ * `tabWidths` records. The measurer stamps `run.width` as a side effect of
+ * measuring, so a cache-hit or previous-measure reuse over freshly projected
+ * run objects would otherwise leave the widths absent — making resolved
+ * output (and every `run.width` reader) depend on which pass last measured
+ * those exact objects instead of on content. Measures are content-addressed,
+ * so this hydration is deterministic and idempotent.
+ *
+ * Tables recurse: cell paragraphs are measured nested (`TableCellMeasure.
+ * blocks`/`paragraph`), and their tab runs carry the same stamps — a warm
+ * cache hit on the TABLE otherwise leaves every nested tab width unstamped,
+ * which is exactly the freddie browser determinism divergence (painter plan
+ * debt 1, 2026-07-05: pass 1 measured/stamped, pass 2 cache-hit/unstamped).
+ */
+function hydrateTabRunWidthsFromMeasure(block: FlowBlock, measure: Measure): void {
+  if (!measure || !block) return;
+  if (block.kind === 'paragraph' && measure.kind === 'paragraph') {
+    hydrateParagraphTabRunWidths(block as ParagraphBlock, measure as ParagraphMeasure);
+    return;
+  }
+  if (block.kind === 'table' && measure.kind === 'table') {
+    const blockRows = (block as { rows?: unknown[] }).rows;
+    const measureRows = (measure as TableMeasure).rows;
+    if (!Array.isArray(blockRows) || !Array.isArray(measureRows)) return;
+    for (let rowIndex = 0; rowIndex < blockRows.length; rowIndex += 1) {
+      const blockCells = (blockRows[rowIndex] as { cells?: unknown[] } | undefined)?.cells;
+      const measureCells = measureRows[rowIndex]?.cells;
+      if (!Array.isArray(blockCells) || !Array.isArray(measureCells)) continue;
+      for (let cellIndex = 0; cellIndex < blockCells.length; cellIndex += 1) {
+        const blockCell = blockCells[cellIndex] as { blocks?: FlowBlock[]; paragraph?: FlowBlock } | undefined;
+        const measureCell = measureCells[cellIndex];
+        if (!blockCell || !measureCell) continue;
+        if (Array.isArray(blockCell.blocks) && Array.isArray(measureCell.blocks)) {
+          for (let blockIndex = 0; blockIndex < blockCell.blocks.length; blockIndex += 1) {
+            const nestedMeasure = measureCell.blocks[blockIndex];
+            if (nestedMeasure) hydrateTabRunWidthsFromMeasure(blockCell.blocks[blockIndex]!, nestedMeasure);
+          }
+        }
+        if (blockCell.paragraph && measureCell.paragraph) {
+          hydrateTabRunWidthsFromMeasure(blockCell.paragraph, measureCell.paragraph);
+        }
+      }
+    }
+  }
+}
+
+function hydrateParagraphTabRunWidths(block: ParagraphBlock, measure: ParagraphMeasure): void {
+  const runs = block.runs;
+  if (!Array.isArray(runs)) return;
+  const lines = measure.lines;
+  if (!Array.isArray(lines)) return;
+  for (const line of lines) {
+    const tabWidths = (line as { tabWidths?: Record<number, number> }).tabWidths;
+    if (!tabWidths) continue;
+    for (const key of Object.keys(tabWidths)) {
+      const run = runs[Number(key)];
+      if (run && run.kind === 'tab') {
+        (run as { width?: number }).width = tabWidths[Number(key)]!;
+      }
+    }
+  }
 }
 
 /**
@@ -1038,6 +1496,16 @@ function computeNoteBodyHeights(
   return { totalMap, firstLineMap };
 }
 
+export interface IncrementalLayoutExecutionControl {
+  signal?: AbortSignal;
+  /** Budget-aware host-task yield; may resolve immediately. */
+  yieldToHost?: (checkpoint?: LayoutExecutionCheckpoint) => Promise<void>;
+  /** Measurement checkpoints default to 32 blocks; nested layout checkpoints default to 16. */
+  yieldEveryBlocks?: number;
+  /** Time-aware mounted probe. Null is the allocation-free under-budget path. */
+  checkpointIfDue?: (checkpoint?: LayoutExecutionCheckpoint) => Promise<void> | null;
+}
+
 export async function incrementalLayout(
   previousBlocks: FlowBlock[],
   _previousLayout: Layout | null,
@@ -1051,6 +1519,18 @@ export async function incrementalLayout(
     footerBlocksByRId?: Map<string, FlowBlock[]>;
     constraints: HeaderFooterConstraints;
     measure?: HeaderFooterMeasureFn;
+    /**
+     * When `false`, header/footer NUMPAGES/SECTIONPAGES fields keep their
+     * source-cached DOCX text (em dash when absent) instead of resolving to
+     * the current — possibly partial — page total. Defaults to exact.
+     */
+    pageCountFieldsExact?: boolean;
+    /**
+     * @deprecated Compatibility-only. Measurement identity is derived from
+     * content, constraints, font signature, and page-count field mode; render
+     * generation must not invalidate unchanged header/footer measurements.
+     */
+    cacheGeneration?: number;
   },
   previousMeasures?: Measure[] | null,
   // Narrow runtime context (deliberately NOT on LayoutOptions): the per-document FontMeasureContext -
@@ -1063,10 +1543,93 @@ export async function incrementalLayout(
   fontRuntime?: { fontContext?: FontMeasureContext; previousFontSignature?: string },
   // SD-3432: warm-start context (deliberately NOT on LayoutOptions, mirroring
   // fontRuntime): the previous run's footnote reserve fixed point, if any.
-  warmStart?: { footnoteReserveSeed?: FootnoteReserveSeed | null },
+  warmStart?: {
+    footnoteReserveSeed?: FootnoteReserveSeed | null;
+    /** Host proved the authoritative note projection bundle was retained exactly. */
+    noteMeasurePlaneRetainedExact?: true;
+    /** Extra note/decorative planes paired with the retained note bundle. */
+    retainedFootnoteExtras?: { blocks: FlowBlock[]; measures: Measure[] };
+  },
+  layoutReuse?: IncrementalLayoutReuseOptions,
+  measureReuseProof?: IncrementalMeasureReuseProof,
+  execution?: IncrementalLayoutExecutionControl,
 ): Promise<IncrementalLayoutResult> {
+  const bridgeStartedAt = performance.now();
+  // The mounted time-budget probe is deliberately allocation-free while the
+  // current task remains under budget. Keep that fast path for callers that
+  // only opt into time-aware cooperative measurement checkpoints. A scheduler
+  // signal (or the legacy untimed yield hook) additionally opts the nested
+  // layout engine into its resumable iterator so incompatible work can abort
+  // between bounded layout units.
+  const useCooperativeLayout = Boolean(execution?.signal || (execution?.yieldToHost && !execution.checkpointIfDue));
+  const layoutExecution: LayoutExecutionControl | undefined =
+    useCooperativeLayout && execution
+      ? {
+          ...(execution.signal ? { signal: execution.signal } : {}),
+          ...(execution.checkpointIfDue
+            ? {
+                yieldToHost: async (checkpoint: LayoutExecutionCheckpoint) => {
+                  const pending = execution.checkpointIfDue?.(checkpoint);
+                  if (pending) await pending;
+                },
+              }
+            : execution.yieldToHost
+              ? { yieldToHost: (checkpoint: LayoutExecutionCheckpoint) => execution.yieldToHost!(checkpoint) }
+              : {}),
+          checkpointEveryBlocks: Math.max(1, Math.floor(execution.yieldEveryBlocks ?? 16)),
+        }
+      : undefined;
+  const headerFooterExecution: HeaderFooterLayoutExecution | undefined = execution
+    ? {
+        ...(layoutExecution ?? {}),
+        ...(execution.checkpointIfDue ? { checkpointIfDue: execution.checkpointIfDue } : {}),
+      }
+    : undefined;
+  if (layoutExecution) {
+    await checkpointLayoutExecution(layoutExecution, { phase: 'measure:block', index: 0, total: nextBlocks.length });
+  }
+  // Internal same-call observer used by the canonical pipeline to retain the
+  // exact constraints that produced cached/adopted measures. It is carried
+  // on the existing callback object, adds no package export or public option,
+  // and never performs measurement itself.
+  const observeMeasureConstraints = (
+    measureBlock as typeof measureBlock & {
+      observeConstraints?: (block: FlowBlock, constraints: { maxWidth: number; maxHeight: number }) => void;
+    }
+  ).observeConstraints;
+  const measureCallbackIntervals: Array<{ start: number; end: number }> = [];
+  const timeMeasureCallback =
+    (callback: HeaderFooterMeasureFn): HeaderFooterMeasureFn =>
+    async (block, constraints) => {
+      const start = performance.now();
+      try {
+        return await callback(block, constraints);
+      } finally {
+        measureCallbackIntervals.push({ start, end: performance.now() });
+      }
+    };
+  measureBlock = timeMeasureCallback(measureBlock);
+  if (headerFooter?.measure) {
+    headerFooter = { ...headerFooter, measure: timeMeasureCallback(headerFooter.measure) };
+  }
   const fontSignature = fontRuntime?.fontContext?.fontSignature ?? '';
   const previousFontSignature = fontRuntime?.previousFontSignature ?? '';
+  // Provisional-vs-exact page-count field mode for every header/footer layout
+  // this call performs (pre-layout height passes and final per-page layout).
+  const hfTokenOptions: ResolveHeaderFooterTokensOptions | undefined =
+    headerFooter?.pageCountFieldsExact === false ? { pageCountFieldsExact: false } : undefined;
+  // Header/footer measurement reuse is keyed by exact block content,
+  // constraints, font signature, and provisional/exact field mode. Render
+  // generation belongs to provider-closure freshness, not measurement
+  // identity: including it here remeasured every unchanged furniture block
+  // after an ordinary body keystroke.
+  const headerFooterCacheSignature = fontSignature;
+  // A font-mapping change means newly registered faces can resolve behind the
+  // same canvas font strings, so the remeasure glyph/slice width caches are
+  // stale even though their keys are unchanged.
+  if (previousFontSignature !== '' && previousFontSignature !== fontSignature) {
+    clearRemeasureTextCaches();
+  }
   const isSemanticFlow = options.flowMode === 'semantic';
 
   // In semantic mode, neutralize paginated-only inputs so downstream code
@@ -1077,11 +1640,60 @@ export async function incrementalLayout(
   }
 
   // Dirty region computation
-  const dirty = computeDirtyRegions(previousBlocks, nextBlocks);
+  const effectiveMeasureReuseProof = measureReuseProof ?? layoutReuse;
+  const headerFooterOnlyProof = layoutReuse?.provedHeaderFooterOnlyRefresh;
+  const headerFooterBodyReferencesRetained =
+    !isSemanticFlow &&
+    headerFooterOnlyProof?.bodyProjectionRetainedExact === true &&
+    headerFooterOnlyProof.bodyLayoutInputsUnchanged === true &&
+    previousBlocks.length === nextBlocks.length &&
+    previousBlocks.every((block, index) => nextBlocks[index] === block) &&
+    new Set(nextBlocks.map((block) => block.id)).size === nextBlocks.length;
+  const dirty = headerFooterBodyReferencesRetained
+    ? {
+        firstDirtyIndex: nextBlocks.length,
+        lastStableIndex: nextBlocks.length - 1,
+        insertedBlockIds: [],
+        deletedBlockIds: [],
+        changedBlockIds: [],
+        stableBlockIds: new Set(nextBlocks.map((block) => block.id)),
+      }
+    : (effectiveMeasureReuseProof?.provedDirtyRegion ?? computeDirtyRegions(previousBlocks, nextBlocks));
+  // P8.4: cache-miss count that arms content-keyed previous-measure adoption
+  // (see the adoption block in the measure loop). Small enough that a
+  // structural keystroke's shifted tail engages within a few redundant
+  // measures; large enough that plain typing (1-2 changed blocks) never
+  // builds the content map.
+  const CONTENT_ADOPTION_MISS_THRESHOLD = 4;
 
   if (dirty.deletedBlockIds.length > 0) {
     measureCache.invalidate(dirty.deletedBlockIds);
   }
+
+  const provedDirtyMeasurePacket =
+    (effectiveMeasureReuseProof?.dependencyProof?.profile === 'single-section-local-text' ||
+      effectiveMeasureReuseProof?.dependencyProof?.profile === 'document-start-local-text' ||
+      effectiveMeasureReuseProof?.dependencyProof?.profile === 'page-checkpoint-local-text') &&
+    effectiveMeasureReuseProof.dependencyProof.blockIdsUnchanged === true &&
+    effectiveMeasureReuseProof.dependencyProof.blockIdsUnique === true &&
+    validateIncrementalPaginationProof(effectiveMeasureReuseProof.dependencyProof) == null &&
+    effectiveMeasureReuseProof.dependencyProof.renderInputsUnchanged === true &&
+    effectiveMeasureReuseProof.provedDirtyRegion === dirty &&
+    effectiveMeasureReuseProof.currentBlockIndexById != null &&
+    Array.isArray(previousMeasures) &&
+    previousMeasures.length === previousBlocks.length
+      ? validateProvedDirtyMeasurePacket({
+          blocks: nextBlocks,
+          previousBlocks,
+          previousMeasures: previousMeasures!,
+          dirty,
+          previousBlockIndexById: effectiveMeasureReuseProof.previousBlockIndexById ?? null,
+          currentBlockIndexById: effectiveMeasureReuseProof.currentBlockIndexById,
+          dirtyMeasureConstraints: effectiveMeasureReuseProof.provedDirtyMeasureConstraints ?? null,
+          requiresExactConstraints: effectiveMeasureReuseProof.dependencyProof.profile !== 'single-section-local-text',
+        })
+      : null;
+  const provedDirtyMeasureCandidate = provedDirtyMeasurePacket != null;
 
   // Perf summary emitted at the end of the function.
 
@@ -1089,10 +1701,16 @@ export async function incrementalLayout(
   // This prevents text clipping in mixed-orientation documents (SD-1962) where the old
   // global-max approach measured all blocks at the widest section's width, causing line
   // breaks to be too wide for narrower sections.
-  const perSectionConstraints = computePerSectionConstraints(options, nextBlocks);
+  let perSectionConstraints =
+    provedDirtyMeasureCandidate || headerFooterBodyReferencesRetained
+      ? null
+      : computePerSectionConstraints(options, nextBlocks);
 
   // Global max constraints are still used for cache invalidation comparison.
-  const { measurementWidth, measurementHeight } = resolveMeasurementConstraints(options, nextBlocks);
+  const { measurementWidth, measurementHeight } = resolveMeasurementConstraints(
+    options,
+    provedDirtyMeasureCandidate ? undefined : nextBlocks,
+  );
 
   if (measurementWidth <= 0 || measurementHeight <= 0) {
     throw new Error('incrementalLayout: invalid measurement constraints resolved from options');
@@ -1107,83 +1725,234 @@ export async function incrementalLayout(
   // Disable previous-pass measure reuse in semantic mode; the width-keyed
   // measureCache still provides fast lookups for unchanged blocks.
   const previousConstraints =
-    hasPreviousMeasures && !isSemanticFlow ? resolveMeasurementConstraints(options, previousBlocks) : null;
+    hasPreviousMeasures && !isSemanticFlow && !headerFooterBodyReferencesRetained
+      ? resolveMeasurementConstraints(options, provedDirtyMeasureCandidate ? undefined : previousBlocks)
+      : null;
   const canReusePreviousMeasures =
     hasPreviousMeasures &&
     // A mapping change (different signature) makes the prior measures stale even for unchanged
     // blocks; this reuse path bypasses the measure-cache key, so it must check the signature too.
     fontSignature === previousFontSignature &&
-    previousConstraints?.measurementWidth === measurementWidth &&
-    previousConstraints?.measurementHeight === measurementHeight;
-  const previousPerSectionConstraints = canReusePreviousMeasures
-    ? computePerSectionConstraints(options, previousBlocks)
-    : null;
-  const previousMeasuresById = canReusePreviousMeasures
-    ? new Map(previousBlocks.map((block, index) => [block.id, previousMeasures![index]]))
-    : null;
-  const previousConstraintsById = canReusePreviousMeasures
-    ? new Map(previousBlocks.map((block, index) => [block.id, previousPerSectionConstraints![index]]))
-    : null;
+    (headerFooterBodyReferencesRetained ||
+      (previousConstraints?.measurementWidth === measurementWidth &&
+        previousConstraints?.measurementHeight === measurementHeight));
+  if (!canReusePreviousMeasures && perSectionConstraints == null) {
+    perSectionConstraints = computePerSectionConstraints(options, nextBlocks);
+  }
+  const previousPerSectionConstraints =
+    canReusePreviousMeasures && !provedDirtyMeasureCandidate
+      ? computePerSectionConstraints(options, previousBlocks)
+      : null;
+  const previousMeasuresById =
+    canReusePreviousMeasures && !provedDirtyMeasureCandidate
+      ? new Map(previousBlocks.map((block, index) => [block.id, previousMeasures![index]]))
+      : null;
+  const previousConstraintsById =
+    canReusePreviousMeasures && !provedDirtyMeasureCandidate
+      ? new Map(previousBlocks.map((block, index) => [block.id, previousPerSectionConstraints![index]]))
+      : null;
 
   const measureStart = performance.now();
-  const measures: Measure[] = [];
+  const inputPreparationMs = measureStart - bridgeStartedAt;
+  let measures: Measure[] = [];
   let cacheHits = 0;
   let cacheMisses = 0;
   let reusedMeasures = 0;
   let cacheLookupTime = 0;
   let actualMeasureTime = 0;
 
-  for (let blockIndex = 0; blockIndex < nextBlocks.length; blockIndex++) {
-    const block = nextBlocks[blockIndex];
-    if (block.kind === 'sectionBreak') {
-      measures.push({ kind: 'sectionBreak' });
-      continue;
-    }
-
-    // Use per-section constraints for this block's measurement.
-    const sectionConstraints = perSectionConstraints[blockIndex];
-    const blockMeasureWidth = sectionConstraints.maxWidth;
-    const blockMeasureHeight = sectionConstraints.maxHeight;
-
-    if (canReusePreviousMeasures && dirty.stableBlockIds.has(block.id)) {
-      const previousMeasure = previousMeasuresById?.get(block.id);
-      const previousBlockConstraints = previousConstraintsById?.get(block.id);
-      if (
-        previousMeasure &&
-        previousBlockConstraints?.maxWidth === blockMeasureWidth &&
-        previousBlockConstraints?.maxHeight === blockMeasureHeight
-      ) {
-        measures.push(previousMeasure);
-        reusedMeasures++;
-        continue;
+  // P8.4 — content-keyed previous-measure adoption. Structural keystrokes
+  // under synthetic occurrence ids (paraId-less documents: split/merge/paste,
+  // collab CRDT merges) shift every downstream block id even though the
+  // content is untouched, so both the id-keyed stable set above and the
+  // id-prefixed measure cache miss on the whole tail — every block DOM
+  // re-measures (~2s/keystroke on 1000-paragraph documents). Measures are a
+  // pure function of (content, constraints, font signature); adopting the
+  // previous pass's measure on hashMeasureContent equality at equal
+  // constraints is exactly as sound as a cache hit. The map is built lazily,
+  // and ONLY when a block id unknown to the previous pass misses the cache —
+  // plain typing never pays the O(doc) hash pass.
+  let previousMeasuresByContent: Map<string, Measure> | null | undefined;
+  const adoptPreviousMeasureByContent = (
+    block: FlowBlock,
+    maxWidth: number,
+    maxHeight: number,
+  ): Measure | undefined => {
+    if (!canReusePreviousMeasures) return undefined;
+    if (previousMeasuresByContent === undefined) {
+      previousMeasuresByContent = new Map();
+      for (let index = 0; index < previousBlocks.length; index++) {
+        const previousBlock = previousBlocks[index];
+        if (previousBlock.kind === 'sectionBreak') continue;
+        const constraints = previousPerSectionConstraints![index];
+        const key = `${hashMeasureContent(previousBlock)}@${constraints.maxWidth}x${constraints.maxHeight}`;
+        if (!previousMeasuresByContent.has(key)) previousMeasuresByContent.set(key, previousMeasures![index]);
       }
     }
+    return previousMeasuresByContent?.get(`${hashMeasureContent(block)}@${maxWidth}x${maxHeight}`) ?? undefined;
+  };
 
-    // Time the cache lookup (includes hashRuns computation)
-    const lookupStart = performance.now();
-    const cached = measureCache.get(block, blockMeasureWidth, blockMeasureHeight, fontSignature);
-    cacheLookupTime += performance.now() - lookupStart;
-
-    if (cached) {
-      measures.push(cached);
-      cacheHits++;
-      continue;
+  const provedDirtyMeasure = provedDirtyMeasureCandidate && canReusePreviousMeasures ? provedDirtyMeasurePacket : null;
+  const yieldEveryBlocks = Math.max(1, Math.floor(execution?.yieldEveryBlocks ?? 32));
+  const checkpointMeasurement = (blockIndex: number, totalBlocks: number): Promise<void> | null => {
+    throwIfLayoutExecutionAborted(layoutExecution);
+    const pending = execution?.checkpointIfDue?.({
+      phase: 'measure:block',
+      index: blockIndex,
+      total: totalBlocks,
+    });
+    if (pending) return pending;
+    if (!execution?.checkpointIfDue && blockIndex > 0 && blockIndex % yieldEveryBlocks === 0) {
+      return layoutExecution
+        ? checkpointLayoutExecution(layoutExecution, {
+            phase: 'measure:block',
+            index: blockIndex,
+            total: totalBlocks,
+          })
+        : null;
     }
+    return null;
+  };
+  const checkpointPhaseIfDue = async (): Promise<void> => {
+    throwIfLayoutExecutionAborted(layoutExecution);
+    const pending = execution?.checkpointIfDue?.();
+    if (pending) await pending;
+    throwIfLayoutExecutionAborted(layoutExecution);
+  };
 
-    // Time the actual DOM measurement
-    const measureBlockStart = performance.now();
-    const measurement = await measureBlock(block, sectionConstraints);
-    actualMeasureTime += performance.now() - measureBlockStart;
+  if (headerFooterBodyReferencesRetained && canReusePreviousMeasures) {
+    measures = previousMeasures!;
+    reusedMeasures = nextBlocks.length;
+  } else if (provedDirtyMeasure) {
+    const overrides = new Map<number, Measure>();
+    let dirtyMeasureIndex = 0;
+    for (const blockId of provedDirtyMeasure.dirtyBlockIds) {
+      const checkpoint = checkpointMeasurement(dirtyMeasureIndex, provedDirtyMeasure.dirtyBlockIds.length);
+      if (checkpoint) {
+        await checkpoint;
+        throwIfLayoutExecutionAborted(layoutExecution);
+      }
+      dirtyMeasureIndex += 1;
+      const blockIndex = provedDirtyMeasure.currentBlockIndexById.get(blockId)!;
+      const block = nextBlocks[blockIndex]!;
+      const constraints = provedDirtyMeasure.dirtyMeasureConstraints?.get(blockId) ?? {
+        maxWidth: measurementWidth,
+        maxHeight: measurementHeight,
+      };
+      observeMeasureConstraints?.(block, constraints);
+      const measureBlockStart = performance.now();
+      const measurement = await measureBlock(block, constraints);
+      actualMeasureTime += performance.now() - measureBlockStart;
+      measureCache.set(block, constraints.maxWidth, constraints.maxHeight, measurement, fontSignature);
+      overrides.set(blockIndex, measurement);
+      cacheMisses += 1;
+    }
+    if (provedDirtyMeasure.measureSplice) {
+      // Structural ±1 alignment: preserve the retained measure plane by
+      // position, insert/remove only at the proved adjacent paragraph, then
+      // overwrite every dirty result measure. This avoids the O(document)
+      // content-hash adoption scan while keeping same-index block/measure
+      // ownership exact.
+      measures = previousMeasures!.slice();
+      if (provedDirtyMeasure.measureSplice.ordinalDelta === 1) {
+        const headMeasure = measures[provedDirtyMeasure.measureSplice.atIndex - 1];
+        if (!headMeasure) throw new Error('incrementalLayout: structural split measure anchor missing');
+        measures.splice(provedDirtyMeasure.measureSplice.atIndex, 0, headMeasure);
+      } else {
+        measures.splice(provedDirtyMeasure.measureSplice.atIndex, 1);
+      }
+      for (const [index, measurement] of overrides) measures[index] = measurement;
+      if (measures.length !== nextBlocks.length) {
+        throw new Error('incrementalLayout: structural measure splice cardinality mismatch');
+      }
+    } else {
+      measures = createMeasureOverlay(previousMeasures!, overrides);
+    }
+    reusedMeasures = nextBlocks.length - overrides.size;
+  } else
+    for (let blockIndex = 0; blockIndex < nextBlocks.length; blockIndex++) {
+      const checkpoint = checkpointMeasurement(blockIndex, nextBlocks.length);
+      if (checkpoint) {
+        await checkpoint;
+        throwIfLayoutExecutionAborted(layoutExecution);
+      }
+      const block = nextBlocks[blockIndex];
+      if (block.kind === 'sectionBreak') {
+        measures.push({ kind: 'sectionBreak' });
+        continue;
+      }
 
-    measureCache.set(block, blockMeasureWidth, blockMeasureHeight, measurement, fontSignature);
-    measures.push(measurement);
-    cacheMisses++;
-  }
+      // Use per-section constraints for this block's measurement.
+      const sectionConstraints = perSectionConstraints![blockIndex];
+      const blockMeasureWidth = sectionConstraints.maxWidth;
+      const blockMeasureHeight = sectionConstraints.maxHeight;
+      observeMeasureConstraints?.(block, sectionConstraints);
+
+      if (canReusePreviousMeasures && dirty.stableBlockIds.has(block.id)) {
+        const previousMeasure = previousMeasuresById?.get(block.id);
+        const previousBlockConstraints = previousConstraintsById?.get(block.id);
+        if (
+          previousMeasure &&
+          previousBlockConstraints?.maxWidth === blockMeasureWidth &&
+          previousBlockConstraints?.maxHeight === blockMeasureHeight
+        ) {
+          hydrateTabRunWidthsFromMeasure(block, previousMeasure);
+          measures.push(previousMeasure);
+          reusedMeasures++;
+          continue;
+        }
+      }
+
+      // Time the cache lookup (includes hashRuns computation)
+      const lookupStart = performance.now();
+      const cached = measureCache.get(block, blockMeasureWidth, blockMeasureHeight, fontSignature);
+      cacheLookupTime += performance.now() - lookupStart;
+
+      if (cached) {
+        hydrateTabRunWidthsFromMeasure(block, cached);
+        measures.push(cached);
+        cacheHits++;
+        continue;
+      }
+
+      // P8.4: try content adoption before paying a DOM measure when the miss
+      // pattern says ids churned: a block id the previous pass never saw, OR a
+      // burst of misses in one pass. The burst arm matters for POSITIONAL id
+      // schemes (paraId-less occurrence ordinals): a split shifts every
+      // downstream block onto the id its neighbor wore last pass, so the ids
+      // all LOOK known while the id-keyed reuse misses on content — without
+      // the burst arm the whole tail DOM-remeasures (~2s on 1000-paragraph
+      // docs). Plain typing stays under the threshold and never pays the
+      // O(doc) hash pass that builds the content map.
+      if (
+        previousMeasuresById != null &&
+        (!previousMeasuresById.has(block.id) || cacheMisses >= CONTENT_ADOPTION_MISS_THRESHOLD)
+      ) {
+        const adopted = adoptPreviousMeasureByContent(block, blockMeasureWidth, blockMeasureHeight);
+        if (adopted) {
+          hydrateTabRunWidthsFromMeasure(block, adopted);
+          measureCache.set(block, blockMeasureWidth, blockMeasureHeight, adopted, fontSignature);
+          measures.push(adopted);
+          reusedMeasures++;
+          continue;
+        }
+      }
+
+      // Time the actual DOM measurement
+      const measureBlockStart = performance.now();
+      const measurement = await measureBlock(block, sectionConstraints);
+      actualMeasureTime += performance.now() - measureBlockStart;
+
+      measureCache.set(block, blockMeasureWidth, blockMeasureHeight, measurement, fontSignature);
+      measures.push(measurement);
+      cacheMisses++;
+    }
   const measureEnd = performance.now();
   const totalMeasureTime = measureEnd - measureStart;
+  await checkpointPhaseIfDue();
 
   perfLog(
-    `[Perf] 4.1 Measure all blocks: ${totalMeasureTime.toFixed(2)}ms (${cacheMisses} measured, ${cacheHits} cached, ${reusedMeasures} reused)`,
+    `[Perf] 4.1 Measure all blocks: ${totalMeasureTime.toFixed(2)}ms (${cacheMisses} measured, ${cacheHits} cached, ${reusedMeasures} reused; ${cacheLookupTime.toFixed(2)}ms cache lookup, ${actualMeasureTime.toFixed(2)}ms DOM measure)`,
   );
 
   // Pre-layout headers to get their actual content heights BEFORE body layout.
@@ -1205,6 +1974,7 @@ export async function incrementalLayout(
    */
   let headerContentHeightsByRId: Map<string, number> | undefined;
   let headerContentHeightsBySectionRef: Map<string, number> | undefined;
+  let headerPreLayoutTime = 0;
 
   // Check if we have headers via either headerBlocks (by variant) or headerBlocksByRId (by relationship ID)
   const hasHeaderBlocks = headerFooter?.headerBlocks && Object.keys(headerFooter.headerBlocks).length > 0;
@@ -1247,8 +2017,11 @@ export async function incrementalLayout(
           1,
           pageResolver,
           kind,
-          undefined,
-          (block, maxWidth, firstLineIndent) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent),
+          headerFooterCacheSignature,
+          (block, maxWidth, firstLineIndent, lineRegions) =>
+            remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+          hfTokenOptions,
+          headerFooterExecution,
         );
         const layout = layouts.default?.layout;
         if (!layout || !(layout.height > 0)) continue;
@@ -1281,8 +2054,11 @@ export async function incrementalLayout(
         1,
         pageResolver,
         kind,
-        undefined,
-        (block, maxWidth, firstLineIndent) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent),
+        headerFooterCacheSignature,
+        (block, maxWidth, firstLineIndent, lineRegions) =>
+          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+        hfTokenOptions,
+        headerFooterExecution,
       );
       const layout = layouts.default?.layout;
       if (layout && layout.height > 0) {
@@ -1315,7 +2091,9 @@ export async function incrementalLayout(
      * header height calculations. A value of 1 is sufficient as a placeholder.
      */
     const HEADER_PRELAYOUT_PLACEHOLDER_PAGE_COUNT = 1;
-    const prelayoutPageResolver = buildConservativePrelayoutPageResolver(nextBlocks, sectionMetadata);
+    const prelayoutPageResolver = layoutExecution
+      ? await buildConservativePrelayoutPageResolverCooperatively(nextBlocks, sectionMetadata, layoutExecution)
+      : buildConservativePrelayoutPageResolver(nextBlocks, sectionMetadata);
 
     /**
      * Type guard to check if a key is a valid header variant type.
@@ -1341,8 +2119,11 @@ export async function incrementalLayout(
         HEADER_PRELAYOUT_PLACEHOLDER_PAGE_COUNT,
         prelayoutPageResolver,
         'header',
-        fontSignature,
-        (block, maxWidth, firstLineIndent) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent),
+        headerFooterCacheSignature,
+        (block, maxWidth, firstLineIndent, lineRegions) =>
+          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+        hfTokenOptions,
+        headerFooterExecution,
       );
 
       // Extract actual content heights from each variant
@@ -1372,7 +2153,8 @@ export async function incrementalLayout(
     }
 
     const hfPreEnd = performance.now();
-    perfLog(`[Perf] 4.1.5 Pre-layout headers for height: ${(hfPreEnd - hfPreStart).toFixed(2)}ms`);
+    headerPreLayoutTime = hfPreEnd - hfPreStart;
+    perfLog(`[Perf] 4.1.5 Pre-layout headers for height: ${headerPreLayoutTime.toFixed(2)}ms`);
   }
 
   // Pre-layout footers to get their actual content heights BEFORE body layout.
@@ -1394,6 +2176,7 @@ export async function incrementalLayout(
    */
   let footerContentHeightsByRId: Map<string, number> | undefined;
   let footerContentHeightsBySectionRef: Map<string, number> | undefined;
+  let footerPreLayoutTime = 0;
 
   // Check if we have footers via either footerBlocks (by variant) or footerBlocksByRId (by relationship ID)
   const hasFooterBlocks = headerFooter?.footerBlocks && Object.keys(headerFooter.footerBlocks).length > 0;
@@ -1422,7 +2205,9 @@ export async function incrementalLayout(
      * footer height calculations. A value of 1 is sufficient as a placeholder.
      */
     const FOOTER_PRELAYOUT_PLACEHOLDER_PAGE_COUNT = 1;
-    const prelayoutPageResolver = buildConservativePrelayoutPageResolver(nextBlocks, sectionMetadata);
+    const prelayoutPageResolver = layoutExecution
+      ? await buildConservativePrelayoutPageResolverCooperatively(nextBlocks, sectionMetadata, layoutExecution)
+      : buildConservativePrelayoutPageResolver(nextBlocks, sectionMetadata);
 
     /**
      * Type guard to check if a key is a valid footer variant type.
@@ -1449,8 +2234,11 @@ export async function incrementalLayout(
           FOOTER_PRELAYOUT_PLACEHOLDER_PAGE_COUNT,
           prelayoutPageResolver,
           'footer',
-          fontSignature,
-          (block, maxWidth, firstLineIndent) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent),
+          headerFooterCacheSignature,
+          (block, maxWidth, firstLineIndent, lineRegions) =>
+            remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+          hfTokenOptions,
+          headerFooterExecution,
         );
 
         // Extract actual content heights from each variant
@@ -1479,13 +2267,24 @@ export async function incrementalLayout(
         footerContentHeightsBySectionRef = measuredHeights.heightsBySectionRef;
       }
     } catch (error) {
+      throwIfLayoutExecutionAborted(layoutExecution);
       console.error('[Layout] Footer pre-layout failed:', error);
       footerContentHeights = undefined;
     }
 
     const footerPreEnd = performance.now();
-    perfLog(`[Perf] 4.1.6 Pre-layout footers for height: ${(footerPreEnd - footerPreStart).toFixed(2)}ms`);
+    footerPreLayoutTime = footerPreEnd - footerPreStart;
+    perfLog(`[Perf] 4.1.6 Pre-layout footers for height: ${footerPreLayoutTime.toFixed(2)}ms`);
   }
+
+  const headerFooterGeometryFingerprint = buildHeaderFooterGeometryFingerprint({
+    headerContentHeights,
+    footerContentHeights,
+    headerContentHeightsByRId,
+    headerContentHeightsBySectionRef,
+    footerContentHeightsByRId,
+    footerContentHeightsBySectionRef,
+  });
 
   // SD-3432: when a warm-start seed is usable, build the INITIAL pagination
   // directly with the seeded reserves (and the note body heights the slicer
@@ -1494,32 +2293,84 @@ export async function incrementalLayout(
   // pagination per keystroke instead of two. The cold path (no seed) is
   // byte-identical to before. The seed remains ONLY a starting vector: the
   // footnote pipeline below still re-validates it in full.
+  const warmStartPreparationStart = performance.now();
   const earlyFootnotesInput = isFootnotesLayoutInput(options.footnotes) ? options.footnotes : null;
   const warmSeed = warmStart?.footnoteReserveSeed ?? null;
-  const warmSeedUsable =
+  const warmSeedBaseUsable =
     !isSemanticFlow &&
     warmSeed !== null &&
     warmSeed.reserves.some((h) => h > 0) &&
     warmSeed.fontSignature === fontSignature &&
     warmSeed.measurementWidth === measurementWidth &&
-    warmSeed.measurementHeight === measurementHeight &&
     earlyFootnotesInput !== null &&
     earlyFootnotesInput.refs.length > 0 &&
     earlyFootnotesInput.blocksById.size > 0;
+  const retainedNoteMeasures = warmSeedBaseUsable
+    ? validateRetainedNoteMeasurePlane(earlyFootnotesInput!.blocksById, warmSeed!)
+    : null;
+  const retainedNoteMeasurePlaneExact =
+    warmStart?.noteMeasurePlaneRetainedExact === true && retainedNoteMeasures !== null;
+  // The proved dirty-measure lane deliberately skips the O(document) section
+  // scan, so its conservative global max-height key can differ from the cold
+  // seed. That height is only a note-measure cache bound: when the exact note
+  // plane has also passed object-identity validation, no note is remeasured
+  // under the current bound and the retained reserve vector remains valid.
+  // Width still gates unconditionally because it changes line wrapping.
+  const warmSeedUsable =
+    warmSeedBaseUsable &&
+    (warmSeed!.measurementHeight === measurementHeight ||
+      (provedDirtyMeasureCandidate && retainedNoteMeasurePlaneExact));
+  const retainedNoteHeights =
+    retainedNoteMeasurePlaneExact &&
+    warmSeed?.noteBodyHeightById instanceof Map &&
+    warmSeed.noteFirstLineHeightById instanceof Map &&
+    new Set(earlyFootnotesInput?.refs.map((reference) => reference.id) ?? []).size ===
+      warmSeed.noteBodyHeightById.size &&
+    [...new Set(earlyFootnotesInput?.refs.map((reference) => reference.id) ?? [])].every(
+      (id) => warmSeed.noteBodyHeightById!.has(id) && warmSeed.noteFirstLineHeightById!.has(id),
+    )
+      ? {
+          totalMap: warmSeed.noteBodyHeightById,
+          firstLineMap: warmSeed.noteFirstLineHeightById,
+        }
+      : null;
+  const retainedFootnoteGeometry =
+    provedDirtyMeasureCandidate &&
+    retainedNoteMeasures !== null &&
+    retainedNoteHeights !== null &&
+    warmStart?.noteMeasurePlaneRetainedExact === true &&
+    typeof warmSeed?.footnoteMeasurementWidth === 'number' &&
+    Number.isFinite(warmSeed.footnoteMeasurementWidth) &&
+    warmSeed.footnoteMeasurementWidth > 0 &&
+    warmSeed.sectionColumnsByIndex instanceof Map &&
+    warmSeed.sectionColumnsByIndex.size > 0
+      ? {
+          measurementWidth: warmSeed.footnoteMeasurementWidth,
+          sectionColumnsByIndex: warmSeed.sectionColumnsByIndex,
+        }
+      : null;
+  let preparedWarmNoteMeasures: ReadonlyMap<string, Measure> | null = null;
   let seededInitialLayout = false;
   let seededInitialOptions: Record<string, unknown> = {};
   if (warmSeedUsable) {
-    const earlyFootnoteWidth = resolveFootnoteMeasurementWidth(options, nextBlocks);
+    const earlyFootnoteWidth =
+      retainedFootnoteGeometry?.measurementWidth ?? resolveFootnoteMeasurementWidth(options, nextBlocks);
     if (earlyFootnoteWidth > 0) {
       const allIds = new Set(earlyFootnotesInput.refs.map((ref) => ref.id));
-      const { measuresById } = await measureNoteBlocks(
-        allIds,
-        earlyFootnotesInput.blocksById,
-        { maxWidth: earlyFootnoteWidth, maxHeight: measurementHeight },
-        measureBlock,
-        fontSignature,
-      );
-      const { totalMap, firstLineMap } = computeNoteBodyHeights(earlyFootnotesInput, measuresById);
+      const measuresById =
+        retainedNoteMeasures ??
+        (
+          await measureNoteBlocks(
+            allIds,
+            earlyFootnotesInput.blocksById,
+            { maxWidth: earlyFootnoteWidth, maxHeight: measurementHeight },
+            measureBlock,
+            fontSignature,
+          )
+        ).measuresById;
+      preparedWarmNoteMeasures = measuresById;
+      const { totalMap, firstLineMap } =
+        retainedNoteHeights ?? computeNoteBodyHeights(earlyFootnotesInput, measuresById);
       seededInitialOptions = {
         footnoteReservedByPageIndex: warmSeed.reserves,
         footnotes: {
@@ -1534,9 +2385,11 @@ export async function incrementalLayout(
       seededInitialLayout = true;
     }
   }
+  const warmStartPreparationTime = performance.now() - warmStartPreparationStart;
 
   const layoutStart = performance.now();
-  let layout = layoutDocument(nextBlocks, measures, {
+  const initialLayoutInvocationTiming = { layoutDocumentMs: 0, layoutDocumentCalls: 0 };
+  const initialBodyLayoutOptions: LayoutOptions = {
     ...options,
     ...seededInitialOptions,
     headerContentHeights, // Pass header heights to prevent overlap (per-variant)
@@ -1545,12 +2398,70 @@ export async function incrementalLayout(
     headerContentHeightsByRId, // Pass header heights by rId for per-page margin calculation
     footerContentHeightsBySectionRef, // Pass footer heights by rId+section for exact page-specific margin calculation
     footerContentHeightsByRId, // Pass footer heights by rId for per-page margin calculation
-    remeasureParagraph: (block: FlowBlock, maxWidth: number, firstLineIndent?: number) =>
-      remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent),
+    remeasureParagraph: (
+      block: FlowBlock,
+      maxWidth: number,
+      firstLineIndent?: number,
+      lineRegions?: readonly (readonly ParagraphLineRegion[])[],
+    ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+  };
+  const initialLayoutResult = await layoutWithOptionalReuse({
+    previousBlocks,
+    blocks: nextBlocks,
+    measures,
+    options: initialBodyLayoutOptions,
+    dirty,
+    stableBlockIds: dirty.stableBlockIds,
+    reuse: layoutReuse,
+    ...(warmSeedUsable && warmSeed && earlyFootnotesInput && preparedWarmNoteMeasures
+      ? {
+          preparedNoteOnly: {
+            previousBlocks,
+            footnotes: earlyFootnotesInput,
+            currentNoteMeasures: preparedWarmNoteMeasures,
+            warmSeed,
+          } satisfies PreparedNoteOnlyLayoutReuse,
+        }
+      : {}),
+    ...(headerFooterBodyReferencesRetained && canReusePreviousMeasures
+      ? {
+          preparedHeaderFooterOnly: {
+            currentGeometryFingerprint: headerFooterGeometryFingerprint,
+            bodyMeasuresRetainedExact: true,
+            footnotes: earlyFootnotesInput,
+            warmSeed,
+            noteMeasurePlaneRetainedExact: retainedNoteMeasurePlaneExact,
+            retainedFootnoteExtras: warmStart?.retainedFootnoteExtras ?? null,
+          } satisfies PreparedHeaderFooterOnlyLayoutReuse,
+        }
+      : {}),
+    timing: initialLayoutInvocationTiming,
+    execution: layoutExecution,
   });
+  let layout = initialLayoutResult.layout;
+  let layoutReuseSummary = initialLayoutResult.reuse;
+  const provedNoteOnlyFinalization = initialLayoutResult.provedNoteOnlyFinalization ?? null;
+  // Tail adoption stores source-generation pages lazily. Downstream
+  // finalizers consume current block ids and PM coordinates, so expose the
+  // guarded current-coordinate view before they resolve references. Keeping
+  // this until return made rekeyed footnote anchors look absent and forced a
+  // full-document reserve relayout after an otherwise successful splice.
+  let adoptedPagesGuardedForFinalizers = false;
+  if (
+    layoutReuseSummary.tailAdoption &&
+    supportsLocalizedSectionNumbering(options) &&
+    (layoutReuseSummary.tailAdoption.pageIndexDelta === 0 ||
+      layoutReuseSummary.tailAdoption.displayPageNumberTransform != null)
+  ) {
+    layout = guardAdoptedLayoutPages(layout, layoutReuseSummary.tailAdoption);
+    adoptedPagesGuardedForFinalizers = true;
+  }
   const layoutEnd = performance.now();
   const layoutTime = layoutEnd - layoutStart;
+  const layoutDocumentTime = initialLayoutInvocationTiming.layoutDocumentMs;
+  const layoutReuseOrchestrationTime = Math.max(0, layoutTime - layoutDocumentTime);
   perfLog(`[Perf] 4.2 Layout document (pagination): ${layoutTime.toFixed(2)}ms`);
+  await checkpointPhaseIfDue();
 
   // Two-pass convergence loop for page number token resolution.
   // Steps: paginate -> build numbering context -> resolve PAGE/NUMPAGES tokens
@@ -1559,11 +2470,19 @@ export async function incrementalLayout(
   let currentBlocks = nextBlocks;
   let currentMeasures = measures;
   let iteration = 0;
+  const shouldResolveBodyPageTokens =
+    !isSemanticFlow && FeatureFlags.BODY_PAGE_TOKENS && layoutReuseSummary.mode === 'full';
   // Chapter context only reads stable paragraph style/marker metadata; PAGE
   // token convergence clones run text but does not change those block attrs.
-  const chapterBlockById = buildBlockById(currentBlocks);
+  const chapterBlockById =
+    !shouldResolveBodyPageTokens || layoutReuse?.dependencyProof?.globalDependenciesAbsent === true
+      ? new Map<string, FlowBlock>()
+      : layoutExecution
+        ? await buildBlockByIdCooperatively(currentBlocks, layoutExecution)
+        : buildBlockById(currentBlocks);
   const chapterContextCache: ChapterContextCache = {};
 
+  const pageTokenSetupTime = performance.now() - layoutEnd;
   const pageTokenStart = performance.now();
   let totalAffectedBlocks = 0;
   let totalRemeasureTime = 0;
@@ -1571,17 +2490,40 @@ export async function incrementalLayout(
   let converged = true;
 
   // Only run token resolution if feature flag is enabled
-  if (!isSemanticFlow && FeatureFlags.BODY_PAGE_TOKENS) {
+  // Local pagination is admitted only after dynamic fields were proved absent;
+  // avoid a whole-layout token pass (and never interpret retained source page
+  // numbers as target physical numbers after a page-count shift).
+  if (shouldResolveBodyPageTokens) {
     while (iteration < maxIterations) {
       // Build numbering context from current layout
       const sections = options.sectionMetadata ?? [];
-      const numberingCtx = buildNumberingContext(layout, sections, chapterBlockById, chapterContextCache);
+      const numberingCtx = layoutExecution
+        ? await buildNumberingContextCooperatively(
+            layout,
+            sections,
+            chapterBlockById,
+            chapterContextCache,
+            layoutExecution,
+          )
+        : buildNumberingContext(layout, sections, chapterBlockById, chapterContextCache);
 
       // Log iteration start
       PageTokenLogger.logIterationStart(iteration, layout.pages.length);
 
-      // Resolve page number tokens
-      const tokenResult = resolvePageNumberTokens(layout, currentBlocks, currentMeasures, numberingCtx);
+      // Resolve page number tokens. Under provisional pagination, body
+      // total-page fields keep their source-cached text (em dash when absent)
+      // — only `PAGE` resolves — mirroring the header/footer field policy.
+      const pageTokenOptions = { pageCountFieldsExact: headerFooter?.pageCountFieldsExact !== false };
+      const tokenResult = layoutExecution
+        ? await resolvePageNumberTokensCooperatively(
+            layout,
+            currentBlocks,
+            currentMeasures,
+            numberingCtx,
+            pageTokenOptions,
+            layoutExecution,
+          )
+        : resolvePageNumberTokens(layout, currentBlocks, currentMeasures, numberingCtx, pageTokenOptions);
 
       // Check for convergence
       if (tokenResult.affectedBlockIds.size === 0) {
@@ -1614,6 +2556,7 @@ export async function incrementalLayout(
         measureBlock,
         fontSignature,
         measureCache,
+        layoutExecution,
       );
       const remeasureEnd = performance.now();
       const remeasureTime = remeasureEnd - remeasureStart;
@@ -1624,7 +2567,7 @@ export async function incrementalLayout(
       // Re-run pagination with updated measures (preserving the seeded
       // footnote reserves when the initial pagination was seeded, SD-3432).
       const relayoutStart = performance.now();
-      layout = layoutDocument(currentBlocks, currentMeasures, {
+      const pageTokenLayoutOptions: LayoutOptions = {
         ...options,
         ...seededInitialOptions,
         headerContentHeights, // Pass header heights to prevent overlap (per-variant)
@@ -1633,9 +2576,16 @@ export async function incrementalLayout(
         headerContentHeightsByRId, // Pass header heights by rId for per-page margin calculation
         footerContentHeightsBySectionRef, // Pass footer heights by rId+section for exact page-specific margin calculation
         footerContentHeightsByRId, // Pass footer heights by rId for per-page margin calculation
-        remeasureParagraph: (block: FlowBlock, maxWidth: number, firstLineIndent?: number) =>
-          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent),
-      });
+        remeasureParagraph: (
+          block: FlowBlock,
+          maxWidth: number,
+          firstLineIndent?: number,
+          lineRegions?: readonly (readonly ParagraphLineRegion[])[],
+        ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+      };
+      layout = layoutExecution
+        ? await layoutDocumentCooperatively(currentBlocks, currentMeasures, pageTokenLayoutOptions, layoutExecution)
+        : layoutDocument(currentBlocks, currentMeasures, pageTokenLayoutOptions);
       const relayoutEnd = performance.now();
       const relayoutTime = relayoutEnd - relayoutStart;
       totalRelayoutTime += relayoutTime;
@@ -1652,10 +2602,17 @@ export async function incrementalLayout(
     }
   }
 
-  hydrateTableTextboxMeasures(currentBlocks, (block, maxWidth) => remeasureParagraph(block, maxWidth));
+  // Tables are excluded by the proved local profile. Avoid walking the
+  // untouched document merely to discover that there are none.
+  if (layoutReuseSummary.mode === 'full') {
+    currentBlocks = hydrateTableTextboxMeasures(currentBlocks, (block, maxWidth) =>
+      remeasureParagraph(block, maxWidth),
+    );
+  }
 
   const pageTokenEnd = performance.now();
   const totalTokenTime = pageTokenEnd - pageTokenStart;
+  await checkpointPhaseIfDue();
 
   if (iteration > 0) {
     perfLog(`[Perf] 4.3 Total page token resolution time: ${totalTokenTime.toFixed(2)}ms`);
@@ -1683,7 +2640,28 @@ export async function incrementalLayout(
   // SD-3432: stays null unless this run ends on an EXACT footnote fixed point.
   let nextFootnoteReserveSeed: FootnoteReserveSeed | null = null;
   const footnotesInput = isFootnotesLayoutInput(options.footnotes) ? options.footnotes : null;
-  if (!isSemanticFlow && footnotesInput && footnotesInput.refs.length > 0 && footnotesInput.blocksById.size > 0) {
+  const footnoteStart = performance.now();
+  let footnoteFullRelayoutPerformed = false;
+  let footnoteRelayouts = 0;
+  const footnoteRelayoutBreakdown = {
+    reserve: 0,
+    grow: 0,
+    tighten: 0,
+    preferred: 0,
+    widow: 0,
+    revert: 0,
+    other: 0,
+  };
+  if (provedNoteOnlyFinalization) {
+    extraBlocks = provedNoteOnlyFinalization.extraBlocks;
+    extraMeasures = provedNoteOnlyFinalization.extraMeasures;
+    nextFootnoteReserveSeed = provedNoteOnlyFinalization.footnoteReserveSeed;
+  } else if (
+    !isSemanticFlow &&
+    footnotesInput &&
+    footnotesInput.refs.length > 0 &&
+    footnotesInput.blocksById.size > 0
+  ) {
     const gap = typeof footnotesInput.gap === 'number' && Number.isFinite(footnotesInput.gap) ? footnotesInput.gap : 2;
     const topPadding =
       typeof footnotesInput.topPadding === 'number' && Number.isFinite(footnotesInput.topPadding)
@@ -1701,9 +2679,16 @@ export async function incrementalLayout(
     // §17.11.1  w:continuationSeparator — "spans the width of the main story's text extents"
     const SEPARATOR_DEFAULT_WIDTH_FACTOR = 0.5;
 
-    const footnoteWidth = resolveFootnoteMeasurementWidth(options, currentBlocks);
+    const footnoteWidth =
+      retainedFootnoteGeometry?.measurementWidth ?? resolveFootnoteMeasurementWidth(options, currentBlocks);
     if (footnoteWidth > 0) {
+      const footnoteSectionColumnsByIndex =
+        retainedFootnoteGeometry?.sectionColumnsByIndex ?? resolveSectionColumnsByIndex(options, currentBlocks);
       const footnoteConstraints = { maxWidth: footnoteWidth, maxHeight: measurementHeight };
+      // The fixed-point planner can rediscover the same cap/truncation on
+      // several internal passes. Console I/O is diagnostic only; emit each
+      // stable fact once per incrementalLayout invocation.
+      const emittedFootnoteWarningKeys = new Set<string>();
 
       const collectFootnoteIdsByColumn = (idsByColumn: Map<number, Map<number, string[]>>): Set<string> => {
         const ids = new Set<string>();
@@ -1715,8 +2700,33 @@ export async function incrementalLayout(
         return ids;
       };
 
-      const measureFootnoteBlocks = (ids: Set<string>) =>
-        measureNoteBlocks(ids, footnotesInput.blocksById, footnoteConstraints, measureBlock, fontSignature);
+      const measureFootnoteBlocks = (ids: Set<string>) => {
+        if (!retainedNoteMeasures) {
+          return measureNoteBlocks(ids, footnotesInput.blocksById, footnoteConstraints, measureBlock, fontSignature);
+        }
+        const blocks: FlowBlock[] = [];
+        const measuresById = new Map<string, Measure>();
+        for (const id of ids) {
+          for (const block of footnotesInput.blocksById.get(id) ?? []) {
+            const measure = retainedNoteMeasures.get(block.id);
+            if (!measure) {
+              return measureNoteBlocks(
+                ids,
+                footnotesInput.blocksById,
+                footnoteConstraints,
+                measureBlock,
+                fontSignature,
+              );
+            }
+            blocks.push(block);
+            measuresById.set(block.id, measure);
+          }
+        }
+        return Promise.resolve({
+          blocks,
+          measuresById: measuresById.size === retainedNoteMeasures.size ? retainedNoteMeasures : measuresById,
+        });
+      };
 
       const computeFootnoteLayoutPlan = (
         layoutForPages: Layout,
@@ -2028,7 +3038,7 @@ export async function incrementalLayout(
             // cluster (Word-like — last anchor also renders fully when room
             // exists). Body slicer may choose this when safe.
             let preferredReserve = 0;
-            // SD-2656 (post-Vivienne Carlsbad p22): Any continuation flowing
+            // SD-2656: Any continuation flowing
             // INTO this page (from a prior page's spill) must also fit on this
             // page — it can't move anywhere else. Include it in BOTH reserves
             // so the scorer's preferred target is large enough to actually
@@ -2210,16 +3220,22 @@ export async function incrementalLayout(
         }
 
         if (cappedPages.size > 0) {
-          console.warn('[layout] Footnote reserve capped to preserve body area', {
-            pages: Array.from(cappedPages),
-          });
+          const pages = Array.from(cappedPages).sort((left, right) => left - right);
+          const key = `reserve-capped:${pages.join(',')}`;
+          if (!emittedFootnoteWarningKeys.has(key)) {
+            emittedFootnoteWarningKeys.add(key);
+            console.warn('[layout] Footnote reserve capped to preserve body area', { pages });
+          }
         }
         if (pendingByColumn.size > 0) {
           const pendingIds = new Set<string>();
           pendingByColumn.forEach((entries) => entries.forEach((entry) => pendingIds.add(entry.id)));
-          console.warn('[layout] Footnote content truncated: extends beyond document pages', {
-            ids: Array.from(pendingIds),
-          });
+          const ids = Array.from(pendingIds).sort();
+          const key = `content-truncated:${ids.join(',')}`;
+          if (!emittedFootnoteWarningKeys.has(key)) {
+            emittedFootnoteWarningKeys.add(key);
+            console.warn('[layout] Footnote content truncated: extends beyond document pages', { ids });
+          }
         }
 
         return {
@@ -2238,13 +3254,24 @@ export async function incrementalLayout(
         reservesByPageIndex: number[],
         blockById: Map<string, FlowBlock>,
         pageColumns: Map<number, PageColumns>,
+        pageIndexesToFinalize: ReadonlySet<number> | null,
       ) => {
         const decorativeBlocks: FlowBlock[] = [];
         const decorativeMeasures: Measure[] = [];
 
-        for (let pageIndex = 0; pageIndex < layoutForPages.pages.length; pageIndex++) {
+        const pageIndexes =
+          pageIndexesToFinalize == null
+            ? layoutForPages.pages.keys()
+            : [...pageIndexesToFinalize]
+                .filter(
+                  (pageIndex) =>
+                    Number.isInteger(pageIndex) && pageIndex >= 0 && pageIndex < layoutForPages.pages.length,
+                )
+                .sort((left, right) => left - right);
+        for (const pageIndex of pageIndexes) {
           const page = layoutForPages.pages[pageIndex];
-          page.footnoteReserved = Math.max(0, reservesByPageIndex[pageIndex] ?? plan.reserves[pageIndex] ?? 0);
+          const nextFootnoteReserved = Math.max(0, reservesByPageIndex[pageIndex] ?? plan.reserves[pageIndex] ?? 0);
+          if (page.footnoteReserved !== nextFootnoteReserved) page.footnoteReserved = nextFootnoteReserved;
           // SD-2656 Phase 0: attach the per-page ledger. Combine the planner
           // draft with the applied body reserve we just stamped. This is the
           // single source of truth that Phase 1+ will read.
@@ -2396,6 +3423,7 @@ export async function incrementalLayout(
                   page.fragments.push({
                     kind: 'para',
                     blockId: range.blockId,
+                    columnIndex,
                     fromLine: range.fromLine,
                     toLine: range.toLine,
                     x: columnX,
@@ -2425,6 +3453,7 @@ export async function incrementalLayout(
                     kind: 'list-item',
                     blockId: range.blockId,
                     itemId: range.itemId,
+                    columnIndex,
                     fromLine: range.fromLine,
                     toLine: range.toLine,
                     x: columnX + indentLeft + markerWidth,
@@ -2522,14 +3551,32 @@ export async function incrementalLayout(
       };
 
       const resolveFootnoteAssignments = (layoutForPages: Layout) => {
-        const columns = resolvePageColumns(layoutForPages, options, currentBlocks);
+        const columns = resolvePageColumns(layoutForPages, options, undefined, footnoteSectionColumnsByIndex);
         const paragraphMeasuresByBlockId = new Map<string, ParagraphMeasure>();
-        const pairedLength = Math.min(currentBlocks.length, currentMeasures.length);
-        for (let index = 0; index < pairedLength; index += 1) {
-          const block = currentBlocks[index];
-          const measure = currentMeasures[index];
-          if (block?.kind !== 'paragraph' || measure?.kind !== 'paragraph') continue;
-          paragraphMeasuresByBlockId.set(block.id, measure);
+        const currentBlockIndexById = effectiveMeasureReuseProof?.currentBlockIndexById;
+        if (provedDirtyMeasureCandidate && currentBlockIndexById) {
+          const referenceBlockIds = new Set(
+            footnotesInput.refs.flatMap((reference) =>
+              typeof reference.blockId === 'string' ? [reference.blockId] : [],
+            ),
+          );
+          for (const blockId of referenceBlockIds) {
+            const index = currentBlockIndexById.get(blockId);
+            if (index == null) continue;
+            const block = currentBlocks[index];
+            const measure = currentMeasures[index];
+            if (block?.kind === 'paragraph' && measure?.kind === 'paragraph') {
+              paragraphMeasuresByBlockId.set(block.id, measure);
+            }
+          }
+        } else {
+          const pairedLength = Math.min(currentBlocks.length, currentMeasures.length);
+          for (let index = 0; index < pairedLength; index += 1) {
+            const block = currentBlocks[index];
+            const measure = currentMeasures[index];
+            if (block?.kind !== 'paragraph' || measure?.kind !== 'paragraph') continue;
+            paragraphMeasuresByBlockId.set(block.id, measure);
+          }
         }
         const idsByColumn = assignFootnotesToColumns(
           layoutForPages,
@@ -2543,9 +3590,10 @@ export async function incrementalLayout(
       // SD-3049: per-footnote total body height; accounting mirrors `computeFootnoteLayoutPlan`.
       // SD-2656: alongside the total, compute the first valid line/run height
       // so the body slicer can apply the ordered-cluster demand model.
-      let bodyHeightById = new Map<string, number>();
-      let firstLineHeightById = new Map<string, number>();
+      let bodyHeightById = retainedNoteHeights?.totalMap ?? new Map<string, number>();
+      let firstLineHeightById = retainedNoteHeights?.firstLineMap ?? new Map<string, number>();
       const refreshBodyHeights = (measures: Map<string, Measure>) => {
+        if (retainedNoteHeights && measures === retainedNoteMeasures) return;
         const { totalMap, firstLineMap } = computeNoteBodyHeights(footnotesInput, measures);
         bodyHeightById = totalMap;
         firstLineHeightById = firstLineMap;
@@ -2589,8 +3637,21 @@ export async function incrementalLayout(
       // Otherwise the slicer falls back to defaults that drift on docs with
       // custom separator dimensions, packing body onto a page whose band
       // can't actually fit the refs.
-      const relayout = (footnoteReservedByPageIndex: number[], plannerSeparatorSpacingBefore?: number) =>
-        layoutDocument(currentBlocks, currentMeasures, {
+      const relayout = async (
+        footnoteReservedByPageIndex: number[],
+        plannerSeparatorSpacingBefore?: number,
+        label = 'footnote-relayout',
+      ): Promise<Layout> => {
+        footnoteRelayouts += 1;
+        if (label.includes('revert')) footnoteRelayoutBreakdown.revert += 1;
+        else if (label.startsWith('reserve-loop')) footnoteRelayoutBreakdown.reserve += 1;
+        else if (label.startsWith('grow-pass')) footnoteRelayoutBreakdown.grow += 1;
+        else if (label.startsWith('tighten-pass')) footnoteRelayoutBreakdown.tighten += 1;
+        else if (label.startsWith('preferred-trial')) footnoteRelayoutBreakdown.preferred += 1;
+        else if (label.startsWith('widow-orphan')) footnoteRelayoutBreakdown.widow += 1;
+        else footnoteRelayoutBreakdown.other += 1;
+        if (layoutExecution) await checkpointLayoutExecution(layoutExecution, { phase: 'footnote:phase' });
+        const footnoteLayoutOptions: LayoutOptions = {
           ...options,
           footnoteReservedByPageIndex,
           footnotes: {
@@ -2607,9 +3668,55 @@ export async function incrementalLayout(
           headerContentHeightsByRId,
           footerContentHeightsBySectionRef,
           footerContentHeightsByRId,
-          remeasureParagraph: (block: FlowBlock, maxWidth: number, firstLineIndent?: number) =>
-            remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent),
-        });
+          remeasureParagraph: (
+            block: FlowBlock,
+            maxWidth: number,
+            firstLineIndent?: number,
+            lineRegions?: readonly (readonly ParagraphLineRegion[])[],
+          ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+        };
+        if (layoutReuse && layoutReuseSummary.mode !== 'full') {
+          const localizedReuse = { ...layoutReuse };
+          delete localizedReuse.provedNoteOnlyRefresh;
+          delete localizedReuse.provedHeaderFooterOnlyRefresh;
+          const localizedTiming = { layoutDocumentMs: 0, layoutDocumentCalls: 0 };
+          const localized = await layoutWithOptionalReuse({
+            previousBlocks,
+            blocks: currentBlocks,
+            measures: currentMeasures,
+            options: footnoteLayoutOptions,
+            dirty,
+            stableBlockIds: dirty.stableBlockIds,
+            reuse: localizedReuse,
+            timing: localizedTiming,
+            execution: layoutExecution,
+          });
+          if (localized.reuse.mode !== 'full') {
+            layoutReuseSummary = {
+              ...localized.reuse,
+              reason: `m4-footnote-reserve-localized;${localized.reuse.reason}`,
+            };
+            let localizedLayout = localized.layout;
+            if (
+              localized.reuse.tailAdoption &&
+              supportsLocalizedSectionNumbering(options) &&
+              (localized.reuse.tailAdoption.pageIndexDelta === 0 ||
+                localized.reuse.tailAdoption.displayPageNumberTransform != null)
+            ) {
+              localizedLayout = guardAdoptedLayoutPages(localizedLayout, localized.reuse.tailAdoption);
+              adoptedPagesGuardedForFinalizers = true;
+            }
+            return localizedLayout;
+          }
+          layoutReuseSummary = localized.reuse;
+          footnoteFullRelayoutPerformed = true;
+          return localized.layout;
+        }
+        footnoteFullRelayoutPerformed = true;
+        return layoutExecution
+          ? layoutDocumentCooperatively(currentBlocks, currentMeasures, footnoteLayoutOptions, layoutExecution)
+          : layoutDocument(currentBlocks, currentMeasures, footnoteLayoutOptions);
+      };
 
       // SD-3049: every reachable footnote id, computed once. Used to keep
       // `bodyHeightById` complete across convergence iterations even when refs
@@ -2617,509 +3724,698 @@ export async function incrementalLayout(
       // mid-loop, which would zero their entries and cause oscillation.
       const allFootnoteIds = new Set(footnotesInput.refs.map((ref) => ref.id));
 
-      // Pass 1: assign + reserve from current layout. Pre-measure ALL footnote
-      // bodies (the cache makes the assigned-only subset essentially free).
-      let { columns: pageColumns, idsByColumn } = resolveFootnoteAssignments(layout);
-      let { measuresById } = await measureFootnoteBlocks(allFootnoteIds);
-      refreshBodyHeights(measuresById);
-      let plan = computeFootnoteLayoutPlan(
-        layout,
-        idsByColumn,
-        measuresById,
-        // SD-3432: a seeded initial layout was built WITH the seed reserves,
-        // so the pass-1 plan must use them as its base (mirroring what the
-        // convergence loop does on every pass); the cold path keeps [].
-        seededInitialLayout && warmSeed ? warmSeed.reserves : [],
-        pageColumns,
-      );
-      let reserves = plan.reserves;
-      logFootnoteLayoutPhase('initial-plan', layout, reserves, plan.reserves, {
-        assignedFootnoteCount: collectFootnoteIdsByColumn(idsByColumn).size,
-      });
-
-      // SD-3432: warm-start. Seed the convergence loop with the previous
-      // run's fixed point so an unchanged document validates in ONE relayout
-      // instead of converging from zero reserves (measured: 9 full
-      // re-paginations -> 1 on a 90-page/25-footnote document) — and in ZERO
-      // extra relayouts when the initial pagination was itself seeded and
-      // validates immediately below. The seed is gated on the same cold gate
-      // as the loop itself (the plan must demand reserves) and on the
-      // geometry guards; the loop below re-validates it in full, so a stale
-      // seed costs passes, never correctness. Page counts legitimately
-      // differ between unreserved and reserved layouts, so the vector length
-      // is intentionally unguarded.
-      let seededSep: number | undefined;
-      let seedApplied = false;
-      if (warmSeedUsable && warmSeed && reserves.some((h) => h > 0)) {
-        reserves = warmSeed.reserves.slice();
-        seededSep = warmSeed.separatorSpacingBefore;
-        seedApplied = true;
-        if (typeof seededSep === 'number' && Number.isFinite(seededSep)) {
-          plan = { ...plan, separatorSpacingBefore: seededSep };
-        }
-      }
-
-      // Relayout with footnote reserves and iterate until reserves and page count stabilize,
-      // so each page gets the correct reserve (avoids "too much" on one page and "not enough" on another).
-      if (reserves.some((h) => h > 0)) {
-        let reservesStabilized = false;
-        // SD-3432: when the INITIAL pagination was already built with the
-        // seed, `layout` IS layout(seed) — if the pass-1 plan (computed with
-        // the seed as base) reproduces the seed exactly and the separator
-        // spacing matches, the fixed point is already validated with zero
-        // additional re-paginations.
-        if (
-          seedApplied &&
-          seededInitialLayout &&
-          plan.reserves.length === reserves.length &&
-          plan.reserves.every((h, i) => (reserves[i] ?? 0) === h) &&
-          reserves.every((h, i) => (plan.reserves[i] ?? 0) === h) &&
-          (seededSep === undefined || plan.separatorSpacingBefore === seededSep)
-        ) {
-          reservesStabilized = true;
-        }
-        // SD-3432: a seeded run must NOT pre-register its starting vector in
-        // the cycle detector — a sep-only mismatch on the seeded pass keeps
-        // the reserve vector identical, and pre-registration would misread
-        // that as oscillation and break before the sep-corrected pass runs.
-        const seenReserveVectors: number[][] = seedApplied ? [] : [reserves.slice()];
-        for (let pass = 0; !reservesStabilized && pass < MAX_FOOTNOTE_LAYOUT_PASSES; pass += 1) {
-          layout = relayout(reserves, plan.separatorSpacingBefore);
-          ({ columns: pageColumns, idsByColumn } = resolveFootnoteAssignments(layout));
-          // SD-3049: measure the full set each iteration so `bodyHeightById`
-          // stays complete; refs migrating between pages must not drop their
-          // measured demand from the per-block lookup.
-          ({ measuresById } = await measureFootnoteBlocks(allFootnoteIds));
-          refreshBodyHeights(measuresById);
-          plan = computeFootnoteLayoutPlan(layout, idsByColumn, measuresById, reserves, pageColumns);
-          const nextReserves = plan.reserves;
-          // SD-3432: a SEEDED first pass may only early-break when the
-          // recomputed separator spacing matches the seeded value the
-          // relayout was built with — reserve equality alone would let a
-          // stale separator height survive into the painted band.
-          const sepConsistent =
-            !seedApplied || pass > 0 || plan.separatorSpacingBefore === seededSep || seededSep === undefined;
-          logFootnoteLayoutPhase(`reserve-loop-pass-${pass + 1}`, layout, reserves, nextReserves, {
-            assignedFootnoteCount: collectFootnoteIdsByColumn(idsByColumn).size,
-          });
-          const reservesStable =
-            sepConsistent &&
-            nextReserves.length === reserves.length &&
-            nextReserves.every((h, i) => (reserves[i] ?? 0) === h) &&
-            reserves.every((h, i) => (nextReserves[i] ?? 0) === h);
-          if (reservesStable) {
-            reserves = nextReserves;
-            reservesStabilized = true;
-            break;
-          }
-          // Reserves are oscillating. Break out; the post-reserve grow loop
-          // below (which is monotonic and has its own cycle detector) will
-          // bump any under-reserved pages to the current plan's demand.
-          // Merging history here would carry over large demands from early
-          // passes that the current layout no longer anchors, leading to
-          // wasted reserved space on pages that never get any footnote.
-          if (seenReserveVectors.some((v) => v.join(',') === nextReserves.join(','))) break;
-          seenReserveVectors.push(nextReserves.slice());
-          // Only update reserves when we will do another layout pass; otherwise layout
-          // would be built with the previous reserves while reserves would be nextReserves,
-          // and the plan/injection phase could place footnotes in the wrong band.
-          if (pass < MAX_FOOTNOTE_LAYOUT_PASSES - 1) {
-            reserves = nextReserves;
-          }
-        }
-        if (!reservesStabilized) {
-          console.warn(
-            `[incrementalLayout] Footnote reserve loop did not converge (max ${MAX_FOOTNOTE_LAYOUT_PASSES} passes); layout may have suboptimal footnote placement.`,
+      footnoteFinalization: {
+        // Pass 1: assign + reserve from current layout. Pre-measure ALL footnote
+        // bodies (the cache makes the assigned-only subset essentially free).
+        let { columns: pageColumns, idsByColumn } = resolveFootnoteAssignments(layout);
+        const adoption = layoutReuseSummary.tailAdoption;
+        const retainedExtras = warmStart?.retainedFootnoteExtras;
+        const checkpointPageIndex = layoutReuseSummary.checkpointPageIndex;
+        const assignedFootnoteIds = collectFootnoteIdsByColumn(idsByColumn);
+        const previousNotePageIndexes = new Set(warmSeed?.notePageIndexes ?? []);
+        warmSeed?.reserves.forEach((reserve, pageIndex) => {
+          if (reserve > 0) previousNotePageIndexes.add(pageIndex);
+        });
+        const retainedFootnotePlaneAdoptable =
+          adoption != null &&
+          adoption.pageIndexDelta === 0 &&
+          Number.isInteger(checkpointPageIndex) &&
+          checkpointPageIndex! >= 0 &&
+          warmSeedBaseUsable &&
+          layoutReuse?.dependencyProof?.renderInputsUnchanged === true &&
+          warmStart?.noteMeasurePlaneRetainedExact === true &&
+          retainedExtras != null &&
+          retainedExtras.blocks.length > 0 &&
+          retainedExtras.blocks.length === retainedExtras.measures.length &&
+          Array.isArray(warmSeed?.notePageIndexes) &&
+          assignedFootnoteIds.size === allFootnoteIds.size &&
+          [...idsByColumn.keys()].every(
+            (pageIndex) => pageIndex < checkpointPageIndex! || pageIndex >= adoption.startPageIndex,
+          ) &&
+          [...previousNotePageIndexes].every(
+            (pageIndex) => pageIndex < checkpointPageIndex! || pageIndex >= adoption.sourcePageStartIndex,
           );
+        if (retainedFootnotePlaneAdoptable) {
+          // All note anchors and emitted note pages live in the retained prefix
+          // or the exact same-index adopted tail. The guarded page sequence has
+          // already rekeyed body ids/PM coordinates, while note bodies and
+          // decorative extras are unchanged. Re-running the reserve planner here
+          // can only replace a canonical retained band with a cold near-fixed
+          // point and turn a four-page edit into whole-document pagination.
+          extraBlocks = retainedExtras!.blocks;
+          extraMeasures = retainedExtras!.measures;
+          nextFootnoteReserveSeed = warmSeed;
+          const localPageReplacements = new Map<number, Page>();
+          for (let pageIndex = checkpointPageIndex!; pageIndex < adoption!.startPageIndex; pageIndex += 1) {
+            const page = layout.pages[pageIndex];
+            if (!page) continue;
+            localPageReplacements.set(pageIndex, {
+              ...page,
+              footnoteReserved: 0,
+              footnoteLedger: {
+                pageIndex,
+                anchorIds: [],
+                mandatorySliceIds: [],
+                continuationSliceIds: [],
+                extendedSliceIds: [],
+                continuationIn: [],
+                continuationOut: [],
+                mandatoryReservePx: 0,
+                preferredReservePx: 0,
+                actualBandHeightPx: 0,
+                appliedBodyReservePx: 0,
+                deadReservePx: 0,
+                lastAnchorRenderedLines: 0,
+              },
+            });
+          }
+          layout = {
+            ...layout,
+            pages: createPageSequenceWithReplacements(layout.pages, localPageReplacements),
+          };
+          break footnoteFinalization;
         }
-
-        let { columns: finalPageColumns, idsByColumn: finalIdsByColumn } = resolveFootnoteAssignments(layout);
-        let { blocks: finalBlocks, measuresById: finalMeasuresById } = await measureFootnoteBlocks(
-          collectFootnoteIdsByColumn(finalIdsByColumn),
-        );
-        let finalPlan = computeFootnoteLayoutPlan(
+        let { measuresById } = await measureFootnoteBlocks(allFootnoteIds);
+        refreshBodyHeights(measuresById);
+        let plan = computeFootnoteLayoutPlan(
           layout,
-          finalIdsByColumn,
-          finalMeasuresById,
-          reserves,
-          finalPageColumns,
+          idsByColumn,
+          measuresById,
+          // SD-3432: a seeded initial layout was built WITH the seed reserves,
+          // so the pass-1 plan must use them as its base (mirroring what the
+          // convergence loop does on every pass); the cold path keeps [].
+          seededInitialLayout && warmSeed ? warmSeed.reserves : [],
+          pageColumns,
         );
-        let reservesAppliedToLayout = reserves;
-        logFootnoteLayoutPhase('post-reserve-loop', layout, reservesAppliedToLayout, finalPlan.reserves, {
-          assignedFootnoteCount: collectFootnoteIdsByColumn(finalIdsByColumn).size,
+        let reserves = plan.reserves;
+        logFootnoteLayoutPhase('initial-plan', layout, reserves, plan.reserves, {
+          assignedFootnoteCount: collectFootnoteIdsByColumn(idsByColumn).size,
         });
 
-        const vectorsEqual = (a: number[], b: number[]): boolean => {
-          for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-            if ((a[i] ?? 0) !== (b[i] ?? 0)) return false;
+        // SD-3432: warm-start. Seed the convergence loop with the previous
+        // run's fixed point so an unchanged document validates in ONE relayout
+        // instead of converging from zero reserves (measured: 9 full
+        // re-paginations -> 1 on a 90-page/25-footnote document) — and in ZERO
+        // extra relayouts when the initial pagination was itself seeded and
+        // validates immediately below. The seed is gated on the same cold gate
+        // as the loop itself (the plan must demand reserves) and on the
+        // geometry guards; the loop below re-validates it in full, so a stale
+        // seed costs passes, never correctness. Page counts legitimately
+        // differ between unreserved and reserved layouts, so the vector length
+        // is intentionally unguarded.
+        let seededSep: number | undefined;
+        let seedApplied = false;
+        if (warmSeedUsable && warmSeed && reserves.some((h) => h > 0)) {
+          reserves = warmSeed.reserves.slice();
+          seededSep = warmSeed.separatorSpacingBefore;
+          seedApplied = true;
+          if (typeof seededSep === 'number' && Number.isFinite(seededSep)) {
+            plan = { ...plan, separatorSpacingBefore: seededSep };
           }
-          return true;
-        };
-        const applyReserves = async (target: number[], label = 'apply-reserves') => {
-          // Planner sized the band with the measured separator spacing; the
-          // body slicer must match or it packs too much and the band overflows.
-          layout = relayout(target, finalPlan.separatorSpacingBefore);
-          reservesAppliedToLayout = target;
-          ({ columns: finalPageColumns, idsByColumn: finalIdsByColumn } = resolveFootnoteAssignments(layout));
-          ({ blocks: finalBlocks, measuresById: finalMeasuresById } = await measureFootnoteBlocks(allFootnoteIds));
-          refreshBodyHeights(finalMeasuresById);
-          finalPlan = computeFootnoteLayoutPlan(
+        }
+
+        // Relayout with footnote reserves and iterate until reserves and page count stabilize,
+        // so each page gets the correct reserve (avoids "too much" on one page and "not enough" on another).
+        if (reserves.some((h) => h > 0)) {
+          let reservesStabilized = false;
+          // SD-3432: when the INITIAL pagination was already built with the
+          // seed, `layout` IS layout(seed) — if the pass-1 plan (computed with
+          // the seed as base) reproduces the seed exactly and the separator
+          // spacing matches, the fixed point is already validated with zero
+          // additional re-paginations.
+          if (
+            seedApplied &&
+            seededInitialLayout &&
+            plan.reserves.length === reserves.length &&
+            plan.reserves.every((h, i) => (reserves[i] ?? 0) === h) &&
+            reserves.every((h, i) => (plan.reserves[i] ?? 0) === h) &&
+            (seededSep === undefined || plan.separatorSpacingBefore === seededSep)
+          ) {
+            reservesStabilized = true;
+          }
+          // SD-3432: a seeded run must NOT pre-register its starting vector in
+          // the cycle detector — a sep-only mismatch on the seeded pass keeps
+          // the reserve vector identical, and pre-registration would misread
+          // that as oscillation and break before the sep-corrected pass runs.
+          const seenReserveVectors: number[][] = seedApplied ? [] : [reserves.slice()];
+          for (let pass = 0; !reservesStabilized && pass < MAX_FOOTNOTE_LAYOUT_PASSES; pass += 1) {
+            layout = await relayout(reserves, plan.separatorSpacingBefore, `reserve-loop-pass-${pass + 1}`);
+            await checkpointPhaseIfDue();
+            ({ columns: pageColumns, idsByColumn } = resolveFootnoteAssignments(layout));
+            // SD-3049: measure the full set each iteration so `bodyHeightById`
+            // stays complete; refs migrating between pages must not drop their
+            // measured demand from the per-block lookup.
+            ({ measuresById } = await measureFootnoteBlocks(allFootnoteIds));
+            refreshBodyHeights(measuresById);
+            plan = computeFootnoteLayoutPlan(layout, idsByColumn, measuresById, reserves, pageColumns);
+            const nextReserves = plan.reserves;
+            // SD-3432: a SEEDED first pass may only early-break when the
+            // recomputed separator spacing matches the seeded value the
+            // relayout was built with — reserve equality alone would let a
+            // stale separator height survive into the painted band.
+            const sepConsistent =
+              !seedApplied || pass > 0 || plan.separatorSpacingBefore === seededSep || seededSep === undefined;
+            logFootnoteLayoutPhase(`reserve-loop-pass-${pass + 1}`, layout, reserves, nextReserves, {
+              assignedFootnoteCount: collectFootnoteIdsByColumn(idsByColumn).size,
+            });
+            const reservesStable =
+              sepConsistent &&
+              nextReserves.length === reserves.length &&
+              nextReserves.every((h, i) => (reserves[i] ?? 0) === h) &&
+              reserves.every((h, i) => (nextReserves[i] ?? 0) === h);
+            if (reservesStable) {
+              reserves = nextReserves;
+              reservesStabilized = true;
+              break;
+            }
+            // Reserves are oscillating. Break out; the post-reserve grow loop
+            // below (which is monotonic and has its own cycle detector) will
+            // bump any under-reserved pages to the current plan's demand.
+            // Merging history here would carry over large demands from early
+            // passes that the current layout no longer anchors, leading to
+            // wasted reserved space on pages that never get any footnote.
+            if (seenReserveVectors.some((v) => v.join(',') === nextReserves.join(','))) break;
+            seenReserveVectors.push(nextReserves.slice());
+            // Only update reserves when we will do another layout pass; otherwise layout
+            // would be built with the previous reserves while reserves would be nextReserves,
+            // and the plan/injection phase could place footnotes in the wrong band.
+            if (pass < MAX_FOOTNOTE_LAYOUT_PASSES - 1) {
+              reserves = nextReserves;
+            }
+          }
+          if (!reservesStabilized) {
+            console.warn(
+              `[incrementalLayout] Footnote reserve loop did not converge (max ${MAX_FOOTNOTE_LAYOUT_PASSES} passes); layout may have suboptimal footnote placement.`,
+            );
+          }
+
+          let { columns: finalPageColumns, idsByColumn: finalIdsByColumn } = resolveFootnoteAssignments(layout);
+          let { blocks: finalBlocks, measuresById: finalMeasuresById } = await measureFootnoteBlocks(
+            collectFootnoteIdsByColumn(finalIdsByColumn),
+          );
+          let finalPlan = computeFootnoteLayoutPlan(
             layout,
             finalIdsByColumn,
             finalMeasuresById,
-            reservesAppliedToLayout,
+            reserves,
             finalPageColumns,
           );
-          logFootnoteLayoutPhase(label, layout, reservesAppliedToLayout, finalPlan.reserves, {
+          let reservesAppliedToLayout = reserves;
+          logFootnoteLayoutPhase('post-reserve-loop', layout, reservesAppliedToLayout, finalPlan.reserves, {
             assignedFootnoteCount: collectFootnoteIdsByColumn(finalIdsByColumn).size,
           });
-        };
-        const buildFootnoteLedgers = (plan: FootnoteLayoutPlan, appliedReserves: number[], pageCount: number) => {
-          const ledgers: FootnotePageLedger[] = [];
-          for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
-            const draft = plan.ledgersByPage.get(pageIndex);
-            if (!draft) continue;
-            const appliedBodyReservePx = Math.max(0, appliedReserves[pageIndex] ?? plan.reserves[pageIndex] ?? 0);
-            ledgers.push({
-              pageIndex,
-              anchorIds: draft.anchorIds,
-              mandatorySliceIds: draft.mandatorySliceIds,
-              continuationSliceIds: draft.continuationSliceIds,
-              extendedSliceIds: draft.extendedSliceIds,
-              continuationIn: draft.continuationIn,
-              continuationOut: draft.continuationOut,
-              mandatoryReservePx: draft.mandatoryReservePx,
-              preferredReservePx: draft.preferredReservePx,
-              actualBandHeightPx: draft.actualBandHeightPx,
-              appliedBodyReservePx,
-              deadReservePx: Math.max(0, appliedBodyReservePx - draft.actualBandHeightPx),
-              lastAnchorRenderedLines: draft.lastAnchorRenderedLines,
-            });
-          }
-          return ledgers;
-        };
-        const capReserveForRelayout = (
-          requestedReserve: number,
-          pageIndex: number,
-          referenceLayout: Layout,
-          referenceReserves: number[],
-        ): number => {
-          const requested = Number.isFinite(requestedReserve) ? Math.max(0, requestedReserve) : 0;
-          const page = referenceLayout.pages?.[pageIndex];
-          if (!page) return requested;
 
-          const pageSize = page.size ?? referenceLayout.pageSize ?? DEFAULT_PAGE_SIZE;
-          const topMargin = normalizeMargin(page.margins?.top, DEFAULT_MARGINS.top);
-          const bottomWithReserve = normalizeMargin(page.margins?.bottom, DEFAULT_MARGINS.bottom);
-          const currentReserve = Number.isFinite(referenceReserves[pageIndex])
-            ? Math.max(0, referenceReserves[pageIndex])
-            : 0;
-          const physicalBottomMargin = Math.max(0, bottomWithReserve - currentReserve);
-          const physicalContentHeight = pageSize.h - topMargin - physicalBottomMargin;
-          if (!Number.isFinite(physicalContentHeight)) return requested;
-
-          return Math.min(requested, Math.max(0, physicalContentHeight - MIN_FOOTNOTE_BODY_HEIGHT));
-        };
-        // Grow-only convergence: ensures every page reserves at least as much
-        // as its plan demands, so footnotes never render past the page bottom.
-        // Monotonic (reserves only increase) and safe under oscillation. Needs
-        // several passes for growth on one page to propagate to the pages it
-        // spills into. If a target cycles back to one we've tried, we merge
-        // element-wise with the last applied target to force progress.
-        const growReserves = async (maxPasses: number): Promise<boolean> => {
-          const seen: number[][] = [reservesAppliedToLayout.slice()];
-          for (let pass = 0; pass < maxPasses; pass += 1) {
-            const target = reservesAppliedToLayout.slice();
-            const plan = finalPlan.reserves;
-            let grew = false;
-            for (let i = 0; i < Math.max(target.length, plan.length); i += 1) {
-              if ((plan[i] ?? 0) > (target[i] ?? 0)) {
-                target[i] = plan[i];
-                grew = true;
-              }
+          const vectorsEqual = (a: number[], b: number[]): boolean => {
+            for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+              if ((a[i] ?? 0) !== (b[i] ?? 0)) return false;
             }
-            if (!grew) return true;
-            let next = target;
-            if (seen.some((prev) => vectorsEqual(prev, target))) {
-              const last = seen[seen.length - 1];
-              next = target.map((v, i) => Math.max(v, last[i] ?? 0));
-              if (vectorsEqual(next, reservesAppliedToLayout)) return true;
-            }
-            await applyReserves(next, `grow-pass-${pass + 1}`);
-            seen.push(next);
-          }
-          return false;
-        };
-
-        const GROW_MAX_PASSES = 10;
-        const PREFERRED_RESERVE_MAX_CANDIDATES = 12;
-        const PREFERRED_RESERVE_MAX_ACCEPTED_CANDIDATES = PREFERRED_RESERVE_MAX_CANDIDATES;
-        const PREFERRED_RESERVE_WINDOW_AHEAD = 3;
-
-        // SD-2656: scored preferred-reserve trials.
-        //
-        // Ordered-minimum reserve is the correctness floor. Word sometimes
-        // spends more space on the last anchor's footnote, but applying that
-        // locally in the body slicer caused large downstream drift. This pass
-        // tries one candidate at a time after the mandatory layout has already
-        // stabilized, then keeps the candidate only if the page-window scorer
-        // proves the result is globally safe. The scorer guards both the local
-        // page window and the full document, so we can try candidates while
-        // still rejecting changes that create late-document slack.
-        const runPreferredReserveTrials = async () => {
-          let acceptedPreferredTrials = 0;
-          let rejectedPreferredTrials = 0;
-          const rejectedPreferredPages = new Set<number>();
-
-          for (let candidatePass = 0; candidatePass < PREFERRED_RESERVE_MAX_CANDIDATES; candidatePass += 1) {
-            const beforeLayout = layout;
-            const beforePlan = finalPlan;
-            const beforeReserves = reservesAppliedToLayout.slice();
-            const beforeLedgers = buildFootnoteLedgers(beforePlan, beforeReserves, beforeLayout.pages.length);
-            const candidate = getPreferredReserveCandidates(beforeLedgers).find(
-              (entry) => !rejectedPreferredPages.has(entry.pageIndex),
+            return true;
+          };
+          const applyReserves = async (target: number[], label = 'apply-reserves') => {
+            // Planner sized the band with the measured separator spacing; the
+            // body slicer must match or it packs too much and the band overflows.
+            layout = await relayout(target, finalPlan.separatorSpacingBefore, label);
+            await checkpointPhaseIfDue();
+            reservesAppliedToLayout = target;
+            ({ columns: finalPageColumns, idsByColumn: finalIdsByColumn } = resolveFootnoteAssignments(layout));
+            ({ blocks: finalBlocks, measuresById: finalMeasuresById } = await measureFootnoteBlocks(allFootnoteIds));
+            refreshBodyHeights(finalMeasuresById);
+            finalPlan = computeFootnoteLayoutPlan(
+              layout,
+              finalIdsByColumn,
+              finalMeasuresById,
+              reservesAppliedToLayout,
+              finalPageColumns,
             );
-            if (!candidate) break;
-
-            const targetReserves = getPreferredReserveTrialTargets(candidate, beforeReserves[candidate.pageIndex] ?? 0);
-            let acceptedCandidate = false;
-
-            for (const targetReserve of targetReserves) {
-              const trialReserves = beforeReserves.slice();
-              const cappedPreferredReserve = capReserveForRelayout(
-                targetReserve,
-                candidate.pageIndex,
-                beforeLayout,
-                beforeReserves,
-              );
-              trialReserves[candidate.pageIndex] = Math.max(
-                trialReserves[candidate.pageIndex] ?? 0,
-                cappedPreferredReserve,
-              );
-
-              await applyReserves(
-                trialReserves,
-                `preferred-trial-page-${candidate.pageIndex + 1}-target-${Math.round(cappedPreferredReserve)}`,
-              );
-              const trialConverged = await growReserves(GROW_MAX_PASSES);
-              const afterLedgers = buildFootnoteLedgers(finalPlan, reservesAppliedToLayout, layout.pages.length);
-              const score = scoreFootnoteWindow({
-                beforeLayout,
-                afterLayout: layout,
-                candidatePageIndex: candidate.pageIndex,
-                candidateAnchorId: candidate.anchorIds[candidate.anchorIds.length - 1],
-                beforeLedger: beforeLedgers,
-                afterLedger: afterLedgers,
-                windowAhead: PREFERRED_RESERVE_WINDOW_AHEAD,
+            logFootnoteLayoutPhase(label, layout, reservesAppliedToLayout, finalPlan.reserves, {
+              assignedFootnoteCount: collectFootnoteIdsByColumn(finalIdsByColumn).size,
+            });
+          };
+          const buildFootnoteLedgers = (plan: FootnoteLayoutPlan, appliedReserves: number[], pageCount: number) => {
+            const ledgers: FootnotePageLedger[] = [];
+            for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+              const draft = plan.ledgersByPage.get(pageIndex);
+              if (!draft) continue;
+              const appliedBodyReservePx = Math.max(0, appliedReserves[pageIndex] ?? plan.reserves[pageIndex] ?? 0);
+              ledgers.push({
+                pageIndex,
+                anchorIds: draft.anchorIds,
+                mandatorySliceIds: draft.mandatorySliceIds,
+                continuationSliceIds: draft.continuationSliceIds,
+                extendedSliceIds: draft.extendedSliceIds,
+                continuationIn: draft.continuationIn,
+                continuationOut: draft.continuationOut,
+                mandatoryReservePx: draft.mandatoryReservePx,
+                preferredReservePx: draft.preferredReservePx,
+                actualBandHeightPx: draft.actualBandHeightPx,
+                appliedBodyReservePx,
+                deadReservePx: Math.max(0, appliedBodyReservePx - draft.actualBandHeightPx),
+                lastAnchorRenderedLines: draft.lastAnchorRenderedLines,
               });
+            }
+            return ledgers;
+          };
+          const capReserveForRelayout = (
+            requestedReserve: number,
+            pageIndex: number,
+            referenceLayout: Layout,
+            referenceReserves: number[],
+          ): number => {
+            const requested = Number.isFinite(requestedReserve) ? Math.max(0, requestedReserve) : 0;
+            const page = referenceLayout.pages?.[pageIndex];
+            if (!page) return requested;
 
-              if (trialConverged && score.accept) {
+            const pageSize = page.size ?? referenceLayout.pageSize ?? DEFAULT_PAGE_SIZE;
+            const topMargin = normalizeMargin(page.margins?.top, DEFAULT_MARGINS.top);
+            const bottomWithReserve = normalizeMargin(page.margins?.bottom, DEFAULT_MARGINS.bottom);
+            const currentReserve = Number.isFinite(referenceReserves[pageIndex])
+              ? Math.max(0, referenceReserves[pageIndex])
+              : 0;
+            const physicalBottomMargin = Math.max(0, bottomWithReserve - currentReserve);
+            const physicalContentHeight = pageSize.h - topMargin - physicalBottomMargin;
+            if (!Number.isFinite(physicalContentHeight)) return requested;
+
+            return Math.min(requested, Math.max(0, physicalContentHeight - MIN_FOOTNOTE_BODY_HEIGHT));
+          };
+          // Grow-only convergence: ensures every page reserves at least as much
+          // as its plan demands, so footnotes never render past the page bottom.
+          // Monotonic (reserves only increase) and safe under oscillation. Needs
+          // several passes for growth on one page to propagate to the pages it
+          // spills into. If a target cycles back to one we've tried, we merge
+          // element-wise with the last applied target to force progress.
+          const growReserves = async (maxPasses: number): Promise<boolean> => {
+            const seen: number[][] = [reservesAppliedToLayout.slice()];
+            for (let pass = 0; pass < maxPasses; pass += 1) {
+              const target = reservesAppliedToLayout.slice();
+              const plan = finalPlan.reserves;
+              let grew = false;
+              for (let i = 0; i < Math.max(target.length, plan.length); i += 1) {
+                if ((plan[i] ?? 0) > (target[i] ?? 0)) {
+                  target[i] = plan[i];
+                  grew = true;
+                }
+              }
+              if (!grew) return true;
+              let next = target;
+              if (seen.some((prev) => vectorsEqual(prev, target))) {
+                const last = seen[seen.length - 1];
+                next = target.map((v, i) => Math.max(v, last[i] ?? 0));
+                if (vectorsEqual(next, reservesAppliedToLayout)) return true;
+              }
+              await applyReserves(next, `grow-pass-${pass + 1}`);
+              seen.push(next);
+            }
+            return false;
+          };
+
+          const GROW_MAX_PASSES = 10;
+          const PREFERRED_RESERVE_MAX_CANDIDATES = 12;
+          const PREFERRED_RESERVE_MAX_ACCEPTED_CANDIDATES = PREFERRED_RESERVE_MAX_CANDIDATES;
+          const PREFERRED_RESERVE_WINDOW_AHEAD = 3;
+
+          // SD-2656: scored preferred-reserve trials.
+          //
+          // Ordered-minimum reserve is the correctness floor. Word sometimes
+          // spends more space on the last anchor's footnote, but applying that
+          // locally in the body slicer caused large downstream drift. This pass
+          // tries one candidate at a time after the mandatory layout has already
+          // stabilized, then keeps the candidate only if the page-window scorer
+          // proves the result is globally safe. The scorer guards both the local
+          // page window and the full document, so we can try candidates while
+          // still rejecting changes that create late-document slack.
+          const runPreferredReserveTrials = async () => {
+            let acceptedPreferredTrials = 0;
+            let rejectedPreferredTrials = 0;
+            const rejectedPreferredPages = new Set<number>();
+
+            for (let candidatePass = 0; candidatePass < PREFERRED_RESERVE_MAX_CANDIDATES; candidatePass += 1) {
+              const beforeLayout = layout;
+              const beforePlan = finalPlan;
+              const beforeReserves = reservesAppliedToLayout.slice();
+              const beforeLedgers = buildFootnoteLedgers(beforePlan, beforeReserves, beforeLayout.pages.length);
+              const candidate = getPreferredReserveCandidates(beforeLedgers).find(
+                (entry) => !rejectedPreferredPages.has(entry.pageIndex),
+              );
+              if (!candidate) break;
+
+              const targetReserves = getPreferredReserveTrialTargets(
+                candidate,
+                beforeReserves[candidate.pageIndex] ?? 0,
+              );
+              let acceptedCandidate = false;
+
+              for (const targetReserve of targetReserves) {
+                const trialReserves = beforeReserves.slice();
+                const cappedPreferredReserve = capReserveForRelayout(
+                  targetReserve,
+                  candidate.pageIndex,
+                  beforeLayout,
+                  beforeReserves,
+                );
+                trialReserves[candidate.pageIndex] = Math.max(
+                  trialReserves[candidate.pageIndex] ?? 0,
+                  cappedPreferredReserve,
+                );
+
+                await applyReserves(
+                  trialReserves,
+                  `preferred-trial-page-${candidate.pageIndex + 1}-target-${Math.round(cappedPreferredReserve)}`,
+                );
+                const trialConverged = await growReserves(GROW_MAX_PASSES);
+                const afterLedgers = buildFootnoteLedgers(finalPlan, reservesAppliedToLayout, layout.pages.length);
+                const score = scoreFootnoteWindow({
+                  beforeLayout,
+                  afterLayout: layout,
+                  candidatePageIndex: candidate.pageIndex,
+                  candidateAnchorId: candidate.anchorIds[candidate.anchorIds.length - 1],
+                  beforeLedger: beforeLedgers,
+                  afterLedger: afterLedgers,
+                  windowAhead: PREFERRED_RESERVE_WINDOW_AHEAD,
+                });
+
+                if (trialConverged && score.accept) {
+                  if (layoutDebugEnabled) {
+                    console.log('[incrementalLayout] Accepted footnote preferred-reserve trial', {
+                      pageIndex: candidate.pageIndex,
+                      targetReserve,
+                      score,
+                    });
+                  }
+                  acceptedPreferredTrials += 1;
+                  acceptedCandidate = true;
+                  break;
+                }
+
                 if (layoutDebugEnabled) {
-                  console.log('[incrementalLayout] Accepted footnote preferred-reserve trial', {
+                  console.log('[incrementalLayout] Rejected footnote preferred-reserve trial', {
                     pageIndex: candidate.pageIndex,
                     targetReserve,
+                    trialConverged,
                     score,
                   });
                 }
-                acceptedPreferredTrials += 1;
-                acceptedCandidate = true;
+
+                await applyReserves(beforeReserves, `preferred-revert-page-${candidate.pageIndex + 1}`);
+              }
+
+              if (acceptedCandidate) {
+                if (acceptedPreferredTrials >= PREFERRED_RESERVE_MAX_ACCEPTED_CANDIDATES) break;
+                continue;
+              }
+
+              rejectedPreferredTrials += 1;
+              rejectedPreferredPages.add(candidate.pageIndex);
+            }
+
+            if (layoutDebugEnabled && (acceptedPreferredTrials > 0 || rejectedPreferredTrials > 0)) {
+              console.log('[incrementalLayout] Footnote preferred-reserve trials', {
+                accepted: acceptedPreferredTrials,
+                rejected: rejectedPreferredTrials,
+              });
+            }
+          };
+
+          // Fast path for well-converged docs: if every page's current reserve
+          // already satisfies the plan and no page is carrying dead reserve,
+          // skip both the initial grow and the tighten loop entirely. Avoids
+          // up to ~20 unnecessary relayouts on documents without oscillation.
+          const TIGHTEN_SLACK_PX = 8;
+          const needsWork = (() => {
+            const plan = finalPlan.reserves;
+            const applied = reservesAppliedToLayout;
+            const len = Math.max(plan.length, applied.length);
+            for (let i = 0; i < len; i += 1) {
+              const a = applied[i] ?? 0;
+              const p = plan[i] ?? 0;
+              if (p > a) return true; // under-reserved — grow must bump
+              if (a >= TIGHTEN_SLACK_PX && p === 0) return true; // dead reserve — tighten can reclaim
+              // SD-2656 Phase 4: dead reserve where plan > 0 (e.g. bump-inflated
+              // continuation page where final demand is much smaller).
+              if (a >= TIGHTEN_SLACK_PX && a - p > TIGHTEN_SLACK_PX) return true;
+            }
+            return false;
+          })();
+
+          if (needsWork) {
+            if (!(await growReserves(GROW_MAX_PASSES))) {
+              console.warn(
+                '[incrementalLayout] Footnote post-reserve loop did not converge; some pages may have footnotes overflowing the reserved band.',
+              );
+            }
+
+            // SD-2656 Phase 4: opportunistic tighten — pages whose body reserved
+            // significantly more than the planner now needs. Two cases:
+            //
+            //   (a) planned === 0: footnote content shifted off this page in
+            //       an earlier pass. The reserve is fully dead — tighten to 0.
+            //
+            //   (b) planned > 0 but applied >> planned: previous pass's bump
+            //       (e.g. for a continuation that was longer then than now)
+            //       was preserved by the grow-only loop and never shrank back.
+            //       Tighten to planned so body reclaims the dead space; grow
+            //       will bump back up if the new bodyMaxY changes plan demand.
+            //
+            // Revert iff regrow can't stabilize or page count grows (safety net
+            // for cluster spills induced by absorbing body content).
+            const MAX_TIGHTEN_ITERATIONS = 8;
+            for (let iteration = 0; iteration < MAX_TIGHTEN_ITERATIONS; iteration += 1) {
+              const pagesToTighten: Array<{ i: number; target: number }> = [];
+              for (let i = 0; i < reservesAppliedToLayout.length; i += 1) {
+                const applied = reservesAppliedToLayout[i] ?? 0;
+                const planned = finalPlan.reserves[i] ?? 0;
+                if (applied < TIGHTEN_SLACK_PX) continue;
+                if (planned === 0) {
+                  pagesToTighten.push({ i, target: 0 });
+                } else if (applied - planned > TIGHTEN_SLACK_PX) {
+                  pagesToTighten.push({ i, target: planned });
+                }
+              }
+              if (pagesToTighten.length === 0) break;
+              const safeApplied = reservesAppliedToLayout.slice();
+              const safePageCount = layout.pages.length;
+              const tightened = reservesAppliedToLayout.slice();
+              for (const { i, target } of pagesToTighten) tightened[i] = target;
+              await applyReserves(tightened, `tighten-pass-${iteration + 1}`);
+              if (!(await growReserves(GROW_MAX_PASSES)) || layout.pages.length > safePageCount) {
+                await applyReserves(safeApplied, `tighten-revert-${iteration + 1}`);
                 break;
               }
-
-              if (layoutDebugEnabled) {
-                console.log('[incrementalLayout] Rejected footnote preferred-reserve trial', {
-                  pageIndex: candidate.pageIndex,
-                  targetReserve,
-                  trialConverged,
-                  score,
-                });
-              }
-
-              await applyReserves(beforeReserves, `preferred-revert-page-${candidate.pageIndex + 1}`);
             }
-
-            if (acceptedCandidate) {
-              if (acceptedPreferredTrials >= PREFERRED_RESERVE_MAX_ACCEPTED_CANDIDATES) break;
-              continue;
-            }
-
-            rejectedPreferredTrials += 1;
-            rejectedPreferredPages.add(candidate.pageIndex);
           }
 
-          if (layoutDebugEnabled && (acceptedPreferredTrials > 0 || rejectedPreferredTrials > 0)) {
-            console.log('[incrementalLayout] Footnote preferred-reserve trials', {
-              accepted: acceptedPreferredTrials,
-              rejected: rejectedPreferredTrials,
-            });
-          }
-        };
-
-        // Fast path for well-converged docs: if every page's current reserve
-        // already satisfies the plan and no page is carrying dead reserve,
-        // skip both the initial grow and the tighten loop entirely. Avoids
-        // up to ~20 unnecessary relayouts on documents without oscillation.
-        const TIGHTEN_SLACK_PX = 8;
-        const needsWork = (() => {
-          const plan = finalPlan.reserves;
-          const applied = reservesAppliedToLayout;
-          const len = Math.max(plan.length, applied.length);
-          for (let i = 0; i < len; i += 1) {
-            const a = applied[i] ?? 0;
-            const p = plan[i] ?? 0;
-            if (p > a) return true; // under-reserved — grow must bump
-            if (a >= TIGHTEN_SLACK_PX && p === 0) return true; // dead reserve — tighten can reclaim
-            // SD-2656 Phase 4: dead reserve where plan > 0 (e.g. bump-inflated
-            // continuation page where final demand is much smaller).
-            if (a >= TIGHTEN_SLACK_PX && a - p > TIGHTEN_SLACK_PX) return true;
-          }
-          return false;
-        })();
-
-        if (needsWork) {
-          if (!(await growReserves(GROW_MAX_PASSES))) {
-            console.warn(
-              '[incrementalLayout] Footnote post-reserve loop did not converge; some pages may have footnotes overflowing the reserved band.',
-            );
-          }
-
-          // SD-2656 Phase 4: opportunistic tighten — pages whose body reserved
-          // significantly more than the planner now needs. Two cases:
-          //
-          //   (a) planned === 0: footnote content shifted off this page in
-          //       an earlier pass. The reserve is fully dead — tighten to 0.
-          //
-          //   (b) planned > 0 but applied >> planned: previous pass's bump
-          //       (e.g. for a continuation that was longer then than now)
-          //       was preserved by the grow-only loop and never shrank back.
-          //       Tighten to planned so body reclaims the dead space; grow
-          //       will bump back up if the new bodyMaxY changes plan demand.
-          //
-          // Revert iff regrow can't stabilize or page count grows (safety net
-          // for cluster spills induced by absorbing body content).
-          const MAX_TIGHTEN_ITERATIONS = 8;
-          for (let iteration = 0; iteration < MAX_TIGHTEN_ITERATIONS; iteration += 1) {
-            const pagesToTighten: Array<{ i: number; target: number }> = [];
-            for (let i = 0; i < reservesAppliedToLayout.length; i += 1) {
-              const applied = reservesAppliedToLayout[i] ?? 0;
-              const planned = finalPlan.reserves[i] ?? 0;
-              if (applied < TIGHTEN_SLACK_PX) continue;
-              if (planned === 0) {
-                pagesToTighten.push({ i, target: 0 });
-              } else if (applied - planned > TIGHTEN_SLACK_PX) {
-                pagesToTighten.push({ i, target: planned });
+          // Absorb one-line footnote widows by bumping their reserve to
+          // preferred. Keep this narrow: single-anchor clusters benefit from the
+          // classic widow/orphan absorb, but multi-anchor footnote bands can
+          // legitimately leave a one-line continuation on the next page. Those
+          // larger clusters should stay on the scored preferred-reserve path.
+          const ONE_LINE_TAIL_PX = 24;
+          const runWidowOrphanAbsorb = async () => {
+            const ledgers = buildFootnoteLedgers(finalPlan, reservesAppliedToLayout, layout.pages.length);
+            const target = reservesAppliedToLayout.slice();
+            let bumped = 0;
+            for (const ledger of ledgers) {
+              const tailPx = ledger.continuationOut.reduce((s, e) => s + (e.remainingHeightPx || 0), 0);
+              if (!shouldAbsorbOneLineFootnoteWidow(ledger, tailPx, ONE_LINE_TAIL_PX)) continue;
+              const requested = capReserveForRelayout(
+                ledger.preferredReservePx,
+                ledger.pageIndex,
+                layout,
+                reservesAppliedToLayout,
+              );
+              if (requested > (target[ledger.pageIndex] ?? 0)) {
+                target[ledger.pageIndex] = requested;
+                bumped += 1;
               }
             }
-            if (pagesToTighten.length === 0) break;
+            if (bumped === 0) return;
             const safeApplied = reservesAppliedToLayout.slice();
             const safePageCount = layout.pages.length;
-            const tightened = reservesAppliedToLayout.slice();
-            for (const { i, target } of pagesToTighten) tightened[i] = target;
-            await applyReserves(tightened, `tighten-pass-${iteration + 1}`);
+            await applyReserves(target, 'widow-orphan-absorb');
             if (!(await growReserves(GROW_MAX_PASSES)) || layout.pages.length > safePageCount) {
-              await applyReserves(safeApplied, `tighten-revert-${iteration + 1}`);
-              break;
+              await applyReserves(safeApplied, 'widow-orphan-revert');
             }
-          }
-        }
-
-        // Absorb one-line footnote widows by bumping their reserve to
-        // preferred. The scorer would reject this as a page-count regression;
-        // for one-line tails the cost is bounded and Word's pagination always
-        // absorbs them.
-        const ONE_LINE_TAIL_PX = 24;
-        const runWidowOrphanAbsorb = async () => {
-          const ledgers = buildFootnoteLedgers(finalPlan, reservesAppliedToLayout, layout.pages.length);
-          const target = reservesAppliedToLayout.slice();
-          let bumped = 0;
-          for (const ledger of ledgers) {
-            const tailPx = ledger.continuationOut.reduce((s, e) => s + (e.remainingHeightPx || 0), 0);
-            if (tailPx <= 0 || tailPx > ONE_LINE_TAIL_PX) continue;
-            const requested = capReserveForRelayout(
-              ledger.preferredReservePx,
-              ledger.pageIndex,
-              layout,
-              reservesAppliedToLayout,
-            );
-            if (requested > (target[ledger.pageIndex] ?? 0)) {
-              target[ledger.pageIndex] = requested;
-              bumped += 1;
-            }
-          }
-          if (bumped === 0) return;
-          const safeApplied = reservesAppliedToLayout.slice();
-          const safePageCount = layout.pages.length;
-          await applyReserves(target, 'widow-orphan-absorb');
-          if (!(await growReserves(GROW_MAX_PASSES)) || layout.pages.length > safePageCount) {
-            await applyReserves(safeApplied, 'widow-orphan-revert');
-          }
-        };
-        await runWidowOrphanAbsorb();
-        await runPreferredReserveTrials();
-
-        const blockById = new Map<string, FlowBlock>();
-        finalBlocks.forEach((block) => {
-          blockById.set(block.id, block);
-        });
-        const injected = injectFragments(
-          layout,
-          finalPlan,
-          finalMeasuresById,
-          reservesAppliedToLayout,
-          blockById,
-          finalPageColumns,
-        );
-
-        const alignedBlocks: FlowBlock[] = [];
-        const alignedMeasures: Measure[] = [];
-        finalBlocks.forEach((block) => {
-          const measure = finalMeasuresById.get(block.id);
-          if (!measure) return;
-          alignedBlocks.push(block);
-          alignedMeasures.push(measure);
-        });
-        extraBlocks = injected ? alignedBlocks.concat(injected.decorativeBlocks) : alignedBlocks;
-        extraMeasures = injected ? alignedMeasures.concat(injected.decorativeMeasures) : alignedMeasures;
-
-        // SD-3432: capture the applied reserves as the next run's seed
-        // whenever this run reserved anything. Capture is deliberately
-        // UNCONDITIONAL on exactness: the seed is only a starting vector that
-        // the next run fully re-validates, so capturing a NEAR-fixed-point is
-        // both safe and necessary — it is how the chain bootstraps. Real
-        // documents (the SD-3432 repro) end their cold ladder with small dead
-        // reserves left by reverted tighten attempts; refusing to capture
-        // those keeps the document cold forever, while seeding them lets the
-        // next run converge the rest of the way and capture the TRUE fixed
-        // point, after which every keystroke validates in a single relayout.
-        // The exactness check below is diagnostics only: `exact=true` means
-        // the next identical run will pass-1-validate (the steady state).
-        if (reservesAppliedToLayout.some((h) => h > 0)) {
-          nextFootnoteReserveSeed = {
-            reserves: reservesAppliedToLayout.slice(),
-            separatorSpacingBefore: finalPlan.separatorSpacingBefore,
-            fontSignature,
-            measurementWidth,
-            measurementHeight,
           };
-        }
-        const exactFixedPoint =
-          finalPlan.reserves.length <= reservesAppliedToLayout.length &&
-          reservesAppliedToLayout.every((h, i) => (finalPlan.reserves[i] ?? 0) === (h ?? 0)) &&
-          finalPlan.reserves.every((h, i) => (reservesAppliedToLayout[i] ?? 0) === (h ?? 0));
-        if (!exactFixedPoint) {
-          perfLog(
-            `[Perf] 4.5 footnote warm-start: captured a near-fixed-point (stabilized=${reservesStabilized}); next run settles it`,
+          await runWidowOrphanAbsorb();
+          await runPreferredReserveTrials();
+
+          let footnotePageIndexesToFinalize: ReadonlySet<number> | null = null;
+          if (!footnoteFullRelayoutPerformed && layoutReuseSummary.mode !== 'full') {
+            const currentBodyBlockIndex = layoutReuse?.currentBlockIndexById;
+            if (!currentBodyBlockIndex || !warmSeedUsable || !warmSeed) {
+              // This is unreachable for a validated warm packet, but keep the
+              // finalizer fail-closed if a future caller bypasses that contract.
+              await applyReserves(reservesAppliedToLayout, 'retained-note-band-index-missing-full-relayout');
+            } else {
+              const currentNotePageIndexes = collectFootnoteOutputPageIndexes(finalPlan, reservesAppliedToLayout);
+              const previousNotePageIndexes = new Set(warmSeed.notePageIndexes ?? []);
+              warmSeed.reserves.forEach((reserve, pageIndex) => {
+                // A stale sparse hint may cost extra page clones, but it may
+                // never hide a positively reserved source page from cleanup.
+                if (reserve > 0) previousNotePageIndexes.add(pageIndex);
+              });
+              const pageIndexesToFinalize = collectFootnoteReinjectionPageIndexes(
+                layout.pages.length,
+                currentNotePageIndexes,
+                previousNotePageIndexes,
+                layoutReuseSummary.tailAdoption,
+              );
+              const tailAdoption = layoutReuseSummary.tailAdoption;
+              const localCheckpoint = layoutReuseSummary.checkpointPageIndex;
+              if (tailAdoption && Number.isInteger(localCheckpoint) && localCheckpoint! >= 0) {
+                for (let pageIndex = localCheckpoint!; pageIndex < tailAdoption.startPageIndex; pageIndex += 1) {
+                  pageIndexesToFinalize.add(pageIndex);
+                }
+              }
+              footnotePageIndexesToFinalize = pageIndexesToFinalize;
+              layout = prepareRetainedPagesForFootnoteReinjection(
+                layout,
+                currentBodyBlockIndex,
+                footnotePageIndexesToFinalize,
+                layoutReuseSummary.tailAdoption?.blockIdRewrites ?? null,
+              );
+            }
+          }
+
+          const blockById = new Map<string, FlowBlock>();
+          finalBlocks.forEach((block) => {
+            blockById.set(block.id, block);
+          });
+          const injected = injectFragments(
+            layout,
+            finalPlan,
+            finalMeasuresById,
+            reservesAppliedToLayout,
+            blockById,
+            finalPageColumns,
+            footnotePageIndexesToFinalize,
           );
+          if (footnotePageIndexesToFinalize) {
+            layout = {
+              ...layout,
+              pages: ensureEmptyFootnoteMetadataOutsideFinalizedPages(layout.pages, footnotePageIndexesToFinalize),
+            };
+          }
+
+          const alignedBlocks: FlowBlock[] = [];
+          const alignedMeasures: Measure[] = [];
+          finalBlocks.forEach((block) => {
+            const measure = finalMeasuresById.get(block.id);
+            if (!measure) return;
+            alignedBlocks.push(block);
+            alignedMeasures.push(measure);
+          });
+          extraBlocks = injected ? alignedBlocks.concat(injected.decorativeBlocks) : alignedBlocks;
+          extraMeasures = injected ? alignedMeasures.concat(injected.decorativeMeasures) : alignedMeasures;
+
+          // SD-3432: capture the applied reserves as the next run's seed
+          // whenever this run reserved anything. Capture is deliberately
+          // UNCONDITIONAL on exactness: the seed is only a starting vector that
+          // the next run fully re-validates, so capturing a NEAR-fixed-point is
+          // both safe and necessary — it is how the chain bootstraps. Real
+          // documents (the SD-3432 repro) end their cold ladder with small dead
+          // reserves left by reverted tighten attempts; refusing to capture
+          // those keeps the document cold forever, while seeding them lets the
+          // next run converge the rest of the way and capture the TRUE fixed
+          // point, after which every keystroke validates in a single relayout.
+          // The exactness check below is diagnostics only: `exact=true` means
+          // the next identical run will pass-1-validate (the steady state).
+          if (reservesAppliedToLayout.some((h) => h > 0)) {
+            nextFootnoteReserveSeed = {
+              reserves: reservesAppliedToLayout.slice(),
+              notePageIndexes: [...collectFootnoteOutputPageIndexes(finalPlan, reservesAppliedToLayout)].sort(
+                (left, right) => left - right,
+              ),
+              separatorSpacingBefore: finalPlan.separatorSpacingBefore,
+              fontSignature,
+              measurementWidth,
+              measurementHeight,
+              footnoteMeasurementWidth: footnoteWidth,
+              sectionColumnsByIndex: new Map(
+                [...footnoteSectionColumnsByIndex].map(([sectionIndex, columns]) => [
+                  sectionIndex,
+                  cloneColumnLayout(columns),
+                ]),
+              ),
+              noteBlocksByBlockId: new Map(finalBlocks.map((block) => [block.id, block])),
+              noteMeasuresByBlockId: new Map(finalMeasuresById),
+              noteBodyHeightById: new Map(bodyHeightById),
+              noteFirstLineHeightById: new Map(firstLineHeightById),
+            };
+          }
+          const exactFixedPoint =
+            finalPlan.reserves.length <= reservesAppliedToLayout.length &&
+            reservesAppliedToLayout.every((h, i) => (finalPlan.reserves[i] ?? 0) === (h ?? 0)) &&
+            finalPlan.reserves.every((h, i) => (reservesAppliedToLayout[i] ?? 0) === (h ?? 0));
+          if (!exactFixedPoint) {
+            perfLog(
+              `[Perf] 4.5 footnote warm-start: captured a near-fixed-point (stabilized=${reservesStabilized}); next run settles it`,
+            );
+          }
         }
       }
     }
   }
+  const footnoteTime = performance.now() - footnoteStart;
+
+  if (footnoteFullRelayoutPerformed && layoutReuseSummary.mode !== 'full') {
+    // The note fixed-point finalizer currently re-paginates the complete body
+    // when its retained reserve seed cannot validate without another pass.
+    // Once that happens the initial tail-splice descriptor no longer owns the
+    // published layout: retaining it would apply PM transforms twice and skip
+    // numbering finalization across the alleged adopted tail. Report and
+    // finalize the result as the full layout it actually is.
+    const initialReuseReason = layoutReuseSummary.reason;
+    layoutReuseSummary = {
+      mode: 'full',
+      reason: `m4-layout-reuse-disabled-footnote-finalizer-full-relayout;initial=${initialReuseReason}`,
+      tailDisposition: 'none',
+      checkpointPageIndex: null,
+      affectedFrontierPageIndex: null,
+      sourceAffectedFrontierPageIndex: null,
+      convergencePageIndex: null,
+      sourceConvergencePageIndex: null,
+      pagesPaginated: null,
+      pagesSplicedByReuse: 0,
+      tailAdoption: null,
+    };
+  }
 
   let headers: HeaderFooterLayoutResult[] | undefined;
   let footers: HeaderFooterLayoutResult[] | undefined;
+  let finalHeaderFooterTime = 0;
+  const numberingStart = performance.now();
   const sections = options.sectionMetadata ?? [];
-  const numberingCtx = buildNumberingContext(layout, sections, chapterBlockById, chapterContextCache);
-  applyNumberingContextToLayout(layout, numberingCtx);
+  const localizedSectionNumbering =
+    layoutReuseSummary.mode !== 'full' &&
+    supportsLocalizedSectionNumbering(options) &&
+    (layoutReuseSummary.tailAdoption == null ||
+      layoutReuseSummary.tailAdoption.pageIndexDelta === 0 ||
+      layoutReuseSummary.tailAdoption.displayPageNumberTransform != null);
+  const numberingCtx: NumberingContext = localizedSectionNumbering
+    ? { totalPages: layout.pages.length, displayPages: [] }
+    : layoutExecution
+      ? await buildNumberingContextCooperatively(
+          layout,
+          sections,
+          chapterBlockById,
+          chapterContextCache,
+          layoutExecution,
+        )
+      : buildNumberingContext(layout, sections, chapterBlockById, chapterContextCache);
+  if (localizedSectionNumbering) {
+    if (layoutExecution) {
+      await applyLocalizedSectionNumberingCooperatively(layout, layoutReuseSummary, sections, layoutExecution);
+    } else {
+      applyLocalizedSectionNumbering(layout, layoutReuseSummary, sections);
+    }
+  } else {
+    if (layoutExecution) {
+      await applyNumberingContextToLayoutCooperatively(layout, numberingCtx, layoutReuseSummary, layoutExecution);
+    } else {
+      applyNumberingContextToLayout(layout, numberingCtx, layoutReuseSummary);
+    }
+  }
+  const numberingTime = performance.now() - numberingStart;
 
   if (headerFooter?.constraints && (headerFooter.headerBlocks || headerFooter.footerBlocks)) {
     const hfStart = performance.now();
@@ -3164,11 +4460,7 @@ export async function incrementalLayout(
         }
       : undefined;
 
-    const hfRemeasure = (block: ParagraphBlock, maxWidth: number) => remeasureParagraph(block, maxWidth);
     if (headerFooter.headerBlocks) {
-      for (const blocks of Object.values(headerFooter.headerBlocks)) {
-        hydrateTableTextboxMeasures(blocks, hfRemeasure);
-      }
       const headerLayouts = await layoutHeaderFooterWithCache(
         headerFooter.headerBlocks,
         headerFooter.constraints,
@@ -3177,15 +4469,15 @@ export async function incrementalLayout(
         FeatureFlags.HEADER_FOOTER_PAGE_TOKENS ? undefined : numberingCtx.totalPages, // Fallback for backward compat
         pageResolver, // Use page resolver for section-aware numbering
         'header',
-        fontSignature,
-        (block, maxWidth, firstLineIndent) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent),
+        headerFooterCacheSignature,
+        (block, maxWidth, firstLineIndent, lineRegions) =>
+          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+        hfTokenOptions,
+        headerFooterExecution,
       );
       headers = serializeHeaderFooterResults('header', headerLayouts);
     }
     if (headerFooter.footerBlocks) {
-      for (const blocks of Object.values(headerFooter.footerBlocks)) {
-        hydrateTableTextboxMeasures(blocks, hfRemeasure);
-      }
       const footerLayouts = await layoutHeaderFooterWithCache(
         headerFooter.footerBlocks,
         headerFooter.constraints,
@@ -3194,23 +4486,95 @@ export async function incrementalLayout(
         FeatureFlags.HEADER_FOOTER_PAGE_TOKENS ? undefined : numberingCtx.totalPages, // Fallback for backward compat
         pageResolver, // Use page resolver for section-aware numbering
         'footer',
-        fontSignature,
-        (block, maxWidth, firstLineIndent) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent),
+        headerFooterCacheSignature,
+        (block, maxWidth, firstLineIndent, lineRegions) =>
+          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+        hfTokenOptions,
+        headerFooterExecution,
       );
       footers = serializeHeaderFooterResults('footer', footerLayouts);
     }
 
     const hfEnd = performance.now();
-    perfLog(`[Perf] 4.4 Header/footer layout: ${(hfEnd - hfStart).toFixed(2)}ms`);
+    finalHeaderFooterTime = hfEnd - hfStart;
+    perfLog(`[Perf] 4.4 Header/footer layout: ${finalHeaderFooterTime.toFixed(2)}ms`);
 
     // Record header/footer cache metrics
     const cacheStats = headerMeasureCache.getStats();
     globalMetrics.recordHeaderFooterCacheMetrics(cacheStats);
     HeaderFooterCacheLogger.logStats(cacheStats);
   }
+  const layoutExposureStart = performance.now();
+  const exposedLayout =
+    layoutReuseSummary.tailAdoption && !adoptedPagesGuardedForFinalizers
+      ? guardAdoptedLayoutPages(
+          layout,
+          layoutReuseSummary.tailAdoption,
+          localizedSectionNumbering ? null : numberingCtx,
+        )
+      : layout;
+  const layoutExposureTime = performance.now() - layoutExposureStart;
+  const totalBridgeTime = performance.now() - bridgeStartedAt;
+  const measureCallbackWallTime = computeTimingUnionMs(measureCallbackIntervals);
+  const additiveTopLevelMs =
+    inputPreparationMs +
+    totalMeasureTime +
+    headerPreLayoutTime +
+    footerPreLayoutTime +
+    warmStartPreparationTime +
+    layoutTime +
+    pageTokenSetupTime +
+    totalTokenTime +
+    footnoteTime +
+    numberingTime +
+    layoutExposureTime +
+    finalHeaderFooterTime;
+  const bridgeTiming: IncrementalLayoutBridgeTiming = {
+    totalMs: roundTimingMs(totalBridgeTime),
+    inputPreparationMs: roundTimingMs(inputPreparationMs),
+    measureTotalMs: roundTimingMs(totalMeasureTime),
+    measureCallbackWallMs: roundTimingMs(measureCallbackWallTime),
+    measureCacheLookupMs: roundTimingMs(cacheLookupTime),
+    measureActualMs: roundTimingMs(actualMeasureTime),
+    headerFooterPreLayoutMs: roundTimingMs(headerPreLayoutTime + footerPreLayoutTime),
+    headerPreLayoutMs: roundTimingMs(headerPreLayoutTime),
+    footerPreLayoutMs: roundTimingMs(footerPreLayoutTime),
+    warmStartPreparationMs: roundTimingMs(warmStartPreparationTime),
+    layoutDocumentMs: roundTimingMs(layoutDocumentTime),
+    layoutReuseOrchestrationMs: roundTimingMs(layoutReuseOrchestrationTime),
+    paginationMs: roundTimingMs(layoutDocumentTime),
+    pageTokenSetupMs: roundTimingMs(pageTokenSetupTime),
+    pageTokenTotalMs: roundTimingMs(totalTokenTime),
+    pageTokenRemeasureMs: roundTimingMs(totalRemeasureTime),
+    pageTokenRelayoutMs: roundTimingMs(totalRelayoutTime),
+    footnoteMs: roundTimingMs(footnoteTime),
+    numberingMs: roundTimingMs(numberingTime),
+    finalHeaderFooterMs: roundTimingMs(finalHeaderFooterTime),
+    layoutExposureMs: roundTimingMs(layoutExposureTime),
+    unattributedMs: roundTimingMs(totalBridgeTime - additiveTopLevelMs),
+    counters: {
+      blocksRead: nextBlocks.length,
+      cacheHits,
+      cacheMisses,
+      measuresAdopted: reusedMeasures,
+      pagesPaginated: layoutReuseSummary.pagesPaginated,
+      pagesSplicedByReuse: layoutReuseSummary.pagesSplicedByReuse,
+      paginationPasses: initialLayoutInvocationTiming.layoutDocumentCalls + iteration + footnoteRelayouts,
+      pageTokenRelayouts: iteration,
+      footnoteRelayouts,
+      footnoteReserveRelayouts: footnoteRelayoutBreakdown.reserve,
+      footnoteGrowRelayouts: footnoteRelayoutBreakdown.grow,
+      footnoteTightenRelayouts: footnoteRelayoutBreakdown.tighten,
+      footnotePreferredRelayouts: footnoteRelayoutBreakdown.preferred,
+      footnoteWidowRelayouts: footnoteRelayoutBreakdown.widow,
+      footnoteRevertRelayouts: footnoteRelayoutBreakdown.revert,
+      footnoteOtherRelayouts: footnoteRelayoutBreakdown.other,
+    },
+  };
 
   return {
-    layout,
+    layout: exposedLayout,
+    blocks: currentBlocks,
     measures: currentMeasures,
     dirty,
     headers,
@@ -3218,7 +4582,2860 @@ export async function incrementalLayout(
     extraBlocks,
     extraMeasures,
     footnoteReserveSeed: nextFootnoteReserveSeed,
+    headerFooterGeometryFingerprint,
+    layoutReuse: layoutReuseSummary,
+    measureReuse: {
+      mode:
+        headerFooterBodyReferencesRetained && canReusePreviousMeasures
+          ? 'body-stable'
+          : provedDirtyMeasure
+            ? 'proved-dirty-only'
+            : 'full-scan',
+      blocksMeasured: cacheMisses,
+      measuresAdopted: reusedMeasures,
+      reason:
+        headerFooterBodyReferencesRetained && canReusePreviousMeasures
+          ? 'header-footer-only-body-measure-plane-retained'
+          : provedDirtyMeasure
+            ? 'exact-envelope-dirty-measure-packet'
+            : 'proved-dirty-measure-packet-unavailable',
+    },
+    bridgeTiming,
   };
+}
+
+function validateProvedDirtyMeasurePacket(input: {
+  blocks: FlowBlock[];
+  previousBlocks: FlowBlock[];
+  previousMeasures: Measure[];
+  dirty: ReturnType<typeof computeDirtyRegions>;
+  previousBlockIndexById: ReadonlyMap<string, number> | null;
+  currentBlockIndexById: ReadonlyMap<string, number>;
+  dirtyMeasureConstraints: ReadonlyMap<string, { maxWidth: number; maxHeight: number }> | null;
+  requiresExactConstraints: boolean;
+}): {
+  dirtyBlockIds: readonly string[];
+  currentBlockIndexById: ReadonlyMap<string, number>;
+  dirtyMeasureConstraints: ReadonlyMap<string, { maxWidth: number; maxHeight: number }> | null;
+  measureSplice: { ordinalDelta: 1 | -1; atIndex: number } | null;
+} | null {
+  if (input.previousMeasures.length !== input.previousBlocks.length) return null;
+  if (input.currentBlockIndexById.size !== input.blocks.length) return null;
+  const inserted = input.dirty.insertedBlockIds;
+  const deleted = input.dirty.deletedBlockIds;
+  let measureSplice: { ordinalDelta: 1 | -1; atIndex: number } | null = null;
+  if (inserted.length === 0 && deleted.length === 0) {
+    if (input.blocks.length !== input.previousBlocks.length) return null;
+  } else if (inserted.length === 1 && deleted.length === 0) {
+    if (input.blocks.length !== input.previousBlocks.length + 1 || !input.previousBlockIndexById) return null;
+    const insertedIndex = input.currentBlockIndexById.get(inserted[0]!);
+    if (!Number.isInteger(insertedIndex) || insertedIndex! <= 0) return null;
+    const headId = input.blocks[insertedIndex! - 1]?.id;
+    if (
+      !headId ||
+      input.previousBlockIndexById.get(headId) !== insertedIndex! - 1 ||
+      input.previousBlocks[insertedIndex! - 1]?.id !== headId
+    )
+      return null;
+    measureSplice = { ordinalDelta: 1, atIndex: insertedIndex! };
+  } else if (inserted.length === 0 && deleted.length === 1) {
+    if (input.blocks.length + 1 !== input.previousBlocks.length || !input.previousBlockIndexById) return null;
+    const deletedIndex = input.previousBlockIndexById.get(deleted[0]!);
+    if (!Number.isInteger(deletedIndex) || deletedIndex! <= 0) return null;
+    const headId = input.previousBlocks[deletedIndex! - 1]?.id;
+    if (
+      !headId ||
+      input.currentBlockIndexById.get(headId) !== deletedIndex! - 1 ||
+      input.blocks[deletedIndex! - 1]?.id !== headId
+    )
+      return null;
+    measureSplice = { ordinalDelta: -1, atIndex: deletedIndex! };
+  } else {
+    return null;
+  }
+  const dirtyBlockIds = [...new Set(input.dirty.changedBlockIds)];
+  if (dirtyBlockIds.length === 0 || dirtyBlockIds.length !== input.dirty.changedBlockIds.length) return null;
+  for (const blockId of dirtyBlockIds) {
+    const index = input.currentBlockIndexById.get(blockId);
+    if (!Number.isInteger(index) || index! < 0 || index! >= input.blocks.length) return null;
+    const current = input.blocks[index!]!;
+    if (current.id !== blockId || current.kind === 'sectionBreak') return null;
+    if (!inserted.includes(blockId)) {
+      const previousIndex = input.previousBlockIndexById?.get(blockId) ?? index;
+      if (!Number.isInteger(previousIndex) || input.previousBlocks[previousIndex!]?.id !== blockId) return null;
+    }
+    const constraints = input.dirtyMeasureConstraints?.get(blockId);
+    if (
+      input.requiresExactConstraints &&
+      (!constraints ||
+        !Number.isFinite(constraints.maxWidth) ||
+        constraints.maxWidth <= 0 ||
+        !Number.isFinite(constraints.maxHeight) ||
+        // measuring-dom treats zero as the exact unbounded-height contract.
+        constraints.maxHeight < 0)
+    )
+      return null;
+  }
+  return {
+    dirtyBlockIds,
+    currentBlockIndexById: input.currentBlockIndexById,
+    dirtyMeasureConstraints: input.dirtyMeasureConstraints,
+    measureSplice,
+  };
+}
+
+interface PersistentMeasureNode {
+  zero?: PersistentMeasureNode;
+  one?: PersistentMeasureNode;
+  hasValue?: true;
+  value?: Measure;
+}
+
+const persistentMeasureOverlays = new WeakMap<
+  object,
+  {
+    base: Measure[];
+    root: PersistentMeasureNode | null;
+  }
+>();
+
+function createMeasureOverlay(previous: Measure[], overrides: ReadonlyMap<number, Measure>): Measure[] {
+  const prior = persistentMeasureOverlays.get(previous);
+  const base = prior?.base ?? previous;
+  let root = prior?.root ?? null;
+  for (const [index, value] of overrides) root = setPersistentMeasureValue(root, index, value, 31);
+  const proxy = new Proxy(base, {
+    get(target, property, receiver) {
+      if (typeof property === 'string' && /^(?:0|[1-9]\d*)$/.test(property)) {
+        const replacement = getPersistentMeasureValue(root, Number(property), 31);
+        if (replacement.found) return replacement.value;
+      }
+      return Reflect.get(target, property, receiver);
+    },
+    set() {
+      throw new Error('retained measure overlays are immutable');
+    },
+    deleteProperty() {
+      throw new Error('retained measure overlays are immutable');
+    },
+  });
+  persistentMeasureOverlays.set(proxy, { base, root });
+  return proxy;
+}
+
+function setPersistentMeasureValue(
+  node: PersistentMeasureNode | null,
+  index: number,
+  value: Measure,
+  bit: number,
+): PersistentMeasureNode {
+  if (bit < 0) return { ...node, hasValue: true, value };
+  const branch = Math.floor(index / 2 ** bit) % 2;
+  return branch === 0
+    ? { ...node, zero: setPersistentMeasureValue(node?.zero ?? null, index, value, bit - 1) }
+    : { ...node, one: setPersistentMeasureValue(node?.one ?? null, index, value, bit - 1) };
+}
+
+function getPersistentMeasureValue(
+  root: PersistentMeasureNode | null,
+  index: number,
+  bit: number,
+): { found: boolean; value?: Measure } {
+  let node = root;
+  for (let currentBit = bit; currentBit >= 0 && node; currentBit -= 1) {
+    const branch = Math.floor(index / 2 ** currentBit) % 2;
+    node = branch === 0 ? (node.zero ?? null) : (node.one ?? null);
+  }
+  return node?.hasValue ? { found: true, value: node.value } : { found: false };
+}
+
+function tryBuildProvedHeaderFooterOnlyLayoutReuse(input: {
+  previousLayout: Layout;
+  previousBlocks: readonly FlowBlock[];
+  currentBlocks: readonly FlowBlock[];
+  reuse: IncrementalLayoutReuseOptions;
+  prepared: PreparedHeaderFooterOnlyLayoutReuse | null;
+  onReject: (reason: string) => void;
+}): {
+  layout: Layout;
+  reuse: IncrementalLayoutReuseSummary;
+  provedNoteOnlyFinalization?: ProvedNoteOnlyLayoutFinalization;
+} | null {
+  const reject = (reason: string): null => {
+    input.onReject(reason);
+    perfLog(`[incrementalLayout] Header/footer-only reuse rejected: ${reason}`);
+    return null;
+  };
+  const proof = input.reuse.provedHeaderFooterOnlyRefresh;
+  const prepared = input.prepared;
+  if (!proof || !prepared) return reject('proof-or-prepared-input-missing');
+  if (
+    proof.bodyProjectionRetainedExact !== true ||
+    proof.bodyLayoutInputsUnchanged !== true ||
+    typeof proof.previousGeometryFingerprint !== 'string' ||
+    proof.previousGeometryFingerprint.length === 0
+  ) {
+    return reject('body-stability-proof-invalid');
+  }
+  if (proof.previousGeometryFingerprint !== prepared.currentGeometryFingerprint) {
+    return reject('furniture-geometry-changed');
+  }
+  if (
+    prepared.bodyMeasuresRetainedExact !== true ||
+    input.previousBlocks.length !== input.currentBlocks.length ||
+    input.previousBlocks.some((block, index) => input.currentBlocks[index] !== block)
+  ) {
+    return reject('body-plane-not-retained-exact');
+  }
+  const previousPages = input.previousLayout.pages;
+  if (previousPages.length < 2) return reject('stable-tail-unavailable');
+
+  let provedNoteOnlyFinalization: ProvedNoteOnlyLayoutFinalization | undefined;
+  const footnotes = prepared.footnotes;
+  if (footnotes && (footnotes.refs.length > 0 || footnotes.blocksById.size > 0)) {
+    const seed = prepared.warmSeed;
+    const extras = prepared.retainedFootnoteExtras;
+    if (
+      footnotes.refs.length === 0 ||
+      footnotes.blocksById.size === 0 ||
+      !seed ||
+      prepared.noteMeasurePlaneRetainedExact !== true ||
+      !extras ||
+      extras.blocks.length === 0 ||
+      extras.blocks.length !== extras.measures.length ||
+      seed.reserves.length !== previousPages.length ||
+      !(seed.noteBlocksByBlockId instanceof Map) ||
+      !(seed.noteMeasuresByBlockId instanceof Map) ||
+      validateRetainedNoteMeasurePlane(footnotes.blocksById, seed) == null
+    ) {
+      return reject('retained-footnote-plane-incomplete');
+    }
+    const currentNoteIds = new Set(footnotes.refs.map((reference) => reference.id));
+    if (
+      currentNoteIds.size !== footnotes.blocksById.size ||
+      [...footnotes.blocksById.keys()].some((noteId) => !currentNoteIds.has(noteId))
+    ) {
+      return reject('retained-footnote-inventory-mismatch');
+    }
+    provedNoteOnlyFinalization = {
+      extraBlocks: extras.blocks,
+      extraMeasures: extras.measures,
+      footnoteReserveSeed: seed,
+    };
+  }
+
+  const replacements = new Map<number, Page>([[0, materializeAdoptedLayoutPage(previousPages[0]!, [], 0)]]);
+  const pages = createPageSequenceWithReplacements(previousPages, replacements);
+  const tailStartPageIndex = 1;
+  return {
+    layout: { ...input.previousLayout, pages },
+    reuse: {
+      mode: 'tail-splice',
+      reason: 'm4-header-footer-geometry-stable-body-tail-adopted',
+      tailDisposition: 'adopted-source-tail',
+      checkpointPageIndex: 0,
+      affectedFrontierPageIndex: 0,
+      sourceAffectedFrontierPageIndex: 0,
+      convergencePageIndex: tailStartPageIndex,
+      sourceConvergencePageIndex: tailStartPageIndex,
+      pagesPaginated: 0,
+      pagesSplicedByReuse: previousPages.length - tailStartPageIndex,
+      tailAdoption: {
+        startPageIndex: tailStartPageIndex,
+        endPageIndexExclusive: previousPages.length,
+        sourcePageStartIndex: tailStartPageIndex,
+        sourcePageEndIndexExclusive: previousPages.length,
+        pageIndexDelta: 0,
+        sectionPageNumberTransform: null,
+        pageReferenceLocationsStable: true,
+        sourceLayoutEpoch: input.previousLayout.layoutEpoch ?? null,
+        positionTransforms: [],
+        blockIdRewrites: null,
+      },
+    },
+    ...(provedNoteOnlyFinalization ? { provedNoteOnlyFinalization } : {}),
+  };
+}
+
+function tryBuildProvedNoteOnlyLayoutReuse(input: {
+  previousLayout: Layout;
+  previousBlocks: readonly FlowBlock[];
+  currentBlocks: readonly FlowBlock[];
+  dirtyBlockIds: readonly string[];
+  reuse: IncrementalLayoutReuseOptions;
+  prepared: PreparedNoteOnlyLayoutReuse | null;
+  onReject: (reason: string) => void;
+}): {
+  layout: Layout;
+  reuse: IncrementalLayoutReuseSummary;
+  provedNoteOnlyFinalization: ProvedNoteOnlyLayoutFinalization;
+} | null {
+  const reject = (reason: string): null => {
+    input.onReject(reason);
+    perfLog(`[incrementalLayout] Note-only reuse rejected: ${reason}`);
+    return null;
+  };
+  const proof = input.reuse.provedNoteOnlyRefresh;
+  const prepared = input.prepared;
+  if (!proof || !prepared) return reject('proof-or-prepared-input-missing');
+  const dependencyProof = input.reuse.dependencyProof;
+  if (
+    !dependencyProof ||
+    (dependencyProof.profile !== 'document-start-local-text' &&
+      (dependencyProof.profile !== 'page-checkpoint-local-text' ||
+        !dependencyProof.admittedDependencyClasses.includes('footnotes')))
+  ) {
+    return reject('dependency-proof-missing-footnotes');
+  }
+  if (
+    proof.noteIds.length === 0 ||
+    new Set(proof.noteIds).size !== proof.noteIds.length ||
+    proof.bodyReferenceBlockIds.length === 0 ||
+    !haveExactUniqueIdSet(proof.bodyReferenceBlockIds, input.dirtyBlockIds)
+  ) {
+    return reject('note-or-reference-proof-invalid');
+  }
+  if (
+    input.previousBlocks.length !== input.currentBlocks.length ||
+    input.previousBlocks.some((block, index) => input.currentBlocks[index] !== block) ||
+    prepared.previousBlocks.length !== input.previousBlocks.length ||
+    prepared.previousBlocks.some((block, index) => input.previousBlocks[index] !== block)
+  ) {
+    return reject('body-block-identities-not-retained');
+  }
+
+  const refreshedNoteIds = new Set(proof.noteIds);
+  const currentRefs = prepared.footnotes.refs;
+  const provedReferenceBlockIds = [
+    ...new Set(
+      currentRefs
+        .filter((reference) => refreshedNoteIds.has(reference.id))
+        .map((reference) => reference.blockId)
+        .filter((blockId): blockId is string => typeof blockId === 'string' && blockId.length > 0),
+    ),
+  ];
+  if (
+    !haveExactUniqueIdSet(provedReferenceBlockIds, proof.bodyReferenceBlockIds) ||
+    proof.noteIds.some(
+      (noteId) =>
+        !currentRefs.some(
+          (reference) =>
+            reference.id === noteId && typeof reference.blockId === 'string' && reference.blockId.length > 0,
+        ),
+    )
+  ) {
+    return reject('current-reference-anchor-mismatch');
+  }
+
+  const retainedBlocksById = prepared.warmSeed.noteBlocksByBlockId;
+  const retainedMeasuresById = prepared.warmSeed.noteMeasuresByBlockId;
+  const retainedBodyHeightById = prepared.warmSeed.noteBodyHeightById;
+  const retainedFirstLineHeightById = prepared.warmSeed.noteFirstLineHeightById;
+  if (
+    !(retainedBlocksById instanceof Map) ||
+    !(retainedMeasuresById instanceof Map) ||
+    !(retainedBodyHeightById instanceof Map) ||
+    !(retainedFirstLineHeightById instanceof Map)
+  ) {
+    return reject('retained-note-seed-incomplete');
+  }
+
+  const referencedNoteIds = [...new Set(currentRefs.map((reference) => reference.id))];
+  if (
+    referencedNoteIds.length !== prepared.footnotes.blocksById.size ||
+    [...prepared.footnotes.blocksById.keys()].some((noteId) => !referencedNoteIds.includes(noteId)) ||
+    proof.noteIds.some((noteId) => !prepared.footnotes.blocksById.has(noteId))
+  ) {
+    return reject('current-note-inventory-mismatch');
+  }
+  const currentNoteBlocks: FlowBlock[] = [];
+  const currentNoteBlockIds = new Set<string>();
+  for (const noteId of referencedNoteIds) {
+    const blocks = prepared.footnotes.blocksById.get(noteId);
+    if (!blocks || blocks.length === 0) return reject(`current-note-empty:${noteId}`);
+    for (const block of blocks) {
+      if (!block.id || currentNoteBlockIds.has(block.id)) return reject(`current-note-block-id-invalid:${block.id}`);
+      currentNoteBlockIds.add(block.id);
+      currentNoteBlocks.push(block);
+      const retainedBlock = retainedBlocksById.get(block.id);
+      const retainedMeasure = retainedMeasuresById.get(block.id);
+      const currentMeasure = prepared.currentNoteMeasures.get(block.id);
+      if (!retainedBlock || !retainedMeasure || !currentMeasure) {
+        return reject(`retained-note-block-or-measure-missing:${block.id}`);
+      }
+      if (!refreshedNoteIds.has(noteId) && block !== retainedBlock) {
+        return reject(`unrelated-note-block-identity-changed:${noteId}:${block.id}`);
+      }
+      if (
+        refreshedNoteIds.has(noteId) &&
+        block !== retainedBlock &&
+        !areChangedFootnoteBlockFramesEquivalent(retainedBlock, block, retainedMeasure, currentMeasure)
+      ) {
+        return reject(`refreshed-note-block-frame-changed:${noteId}:${block.id}`);
+      }
+    }
+  }
+  if (
+    currentNoteBlocks.length !== retainedBlocksById.size ||
+    currentNoteBlocks.length !== retainedMeasuresById.size ||
+    currentNoteBlocks.length !== prepared.currentNoteMeasures.size
+  ) {
+    return reject(
+      `note-plane-size-mismatch:blocks=${currentNoteBlocks.length}:retainedBlocks=${retainedBlocksById.size}:retainedMeasures=${retainedMeasuresById.size}:currentMeasures=${prepared.currentNoteMeasures.size}`,
+    );
+  }
+
+  const currentRangesByNoteId = new Map<string, FootnoteRange[]>();
+  for (const noteId of referencedNoteIds) {
+    const currentBlocks = prepared.footnotes.blocksById.get(noteId)!;
+    const retainedBlocks: FlowBlock[] = [];
+    for (const block of currentBlocks) {
+      const retainedBlock = retainedBlocksById.get(block.id);
+      if (!retainedBlock) return reject(`retained-note-block-missing:${block.id}`);
+      retainedBlocks.push(retainedBlock);
+    }
+    const currentRanges = buildFootnoteRanges(currentBlocks, new Map(prepared.currentNoteMeasures));
+    currentRangesByNoteId.set(noteId, currentRanges);
+    if (
+      refreshedNoteIds.has(noteId) &&
+      !areFootnoteRangesLayoutEquivalent(buildFootnoteRanges(retainedBlocks, retainedMeasuresById), currentRanges)
+    ) {
+      return reject(`refreshed-note-layout-geometry-changed:${noteId}`);
+    }
+  }
+  const currentHeights = computeNoteBodyHeights(prepared.footnotes, new Map(prepared.currentNoteMeasures));
+  if (
+    referencedNoteIds.some(
+      (noteId) =>
+        currentHeights.totalMap.get(noteId) !== retainedBodyHeightById.get(noteId) ||
+        currentHeights.firstLineMap.get(noteId) !== retainedFirstLineHeightById.get(noteId),
+    )
+  ) {
+    return reject('note-height-map-changed');
+  }
+  const currentSeparatorSpacingBefore = resolveSeparatorSpacingBefore(
+    currentRangesByNoteId,
+    new Map(prepared.currentNoteMeasures),
+    prepared.footnotes.separatorSpacingBefore,
+    DEFAULT_FOOTNOTE_SEPARATOR_SPACING_BEFORE,
+  );
+  if (currentSeparatorSpacingBefore !== prepared.warmSeed.separatorSpacingBefore) {
+    return reject('separator-spacing-changed');
+  }
+
+  const notePageIndexes = prepared.warmSeed.notePageIndexes;
+  if (
+    !Array.isArray(notePageIndexes) ||
+    notePageIndexes.length === 0 ||
+    new Set(notePageIndexes).size !== notePageIndexes.length ||
+    notePageIndexes.some(
+      (pageIndex) => !Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= input.previousLayout.pages.length,
+    )
+  ) {
+    return reject('retained-note-page-index-invalid');
+  }
+  const refreshedBlockIds = new Set(
+    proof.noteIds.flatMap((noteId) => (prepared.footnotes.blocksById.get(noteId) ?? []).map((block) => block.id)),
+  );
+  const affectedPageIndexes = notePageIndexes.filter((pageIndex) => {
+    const page = input.previousLayout.pages[pageIndex];
+    if (!page) return false;
+    if (page.fragments.some((fragment) => refreshedBlockIds.has(fragment.blockId))) return true;
+    const ledger = page.footnoteLedger;
+    return (
+      ledger != null &&
+      (ledger.anchorIds.some((noteId) => refreshedNoteIds.has(noteId)) ||
+        ledger.continuationIn.some((entry) => refreshedNoteIds.has(entry.id)) ||
+        ledger.continuationOut.some((entry) => refreshedNoteIds.has(entry.id)))
+    );
+  });
+  if (affectedPageIndexes.length === 0) return reject('affected-note-page-not-found');
+  const firstAffectedPageIndex = Math.min(...affectedPageIndexes);
+  const lastAffectedPageIndex = Math.max(...affectedPageIndexes);
+  const tailStartPageIndex = lastAffectedPageIndex + 1;
+  if (tailStartPageIndex >= input.previousLayout.pages.length) return reject('stable-tail-unavailable');
+
+  const replacements = new Map<number, Page>();
+  for (let pageIndex = firstAffectedPageIndex; pageIndex <= lastAffectedPageIndex; pageIndex += 1) {
+    const page = input.previousLayout.pages[pageIndex];
+    if (!page) return reject(`affected-page-missing:${pageIndex}`);
+    replacements.set(pageIndex, materializeAdoptedLayoutPage(page, [], 0));
+  }
+  const extraPlane = buildProvedNoteOnlyExtraPlane({
+    layout: input.previousLayout,
+    notePageIndexes,
+    currentNoteBlocks,
+    currentNoteMeasures: prepared.currentNoteMeasures,
+  });
+  if (!extraPlane) return reject('current-note-extra-plane-invalid');
+
+  const pages = createPageSequenceWithReplacements(input.previousLayout.pages, replacements);
+  return {
+    layout: { ...input.previousLayout, pages },
+    reuse: {
+      mode: 'tail-splice',
+      reason: 'm4-note-only-geometry-stable-tail-adopted',
+      tailDisposition: 'adopted-source-tail',
+      checkpointPageIndex: firstAffectedPageIndex,
+      affectedFrontierPageIndex: lastAffectedPageIndex,
+      sourceAffectedFrontierPageIndex: lastAffectedPageIndex,
+      convergencePageIndex: tailStartPageIndex,
+      sourceConvergencePageIndex: tailStartPageIndex,
+      pagesPaginated: 0,
+      pagesSplicedByReuse: input.previousLayout.pages.length - tailStartPageIndex,
+      tailAdoption: {
+        startPageIndex: tailStartPageIndex,
+        endPageIndexExclusive: input.previousLayout.pages.length,
+        sourcePageStartIndex: tailStartPageIndex,
+        sourcePageEndIndexExclusive: input.previousLayout.pages.length,
+        pageIndexDelta: 0,
+        sectionPageNumberTransform: null,
+        pageReferenceLocationsStable: true,
+        sourceLayoutEpoch: input.previousLayout.layoutEpoch ?? null,
+        positionTransforms: [],
+        blockIdRewrites: null,
+      },
+    },
+    provedNoteOnlyFinalization: {
+      extraBlocks: extraPlane.blocks,
+      extraMeasures: extraPlane.measures,
+      footnoteReserveSeed: {
+        ...prepared.warmSeed,
+        reserves: prepared.warmSeed.reserves.slice(),
+        notePageIndexes: notePageIndexes.slice(),
+        noteBlocksByBlockId: new Map(currentNoteBlocks.map((block) => [block.id, block])),
+        noteMeasuresByBlockId: new Map(prepared.currentNoteMeasures),
+        noteBodyHeightById: new Map(currentHeights.totalMap),
+        noteFirstLineHeightById: new Map(currentHeights.firstLineMap),
+      },
+    },
+  };
+}
+
+function areFootnoteRangesLayoutEquivalent(
+  retained: readonly FootnoteRange[],
+  current: readonly FootnoteRange[],
+): boolean {
+  if (retained.length !== current.length) return false;
+  return retained.every((left, index) => {
+    const right = current[index];
+    if (!right || left.kind !== right.kind || left.blockId !== right.blockId || left.height !== right.height) {
+      return false;
+    }
+    if (left.kind === 'paragraph' && right.kind === 'paragraph') {
+      return (
+        left.fromLine === right.fromLine &&
+        left.toLine === right.toLine &&
+        left.totalLines === right.totalLines &&
+        left.spacingAfter === right.spacingAfter
+      );
+    }
+    if (left.kind === 'list-item' && right.kind === 'list-item') {
+      return (
+        left.itemId === right.itemId &&
+        left.fromLine === right.fromLine &&
+        left.toLine === right.toLine &&
+        left.totalLines === right.totalLines &&
+        left.spacingAfter === right.spacingAfter
+      );
+    }
+    return left.kind !== 'paragraph' && left.kind !== 'list-item';
+  });
+}
+
+function areChangedFootnoteBlockFramesEquivalent(
+  retainedBlock: FlowBlock,
+  currentBlock: FlowBlock,
+  retainedMeasure: Measure,
+  currentMeasure: Measure,
+): boolean {
+  // The note-only fast path intentionally starts with the ordinary typing
+  // shape. Other note block kinds keep the canonical planner until their
+  // complete fragment-frame inputs have an equally explicit proof.
+  if (
+    retainedBlock.kind !== 'paragraph' ||
+    currentBlock.kind !== 'paragraph' ||
+    retainedMeasure.kind !== 'paragraph' ||
+    currentMeasure.kind !== 'paragraph'
+  ) {
+    return false;
+  }
+  const retainedMarker = retainedMeasure.marker;
+  const currentMarker = currentMeasure.marker;
+  return (
+    retainedMarker?.markerWidth === currentMarker?.markerWidth &&
+    retainedMarker?.markerTextWidth === currentMarker?.markerTextWidth &&
+    retainedMarker?.gutterWidth === currentMarker?.gutterWidth
+  );
+}
+
+function buildProvedNoteOnlyExtraPlane(input: {
+  layout: Layout;
+  notePageIndexes: readonly number[];
+  currentNoteBlocks: readonly FlowBlock[];
+  currentNoteMeasures: ReadonlyMap<string, Measure>;
+}): { blocks: FlowBlock[]; measures: Measure[] } | null {
+  const blocks = [...input.currentNoteBlocks];
+  const measures: Measure[] = [];
+  for (const block of blocks) {
+    const measure = input.currentNoteMeasures.get(block.id);
+    if (!measure) return null;
+    measures.push(measure);
+  }
+  const seenSeparatorIds = new Set<string>();
+  for (const pageIndex of input.notePageIndexes) {
+    const page = input.layout.pages[pageIndex];
+    if (!page) return null;
+    for (const fragment of page.fragments) {
+      if (
+        fragment.kind !== 'drawing' ||
+        (!fragment.blockId.startsWith('footnote-separator-page-') &&
+          !fragment.blockId.startsWith('footnote-continuation-separator-page-'))
+      ) {
+        continue;
+      }
+      if (seenSeparatorIds.has(fragment.blockId)) continue;
+      if (
+        fragment.drawingKind !== 'vectorShape' ||
+        !Number.isFinite(fragment.width) ||
+        fragment.width <= 0 ||
+        !Number.isFinite(fragment.height) ||
+        fragment.height <= 0
+      ) {
+        return null;
+      }
+      seenSeparatorIds.add(fragment.blockId);
+      blocks.push({
+        kind: 'drawing',
+        id: fragment.blockId,
+        drawingKind: 'vectorShape',
+        geometry: { width: fragment.width, height: fragment.height },
+        shapeKind: 'rect',
+        fillColor: '#000000',
+        strokeColor: null,
+        strokeWidth: 0,
+      });
+      measures.push({
+        kind: 'drawing',
+        drawingKind: 'vectorShape',
+        width: fragment.width,
+        height: fragment.height,
+        scale: 1,
+        naturalWidth: fragment.width,
+        naturalHeight: fragment.height,
+        geometry: { width: fragment.width, height: fragment.height },
+      });
+    }
+  }
+  return { blocks, measures };
+}
+
+async function layoutWithOptionalReuse(input: {
+  previousBlocks: readonly FlowBlock[];
+  blocks: FlowBlock[];
+  measures: Measure[];
+  options: LayoutOptions;
+  dirty: ReturnType<typeof computeDirtyRegions>;
+  stableBlockIds: ReadonlySet<string>;
+  reuse?: IncrementalLayoutReuseOptions;
+  preparedNoteOnly?: PreparedNoteOnlyLayoutReuse;
+  preparedHeaderFooterOnly?: PreparedHeaderFooterOnlyLayoutReuse;
+  timing: { layoutDocumentMs: number; layoutDocumentCalls: number };
+  execution?: LayoutExecutionControl;
+}): Promise<{
+  layout: Layout;
+  reuse: IncrementalLayoutReuseSummary;
+  provedNoteOnlyFinalization?: ProvedNoteOnlyLayoutFinalization;
+}> {
+  let noteOnlyRejectionReason: string | null = null;
+  let headerFooterOnlyRejectionReason: string | null = null;
+  const runLayoutDocument = async (
+    blocks: FlowBlock[],
+    measures: Measure[],
+    options: LayoutOptions,
+  ): Promise<Layout> => {
+    const startedAt = performance.now();
+    input.timing.layoutDocumentCalls += 1;
+    try {
+      return input.execution
+        ? await layoutDocumentCooperatively(blocks, measures, options, input.execution)
+        : layoutDocument(blocks, measures, options);
+    } finally {
+      input.timing.layoutDocumentMs += performance.now() - startedAt;
+    }
+  };
+  const withSpecializedRejections = (reason: string): string =>
+    [
+      reason,
+      ...(noteOnlyRejectionReason == null ? [] : [`note-only=${noteOnlyRejectionReason}`]),
+      ...(headerFooterOnlyRejectionReason == null ? [] : [`header-footer-only=${headerFooterOnlyRejectionReason}`]),
+    ].join(';');
+  const full = async (reason: string): Promise<{ layout: Layout; reuse: IncrementalLayoutReuseSummary }> => ({
+    layout: await runLayoutDocument(input.blocks, input.measures, input.options),
+    reuse: {
+      mode: 'full',
+      reason: withSpecializedRejections(reason),
+      tailDisposition: 'none',
+      checkpointPageIndex: null,
+      affectedFrontierPageIndex: null,
+      sourceAffectedFrontierPageIndex: null,
+      convergencePageIndex: null,
+      sourceConvergencePageIndex: null,
+      pagesPaginated: null,
+      pagesSplicedByReuse: 0,
+      tailAdoption: null,
+    },
+  });
+
+  const previousLayout = input.reuse?.previousLayout;
+  const previousPages = previousLayout?.pages;
+  if (!previousLayout || !Array.isArray(previousPages) || previousPages.length === 0) {
+    return full('m5-layout-reuse-unavailable-no-previous-layout');
+  }
+  const reuse = input.reuse;
+  if (!reuse?.previousBlockPageIndex || !reuse.previousPageStartKeys) {
+    return full('m5-layout-reuse-unavailable-retained-page-metadata-missing');
+  }
+  if (!Number.isFinite(previousLayout.layoutEpoch)) {
+    return full('m4-layout-reuse-disabled-source-layout-epoch-missing');
+  }
+  if (reuse.retainedMetadataSourceLayoutEpoch !== previousLayout.layoutEpoch) {
+    return full('m4-layout-reuse-disabled-retained-metadata-epoch-mismatch');
+  }
+  if (reuse.previousPageStartKeys.length !== previousPages.length) {
+    return full('m4-layout-reuse-invalid-retained-page-key-count');
+  }
+  const provedHeaderFooterOnlyResult = reuse.provedHeaderFooterOnlyRefresh
+    ? tryBuildProvedHeaderFooterOnlyLayoutReuse({
+        previousLayout,
+        previousBlocks: input.previousBlocks,
+        currentBlocks: input.blocks,
+        reuse,
+        prepared: input.preparedHeaderFooterOnly ?? null,
+        onReject: (reason) => {
+          headerFooterOnlyRejectionReason = reason;
+        },
+      })
+    : null;
+  if (provedHeaderFooterOnlyResult) return provedHeaderFooterOnlyResult;
+  const warmProofFailure = validateProvedWarmPaginationInputs(reuse, input.blocks, input.dirty);
+  if (warmProofFailure) return full(`m4-layout-reuse-disabled-${warmProofFailure}`);
+  const unsupportedDependency = reuse.dependencyProof
+    ? validateIncrementalPaginationProof(reuse.dependencyProof)
+    : 'dependency-proof-missing';
+  if (unsupportedDependency) {
+    return full(`m4-layout-reuse-disabled-${unsupportedDependency}`);
+  }
+  const admittedCheckpointDependencies =
+    reuse.dependencyProof?.profile === 'page-checkpoint-local-text'
+      ? reuse.dependencyProof.admittedDependencyClasses
+      : null;
+  const footnoteDependencyInput = isFootnotesLayoutInput(input.options.footnotes) ? input.options.footnotes : null;
+  // The page-checkpoint class list is a proof boundary, not descriptive
+  // telemetry. When the bridge can observe a dependency directly without a
+  // broad scan, reject a producer that omitted it instead of silently
+  // trusting an incomplete packet. Other dependency classes remain owned by
+  // their typed producer sidecars because discovering them here would require
+  // whole-document work on every edit.
+  if (
+    admittedCheckpointDependencies &&
+    footnoteDependencyInput &&
+    footnoteDependencyInput.refs.length > 0 &&
+    footnoteDependencyInput.blocksById.size > 0 &&
+    !admittedCheckpointDependencies.includes('footnotes')
+  ) {
+    return full('m4-layout-reuse-disabled-footnote-dependency-class-missing');
+  }
+  const footnoteFinalizerFragmentsAreExternal =
+    footnoteDependencyInput != null &&
+    (reuse.dependencyProof?.profile === 'document-start-local-text' ||
+      (reuse.dependencyProof?.profile === 'page-checkpoint-local-text' &&
+        reuse.dependencyProof.admittedDependencyClasses.includes('footnotes')));
+  if (reuse.dependencyProof?.profile === 'document-start-local-text' && reuse.requireDocumentStartCheckpoint !== true) {
+    return full('m4-layout-reuse-disabled-document-start-checkpoint-required');
+  }
+  const previousPageStartKeys = reuse.previousPageStartKeys;
+  const previousPageStartKeyIndex = reuse.previousPageStartKeyIndex ?? buildPageStartKeyIndex(previousPageStartKeys);
+  const hasBlockCountChange = input.dirty.insertedBlockIds.length > 0 || input.dirty.deletedBlockIds.length > 0;
+  if (hasBlockCountChange) {
+    const oneSplit = input.dirty.insertedBlockIds.length === 1 && input.dirty.deletedBlockIds.length === 0;
+    const oneMerge = input.dirty.insertedBlockIds.length === 0 && input.dirty.deletedBlockIds.length === 1;
+    if (
+      reuse.allowBlockIdChurn !== true ||
+      (!oneSplit && !oneMerge) ||
+      !reuse.previousBlockIndexById ||
+      !reuse.blockIdRewrites
+    ) {
+      return full('m5-layout-reuse-disabled-block-insert-delete');
+    }
+  }
+  if (input.dirty.firstDirtyIndex >= input.blocks.length) {
+    return full('m5-layout-reuse-disabled-no-dirty-block');
+  }
+
+  if (reuse.dirtyBlockIds && !haveExactUniqueIdSet(reuse.dirtyBlockIds, input.dirty.changedBlockIds)) {
+    return full('m4-layout-reuse-disabled-dirty-block-set-mismatch');
+  }
+  const dirtyBlockIds = [...(reuse.dirtyBlockIds ?? input.dirty.changedBlockIds)];
+  if (dirtyBlockIds.length === 0) {
+    return full('m4-layout-reuse-disabled-dirty-set-empty');
+  }
+  const pageRelativeAnchorProofFailure = validateNonFlowingPageRelativeAnchorDependency({
+    proof: reuse.dependencyProof,
+    previousLayout,
+    blocks: input.blocks,
+    currentBlockIndexById: reuse.currentBlockIndexById,
+    previousBlockPageIndex: reuse.previousBlockPageIndex,
+    blockIdRewrites: reuse.blockIdRewrites,
+    dirtyBlockIds,
+  });
+  if (pageRelativeAnchorProofFailure) {
+    return full(`m4-layout-reuse-disabled-${pageRelativeAnchorProofFailure}`);
+  }
+  if (
+    admittedCheckpointDependencies &&
+    !admittedCheckpointDependencies.includes('tables') &&
+    dirtyBlockIds.some((blockId) => {
+      const blockIndex = reuse.currentBlockIndexById?.get(blockId);
+      return Number.isInteger(blockIndex) && input.blocks[blockIndex!]?.kind === 'table';
+    })
+  ) {
+    return full('m4-layout-reuse-disabled-table-dependency-class-missing');
+  }
+  const provedNoteOnlyResult = reuse.provedNoteOnlyRefresh
+    ? tryBuildProvedNoteOnlyLayoutReuse({
+        previousLayout,
+        previousBlocks: input.previousBlocks,
+        currentBlocks: input.blocks,
+        dirtyBlockIds,
+        reuse,
+        prepared: input.preparedNoteOnly ?? null,
+        onReject: (reason) => {
+          noteOnlyRejectionReason = reason;
+        },
+      })
+    : null;
+  if (provedNoteOnlyResult) return provedNoteOnlyResult;
+  let earliestDirtyPage = Number.POSITIVE_INFINITY;
+  let sourceAffectedFrontierPageIndex = -1;
+  const dirtyPageRanges: Array<{ blockId: string; firstPage: number; lastPage: number }> = [];
+  for (const blockId of dirtyBlockIds) {
+    const previousBlockId = reuse.blockIdRewrites?.currentToPrevious.get(blockId) ?? blockId;
+    const pageRange = reuse.previousBlockPageIndex.get(previousBlockId);
+    if (!pageRange) {
+      if (input.dirty.insertedBlockIds.includes(blockId)) continue;
+      return full('m4-layout-reuse-unavailable-dirty-page-range-not-found');
+    }
+    if (
+      !Number.isInteger(pageRange.firstPage) ||
+      !Number.isInteger(pageRange.lastPage) ||
+      pageRange.firstPage < 0 ||
+      pageRange.lastPage < pageRange.firstPage ||
+      pageRange.lastPage >= previousPages.length ||
+      !pageContainsBlock(previousPages[pageRange.firstPage], previousBlockId) ||
+      !pageContainsBlock(previousPages[pageRange.lastPage], previousBlockId)
+    ) {
+      return full('m4-layout-reuse-disabled-stale-dirty-page-range');
+    }
+    const currentBlockIndex = reuse.currentBlockIndexById?.get(blockId);
+    if (
+      reuse.currentBlockIndexById &&
+      (!Number.isInteger(currentBlockIndex) || input.blocks[currentBlockIndex!]?.id !== blockId)
+    ) {
+      // Named diagnostic detail (id/index only, no content): the admission
+      // certification needs to see WHICH identity diverged between the
+      // retained index and the composed block plane.
+      return full(
+        `m4-layout-reuse-disabled-current-block-index-stale:dirty=${blockId}@${String(currentBlockIndex)} saw=${String(input.blocks[currentBlockIndex ?? -1]?.id)} blocks=${input.blocks.length} indexed=${reuse.currentBlockIndexById.size}`,
+      );
+    }
+    dirtyPageRanges.push({ blockId, firstPage: pageRange.firstPage, lastPage: pageRange.lastPage });
+    earliestDirtyPage = Math.min(earliestDirtyPage, pageRange.firstPage);
+    sourceAffectedFrontierPageIndex = Math.max(sourceAffectedFrontierPageIndex, pageRange.lastPage);
+  }
+  for (const deletedBlockId of input.dirty.deletedBlockIds) {
+    const pageRange = reuse.previousBlockPageIndex.get(deletedBlockId);
+    if (
+      !pageRange ||
+      !Number.isInteger(pageRange.firstPage) ||
+      !Number.isInteger(pageRange.lastPage) ||
+      pageRange.firstPage < 0 ||
+      pageRange.lastPage < pageRange.firstPage ||
+      pageRange.lastPage >= previousPages.length ||
+      !pageContainsBlock(previousPages[pageRange.firstPage], deletedBlockId) ||
+      !pageContainsBlock(previousPages[pageRange.lastPage], deletedBlockId)
+    ) {
+      return full('m4-layout-reuse-unavailable-deleted-page-range-not-found');
+    }
+    dirtyPageRanges.push({ blockId: deletedBlockId, firstPage: pageRange.firstPage, lastPage: pageRange.lastPage });
+    earliestDirtyPage = Math.min(earliestDirtyPage, pageRange.firstPage);
+    sourceAffectedFrontierPageIndex = Math.max(sourceAffectedFrontierPageIndex, pageRange.lastPage);
+  }
+  if (!Number.isFinite(earliestDirtyPage) || sourceAffectedFrontierPageIndex < 0) {
+    return full('m4-layout-reuse-unavailable-dirty-page-range-not-found');
+  }
+  let affectedFrontierPageIndex = earliestDirtyPage;
+  const dirtyPage = reuse.requireDocumentStartCheckpoint === true ? 0 : earliestDirtyPage;
+  if (dirtyPage == null || dirtyPage < 0 || dirtyPage >= previousPages.length) {
+    return full('m5-layout-reuse-unavailable-dirty-page-not-found');
+  }
+
+  const partialPageCheckpointResult =
+    reuse.requireDocumentStartCheckpoint !== true &&
+    dirtyBlockIds.length === 1 &&
+    input.dirty.insertedBlockIds.length === 0
+      ? findSafePartialPageCheckpoint({
+          layout: previousLayout,
+          pages: previousPages,
+          previousBlockId: reuse.blockIdRewrites?.currentToPrevious.get(dirtyBlockIds[0]!) ?? dirtyBlockIds[0]!,
+          currentBlockId: dirtyBlockIds[0]!,
+          currentBlockIndexById: reuse.currentBlockIndexById!,
+          blocks: input.blocks,
+          expectedPageIndex: earliestDirtyPage,
+          stableBlockIds: input.stableBlockIds,
+          previousToCurrentBlockId: reuse.blockIdRewrites?.previousToCurrent ?? null,
+        })
+      : { ok: false as const, reason: 'profile-or-dirty-shape-ineligible' };
+  const partialPageCheckpoint = partialPageCheckpointResult.ok ? partialPageCheckpointResult : null;
+  const partialPageCheckpointRejection = partialPageCheckpointResult.ok ? null : partialPageCheckpointResult.reason;
+  let checkpointPageIndex =
+    partialPageCheckpoint?.checkpoint.pageIndex ?? (reuse.requireDocumentStartCheckpoint === true ? 0 : dirtyPage);
+  if (!partialPageCheckpoint) {
+    while (checkpointPageIndex > 0 && !pageStartsAtCleanBlockBoundary(previousPages[checkpointPageIndex])) {
+      checkpointPageIndex -= 1;
+    }
+  }
+  const checkpointPage = previousPages[checkpointPageIndex];
+  if (!checkpointPage || (!partialPageCheckpoint && !pageStartsAtCleanBlockBoundary(checkpointPage))) {
+    return full('m5-layout-reuse-unavailable-clean-checkpoint-not-found');
+  }
+  if (dirtyPageRanges.some((pageRange) => pageRange.firstPage < checkpointPageIndex)) {
+    return full('m4-layout-reuse-disabled-dirty-block-in-retained-prefix');
+  }
+  const suffixStartBlockId =
+    partialPageCheckpoint?.previousBlockId ?? (checkpointPageIndex === 0 ? null : readFirstPageBlockId(checkpointPage));
+  const currentSuffixStartBlockId =
+    suffixStartBlockId == null
+      ? null
+      : (reuse.blockIdRewrites?.previousToCurrent.get(suffixStartBlockId) ?? suffixStartBlockId);
+  const suffixStartBlockIndex =
+    // A suffix-start BLOCK ID always wins: a PARTIAL (mid-page) checkpoint on
+    // page zero resumes at the checkpoint's own paragraph boundary, not at
+    // document start. Only a null id — the clean page-zero checkpoint whose
+    // suffix genuinely is the whole document — maps to index 0. The previous
+    // `checkpointPageIndex === 0 → 0` shortcut mislabeled every page-zero
+    // partial checkpoint as `current-block-index-stale` and fell to full
+    // layout (observed as the alkuri/nvca first-target admission failures).
+    currentSuffixStartBlockId != null
+      ? (reuse.currentBlockIndexById?.get(currentSuffixStartBlockId) ??
+        input.blocks.findIndex((block) => block.id === currentSuffixStartBlockId))
+      : checkpointPageIndex === 0
+        ? 0
+        : -1;
+  if (suffixStartBlockIndex < 0) {
+    return full('m5-layout-reuse-unavailable-checkpoint-block-not-found');
+  }
+  if (currentSuffixStartBlockId != null && input.blocks[suffixStartBlockIndex]?.id !== currentSuffixStartBlockId) {
+    return full(
+      `m4-layout-reuse-disabled-current-block-index-stale:suffix=${currentSuffixStartBlockId}@${suffixStartBlockIndex} saw=${String(input.blocks[suffixStartBlockIndex]?.id)} blocks=${input.blocks.length}`,
+    );
+  }
+
+  // `maxRelaidPages` is the first locality probe, not a correctness horizon.
+  // A finalized page can miss convergence just beyond that probe (for
+  // example, when one inserted line shifts a long paragraph or table
+  // continuation). Expand inside this bridge call until an exact retained-tail
+  // boundary is proved or the exact current suffix is freshly paginated. No
+  // intermediate probe escapes to resolve or paint.
+  const initialRelaidPageHorizon = Number.isFinite(reuse.maxRelaidPages)
+    ? Math.max(1, Math.floor(reuse.maxRelaidPages!))
+    : 3;
+  let convergenceProbePageHorizon = initialRelaidPageHorizon;
+  let reuseProbePagesPaginated = 0;
+
+  while (true) {
+    const maxRelaidPages = convergenceProbePageHorizon;
+    affectedFrontierPageIndex = earliestDirtyPage;
+    const reachesSourceTail = sourceAffectedFrontierPageIndex + maxRelaidPages + 2 >= previousPages.length - 1;
+    const boundedLocalEndBlockIndexExclusive = findLocalPaginationEndBlockIndexExclusive({
+      blocks: input.blocks,
+      previousPages,
+      currentBlockIndexById: reuse.currentBlockIndexById!,
+      suffixStartBlockIndex,
+      sourceAffectedFrontierPageIndex,
+      maxRelaidPages,
+      previousToCurrentBlockId: reuse.blockIdRewrites?.previousToCurrent ?? null,
+      deletedBlockIds: new Set(input.dirty.deletedBlockIds),
+      ignoreUnindexedFootnoteFragments: footnoteFinalizerFragmentsAreExternal,
+    });
+    if (boundedLocalEndBlockIndexExclusive == null) {
+      return full('m4-layout-reuse-disabled-local-pagination-boundary-not-found');
+    }
+    // Once the source horizon reaches the retained tail, include every current
+    // block. This covers inserted terminal blocks and trailing non-rendering
+    // section carriers that have no retained fragment index.
+    const localEndBlockIndexExclusive = reachesSourceTail ? input.blocks.length : boundedLocalEndBlockIndexExclusive;
+    // Non-terminal probes paginate a bounded source segment only. Passing the
+    // complete suffix would run section/anchor/keep prepasses over the untouched
+    // tail even when convergence is local.
+    const suffixBlocks = input.blocks.slice(suffixStartBlockIndex, localEndBlockIndexExclusive);
+    const suffixMeasures = input.measures.slice(suffixStartBlockIndex, localEndBlockIndexExclusive);
+    if (suffixBlocks.length === 0 || suffixBlocks.length !== suffixMeasures.length) {
+      return full('m5-layout-reuse-unavailable-suffix-alignment-mismatch');
+    }
+
+    const activePageCounter = readFiniteNumber(checkpointPage.displayNumber) ?? checkpointPageIndex + 1;
+    const activeSectionIndex = readFiniteNumber(checkpointPage.sectionIndex) ?? 0;
+    let activeSectionFirstPageIndex = checkpointPageIndex;
+    while (
+      activeSectionFirstPageIndex > 0 &&
+      (previousPages[activeSectionFirstPageIndex - 1]?.sectionIndex ?? 0) === activeSectionIndex
+    ) {
+      activeSectionFirstPageIndex -= 1;
+    }
+    // SD-3772 D2: a nonzero checkpoint must carry a complete, validated
+    // geometry seed, passed through `startContext` so the ACTIVE section state
+    // is restored while `options.margins`/`pageSize`/`columns` stay the
+    // document defaults — later section breaks with missing fields then fall
+    // back exactly like a cold run. Base top/bottom come exclusively from the
+    // cold page's stamped `baseMargins`: the effective `margins.top/bottom`
+    // are already header/footer-inflated and seeding a resumed section base
+    // from them would let `layoutDocument()` inflate the values a second time.
+    // An old or incomplete retained page (missing any of these) takes a named
+    // full fallback and is reseeded by that cold pass. A CLEAN zero checkpoint
+    // replays the document start, where the leading section blocks establish
+    // the exact state. A PARTIAL zero checkpoint starts after those blocks, so
+    // it must carry the stamped page geometry just like a nonzero checkpoint.
+    type ActiveGeometrySeed = Pick<
+      NonNullable<LayoutOptions['startContext']>,
+      | 'activeSectionBaseMargins'
+      | 'activeSectionSideMargins'
+      | 'activeHeaderFooterDistances'
+      | 'activePageSize'
+      | 'activeColumns'
+    >;
+    let activeGeometrySeed: ActiveGeometrySeed = {};
+    if (checkpointPageIndex > 0 || partialPageCheckpoint) {
+      const checkpointBaseTop = readFiniteNumber(checkpointPage.baseMargins?.top);
+      const checkpointBaseBottom = readFiniteNumber(checkpointPage.baseMargins?.bottom);
+      if (checkpointBaseTop == null || checkpointBaseBottom == null) {
+        return full('m4-layout-reuse-disabled-checkpoint-base-margins-missing');
+      }
+      const checkpointLeft = readFiniteNumber(checkpointPage.margins?.left);
+      const checkpointRight = readFiniteNumber(checkpointPage.margins?.right);
+      const checkpointHeaderDistance = readFiniteNumber(checkpointPage.margins?.header);
+      const checkpointFooterDistance = readFiniteNumber(checkpointPage.margins?.footer);
+      if (
+        checkpointLeft == null ||
+        checkpointRight == null ||
+        checkpointHeaderDistance == null ||
+        checkpointFooterDistance == null
+      ) {
+        return full('m4-layout-reuse-disabled-checkpoint-margin-state-incomplete');
+      }
+      activeGeometrySeed = {
+        activeSectionBaseMargins: { top: checkpointBaseTop, bottom: checkpointBaseBottom },
+        activeSectionSideMargins: { left: checkpointLeft, right: checkpointRight },
+        activeHeaderFooterDistances: { header: checkpointHeaderDistance, footer: checkpointFooterDistance },
+        ...(checkpointPage.size ? { activePageSize: checkpointPage.size } : {}),
+        // Absent page columns mean the boundary was single-column; seed that
+        // explicitly rather than falling back to a caller-level multi-column
+        // default the checkpoint page never used.
+        activeColumns: checkpointPage.columns ?? { count: 1, gap: 0 },
+      };
+    }
+    let convergencePageIndex: number | null = null;
+    let sourceConvergencePageIndex: number | null = null;
+    let convergenceSectionPageNumberTransform: IncrementalSectionPageNumberTransform | null = null;
+    let convergenceDisplayPageNumberTransform: IncrementalDisplayPageNumberTransform | null = null;
+    let checkpointConvergenceRejection = partialPageCheckpoint
+      ? 'partial-page-no-candidate-evaluated'
+      : `partial-page-${partialPageCheckpointRejection ?? 'unavailable'}`;
+    const usesFullNumberingFinalizer = !supportsLocalizedDecimalNumbering(input.options);
+    const suffixFootnoteReserves = Array.isArray(input.options.footnoteReservedByPageIndex)
+      ? input.options.footnoteReservedByPageIndex.slice(checkpointPageIndex)
+      : undefined;
+    const localPaginationPageCap =
+      reuse.dependencyProof?.profile === 'page-checkpoint-local-text'
+        ? Math.max(6, sourceAffectedFrontierPageIndex - checkpointPageIndex + maxRelaidPages + 2)
+        : Math.max(4, sourceAffectedFrontierPageIndex - checkpointPageIndex + maxRelaidPages + 1);
+    const suffixFootnotesInput = isFootnotesLayoutInput(input.options.footnotes)
+      ? (() => {
+          const suffixBlockIds = new Set(suffixBlocks.map((block) => block.id));
+          if (input.options.footnotes!.refs.some((reference) => typeof reference.blockId !== 'string')) return null;
+          return {
+            ...input.options.footnotes!,
+            refs: input.options.footnotes!.refs.filter((reference) => suffixBlockIds.has(reference.blockId!)),
+          };
+        })()
+      : undefined;
+    if (isFootnotesLayoutInput(input.options.footnotes) && suffixFootnotesInput == null) {
+      return full('m4-layout-reuse-disabled-footnote-reference-block-id-missing');
+    }
+    const suffixLayoutOptions: LayoutOptions = {
+      ...input.options,
+      ...(suffixFootnoteReserves ? { footnoteReservedByPageIndex: suffixFootnoteReserves } : {}),
+      ...(suffixFootnotesInput ? { footnotes: suffixFootnotesInput } : {}),
+      startContext: {
+        pageNumberOffset: checkpointPageIndex,
+        activePageCounter,
+        activeSectionIndex,
+        activeSectionFirstPageNumber: activeSectionFirstPageIndex + 1,
+        ...(checkpointPage.sectionRefs ? { activeSectionRefs: checkpointPage.sectionRefs } : {}),
+        ...(checkpointPage.orientation ? { activeOrientation: checkpointPage.orientation } : {}),
+        ...activeGeometrySeed,
+        ...(partialPageCheckpoint
+          ? {
+              initialPageState: {
+                prefixFragments: partialPageCheckpoint.prefixFragments,
+                cursorY: partialPageCheckpoint.checkpoint.cursorY,
+                maxCursorY: partialPageCheckpoint.checkpoint.maxCursorY,
+                columnIndex: partialPageCheckpoint.checkpoint.columnIndex,
+                trailingSpacing: partialPageCheckpoint.checkpoint.trailingSpacing,
+                ...(partialPageCheckpoint.checkpoint.lastParagraphStyleId
+                  ? { lastParagraphStyleId: partialPageCheckpoint.checkpoint.lastParagraphStyleId }
+                  : {}),
+                lastParagraphContextualSpacing: partialPageCheckpoint.checkpoint.lastParagraphContextualSpacing,
+                ...(partialPageCheckpoint.checkpoint.lastParagraphBorderHash
+                  ? { lastParagraphBorderHash: partialPageCheckpoint.checkpoint.lastParagraphBorderHash }
+                  : {}),
+                constraintBoundaries: partialPageCheckpoint.checkpoint.constraintBoundaries,
+                activeConstraintIndex: partialPageCheckpoint.checkpoint.activeConstraintIndex,
+                footnoteDemandThisPage: partialPageCheckpoint.checkpoint.footnoteDemandThisPage,
+                footnoteRefsThisPage: partialPageCheckpoint.checkpoint.footnoteRefsThisPage,
+                footnoteAnchorsThisPage: partialPageCheckpoint.checkpoint.footnoteAnchorsThisPage,
+              },
+            }
+          : {}),
+      },
+      // Finalized convergence is evaluated only after layoutDocument returns:
+      // column/region finalizers have not run inside the paginator callback. A
+      // non-terminal probe keeps an engine-owned hard fence. Once every current
+      // block is present, paginate the suffix to completion so the document-end
+      // proof is exact.
+      ...(localEndBlockIndexExclusive < input.blocks.length
+        ? {
+            pageBoundary: {
+              shouldStopBeforeNewPage: ({ completedPageIndex }: { completedPageIndex: number }) =>
+                completedPageIndex + 1 >= localPaginationPageCap,
+            },
+          }
+        : {}),
+    };
+    if (localEndBlockIndexExclusive === input.blocks.length) {
+      // A caller boundary is valid for a cold range layout, but it cannot survive
+      // into the exact terminal proof: this probe must consume the complete
+      // current suffix before claiming document end.
+      delete suffixLayoutOptions.pageBoundary;
+    }
+    const suffixLayout = await runLayoutDocument(suffixBlocks, suffixMeasures, suffixLayoutOptions);
+    reuseProbePagesPaginated += suffixLayout.pages.length;
+
+    for (let completedPageIndex = 0; completedPageIndex < suffixLayout.pages.length; completedPageIndex += 1) {
+      const completedPage = suffixLayout.pages[completedPageIndex];
+      if (pageContainsAnyBlock(completedPage, dirtyBlockIds)) {
+        affectedFrontierPageIndex = Math.max(affectedFrontierPageIndex, checkpointPageIndex + completedPageIndex);
+      }
+    }
+    for (let completedPageIndex = 0; completedPageIndex < suffixLayout.pages.length; completedPageIndex += 1) {
+      const targetPageIndex = checkpointPageIndex + completedPageIndex;
+      const completedPage = suffixLayout.pages[completedPageIndex];
+      const withinConvergenceBudget = targetPageIndex - affectedFrontierPageIndex <= maxRelaidPages;
+      if (targetPageIndex < affectedFrontierPageIndex || !withinConvergenceBudget) continue;
+      if (
+        !pageContainsOnlyStableBlocks(
+          completedPage,
+          input.stableBlockIds,
+          null,
+          footnoteFinalizerFragmentsAreExternal ? (reuse.currentBlockIndexById ?? null) : null,
+        )
+      ) {
+        checkpointConvergenceRejection = `target-${targetPageIndex}-contains-unstable-block`;
+        continue;
+      }
+
+      const candidateKey = buildPageStartKey(completedPage, reuse.blockIdRewrites?.currentToPrevious ?? null);
+      let sourceCandidates = previousPageStartKeyIndex.get(candidateKey) ?? [];
+      if (sourceCandidates.length === 0) {
+        // Bounded fallback for WINDOWED retained planes: the retained
+        // block→page index may only cover materialized window pages, so the
+        // key index can miss even though the source page exists. Convergence
+        // only ever considers sources inside the budgeted window — read those
+        // start keys directly (≤ maxRelaidPages + 3 lazy page reads, the same
+        // bound tail adoption already pays). Every fallback candidate still
+        // passes the full downstream proofs (exact start-key equality, stable
+        // blocks, numbering rebase) before adoption.
+        const scanStart = Math.max(0, sourceAffectedFrontierPageIndex);
+        const scanEndExclusive = Math.min(previousPages.length, sourceAffectedFrontierPageIndex + maxRelaidPages + 3);
+        const fallback: number[] = [];
+        for (let sourcePageIndex = scanStart; sourcePageIndex < scanEndExclusive; sourcePageIndex += 1) {
+          if (previousPageStartKeys[sourcePageIndex] === candidateKey) fallback.push(sourcePageIndex);
+        }
+        sourceCandidates = fallback;
+      }
+      if (sourceCandidates.length === 0) {
+        // Bounded diagnostic: the candidate vs the retained key at the SAME
+        // page index — enough to attribute a resume-drift (same block,
+        // different fromLine) without dumping the scan window.
+        checkpointConvergenceRejection = `target-${targetPageIndex}-page-start-key-missing want=${candidateKey.slice(0, 64)} retainedAtTarget=${String(previousPageStartKeys[targetPageIndex]).slice(0, 64)}`;
+        continue;
+      }
+      const provedCandidates = sourceCandidates.filter((sourcePageIndex) => {
+        if (!Number.isInteger(sourcePageIndex) || sourcePageIndex < 0 || sourcePageIndex >= previousPages.length) {
+          checkpointConvergenceRejection = `target-${targetPageIndex}-source-index-invalid`;
+          return false;
+        }
+        const sourcePage = previousPages[sourcePageIndex];
+        const pageIndexDelta = targetPageIndex - sourcePageIndex;
+        const numberingRebaseSafe =
+          pageIndexDelta === 0 ||
+          usesFullNumberingFinalizer ||
+          (supportsLocalizedDecimalNumbering(input.options) &&
+            canRebaseAdoptedPageNumbering(sourcePage, pageIndexDelta));
+        if (sourcePageIndex < sourceAffectedFrontierPageIndex) {
+          checkpointConvergenceRejection = `target-${targetPageIndex}-source-before-frontier`;
+          return false;
+        }
+        if (previousPageStartKeys[sourcePageIndex] !== candidateKey || buildPageStartKey(sourcePage) !== candidateKey) {
+          checkpointConvergenceRejection = `target-${targetPageIndex}-source-start-key-stale`;
+          return false;
+        }
+        if (
+          !pageContainsOnlyStableBlocks(
+            sourcePage,
+            input.stableBlockIds,
+            reuse.blockIdRewrites?.previousToCurrent ?? null,
+            footnoteFinalizerFragmentsAreExternal ? (reuse.currentBlockIndexById ?? null) : null,
+          )
+        ) {
+          checkpointConvergenceRejection = `target-${targetPageIndex}-source-contains-unstable-block`;
+          return false;
+        }
+        if (
+          !pagesShareConvergenceBoundary(
+            sourcePage,
+            completedPage,
+            reuse.blockIdRewrites?.currentToPrevious ?? null,
+            footnoteFinalizerFragmentsAreExternal,
+          )
+        ) {
+          checkpointConvergenceRejection =
+            `target-${targetPageIndex}-finalized-boundary-mismatch-` +
+            findPageConvergenceMismatchField(
+              sourcePage,
+              completedPage,
+              reuse.blockIdRewrites?.currentToPrevious ?? null,
+              footnoteFinalizerFragmentsAreExternal,
+            );
+          return false;
+        }
+        if (!numberingRebaseSafe) {
+          checkpointConvergenceRejection = `target-${targetPageIndex}-numbering-rebase-unsafe`;
+          return false;
+        }
+        return true;
+      });
+      if (provedCandidates.length !== 1) {
+        if (provedCandidates.length > 1) {
+          checkpointConvergenceRejection = `target-${targetPageIndex}-candidate-ambiguous`;
+        }
+        continue;
+      }
+      const sourcePageIndex = provedCandidates[0]!;
+      const sourcePage = previousPages[sourcePageIndex]!;
+      const sourceSectionIndex = readFiniteNumber(sourcePage.sectionIndex) ?? 0;
+      const targetSectionIndex = readFiniteNumber(completedPage.sectionIndex) ?? 0;
+      const sourceSectionPageNumber = readFiniteNumber(sourcePage.sectionPageNumber);
+      const targetSectionPageNumber = readFiniteNumber(completedPage.sectionPageNumber);
+      const sourceDisplayPageNumber = readFiniteNumber(sourcePage.displayNumber);
+      const targetDisplayPageNumber = readFiniteNumber(completedPage.displayNumber);
+      const pageIndexDelta = targetPageIndex - sourcePageIndex;
+      if (
+        sourceSectionIndex !== targetSectionIndex ||
+        sourceSectionPageNumber == null ||
+        targetSectionPageNumber == null ||
+        !Number.isInteger(sourceSectionPageNumber) ||
+        !Number.isInteger(targetSectionPageNumber) ||
+        sourceSectionPageNumber < 1 ||
+        targetSectionPageNumber < 1
+      ) {
+        checkpointConvergenceRejection = `target-${targetPageIndex}-section-page-position-missing-or-invalid`;
+        continue;
+      }
+      const displayPageNumberTransform = buildDisplayPageNumberTransform(
+        input.options,
+        targetSectionIndex,
+        (targetDisplayPageNumber ?? targetSectionPageNumber) - (sourceDisplayPageNumber ?? sourceSectionPageNumber),
+      );
+      if (pageIndexDelta !== 0 && !usesFullNumberingFinalizer && displayPageNumberTransform == null) {
+        checkpointConvergenceRejection = `target-${targetPageIndex}-display-number-transform-unavailable`;
+        continue;
+      }
+      convergencePageIndex = targetPageIndex;
+      sourceConvergencePageIndex = sourcePageIndex;
+      convergenceSectionPageNumberTransform = {
+        sectionIndex: targetSectionIndex,
+        delta: targetSectionPageNumber - sourceSectionPageNumber,
+      };
+      convergenceDisplayPageNumberTransform = displayPageNumberTransform;
+      break;
+    }
+
+    if (
+      convergencePageIndex != null &&
+      sourceConvergencePageIndex != null &&
+      convergenceSectionPageNumberTransform != null
+    ) {
+      const relaidPageCount = Math.max(0, convergencePageIndex - checkpointPageIndex);
+      // Retain the tail exactly as produced by its source generation. Rewriting
+      // every nested pmStart/pmEnd here turns a one-page edit into O(document)
+      // work and destroys provenance. The resolve layer materializes a current
+      // page lazily from this bounded transform descriptor.
+      const positionTransforms = normalizePositionTransforms(reuse.pmShift);
+      const pages = createSplicedPageSequence({
+        previousPages,
+        prefixPageCount: checkpointPageIndex,
+        relaidPages: suffixLayout.pages,
+        relaidPageCount,
+        sourceTailStartPageIndex: sourceConvergencePageIndex,
+      });
+      const pageIndexDelta = convergencePageIndex - sourceConvergencePageIndex;
+      const blockResumeCheckpoints = createSplicedBlockResumeCheckpointMap({
+        previous: previousLayout.blockResumeCheckpoints,
+        local: suffixLayout.blockResumeCheckpoints,
+        checkpointPageIndex,
+        relaidPageCount,
+        sourceTailStartPageIndex: sourceConvergencePageIndex,
+        pageIndexDelta,
+        previousToCurrentBlockId: reuse.blockIdRewrites?.previousToCurrent ?? null,
+        currentToPreviousBlockId: reuse.blockIdRewrites?.currentToPrevious ?? null,
+        positionTransforms,
+        suffixStartBlockId: input.blocks[suffixStartBlockIndex]?.id ?? null,
+        checkpointPagePrefixFragmentCount: partialPageCheckpoint ? partialPageCheckpoint.prefixFragments.length : null,
+      });
+      return {
+        layout: {
+          ...suffixLayout,
+          pages,
+          columns: previousLayout.columns ?? suffixLayout.columns,
+          ...(blockResumeCheckpoints ? { blockResumeCheckpoints } : {}),
+        },
+        reuse: {
+          mode: 'tail-splice',
+          reason: withSpecializedRejections('m4-affected-frontier-converged-tail-adopted'),
+          tailDisposition: 'adopted-source-tail',
+          checkpointPageIndex,
+          affectedFrontierPageIndex,
+          sourceAffectedFrontierPageIndex,
+          convergencePageIndex,
+          sourceConvergencePageIndex,
+          pagesPaginated: reuseProbePagesPaginated,
+          pagesSplicedByReuse: previousPages.length - sourceConvergencePageIndex,
+          tailAdoption: {
+            startPageIndex: convergencePageIndex,
+            endPageIndexExclusive: pages.length,
+            sourcePageStartIndex: sourceConvergencePageIndex,
+            sourcePageEndIndexExclusive: previousPages.length,
+            pageIndexDelta,
+            sectionPageNumberTransform: convergenceSectionPageNumberTransform,
+            displayPageNumberTransform: convergenceDisplayPageNumberTransform,
+            pageReferenceLocationsStable:
+              pageIndexDelta === 0 &&
+              convergenceSectionPageNumberTransform.delta === 0 &&
+              supportsLocalizedDecimalNumbering(input.options),
+            sourceLayoutEpoch: previousLayout.layoutEpoch ?? null,
+            positionTransforms,
+            blockIdRewrites: reuse.blockIdRewrites?.previousToCurrent ?? null,
+          },
+        },
+      };
+    }
+
+    // A deep edit on the final page has no later stable page on which to prove
+    // tail convergence. When the bounded block slice itself reaches the exact
+    // end of the current document, the emitted suffix is nevertheless complete:
+    // retain the proved prefix and publish every newly paginated terminal page.
+    // This is not early-stop acceptance and adopts no source tail.
+    if (localEndBlockIndexExclusive === input.blocks.length) {
+      // SD-3772 D5: `relaid-to-document-end` requires a complete finalized
+      // emitted suffix. Prove it structurally — the last fragment-bearing block
+      // of the document must appear in the emitted suffix pages; a truncated
+      // suffix takes the canonical full fallback instead of publishing.
+      const suppressedTerminalBlockIds = collectSectionBoundaryFillerBlockIds(suffixBlocks);
+      let finalRenderableBlockId: string | null = null;
+      for (let index = suffixBlocks.length - 1; index >= 0; index -= 1) {
+        if (!doesFlowBlockProduceLayoutFragment(suffixBlocks, index, suppressedTerminalBlockIds)) continue;
+        finalRenderableBlockId = suffixBlocks[index]!.id;
+        break;
+      }
+      const suffixComplete =
+        finalRenderableBlockId == null ||
+        suffixLayout.pages.some((page) => pageContainsBlock(page, finalRenderableBlockId!));
+      if (suffixLayout.pages.length === 0 || !suffixComplete) {
+        return full('m4-layout-reuse-disabled-terminal-suffix-incomplete');
+      }
+      const pages = createSplicedPageSequence({
+        previousPages,
+        prefixPageCount: checkpointPageIndex,
+        relaidPages: suffixLayout.pages,
+        relaidPageCount: suffixLayout.pages.length,
+        sourceTailStartPageIndex: previousPages.length,
+      });
+      const blockResumeCheckpoints = createSplicedBlockResumeCheckpointMap({
+        previous: previousLayout.blockResumeCheckpoints,
+        local: suffixLayout.blockResumeCheckpoints,
+        checkpointPageIndex,
+        relaidPageCount: suffixLayout.pages.length,
+        sourceTailStartPageIndex: previousPages.length,
+        pageIndexDelta: 0,
+        previousToCurrentBlockId: reuse.blockIdRewrites?.previousToCurrent ?? null,
+        currentToPreviousBlockId: reuse.blockIdRewrites?.currentToPrevious ?? null,
+        positionTransforms: normalizePositionTransforms(reuse.pmShift),
+        suffixStartBlockId: input.blocks[suffixStartBlockIndex]?.id ?? null,
+        checkpointPagePrefixFragmentCount: partialPageCheckpoint ? partialPageCheckpoint.prefixFragments.length : null,
+      });
+      return {
+        layout: {
+          ...suffixLayout,
+          pages,
+          columns: previousLayout.columns ?? suffixLayout.columns,
+          ...(blockResumeCheckpoints ? { blockResumeCheckpoints } : {}),
+        },
+        reuse: {
+          mode: 'tail-splice',
+          reason: withSpecializedRejections('m4-terminal-suffix-relaid-with-prefix-adoption'),
+          tailDisposition: 'relaid-to-document-end',
+          checkpointPageIndex,
+          affectedFrontierPageIndex,
+          sourceAffectedFrontierPageIndex,
+          convergencePageIndex: null,
+          sourceConvergencePageIndex: null,
+          pagesPaginated: reuseProbePagesPaginated,
+          pagesSplicedByReuse: checkpointPageIndex,
+          tailAdoption: null,
+        },
+      };
+    }
+
+    // This finalized probe did not converge, but it is neither publishable nor a
+    // reason to throw away the retained prefix. Expand the source horizon
+    // geometrically and retry within this same bridge call.
+    const remainingSourcePageCount = Math.max(1, previousPages.length - sourceAffectedFrontierPageIndex);
+    const nextProbePageHorizon = Math.min(remainingSourcePageCount, Math.max(maxRelaidPages + 1, maxRelaidPages * 2));
+    if (nextProbePageHorizon <= maxRelaidPages) {
+      // Defensive only: reaching the retained tail above must either publish a
+      // complete terminal suffix or take its named exact full fallback.
+      return full(
+        checkpointConvergenceRejection
+          ? `m4-layout-reuse-convergence-probe-stalled:${checkpointConvergenceRejection}`
+          : 'm4-layout-reuse-convergence-probe-stalled',
+      );
+    }
+    perfLog(
+      `[incrementalLayout] Expanding exact convergence probe from ${maxRelaidPages} to ${nextProbePageHorizon} pages (${checkpointConvergenceRejection})`,
+    );
+    convergenceProbePageHorizon = nextProbePageHorizon;
+  }
+}
+
+function findLocalPaginationEndBlockIndexExclusive(input: {
+  blocks: readonly FlowBlock[];
+  previousPages: readonly Page[];
+  currentBlockIndexById: ReadonlyMap<string, number>;
+  suffixStartBlockIndex: number;
+  sourceAffectedFrontierPageIndex: number;
+  maxRelaidPages: number;
+  previousToCurrentBlockId: ReadonlyMap<string, string> | null;
+  deletedBlockIds: ReadonlySet<string>;
+  ignoreUnindexedFootnoteFragments: boolean;
+}): number | null {
+  const finalCandidatePage = Math.min(
+    input.previousPages.length - 1,
+    input.sourceAffectedFrontierPageIndex + input.maxRelaidPages + 2,
+  );
+  let finalBlockIndex = input.suffixStartBlockIndex;
+  for (let pageIndex = input.sourceAffectedFrontierPageIndex; pageIndex <= finalCandidatePage; pageIndex += 1) {
+    const page = input.previousPages[pageIndex];
+    if (!page) return null;
+    for (const fragment of page.fragments) {
+      if (input.deletedBlockIds.has(fragment.blockId)) continue;
+      const currentBlockId = input.previousToCurrentBlockId?.get(fragment.blockId) ?? fragment.blockId;
+      const blockIndex = input.currentBlockIndexById.get(currentBlockId);
+      if (!Number.isInteger(blockIndex) || input.blocks[blockIndex!]?.id !== currentBlockId) {
+        // Footnote-band fragments are page-local finalizer output, not body
+        // pagination boundaries. Their bodies live in the proved note
+        // sidecar and are re-injected after the bounded body splice.
+        if (input.ignoreUnindexedFootnoteFragments) continue;
+        return null;
+      }
+      finalBlockIndex = Math.max(finalBlockIndex, blockIndex!);
+    }
+  }
+  return Math.min(input.blocks.length, finalBlockIndex + 1);
+}
+
+function normalizePositionTransforms(
+  transform: LayoutPositionTransform | null | undefined,
+): readonly LayoutPositionTransform[] {
+  if (!transform || !Number.isFinite(transform.atChar) || !Number.isFinite(transform.delta) || transform.delta === 0) {
+    return [];
+  }
+  return [{ atChar: transform.atChar, delta: transform.delta }];
+}
+
+function applyPositionTransforms(position: number, transforms: readonly LayoutPositionTransform[]): number {
+  let current = position;
+  for (const transform of transforms) {
+    if (current >= transform.atChar) current += transform.delta;
+  }
+  return current;
+}
+
+class SplicedBlockResumeCheckpointMap implements ReadonlyMap<string, LayoutBlockResumeCheckpoint> {
+  readonly #local = new Map<string, LayoutBlockResumeCheckpoint>();
+  readonly #cache = new Map<string, LayoutBlockResumeCheckpoint>();
+  readonly #input: {
+    previous: ReadonlyMap<string, LayoutBlockResumeCheckpoint>;
+    local: ReadonlyMap<string, LayoutBlockResumeCheckpoint>;
+    checkpointPageIndex: number;
+    relaidPageCount: number;
+    sourceTailStartPageIndex: number;
+    pageIndexDelta: number;
+    previousToCurrentBlockId: ReadonlyMap<string, string> | null;
+    currentToPreviousBlockId: ReadonlyMap<string, string> | null;
+    positionTransforms: readonly LayoutPositionTransform[];
+    suffixStartBlockId: string | null;
+    checkpointPagePrefixFragmentCount: number | null;
+  };
+
+  constructor(input: {
+    previous: ReadonlyMap<string, LayoutBlockResumeCheckpoint>;
+    local: ReadonlyMap<string, LayoutBlockResumeCheckpoint>;
+    checkpointPageIndex: number;
+    relaidPageCount: number;
+    sourceTailStartPageIndex: number;
+    pageIndexDelta: number;
+    previousToCurrentBlockId: ReadonlyMap<string, string> | null;
+    currentToPreviousBlockId: ReadonlyMap<string, string> | null;
+    positionTransforms: readonly LayoutPositionTransform[];
+    suffixStartBlockId: string | null;
+    checkpointPagePrefixFragmentCount: number | null;
+  }) {
+    this.#input = input;
+    for (const [blockId, checkpoint] of input.local) {
+      if (checkpoint.pageIndex >= input.relaidPageCount) continue;
+      // The local run's stamp for the SUFFIX-START block reflects the seeded
+      // resume posture (top of the relaid window), not the pre-break state a
+      // cold run records on the preceding page. When the previous layout
+      // holds an admissible stamp for that block — identical prefix pages
+      // make it exact — prefer it so the spliced sidecar equals cold's and a
+      // later resume replays the same break decision (SD-3772 stitched-plane
+      // one-line drift).
+      if (blockId === input.suffixStartBlockId && this.#admissiblePreviousCheckpoint(blockId) != null) {
+        continue;
+      }
+      this.#local.set(blockId, {
+        ...checkpoint,
+        pageIndex: checkpoint.pageIndex + input.checkpointPageIndex,
+      });
+    }
+  }
+
+  #admissiblePreviousCheckpoint(blockId: string): LayoutBlockResumeCheckpoint | null {
+    const previousBlockId = this.#input.currentToPreviousBlockId?.get(blockId) ?? blockId;
+    const previous = this.#input.previous.get(previousBlockId);
+    if (!previous) return null;
+    if (previous.pageIndex < this.#input.checkpointPageIndex) return previous;
+    // A PARTIAL (mid-page) checkpoint retains the checkpoint page's fragment
+    // prefix verbatim, so previous stamps whose state lies within that
+    // retained prefix remain exact (page-local cursor state; prefix pm
+    // positions precede the edit and are unshifted).
+    if (
+      previous.pageIndex === this.#input.checkpointPageIndex &&
+      this.#input.checkpointPagePrefixFragmentCount != null &&
+      Number.isInteger(previous.prefixFragmentCount) &&
+      previous.prefixFragmentCount <= this.#input.checkpointPagePrefixFragmentCount
+    ) {
+      return previous;
+    }
+    return null;
+  }
+
+  get size(): number {
+    let count = 0;
+    for (const _entry of this) count += 1;
+    return count;
+  }
+
+  get(blockId: string): LayoutBlockResumeCheckpoint | undefined {
+    const local = this.#local.get(blockId);
+    if (local) return local;
+    const cached = this.#cache.get(blockId);
+    if (cached) return cached;
+    const previousBlockId = this.#input.currentToPreviousBlockId?.get(blockId) ?? blockId;
+    const previous = this.#input.previous.get(previousBlockId);
+    if (!previous) return undefined;
+    const retainedPrefix = previous.pageIndex < this.#input.checkpointPageIndex;
+    const retainedTail = previous.pageIndex >= this.#input.sourceTailStartPageIndex;
+    const retainedCheckpointPagePrefix =
+      !retainedPrefix && !retainedTail && this.#admissiblePreviousCheckpoint(blockId) != null;
+    if (!retainedPrefix && !retainedTail && !retainedCheckpointPagePrefix) return undefined;
+    const current: LayoutBlockResumeCheckpoint = {
+      ...previous,
+      blockId,
+      pageIndex: previous.pageIndex + (retainedTail ? this.#input.pageIndexDelta : 0),
+      footnoteAnchorsThisPage: retainedTail
+        ? previous.footnoteAnchorsThisPage.map((anchor) => ({
+            ...anchor,
+            pmPos: applyPositionTransforms(anchor.pmPos, this.#input.positionTransforms),
+          }))
+        : previous.footnoteAnchorsThisPage,
+    };
+    this.#cache.set(blockId, current);
+    return current;
+  }
+
+  has(blockId: string): boolean {
+    return this.get(blockId) != null;
+  }
+
+  *entries(): MapIterator<[string, LayoutBlockResumeCheckpoint]> {
+    const emitted = new Set<string>();
+    for (const entry of this.#local) {
+      emitted.add(entry[0]);
+      yield entry;
+    }
+    for (const [previousBlockId] of this.#input.previous) {
+      const currentBlockId = this.#input.previousToCurrentBlockId?.get(previousBlockId) ?? previousBlockId;
+      if (emitted.has(currentBlockId)) continue;
+      const checkpoint = this.get(currentBlockId);
+      if (!checkpoint) continue;
+      emitted.add(currentBlockId);
+      yield [currentBlockId, checkpoint];
+    }
+  }
+
+  [Symbol.iterator](): MapIterator<[string, LayoutBlockResumeCheckpoint]> {
+    return this.entries();
+  }
+
+  *keys(): MapIterator<string> {
+    for (const [blockId] of this) yield blockId;
+  }
+
+  *values(): MapIterator<LayoutBlockResumeCheckpoint> {
+    for (const [, checkpoint] of this) yield checkpoint;
+  }
+
+  forEach(
+    callbackfn: (
+      value: LayoutBlockResumeCheckpoint,
+      key: string,
+      map: ReadonlyMap<string, LayoutBlockResumeCheckpoint>,
+    ) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [blockId, checkpoint] of this) callbackfn.call(thisArg, checkpoint, blockId, this);
+  }
+}
+
+function createSplicedBlockResumeCheckpointMap(input: {
+  previous: ReadonlyMap<string, LayoutBlockResumeCheckpoint> | undefined;
+  local: ReadonlyMap<string, LayoutBlockResumeCheckpoint> | undefined;
+  checkpointPageIndex: number;
+  relaidPageCount: number;
+  sourceTailStartPageIndex: number;
+  pageIndexDelta: number;
+  previousToCurrentBlockId: ReadonlyMap<string, string> | null;
+  currentToPreviousBlockId: ReadonlyMap<string, string> | null;
+  positionTransforms: readonly LayoutPositionTransform[];
+  suffixStartBlockId: string | null;
+  checkpointPagePrefixFragmentCount: number | null;
+}): ReadonlyMap<string, LayoutBlockResumeCheckpoint> | undefined {
+  if (!input.previous || !input.local) return undefined;
+  return new SplicedBlockResumeCheckpointMap({ ...input, previous: input.previous, local: input.local });
+}
+
+interface LazyPageSegment {
+  targetStart: number;
+  length: number;
+  sourcePages: Page[];
+  sourceStart: number;
+  /** Every retained-tail position is after the proved local edit frontier. */
+  positionDelta: number;
+  pageIndexDelta: number;
+  sectionPageNumberDeltas: ReadonlyMap<number, number> | null;
+  displayPageNumberTransforms: readonly IncrementalDisplayPageNumberTransform[] | null;
+  blockIdRewrites: ReadonlyMap<string, string> | null;
+  /** Lazily stamp the canonical empty note row on proved note-free pages. */
+  ensureEmptyFootnoteMetadata: boolean;
+}
+
+interface LazyPageSequence {
+  segments: readonly LazyPageSegment[];
+  cache: Map<number, Page>;
+}
+
+const lazyPageSequences = new WeakMap<Page[], LazyPageSequence>();
+
+/**
+ * Compose retained prefix/local relayout/retained tail without spreading the
+ * document-sized prefix or tail. Nested warm edits flatten the prior segment
+ * descriptor, so revealing a retained page never walks a generation-deep
+ * proxy chain.
+ */
+function createSplicedPageSequence(input: {
+  previousPages: Page[];
+  prefixPageCount: number;
+  relaidPages: Page[];
+  relaidPageCount: number;
+  sourceTailStartPageIndex: number;
+}): Page[] {
+  const segments: LazyPageSegment[] = [];
+  appendPageSequenceSlice(segments, input.previousPages, 0, input.prefixPageCount);
+  appendPageSequenceSlice(segments, input.relaidPages, 0, input.relaidPageCount);
+  appendPageSequenceSlice(segments, input.previousPages, input.sourceTailStartPageIndex, input.previousPages.length);
+  return createLazyPageSequence(segments);
+}
+
+function appendPageSequenceSlice(
+  target: LazyPageSegment[],
+  sourcePages: Page[],
+  sourceStart: number,
+  sourceEnd: number,
+): void {
+  if (sourceEnd <= sourceStart) return;
+  const descriptor = lazyPageSequences.get(sourcePages);
+  if (!descriptor) {
+    target.push({
+      targetStart: pageSegmentLength(target),
+      length: sourceEnd - sourceStart,
+      sourcePages,
+      sourceStart,
+      positionDelta: 0,
+      pageIndexDelta: 0,
+      sectionPageNumberDeltas: null,
+      displayPageNumberTransforms: null,
+      blockIdRewrites: null,
+      ensureEmptyFootnoteMetadata: false,
+    });
+    return;
+  }
+  for (const segment of descriptor.segments) {
+    const segmentEnd = segment.targetStart + segment.length;
+    const overlapStart = Math.max(sourceStart, segment.targetStart);
+    const overlapEnd = Math.min(sourceEnd, segmentEnd);
+    if (overlapEnd <= overlapStart) continue;
+    target.push({
+      ...segment,
+      targetStart: pageSegmentLength(target),
+      length: overlapEnd - overlapStart,
+      sourceStart: segment.sourceStart + overlapStart - segment.targetStart,
+    });
+  }
+}
+
+function pageSegmentLength(segments: readonly LazyPageSegment[]): number {
+  const last = segments[segments.length - 1];
+  return last ? last.targetStart + last.length : 0;
+}
+
+function createLazyPageSequence(segments: readonly LazyPageSegment[]): Page[] {
+  const length = pageSegmentLength(segments);
+  const target: Page[] = [];
+  target.length = length;
+  const descriptor: LazyPageSequence = { segments, cache: new Map() };
+  const readIndex = (property: string | symbol): number | null => {
+    if (typeof property !== 'string' || !/^(0|[1-9]\d*)$/.test(property)) return null;
+    const index = Number(property);
+    return index < length ? index : null;
+  };
+  const readPage = (index: number): Page => {
+    const cached = descriptor.cache.get(index);
+    if (cached) return cached;
+    let low = 0;
+    let high = segments.length - 1;
+    while (low <= high) {
+      const middle = (low + high) >>> 1;
+      const segment = segments[middle]!;
+      if (index < segment.targetStart) high = middle - 1;
+      else if (index >= segment.targetStart + segment.length) low = middle + 1;
+      else {
+        const sourcePage = segment.sourcePages[segment.sourceStart + index - segment.targetStart];
+        if (!sourcePage) throw new RangeError(`Layout page index ${index} is out of range.`);
+        const page =
+          segment.positionDelta !== 0 ||
+          segment.pageIndexDelta !== 0 ||
+          (segment.sectionPageNumberDeltas?.size ?? 0) > 0 ||
+          segment.displayPageNumberTransforms != null ||
+          hasBlockIdRewrites(segment.blockIdRewrites) ||
+          segment.ensureEmptyFootnoteMetadata
+            ? materializeAdoptedLayoutPage(
+                sourcePage,
+                segment.positionDelta === 0 ? [] : [{ atChar: Number.NEGATIVE_INFINITY, delta: segment.positionDelta }],
+                segment.pageIndexDelta,
+                segment.blockIdRewrites,
+                segment.sectionPageNumberDeltas,
+                segment.displayPageNumberTransforms,
+              )
+            : sourcePage;
+        if (segment.ensureEmptyFootnoteMetadata) {
+          page.footnoteReserved = 0;
+          page.footnoteLedger = {
+            pageIndex: index,
+            anchorIds: [],
+            mandatorySliceIds: [],
+            continuationSliceIds: [],
+            extendedSliceIds: [],
+            continuationIn: [],
+            continuationOut: [],
+            mandatoryReservePx: 0,
+            preferredReservePx: 0,
+            actualBandHeightPx: 0,
+            appliedBodyReservePx: 0,
+            deadReservePx: 0,
+            lastAnchorRenderedLines: 0,
+          };
+        }
+        descriptor.cache.set(index, page);
+        return page;
+      }
+    }
+    throw new RangeError(`Layout page index ${index} is out of range.`);
+  };
+  const pages = new Proxy(target, {
+    get(object, property, receiver): unknown {
+      const index = readIndex(property);
+      return index == null ? Reflect.get(object, property, receiver) : readPage(index);
+    },
+    has(object, property): boolean {
+      return readIndex(property) != null || Reflect.has(object, property);
+    },
+    getOwnPropertyDescriptor(object, property): PropertyDescriptor | undefined {
+      const index = readIndex(property);
+      if (index == null) return Reflect.getOwnPropertyDescriptor(object, property);
+      return { configurable: true, enumerable: true, writable: false, value: readPage(index) };
+    },
+    set(): boolean {
+      return false;
+    },
+    defineProperty(): boolean {
+      return false;
+    },
+    deleteProperty(): boolean {
+      return false;
+    },
+  });
+  lazyPageSequences.set(pages, descriptor);
+  return pages;
+}
+
+const composedBlockIdRewriteMaps = new WeakSet<ReadonlyMap<string, string>>();
+
+class ComposedBlockIdRewriteMap extends Map<string, string> {
+  readonly #existing: ReadonlyMap<string, string>;
+  readonly #next: ReadonlyMap<string, string>;
+  #materialized: Map<string, string> | null = null;
+
+  constructor(existing: ReadonlyMap<string, string>, next: ReadonlyMap<string, string>) {
+    super();
+    this.#existing = existing;
+    this.#next = next;
+    composedBlockIdRewriteMaps.add(this);
+  }
+
+  override get(sourceId: string): string | undefined {
+    const intermediate = this.#existing.get(sourceId) ?? sourceId;
+    const current = this.#next.get(intermediate) ?? intermediate;
+    return current === sourceId ? undefined : current;
+  }
+
+  override has(sourceId: string): boolean {
+    return this.get(sourceId) != null;
+  }
+
+  #materialize(): Map<string, string> {
+    if (this.#materialized) return this.#materialized;
+    const result = new Map<string, string>();
+    for (const sourceId of this.#existing.keys()) {
+      const currentId = this.get(sourceId);
+      if (currentId != null) result.set(sourceId, currentId);
+    }
+    for (const sourceId of this.#next.keys()) {
+      if (result.has(sourceId)) continue;
+      const currentId = this.get(sourceId);
+      if (currentId != null) result.set(sourceId, currentId);
+    }
+    this.#materialized = result;
+    return result;
+  }
+
+  override get size(): number {
+    return this.#materialize().size;
+  }
+
+  override entries(): MapIterator<[string, string]> {
+    return this.#materialize().entries();
+  }
+
+  override [Symbol.iterator](): MapIterator<[string, string]> {
+    return this.entries();
+  }
+
+  override keys(): MapIterator<string> {
+    return this.#materialize().keys();
+  }
+
+  override values(): MapIterator<string> {
+    return this.#materialize().values();
+  }
+
+  override forEach(
+    callbackfn: (value: string, key: string, map: Map<string, string>) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [key, value] of this.#materialize()) callbackfn.call(thisArg, value, key, this);
+  }
+
+  override set(): this {
+    throw new Error('composed block-id rewrites are immutable');
+  }
+
+  override delete(): boolean {
+    throw new Error('composed block-id rewrites are immutable');
+  }
+
+  override clear(): void {
+    throw new Error('composed block-id rewrites are immutable');
+  }
+}
+
+function hasBlockIdRewrites(rewrites: ReadonlyMap<string, string> | null): boolean {
+  return rewrites != null && (composedBlockIdRewriteMaps.has(rewrites) || rewrites.size > 0);
+}
+
+function composeBlockIdRewrites(
+  existing: ReadonlyMap<string, string> | null,
+  next: ReadonlyMap<string, string> | null,
+): ReadonlyMap<string, string> | null {
+  if (!hasBlockIdRewrites(existing)) return hasBlockIdRewrites(next) ? next : null;
+  if (!hasBlockIdRewrites(next)) return existing;
+  const existingRewrites = existing!;
+  const nextRewrites = next!;
+  if (
+    composedBlockIdRewriteMaps.has(existingRewrites) ||
+    composedBlockIdRewriteMaps.has(nextRewrites) ||
+    readStructuralBlockIdRewriteDescriptor(existingRewrites) != null ||
+    readStructuralBlockIdRewriteDescriptor(nextRewrites) != null
+  ) {
+    return new ComposedBlockIdRewriteMap(existingRewrites, nextRewrites);
+  }
+  const result = new Map<string, string>();
+  for (const [sourceId, currentId] of existingRewrites) {
+    const rewritten = nextRewrites.get(currentId) ?? currentId;
+    if (rewritten !== sourceId) result.set(sourceId, rewritten);
+  }
+  // A segment can contain pages authored in the immediately previous
+  // generation as well as older lazily adopted pages. Preserve direct next
+  // rewrites for the former while the composed rows cover the latter.
+  for (const [sourceId, currentId] of nextRewrites) {
+    if (!result.has(sourceId) && sourceId !== currentId) result.set(sourceId, currentId);
+  }
+  return result.size > 0 ? result : null;
+}
+
+function composeSectionPageNumberDeltas(
+  existing: ReadonlyMap<number, number> | null,
+  transform: IncrementalSectionPageNumberTransform | null,
+): ReadonlyMap<number, number> | null {
+  if (!transform || transform.delta === 0) return existing;
+  const composed = new Map(existing ?? []);
+  const delta = (composed.get(transform.sectionIndex) ?? 0) + transform.delta;
+  if (delta === 0) composed.delete(transform.sectionIndex);
+  else composed.set(transform.sectionIndex, delta);
+  return composed.size > 0 ? composed : null;
+}
+
+function composeDisplayPageNumberTransforms(
+  existing: readonly IncrementalDisplayPageNumberTransform[] | null,
+  transform: IncrementalDisplayPageNumberTransform | null | undefined,
+): readonly IncrementalDisplayPageNumberTransform[] | null {
+  if (!transform) return existing;
+  const composed = new Map<string, IncrementalDisplayPageNumberTransform>();
+  for (const current of existing ?? []) {
+    composed.set(`${current.startSectionIndex}:${current.endSectionIndexExclusive}`, current);
+  }
+  const key = `${transform.startSectionIndex}:${transform.endSectionIndexExclusive}`;
+  const delta = (composed.get(key)?.delta ?? 0) + transform.delta;
+  if (delta === 0) composed.delete(key);
+  else composed.set(key, { ...transform, delta });
+  return [...composed.values()];
+}
+
+function addAdoptionTransform(pages: Page[], adoption: IncrementalLayoutTailAdoption): Page[] {
+  const source = lazyPageSequences.get(pages);
+  if (!source) return pages;
+  const adoptionDelta = adoption.positionTransforms.reduce((total, transform) => total + transform.delta, 0);
+  const transformed: LazyPageSegment[] = [];
+  const appendRange = (segment: LazyPageSegment, start: number, end: number, adopt: boolean): void => {
+    if (end <= start) return;
+    transformed.push({
+      ...segment,
+      targetStart: pageSegmentLength(transformed),
+      length: end - start,
+      sourceStart: segment.sourceStart + start - segment.targetStart,
+      positionDelta: segment.positionDelta + (adopt ? adoptionDelta : 0),
+      pageIndexDelta: segment.pageIndexDelta + (adopt ? adoption.pageIndexDelta : 0),
+      sectionPageNumberDeltas: adopt
+        ? composeSectionPageNumberDeltas(segment.sectionPageNumberDeltas, adoption.sectionPageNumberTransform)
+        : segment.sectionPageNumberDeltas,
+      displayPageNumberTransforms: adopt
+        ? composeDisplayPageNumberTransforms(segment.displayPageNumberTransforms, adoption.displayPageNumberTransform)
+        : segment.displayPageNumberTransforms,
+      blockIdRewrites: adopt
+        ? composeBlockIdRewrites(segment.blockIdRewrites, adoption.blockIdRewrites ?? null)
+        : segment.blockIdRewrites,
+    });
+  };
+  for (const segment of source.segments) {
+    const start = segment.targetStart;
+    const end = start + segment.length;
+    appendRange(segment, start, Math.min(end, adoption.startPageIndex), false);
+    appendRange(segment, Math.max(start, adoption.startPageIndex), Math.min(end, adoption.endPageIndexExclusive), true);
+    appendRange(segment, Math.max(start, adoption.endPageIndexExclusive), end, false);
+  }
+  return createLazyPageSequence(transformed);
+}
+
+function ensureEmptyFootnoteMetadataOutsideFinalizedPages(
+  pages: Page[],
+  finalizedPageIndexes: ReadonlySet<number>,
+): Page[] {
+  const source = lazyPageSequences.get(pages);
+  if (!source) return pages;
+  const transformed: LazyPageSegment[] = [];
+  const appendRange = (segment: LazyPageSegment, start: number, end: number, ensureEmpty: boolean): void => {
+    if (end <= start) return;
+    transformed.push({
+      ...segment,
+      targetStart: pageSegmentLength(transformed),
+      length: end - start,
+      sourceStart: segment.sourceStart + start - segment.targetStart,
+      ensureEmptyFootnoteMetadata: ensureEmpty || segment.ensureEmptyFootnoteMetadata,
+    });
+  };
+  const finalized = [...finalizedPageIndexes]
+    .filter((pageIndex) => Number.isInteger(pageIndex) && pageIndex >= 0 && pageIndex < pages.length)
+    .sort((left, right) => left - right);
+  for (const segment of source.segments) {
+    const segmentStart = segment.targetStart;
+    const segmentEnd = segmentStart + segment.length;
+    let cursor = segmentStart;
+    for (const pageIndex of finalized) {
+      if (pageIndex < cursor || pageIndex >= segmentEnd) continue;
+      appendRange(segment, cursor, pageIndex, true);
+      appendRange(segment, pageIndex, pageIndex + 1, false);
+      cursor = pageIndex + 1;
+    }
+    appendRange(segment, cursor, segmentEnd, true);
+  }
+  return createLazyPageSequence(transformed);
+}
+
+/**
+ * Retained source pages stay private. Any raw-layout consumer that reads an
+ * adopted target page receives a current-coordinate clone, so bypassing the
+ * localized resolver cannot expose source-generation PM/page metadata.
+ */
+function guardAdoptedLayoutPages(
+  layout: Layout,
+  adoption: IncrementalLayoutTailAdoption,
+  numberingContext: NumberingContext | null = null,
+): Layout {
+  // The generic full numbering finalizer owns formats/restarts/chapters that
+  // cannot be represented by a constant page-index delta. Keep the lazy
+  // source sequence and apply its exact target-page display record when that
+  // adopted page is materialized. Decimal continuous numbering can retain the
+  // cheaper composed-segment transform.
+  const transformedSequence = numberingContext == null ? addAdoptionTransform(layout.pages, adoption) : layout.pages;
+  if (transformedSequence !== layout.pages) return { ...layout, pages: transformedSequence };
+  const sourcePages = layout.pages;
+  const materializedPages = new Map<number, Page>();
+  const sectionPageNumberDeltas = composeSectionPageNumberDeltas(null, adoption.sectionPageNumberTransform);
+  const displayPageNumberTransforms = composeDisplayPageNumberTransforms(null, adoption.displayPageNumberTransform);
+  const readPageIndex = (property: string | symbol): number | null => {
+    if (typeof property !== 'string' || !/^(0|[1-9]\d*)$/.test(property)) return null;
+    const pageIndex = Number(property);
+    return pageIndex < sourcePages.length ? pageIndex : null;
+  };
+  const materializePage = (pageIndex: number): Page => {
+    const sourcePage = sourcePages[pageIndex];
+    if (!sourcePage) throw new RangeError(`Layout page index ${pageIndex} is out of range.`);
+    if (pageIndex < adoption.startPageIndex || pageIndex >= adoption.endPageIndexExclusive) return sourcePage;
+    const cached = materializedPages.get(pageIndex);
+    if (cached) return cached;
+    const currentPage = materializeAdoptedLayoutPage(
+      sourcePage,
+      adoption.positionTransforms,
+      adoption.pageIndexDelta,
+      adoption.blockIdRewrites ?? null,
+      sectionPageNumberDeltas,
+      displayPageNumberTransforms,
+    );
+    const displayInfo = numberingContext?.displayPages[pageIndex];
+    if (displayInfo) {
+      currentPage.number = pageIndex + 1;
+      currentPage.numberText = displayInfo.displayText;
+      currentPage.displayNumber = displayInfo.displayNumber;
+      currentPage.pageNumberFormat = displayInfo.pageFormat;
+      currentPage.pageNumberChapterText = displayInfo.chapterNumberText;
+      currentPage.pageNumberChapterSeparator = displayInfo.chapterSeparator;
+    }
+    materializedPages.set(pageIndex, currentPage);
+    return currentPage;
+  };
+  const pages = new Proxy(sourcePages, {
+    get(target, property, receiver): unknown {
+      const pageIndex = readPageIndex(property);
+      if (pageIndex != null) return materializePage(pageIndex);
+      return Reflect.get(target, property, receiver);
+    },
+    getOwnPropertyDescriptor(target, property): PropertyDescriptor | undefined {
+      const pageIndex = readPageIndex(property);
+      if (pageIndex == null) return Reflect.getOwnPropertyDescriptor(target, property);
+      return {
+        configurable: true,
+        enumerable: true,
+        writable: false,
+        value: materializePage(pageIndex),
+      };
+    },
+    set(): boolean {
+      return false;
+    },
+    defineProperty(): boolean {
+      return false;
+    },
+    deleteProperty(): boolean {
+      return false;
+    },
+  }) as Page[];
+  return { ...layout, pages };
+}
+
+function materializeAdoptedLayoutPage(
+  sourcePage: Page,
+  transforms: readonly LayoutPositionTransform[],
+  pageIndexDelta: number,
+  blockIdRewrites: ReadonlyMap<string, string> | null = null,
+  sectionPageNumberDeltas: ReadonlyMap<number, number> | null = null,
+  displayPageNumberTransforms: readonly IncrementalDisplayPageNumberTransform[] | null = null,
+): Page {
+  const seen = new WeakMap<object, unknown>();
+  const clone = (value: unknown, key?: string, parentKey?: string): unknown => {
+    if ((key === 'pmStart' || key === 'pmEnd') && typeof value === 'number') {
+      return applyPositionTransforms(value, transforms);
+    }
+    if (parentKey === 'pmRange' && (key === 'from' || key === 'to') && typeof value === 'number') {
+      return applyPositionTransforms(value, transforms);
+    }
+    if (key === 'blockId' && typeof value === 'string') {
+      return blockIdRewrites?.get(value) ?? value;
+    }
+    if (key === 'pageIndex' && typeof value === 'number') return value + pageIndexDelta;
+    if (value == null || typeof value !== 'object') return value;
+    const existing = seen.get(value);
+    if (existing) return existing;
+    if (Array.isArray(value)) {
+      const array: unknown[] = [];
+      seen.set(value, array);
+      for (const entry of value) array.push(clone(entry, undefined, key));
+      return array;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return value;
+    const object: Record<string, unknown> = {};
+    seen.set(value, object);
+    for (const [entryKey, entryValue] of Object.entries(value as Record<string, unknown>)) {
+      object[entryKey] = clone(entryValue, entryKey, key);
+    }
+    return object;
+  };
+
+  const page = clone(sourcePage) as Page;
+  page.number += pageIndexDelta;
+  const sectionPageNumberDelta = sectionPageNumberDeltas?.get(page.sectionIndex ?? 0) ?? 0;
+  if (sectionPageNumberDelta !== 0 && page.sectionPageNumber != null) {
+    page.sectionPageNumber += sectionPageNumberDelta;
+  }
+  const pageSectionIndex = page.sectionIndex ?? 0;
+  const displayPageNumberDelta =
+    displayPageNumberTransforms == null
+      ? pageIndexDelta
+      : displayPageNumberTransforms.reduce(
+          (delta, transform) =>
+            pageSectionIndex >= transform.startSectionIndex && pageSectionIndex < transform.endSectionIndexExclusive
+              ? delta + transform.delta
+              : delta,
+          0,
+        );
+  if (page.displayNumber != null) page.displayNumber += displayPageNumberDelta;
+  if (page.effectivePageNumber != null) page.effectivePageNumber += displayPageNumberDelta;
+  if (page.numberText != null && /^\d+$/.test(page.numberText)) {
+    page.numberText = String(Number(page.numberText) + displayPageNumberDelta);
+  }
+  return page;
+}
+
+function haveExactUniqueIdSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const leftSet = new Set(left);
+  if (leftSet.size !== left.length) return false;
+  for (const id of right) {
+    if (!leftSet.has(id)) return false;
+  }
+  return new Set(right).size === right.length;
+}
+
+function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): string | null {
+  const runtimeProof = proof as IncrementalPaginationProof & {
+    globalDependenciesAbsent?: boolean;
+    globalDependenciesFencedByDocumentStart?: boolean;
+    globalDependenciesFencedByPageCheckpoint?: boolean;
+    multiColumnSectionsProvedNonBalanceable?: boolean;
+    admittedDependencyClasses?: unknown;
+    pageReferencesAbsent?: boolean;
+    pageReferenceDependencyClosure?: unknown;
+    localKeepDependencyClosure?: unknown;
+    nonFlowingPageRelativeAnchorDependency?: unknown;
+  };
+  const dependencyProfileValid =
+    proof.profile === 'single-section-local-text'
+      ? runtimeProof.globalDependenciesAbsent === true && runtimeProof.globalDependenciesFencedByDocumentStart !== true
+      : proof.profile === 'document-start-local-text'
+        ? runtimeProof.globalDependenciesAbsent === false &&
+          runtimeProof.globalDependenciesFencedByDocumentStart === true &&
+          runtimeProof.multiColumnSectionsProvedNonBalanceable === true
+        : proof.profile === 'page-checkpoint-local-text'
+          ? runtimeProof.globalDependenciesAbsent === false &&
+            runtimeProof.globalDependenciesFencedByPageCheckpoint === true &&
+            areValidPageCheckpointDependencyClasses(runtimeProof.admittedDependencyClasses) &&
+            hasValidKeepCheckpointClosure(
+              runtimeProof.admittedDependencyClasses,
+              runtimeProof.localKeepDependencyClosure,
+            ) &&
+            // SD-3772 D1: fail closed unless the host proved every
+            // multi-column section genuinely unequal (balancing inert).
+            runtimeProof.multiColumnSectionsProvedNonBalanceable === true
+          : false;
+  if (
+    !dependencyProfileValid ||
+    proof.blockIdsUnchanged !== true ||
+    proof.blockIdsUnique !== true ||
+    proof.renderInputsUnchanged !== true ||
+    !hasValidPageReferenceClosure(
+      proof.profile,
+      runtimeProof.pageReferencesAbsent,
+      runtimeProof.admittedDependencyClasses,
+      runtimeProof.pageReferenceDependencyClosure,
+    ) ||
+    !hasCoherentNonFlowingPageRelativeAnchorProof(
+      runtimeProof.admittedDependencyClasses,
+      runtimeProof.nonFlowingPageRelativeAnchorDependency,
+    )
+  ) {
+    return 'dependency-proof-invalid';
+  }
+  return null;
+}
+
+function hasCoherentNonFlowingPageRelativeAnchorProof(classes: unknown, proof: unknown): boolean {
+  const admitted = Array.isArray(classes) && classes.includes('non-flowing-page-relative-body-anchors');
+  if (!admitted) return proof == null;
+  if (!proof || typeof proof !== 'object') return false;
+  const value = proof as NonFlowingPageRelativeAnchorDependencyProof;
+  return (
+    value.version === 1 &&
+    Number.isInteger(value.sourceLayoutEpoch) &&
+    typeof value.inventoryFingerprint === 'string' &&
+    value.inventoryFingerprint.length > 0 &&
+    Array.isArray(value.entries) &&
+    value.entries.length > 0
+  );
+}
+
+function validateNonFlowingPageRelativeAnchorDependency(input: {
+  proof: IncrementalPaginationProof | null | undefined;
+  previousLayout: Layout;
+  blocks: readonly FlowBlock[];
+  currentBlockIndexById: ReadonlyMap<string, number> | null | undefined;
+  previousBlockPageIndex: ReadonlyMap<string, { firstPage: number; lastPage: number }> | null | undefined;
+  blockIdRewrites: IncrementalLayoutReuseOptions['blockIdRewrites'];
+  dirtyBlockIds: readonly string[];
+}): string | null {
+  if (input.proof?.profile !== 'page-checkpoint-local-text') return null;
+  const classes = input.proof.admittedDependencyClasses;
+  const admitted = classes.includes('non-flowing-page-relative-body-anchors');
+  const dependency = input.proof.nonFlowingPageRelativeAnchorDependency;
+  if (!admitted) return dependency == null ? null : 'page-relative-anchor-class-missing';
+  if (!dependency || dependency.sourceLayoutEpoch !== input.previousLayout.layoutEpoch) {
+    return 'page-relative-anchor-epoch-mismatch';
+  }
+  if (!input.currentBlockIndexById || !input.previousBlockPageIndex) {
+    return 'page-relative-anchor-index-missing';
+  }
+  const dirty = new Set(input.dirtyBlockIds);
+  const seen = new Set<string>();
+  const previousToCurrent = input.blockIdRewrites?.previousToCurrent;
+  const provedAnchorIds = new Set(
+    dependency.entries.map((entry) => previousToCurrent?.get(entry.blockId) ?? entry.blockId),
+  );
+  for (const dirtyBlockId of dirty) {
+    const dirtyBlockIndex = input.currentBlockIndexById.get(dirtyBlockId);
+    const dirtyBlock = Number.isInteger(dirtyBlockIndex) ? input.blocks[dirtyBlockIndex!] : null;
+    const dirtyAnchorBlock = dirtyBlock && 'anchor' in dirtyBlock ? dirtyBlock : null;
+    if (
+      dirtyAnchorBlock?.anchor?.isAnchored === true &&
+      isPageRelativeAnchor(dirtyAnchorBlock) &&
+      !provedAnchorIds.has(dirtyBlockId)
+    ) {
+      return 'page-relative-anchor-inventory-changed';
+    }
+  }
+  for (const entry of dependency.entries) {
+    const currentBlockId = previousToCurrent?.get(entry.blockId) ?? entry.blockId;
+    const currentCarrierParagraphId = previousToCurrent?.get(entry.carrierParagraphId) ?? entry.carrierParagraphId;
+    if (
+      typeof entry.blockId !== 'string' ||
+      entry.blockId.length === 0 ||
+      seen.has(entry.blockId) ||
+      dirty.has(currentBlockId) ||
+      dirty.has(currentCarrierParagraphId)
+    ) {
+      return 'page-relative-anchor-inventory-invalid-or-dirty';
+    }
+    const blockIndex = input.currentBlockIndexById.get(currentBlockId);
+    const block = Number.isInteger(blockIndex) ? input.blocks[blockIndex!] : null;
+    if (
+      !block ||
+      block.id !== currentBlockId ||
+      block.kind !== 'image' ||
+      block.anchor?.isAnchored !== true ||
+      !isPageRelativeAnchor(block) ||
+      block.wrap?.type !== 'None' ||
+      (block.attrs as { anchorParagraphId?: unknown } | undefined)?.anchorParagraphId !== currentCarrierParagraphId
+    ) {
+      return 'page-relative-anchor-current-shape-mismatch';
+    }
+    const pageRange = input.previousBlockPageIndex.get(entry.blockId);
+    const sourcePage = input.previousLayout.pages[entry.sourcePageIndex];
+    if (
+      !pageRange ||
+      pageRange.firstPage !== entry.sourcePageIndex ||
+      pageRange.lastPage !== entry.sourcePageIndex ||
+      !sourcePage?.fragments.some((fragment) => fragment.blockId === entry.blockId) ||
+      (sourcePage.sectionIndex ?? 0) !== entry.sectionIndex
+    ) {
+      return 'page-relative-anchor-source-page-mismatch';
+    }
+    seen.add(entry.blockId);
+  }
+  return seen.size === dependency.entries.length ? null : 'page-relative-anchor-inventory-mismatch';
+}
+
+function hasValidPageReferenceClosure(profile: unknown, absent: unknown, classes: unknown, closure: unknown): boolean {
+  if (absent === true) return closure == null;
+  if (absent !== false) return false;
+  if (profile === 'page-checkpoint-local-text') {
+    if (!Array.isArray(classes) || !classes.includes('page-references')) return false;
+  } else if (profile !== 'document-start-local-text') {
+    return false;
+  }
+  if (!closure || typeof closure !== 'object') return false;
+  const value = closure as Record<string, unknown>;
+  const references = value.referenceBlockIds;
+  const targets = value.targetBookmarkIds;
+  return (
+    Array.isArray(references) &&
+    references.length > 0 &&
+    references.every((item) => typeof item === 'string' && item.length > 0) &&
+    new Set(references).size === references.length &&
+    Array.isArray(targets) &&
+    targets.length > 0 &&
+    targets.every((item) => typeof item === 'string' && item.length > 0) &&
+    new Set(targets).size === targets.length
+  );
+}
+
+function hasValidKeepCheckpointClosure(classes: unknown, closure: unknown): boolean {
+  if (!Array.isArray(classes) || !classes.includes('keep-constraints')) return true;
+  if (!closure || typeof closure !== 'object') return false;
+  const value = closure as Record<string, unknown>;
+  return (
+    Number.isInteger(value.checkpointPageIndex) &&
+    (value.checkpointBlockId === null || typeof value.checkpointBlockId === 'string') &&
+    (value.predecessorBlockId === null || typeof value.predecessorBlockId === 'string')
+  );
+}
+
+function supportsLocalizedSectionNumbering(options: LayoutOptions): boolean {
+  const sections = options.sectionMetadata ?? [];
+  for (let index = 0; index < sections.length; index += 1) {
+    const section = sections[index]!;
+    if (section.sectionIndex !== index) return false;
+    const numbering = section.numbering;
+    if (!numbering) continue;
+    if (numbering.start != null && (!Number.isInteger(numbering.start) || numbering.start < 1)) return false;
+    if (numbering.chapterStyle != null || numbering.chapterSeparator != null) return false;
+  }
+  return true;
+}
+
+function supportsLocalizedDecimalNumbering(options: LayoutOptions): boolean {
+  const sections = options.sectionMetadata ?? [];
+  for (let index = 0; index < sections.length; index += 1) {
+    const section = sections[index]!;
+    if (section.sectionIndex !== index) return false;
+    const numbering = section.numbering;
+    if (!numbering) continue;
+    if (numbering.format != null && numbering.format !== 'decimal') return false;
+    if (numbering.start != null && (!Number.isInteger(numbering.start) || numbering.start < 1)) return false;
+    if (numbering.chapterStyle != null || numbering.chapterSeparator != null) return false;
+  }
+  return true;
+}
+
+function buildDisplayPageNumberTransform(
+  options: LayoutOptions,
+  startSectionIndex: number,
+  delta: number,
+): IncrementalDisplayPageNumberTransform | null {
+  if (!supportsLocalizedDecimalNumbering(options) || !Number.isInteger(startSectionIndex) || startSectionIndex < 0) {
+    return null;
+  }
+  const sections = options.sectionMetadata ?? [];
+  if (sections.length > 0 && sections[startSectionIndex]?.sectionIndex !== startSectionIndex) return null;
+  let endSectionIndexExclusive = Number.MAX_SAFE_INTEGER;
+  for (let sectionIndex = startSectionIndex + 1; sectionIndex < sections.length; sectionIndex += 1) {
+    if (sections[sectionIndex]?.numbering?.start == null) continue;
+    endSectionIndexExclusive = sectionIndex;
+    break;
+  }
+  return { startSectionIndex, endSectionIndexExclusive, delta };
+}
+
+function validateProvedWarmPaginationInputs(
+  reuse: IncrementalLayoutReuseOptions,
+  blocks: readonly FlowBlock[],
+  dirty: ReturnType<typeof computeDirtyRegions>,
+): string | null {
+  if (!reuse.dependencyProof) return 'dependency-proof-missing';
+  if (!reuse.provedDirtyRegion || reuse.provedDirtyRegion !== dirty) return 'proved-dirty-region-missing';
+  if (!reuse.currentBlockIndexById) return 'current-block-index-missing';
+  if (reuse.currentBlockIndexById.size !== blocks.length) return 'duplicate-block-id';
+  if (!reuse.previousPageStartKeyIndex) return 'page-start-key-index-missing';
+  const hasBlockCountChange = dirty.insertedBlockIds.length > 0 || dirty.deletedBlockIds.length > 0;
+  if (hasBlockCountChange) {
+    if (!reuse.previousBlockIndexById || !reuse.blockIdRewrites) {
+      return 'structural-block-id-rewrite-proof-missing';
+    }
+    const { previousToCurrent, currentToPrevious } = reuse.blockIdRewrites;
+    const structuralRewriteProof = validateStructuralBlockIdRewritePair(
+      previousToCurrent,
+      currentToPrevious,
+      reuse.previousBlockIndexById.size,
+      reuse.currentBlockIndexById.size,
+    );
+    if (!structuralRewriteProof) {
+      for (const [previousId, currentId] of previousToCurrent) {
+        if (
+          currentToPrevious.get(currentId) !== previousId ||
+          !reuse.previousBlockIndexById.has(previousId) ||
+          !reuse.currentBlockIndexById.has(currentId) ||
+          !dirty.stableBlockIds.has(currentId)
+        ) {
+          return 'structural-block-id-rewrite-proof-invalid';
+        }
+      }
+      for (const [currentId, previousId] of currentToPrevious) {
+        if (previousToCurrent.get(previousId) !== currentId) {
+          return 'structural-block-id-rewrite-proof-invalid';
+        }
+      }
+    }
+  }
+  return null;
+}
+
+const STRUCTURAL_BLOCK_ID_REWRITE_DESCRIPTOR = Symbol.for('superdoc.v2.structural-block-id-rewrite.v1');
+
+interface StructuralBlockIdRewriteDescriptor {
+  version: 1;
+  token: object;
+  direction: 'previous-to-current' | 'current-to-previous';
+  sourceStartIndex: number;
+  targetStartIndex: number;
+  localRewriteCount?: number;
+  sourceSize: number;
+  targetSize: number;
+}
+
+function readStructuralBlockIdRewriteDescriptor(
+  value: ReadonlyMap<string, string>,
+): StructuralBlockIdRewriteDescriptor | null {
+  const descriptor = (
+    value as ReadonlyMap<string, string> & {
+      [STRUCTURAL_BLOCK_ID_REWRITE_DESCRIPTOR]?: StructuralBlockIdRewriteDescriptor;
+    }
+  )[STRUCTURAL_BLOCK_ID_REWRITE_DESCRIPTOR];
+  return descriptor?.version === 1 ? descriptor : null;
+}
+
+function validateStructuralBlockIdRewritePair(
+  previousToCurrent: ReadonlyMap<string, string>,
+  currentToPrevious: ReadonlyMap<string, string>,
+  previousSize: number,
+  currentSize: number,
+): boolean {
+  const forward = readStructuralBlockIdRewriteDescriptor(previousToCurrent);
+  const reverse = readStructuralBlockIdRewriteDescriptor(currentToPrevious);
+  return (
+    forward != null &&
+    reverse != null &&
+    forward.token === reverse.token &&
+    forward.direction === 'previous-to-current' &&
+    reverse.direction === 'current-to-previous' &&
+    forward.sourceStartIndex === reverse.sourceStartIndex &&
+    forward.targetStartIndex === reverse.targetStartIndex &&
+    (forward.localRewriteCount ?? 0) === (reverse.localRewriteCount ?? 0) &&
+    forward.sourceSize === previousSize &&
+    reverse.sourceSize === previousSize &&
+    forward.targetSize === currentSize &&
+    reverse.targetSize === currentSize &&
+    previousToCurrent.size === previousSize - forward.sourceStartIndex + (forward.localRewriteCount ?? 0) &&
+    currentToPrevious.size === currentSize - forward.targetStartIndex + (forward.localRewriteCount ?? 0)
+  );
+}
+
+function buildPageStartKeyIndex(keys: readonly string[]): ReadonlyMap<string, readonly number[]> {
+  const index = new Map<string, number[]>();
+  keys.forEach((key, pageIndex) => {
+    const pages = index.get(key);
+    if (pages) pages.push(pageIndex);
+    else index.set(key, [pageIndex]);
+  });
+  return index;
+}
+
+function pageContainsAnyBlock(page: Page | undefined, blockIds: readonly string[]): boolean {
+  if (!page || blockIds.length === 0) return false;
+  const targetIds = new Set(blockIds);
+  return page.fragments.some((fragment) => targetIds.has(fragment.blockId));
+}
+
+function pageContainsBlock(page: Page | undefined, blockId: string): boolean {
+  return page?.fragments.some((fragment) => fragment.blockId === blockId) === true;
+}
+
+/**
+ * A start-key match alone is not a pagination fixed point. Preserve the
+ * complete page-start geometry/carry context used by the proved profile so a
+ * matching block id cannot adopt a tail under different margins, columns,
+ * numbering, or first-fragment placement.
+ */
+function pagesShareConvergenceBoundary(
+  previous: Page | undefined,
+  next: Page | undefined,
+  nextToPreviousBlockId: ReadonlyMap<string, string> | null = null,
+  ignoreFootnoteReserved = false,
+): boolean {
+  if (!previous || !next) return false;
+  return (
+    buildPageConvergenceSignature(previous, null, ignoreFootnoteReserved) ===
+    buildPageConvergenceSignature(next, nextToPreviousBlockId, ignoreFootnoteReserved)
+  );
+}
+
+function findPageConvergenceMismatchField(
+  previous: Page,
+  next: Page,
+  nextToPreviousBlockId: ReadonlyMap<string, string> | null,
+  ignoreFootnoteReserved = false,
+): string {
+  const previousValue = JSON.parse(buildPageConvergenceSignature(previous, null, ignoreFootnoteReserved)) as Record<
+    string,
+    unknown
+  >;
+  const nextValue = JSON.parse(
+    buildPageConvergenceSignature(next, nextToPreviousBlockId, ignoreFootnoteReserved),
+  ) as Record<string, unknown>;
+  for (const key of Object.keys(previousValue)) {
+    if (JSON.stringify(previousValue[key]) !== JSON.stringify(nextValue[key])) return key;
+  }
+  return 'unknown';
+}
+
+function canRebaseAdoptedPageNumbering(page: Page | undefined, pageIndexDelta: number): boolean {
+  if (!page) return false;
+  if (pageIndexDelta === 0) return true;
+  if (page.pageNumberChapterText != null || page.pageNumberChapterSeparator != null) return false;
+  if (page.pageNumberFormat != null && page.pageNumberFormat !== 'decimal') return false;
+  if (page.numberText != null && !/^\d+$/.test(page.numberText)) return false;
+  return true;
+}
+
+function buildPageConvergenceSignature(
+  page: Page,
+  blockIdRewrite: ReadonlyMap<string, string> | null = null,
+  ignoreFootnoteReserved = false,
+): string {
+  const first = page.fragments[0] as (Fragment & Record<string, unknown>) | undefined;
+  return JSON.stringify({
+    // Display-number strings are finalized after layoutDocument returns and
+    // therefore are not present on the in-progress candidate page. Their
+    // dependencies are excluded by the narrow profile above; physical number
+    // and section state are the boundary-time numbering proof.
+    size: page.size ?? null,
+    margins: page.margins ?? null,
+    baseMargins: page.baseMargins ?? null,
+    columns: page.columns ?? null,
+    columnRegions: page.columnRegions ?? null,
+    sectionIndex: page.sectionIndex ?? 0,
+    sectionRefs: page.sectionRefs ?? null,
+    orientation: page.orientation ?? null,
+    vAlign: page.vAlign ?? null,
+    footnoteReserved: ignoreFootnoteReserved ? null : (page.footnoteReserved ?? 0),
+    first: first
+      ? {
+          kind: first.kind,
+          blockId: blockIdRewrite?.get(first.blockId) ?? first.blockId,
+          x: first.x,
+          y: first.y,
+          width: first.width,
+          height: first.height ?? null,
+          fromLine: first.fromLine ?? null,
+          toLine: first.toLine ?? null,
+          fromRow: first.fromRow ?? null,
+          toRow: first.toRow ?? null,
+          columnIndex: first.columnIndex ?? null,
+          continuesFromPrev: first.continuesFromPrev === true,
+          partialRow: first.partialRow ?? null,
+        }
+      : null,
+  });
+}
+
+function readFirstPageBlockId(page: { fragments?: Fragment[] } | undefined): string | null {
+  const first = page?.fragments?.[0];
+  return typeof first?.blockId === 'string' ? first.blockId : null;
+}
+
+function pageStartsAtCleanBlockBoundary(page: { fragments?: Fragment[] } | undefined): boolean {
+  const first = page?.fragments?.[0];
+  if (!first) return true;
+  if ('continuesFromPrev' in first && first.continuesFromPrev === true) return false;
+  const fromLine = 'fromLine' in first ? first.fromLine : 0;
+  const fromRow = 'fromRow' in first ? first.fromRow : 0;
+  const partialRow = 'partialRow' in first ? first.partialRow : undefined;
+  return (fromLine ?? 0) === 0 && (fromRow ?? 0) === 0 && partialRow == null;
+}
+
+function findSafePartialPageCheckpoint(input: {
+  layout: Layout;
+  pages: readonly Page[];
+  previousBlockId: string;
+  currentBlockId: string;
+  currentBlockIndexById: ReadonlyMap<string, number>;
+  blocks: readonly FlowBlock[];
+  expectedPageIndex: number;
+  stableBlockIds: ReadonlySet<string>;
+  previousToCurrentBlockId: ReadonlyMap<string, string> | null;
+}):
+  | {
+      ok: true;
+      checkpoint: LayoutBlockResumeCheckpoint;
+      previousBlockId: string;
+      prefixFragments: readonly Fragment[];
+    }
+  | { ok: false; reason: string } {
+  const checkpoint = input.layout.blockResumeCheckpoints?.get(input.previousBlockId);
+  if (!checkpoint || checkpoint.blockId !== input.previousBlockId) return { ok: false, reason: 'sidecar-missing' };
+  if (checkpoint.pageIndex !== input.expectedPageIndex || checkpoint.pageIndex < 0) {
+    return { ok: false, reason: 'page-index-mismatch' };
+  }
+  const page = input.pages[checkpoint.pageIndex];
+  if (!page) return { ok: false, reason: 'page-missing' };
+  const currentBlockIndex = input.currentBlockIndexById.get(input.currentBlockId);
+  if (!Number.isInteger(currentBlockIndex) || input.blocks[currentBlockIndex!]?.kind !== 'paragraph') {
+    return { ok: false, reason: 'current-block-not-paragraph' };
+  }
+  if (
+    !Number.isInteger(checkpoint.prefixFragmentCount) ||
+    checkpoint.prefixFragmentCount <= 0 ||
+    checkpoint.prefixFragmentCount >= page.fragments.length ||
+    page.fragments[checkpoint.prefixFragmentCount]?.blockId !== input.previousBlockId
+  ) {
+    return { ok: false, reason: 'fragment-boundary-mismatch' };
+  }
+  const dirtyFragment = page.fragments[checkpoint.prefixFragmentCount]!;
+  if (
+    (dirtyFragment.kind !== 'para' && dirtyFragment.kind !== 'list-item') ||
+    dirtyFragment.fromLine !== 0 ||
+    dirtyFragment.continuesFromPrev === true
+  ) {
+    return { ok: false, reason: 'dirty-fragment-not-fresh-paragraph' };
+  }
+  const prefixFragments = page.fragments.slice(0, checkpoint.prefixFragmentCount);
+  // The first block-local resume profile deliberately excludes page-local
+  // floats and tables. Their placement registries are not part of this
+  // checkpoint yet, so admitting one would manufacture geometry state.
+  if (
+    prefixFragments.some(
+      (fragment) =>
+        (fragment.kind !== 'para' && fragment.kind !== 'list-item') ||
+        !input.stableBlockIds.has(input.previousToCurrentBlockId?.get(fragment.blockId) ?? fragment.blockId),
+    )
+  ) {
+    return { ok: false, reason: 'prefix-fragment-unsupported-or-unstable' };
+  }
+  if (
+    checkpoint.columnIndex !== 0 ||
+    checkpoint.constraintBoundaries.length !== 0 ||
+    checkpoint.activeConstraintIndex !== -1 ||
+    !Number.isFinite(checkpoint.cursorY) ||
+    !Number.isFinite(checkpoint.maxCursorY) ||
+    !Number.isFinite(checkpoint.trailingSpacing) ||
+    !Number.isFinite(checkpoint.footnoteDemandThisPage) ||
+    !Number.isInteger(checkpoint.footnoteRefsThisPage) ||
+    checkpoint.footnoteRefsThisPage < 0
+  ) {
+    return { ok: false, reason: 'paginator-state-invalid-or-multicolumn' };
+  }
+  return { ok: true, checkpoint, previousBlockId: input.previousBlockId, prefixFragments };
+}
+
+function pageContainsOnlyStableBlocks(
+  page: { fragments?: Fragment[] } | undefined,
+  stableBlockIds: ReadonlySet<string>,
+  blockIdRewrite: ReadonlyMap<string, string> | null = null,
+  currentBodyBlockIndex: ReadonlyMap<string, number> | null = null,
+): boolean {
+  const fragments = page?.fragments ?? [];
+  return fragments.every((fragment) => {
+    if (typeof fragment.blockId !== 'string') return false;
+    const blockId = blockIdRewrite?.get(fragment.blockId) ?? fragment.blockId;
+    return stableBlockIds.has(blockId) || (currentBodyBlockIndex != null && !currentBodyBlockIndex.has(blockId));
+  });
+}
+
+function collectFootnoteOutputPageIndexes(
+  plan: FootnoteLayoutPlan,
+  reservesByPageIndex: readonly number[],
+): Set<number> {
+  // `ledgersByPage` intentionally includes empty accounting rows for every
+  // page. Treating its keys as note output made the supposedly sparse retained
+  // hint cover the whole document and prevented a proved tail from adopting
+  // unchanged footnote bands.
+  const pageIndexes = new Set<number>(plan.slicesByPage.keys());
+  reservesByPageIndex.forEach((reserve, pageIndex) => {
+    if (reserve > 0) pageIndexes.add(pageIndex);
+  });
+  return pageIndexes;
+}
+
+function collectFootnoteReinjectionPageIndexes(
+  pageCount: number,
+  currentNotePageIndexes: ReadonlySet<number>,
+  previousNotePageIndexes: ReadonlySet<number>,
+  tailAdoption: IncrementalLayoutTailAdoption | null,
+): Set<number> {
+  const pageIndexes = new Set<number>();
+  const add = (pageIndex: number): void => {
+    if (Number.isInteger(pageIndex) && pageIndex >= 0 && pageIndex < pageCount) pageIndexes.add(pageIndex);
+  };
+  currentNotePageIndexes.forEach(add);
+  previousNotePageIndexes.forEach((sourcePageIndex) => {
+    // Retained prefixes preserve their source index. Keeping the raw index is
+    // also harmless for a locally relaid page and avoids guessing the exact
+    // prefix boundary from the tail-only adoption descriptor.
+    add(sourcePageIndex);
+    if (
+      tailAdoption &&
+      sourcePageIndex >= tailAdoption.sourcePageStartIndex &&
+      sourcePageIndex < tailAdoption.sourcePageEndIndexExclusive
+    ) {
+      add(tailAdoption.startPageIndex + sourcePageIndex - tailAdoption.sourcePageStartIndex);
+    }
+  });
+  return pageIndexes;
+}
+
+function createPageSequenceWithReplacements(pages: Page[], replacements: ReadonlyMap<number, Page>): Page[] {
+  if (replacements.size === 0) return pages;
+  const segments: LazyPageSegment[] = [];
+  let sourceStart = 0;
+  for (const [pageIndex, replacement] of [...replacements].sort((left, right) => left[0] - right[0])) {
+    appendPageSequenceSlice(segments, pages, sourceStart, pageIndex);
+    appendPageSequenceSlice(segments, [replacement], 0, 1);
+    sourceStart = pageIndex + 1;
+  }
+  appendPageSequenceSlice(segments, pages, sourceStart, pages.length);
+  return createLazyPageSequence(segments);
+}
+
+/**
+ * A retained body page already contains its source-generation footnote band.
+ * Clone only previous/current note pages before the finalizer mutates them,
+ * remove fragments outside the current body block plane (the typed
+ * note-finalizer class used by the convergence proof), and clear the old band
+ * ledger. Sparse replacements retain the lazy prefix/tail descriptor, so the
+ * current fixed-point plan can inject one authoritative band without touching
+ * retained source objects or materializing unrelated pages.
+ */
+function prepareRetainedPagesForFootnoteReinjection(
+  layout: Layout,
+  currentBodyBlockIndex: ReadonlyMap<string, number>,
+  pageIndexesToFinalize: ReadonlySet<number>,
+  previousToCurrentBlockId: ReadonlyMap<string, string> | null,
+): Layout {
+  const replacements = new Map<number, Page>();
+  for (const pageIndex of pageIndexesToFinalize) {
+    if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= layout.pages.length) continue;
+    const page = layout.pages[pageIndex];
+    if (!page) continue;
+    const { footnoteLedger: _retainedFootnoteLedger, ...pageWithoutFootnoteLedger } = page;
+    replacements.set(pageIndex, {
+      ...pageWithoutFootnoteLedger,
+      fragments: page.fragments.filter((fragment) => {
+        const currentBlockId = previousToCurrentBlockId?.get(fragment.blockId) ?? fragment.blockId;
+        return currentBodyBlockIndex.has(currentBlockId);
+      }),
+    });
+  }
+  return {
+    ...layout,
+    pages: createPageSequenceWithReplacements(layout.pages, replacements),
+  };
+}
+
+function buildPageStartKey(
+  page: { fragments?: Fragment[]; sectionIndex?: number } | undefined,
+  blockIdRewrite: ReadonlyMap<string, string> | null = null,
+): string {
+  const fragments = page?.fragments ?? [];
+  const first = fragments[0];
+  const sectionIndex = readFiniteNumber(page?.sectionIndex) ?? 0;
+  if (!first) return `#empty#0#${sectionIndex}#0`;
+  const rawBlockId = typeof first.blockId === 'string' ? first.blockId : '#unknown';
+  const blockId = blockIdRewrite?.get(rawBlockId) ?? rawBlockId;
+  const fromLine = 'fromLine' in first ? readFiniteNumber(first.fromLine) : null;
+  const fromRow = 'fromRow' in first ? readFiniteNumber(first.fromRow) : null;
+  const carry = 'continuesFromPrev' in first && first.continuesFromPrev === true ? 1 : 0;
+  return `${blockId}#${fromLine ?? fromRow ?? 0}#${sectionIndex}#${carry}`;
+}
+
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 const DEFAULT_PAGE_SIZE = { w: 612, h: 792 };
@@ -3234,31 +7451,6 @@ const DEFAULT_MARGINS = { top: 72, right: 72, bottom: 72, left: 72 };
  */
 export const normalizeMargin = (value: number | undefined, fallback: number): number =>
   Number.isFinite(value) ? (value as number) : fallback;
-
-/**
- * Walks table blocks (including nested tables) and computes `contentMeasures` for any
- * `textboxShape` drawings found in table cells. Stores results directly on the block so
- * the painter can read them without a `DrawingFragment` (table-cell drawings have none).
- */
-export function hydrateTableTextboxMeasures(
-  blocks: FlowBlock[],
-  remeasure: (block: ParagraphBlock, maxWidth: number) => ParagraphMeasure,
-): void {
-  for (const block of blocks) {
-    if (block.kind !== 'table') continue;
-    for (const row of block.rows ?? []) {
-      for (const cell of row.cells ?? []) {
-        for (const cellBlock of cell.blocks ?? []) {
-          if (cellBlock.kind === 'drawing' && cellBlock.drawingKind === 'textboxShape') {
-            (cellBlock as TextboxDrawing).contentMeasures = layoutTextboxContent(cellBlock, remeasure);
-          } else if (cellBlock.kind === 'table') {
-            hydrateTableTextboxMeasures([cellBlock], remeasure);
-          }
-        }
-      }
-    }
-  }
-}
 
 /**
  * Rewrites section break blocks so that `layoutDocument` uses the semantic page
@@ -3501,12 +7693,55 @@ type ChapterContextCache = {
   context?: Map<number, ChapterPageInfo>;
 };
 
-function buildBlockById(blocks: FlowBlock[]): ReadonlyMap<string, FlowBlock> {
+function* buildBlockByIdSteps(
+  blocks: FlowBlock[],
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutExecutionCheckpoint, ReadonlyMap<string, FlowBlock>, void> {
   const blockById = new Map<string, FlowBlock>();
-  for (const block of blocks) {
+  for (let index = 0; index < blocks.length; index += 1) {
+    if (checkpointEveryBlocks != null && index % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:chapter', index, total: blocks.length };
+    }
+    const block = blocks[index]!;
     blockById.set(block.id, block);
   }
   return blockById;
+}
+
+function drainNumberingSteps<T>(steps: Generator<LayoutExecutionCheckpoint, T, void>): T {
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+async function drainNumberingStepsCooperatively<T>(
+  steps: Generator<LayoutExecutionCheckpoint, T, void>,
+  execution: LayoutExecutionControl,
+): Promise<T> {
+  try {
+    while (true) {
+      const step = steps.next();
+      if (step.done) return step.value;
+      await checkpointLayoutExecution(execution, step.value);
+    }
+  } finally {
+    steps.return?.(undefined as never);
+  }
+}
+
+function buildBlockById(blocks: FlowBlock[]): ReadonlyMap<string, FlowBlock> {
+  return drainNumberingSteps(buildBlockByIdSteps(blocks, null));
+}
+
+function buildBlockByIdCooperatively(
+  blocks: FlowBlock[],
+  execution: LayoutExecutionControl,
+): Promise<ReadonlyMap<string, FlowBlock>> {
+  return drainNumberingStepsCooperatively(
+    buildBlockByIdSteps(blocks, Math.max(1, Math.floor(execution.checkpointEveryBlocks ?? 16))),
+    execution,
+  );
 }
 
 function getFragmentBlockId(fragment: unknown): string {
@@ -3521,17 +7756,42 @@ function getFragmentBlockId(fragment: unknown): string {
   return '';
 }
 
+function* buildChapterContextSignatureSteps(
+  layout: Layout,
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutExecutionCheckpoint, string, void> {
+  let signature = '';
+  let fragmentOrdinal = 0;
+  for (let pageIndex = 0; pageIndex < layout.pages.length; pageIndex += 1) {
+    if (checkpointEveryBlocks != null && pageIndex % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:chapter', index: pageIndex, total: layout.pages.length };
+    }
+    const page = layout.pages[pageIndex]!;
+    const fragmentBlockIds: string[] = [];
+    for (const fragment of page.fragments) {
+      if (checkpointEveryBlocks != null && fragmentOrdinal % checkpointEveryBlocks === 0) {
+        yield { phase: 'numbering-context:chapter', index: fragmentOrdinal };
+      }
+      fragmentOrdinal += 1;
+      fragmentBlockIds.push(getFragmentBlockId(fragment));
+    }
+    const pageSignature = [page.number, page.sectionIndex ?? 0, page.fragments.length, fragmentBlockIds.join(',')].join(
+      ':',
+    );
+    signature += `${pageIndex === 0 ? '' : '|'}${pageSignature}`;
+  }
+  return signature;
+}
+
 function buildChapterContextSignature(layout: Layout): string {
-  return layout.pages
-    .map((page) => {
-      return [
-        page.number,
-        page.sectionIndex ?? 0,
-        page.fragments.length,
-        page.fragments.map((fragment) => getFragmentBlockId(fragment)).join(','),
-      ].join(':');
-    })
-    .join('|');
+  return drainNumberingSteps(buildChapterContextSignatureSteps(layout, null));
+}
+
+function buildChapterContextSignatureCooperatively(layout: Layout, execution: LayoutExecutionControl): Promise<string> {
+  return drainNumberingStepsCooperatively(
+    buildChapterContextSignatureSteps(layout, Math.max(1, Math.floor(execution.checkpointEveryBlocks ?? 16))),
+    execution,
+  );
 }
 
 function sectionsHaveChapterNumbering(sections: SectionMetadata[]): boolean {
@@ -3591,10 +7851,11 @@ function getPrelayoutChapterMarkerText(block: FlowBlock, chapterStyle: number): 
   return markerText.split(PRELAYOUT_CHAPTER_MARKER_SEPARATOR_RE).length <= chapterStyle ? markerText : undefined;
 }
 
-function buildConservativePrelayoutPageResolver(
+function* buildConservativePrelayoutPageResolverSteps(
   blocks: FlowBlock[],
   sections: SectionMetadata[],
-): PageResolver | undefined {
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutExecutionCheckpoint, PageResolver | undefined, void> {
   if (sections.length === 0) {
     return undefined;
   }
@@ -3616,7 +7877,11 @@ function buildConservativePrelayoutPageResolver(
     }
   };
 
-  for (const section of sections) {
+  for (let sectionOrdinal = 0; sectionOrdinal < sections.length; sectionOrdinal += 1) {
+    if (checkpointEveryBlocks != null && sectionOrdinal % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:chapter', index: sectionOrdinal, total: sections.length };
+    }
+    const section = sections[sectionOrdinal]!;
     const sectionStart =
       typeof section.numbering?.start === 'number' && Number.isFinite(section.numbering.start)
         ? section.numbering.start
@@ -3637,7 +7902,11 @@ function buildConservativePrelayoutPageResolver(
       continue;
     }
 
-    for (const block of blocks) {
+    for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+      if (checkpointEveryBlocks != null && blockIndex % checkpointEveryBlocks === 0) {
+        yield { phase: 'numbering-context:chapter', index: blockIndex, total: blocks.length };
+      }
+      const block = blocks[blockIndex]!;
       const chapterNumberText = getPrelayoutChapterMarkerText(block, chapterStyle);
       if (!chapterNumberText) {
         continue;
@@ -3669,6 +7938,28 @@ function buildConservativePrelayoutPageResolver(
   return () => resolvedDisplay;
 }
 
+function buildConservativePrelayoutPageResolver(
+  blocks: FlowBlock[],
+  sections: SectionMetadata[],
+): PageResolver | undefined {
+  return drainNumberingSteps(buildConservativePrelayoutPageResolverSteps(blocks, sections, null));
+}
+
+function buildConservativePrelayoutPageResolverCooperatively(
+  blocks: FlowBlock[],
+  sections: SectionMetadata[],
+  execution: LayoutExecutionControl,
+): Promise<PageResolver | undefined> {
+  return drainNumberingStepsCooperatively(
+    buildConservativePrelayoutPageResolverSteps(
+      blocks,
+      sections,
+      Math.max(1, Math.floor(execution.checkpointEveryBlocks ?? 16)),
+    ),
+    execution,
+  );
+}
+
 function getChapterContextByPage(
   layout: Layout,
   sections: SectionMetadata[],
@@ -3690,10 +7981,51 @@ function getChapterContextByPage(
   return context;
 }
 
-function applyNumberingContextToLayout(layout: Layout, numberingCtx: NumberingContext): void {
-  const displayInfoByPage = new Map(numberingCtx.displayPages.map((page) => [page.physicalPage, page]));
-  for (const page of layout.pages) {
-    const displayInfo = displayInfoByPage.get(page.number);
+async function getChapterContextByPageCooperatively(
+  layout: Layout,
+  sections: SectionMetadata[],
+  blockById: ReadonlyMap<string, FlowBlock>,
+  cache: ChapterContextCache,
+  execution: LayoutExecutionControl,
+): Promise<Map<number, ChapterPageInfo> | undefined> {
+  if (!sectionsHaveChapterNumbering(sections)) {
+    return undefined;
+  }
+
+  const signature = await buildChapterContextSignatureCooperatively(layout, execution);
+  if (cache.signature === signature && cache.context) {
+    return cache.context;
+  }
+
+  const context = await buildChapterContextByPageCooperatively(layout, blockById, sections, execution);
+  cache.signature = signature;
+  cache.context = context;
+  return context;
+}
+
+function* applyNumberingContextToLayoutSteps(
+  layout: Layout,
+  numberingCtx: NumberingContext,
+  reuse?: IncrementalLayoutReuseSummary,
+  checkpointEveryBlocks: number | null = null,
+): Generator<LayoutExecutionCheckpoint, void, void> {
+  for (let pageIndex = 0; pageIndex < layout.pages.length; pageIndex += 1) {
+    if (checkpointEveryBlocks != null && pageIndex % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:page', index: pageIndex, total: layout.pages.length };
+    }
+    // Retained pages preserve their source-generation object/metadata. Their
+    // current physical/display numbering is applied by the localized resolved
+    // page materializer; mutating them here would corrupt the last-good state.
+    if (
+      (reuse?.checkpointPageIndex != null && pageIndex < reuse.checkpointPageIndex) ||
+      (reuse?.tailAdoption != null &&
+        pageIndex >= reuse.tailAdoption.startPageIndex &&
+        pageIndex < reuse.tailAdoption.endPageIndexExclusive)
+    ) {
+      continue;
+    }
+    const page = layout.pages[pageIndex]!;
+    const displayInfo = numberingCtx.displayPages[pageIndex];
     if (!displayInfo) {
       continue;
     }
@@ -3703,6 +8035,104 @@ function applyNumberingContextToLayout(layout: Layout, numberingCtx: NumberingCo
     page.pageNumberChapterText = displayInfo.chapterNumberText;
     page.pageNumberChapterSeparator = displayInfo.chapterSeparator;
   }
+}
+
+function applyNumberingContextToLayout(
+  layout: Layout,
+  numberingCtx: NumberingContext,
+  reuse?: IncrementalLayoutReuseSummary,
+): void {
+  drainNumberingSteps(applyNumberingContextToLayoutSteps(layout, numberingCtx, reuse));
+}
+
+function applyNumberingContextToLayoutCooperatively(
+  layout: Layout,
+  numberingCtx: NumberingContext,
+  reuse: IncrementalLayoutReuseSummary | undefined,
+  execution: LayoutExecutionControl,
+): Promise<void> {
+  return drainNumberingStepsCooperatively(
+    applyNumberingContextToLayoutSteps(
+      layout,
+      numberingCtx,
+      reuse,
+      Math.max(1, Math.floor(execution.checkpointEveryBlocks ?? 16)),
+    ),
+    execution,
+  );
+}
+
+function* applyLocalizedSectionNumberingSteps(
+  layout: Layout,
+  reuse: IncrementalLayoutReuseSummary,
+  sections: readonly SectionMetadata[],
+  checkpointEveryBlocks: number | null,
+): Generator<LayoutExecutionCheckpoint, void, void> {
+  const startPageIndex = reuse.checkpointPageIndex ?? 0;
+  const endPageIndexExclusive = reuse.tailAdoption?.startPageIndex ?? layout.pages.length;
+  const sectionByIndex = new Map<number, SectionMetadata>();
+  for (let sectionOrdinal = 0; sectionOrdinal < sections.length; sectionOrdinal += 1) {
+    if (checkpointEveryBlocks != null && sectionOrdinal % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:page', index: sectionOrdinal, total: sections.length };
+    }
+    const section = sections[sectionOrdinal]!;
+    sectionByIndex.set(section.sectionIndex, section);
+  }
+  let priorSectionIndex: number | null = null;
+  let sectionPageNumber = 0;
+  let displayNumber = 0;
+  for (let pageIndex = 0; pageIndex < endPageIndexExclusive; pageIndex += 1) {
+    if (checkpointEveryBlocks != null && pageIndex % checkpointEveryBlocks === 0) {
+      yield { phase: 'numbering-context:page', index: pageIndex, total: endPageIndexExclusive };
+    }
+    const page = layout.pages[pageIndex];
+    if (!page) continue;
+    const sectionIndex = page.sectionIndex ?? 0;
+    const numbering = sectionByIndex.get(sectionIndex)?.numbering;
+    const sectionStart = numbering?.start;
+    const pageFormat = numbering?.format ?? 'decimal';
+    sectionPageNumber = priorSectionIndex == null || sectionIndex !== priorSectionIndex ? 1 : sectionPageNumber + 1;
+    displayNumber =
+      priorSectionIndex == null
+        ? (sectionStart ?? 1)
+        : sectionIndex !== priorSectionIndex && sectionStart != null
+          ? sectionStart
+          : displayNumber + 1;
+    priorSectionIndex = sectionIndex;
+    if (pageIndex < startPageIndex) continue;
+    page.number = pageIndex + 1;
+    page.sectionPageNumber = sectionPageNumber;
+    page.numberText = formatSectionPageNumberText({ displayNumber, pageFormat });
+    page.displayNumber = displayNumber;
+    page.pageNumberFormat = pageFormat;
+    page.pageNumberChapterText = undefined;
+    page.pageNumberChapterSeparator = undefined;
+  }
+}
+
+function applyLocalizedSectionNumbering(
+  layout: Layout,
+  reuse: IncrementalLayoutReuseSummary,
+  sections: readonly SectionMetadata[],
+): void {
+  drainNumberingSteps(applyLocalizedSectionNumberingSteps(layout, reuse, sections, null));
+}
+
+function applyLocalizedSectionNumberingCooperatively(
+  layout: Layout,
+  reuse: IncrementalLayoutReuseSummary,
+  sections: readonly SectionMetadata[],
+  execution: LayoutExecutionControl,
+): Promise<void> {
+  return drainNumberingStepsCooperatively(
+    applyLocalizedSectionNumberingSteps(
+      layout,
+      reuse,
+      sections,
+      Math.max(1, Math.floor(execution.checkpointEveryBlocks ?? 16)),
+    ),
+    execution,
+  );
 }
 
 /**
@@ -3724,15 +8154,77 @@ function buildNumberingContext(
   const totalPages = layout.pages.length;
   const chapterInfoByPage = getChapterContextByPage(layout, sections, blockById, chapterContextCache);
   const sectionByIndex = new Map(sections.map((section) => [section.sectionIndex, section]));
-  const displayPages = computeDisplayPageNumber(layout.pages, sections, chapterInfoByPage).map((displayPage) => ({
-    ...displayPage,
-    pageFormat: sectionByIndex.get(displayPage.sectionIndex)?.numbering?.format ?? 'decimal',
-  }));
+  const displayPages = computeDisplayPageNumber(layout.pages, sections, chapterInfoByPage).map(
+    (displayPage, pageIndex) => ({
+      ...displayPage,
+      // An adopted source page can move to a different target index. Physical
+      // page identity belongs to the target layout array, not the retained
+      // Page.number value, which remains source-generation metadata until a
+      // mounted page is materialized.
+      physicalPage: pageIndex + 1,
+      pageFormat: sectionByIndex.get(displayPage.sectionIndex)?.numbering?.format ?? 'decimal',
+    }),
+  );
 
   return {
     totalPages,
     displayPages,
   };
+}
+
+async function buildNumberingContextCooperatively(
+  layout: Layout,
+  sections: SectionMetadata[],
+  blockById: ReadonlyMap<string, FlowBlock>,
+  chapterContextCache: ChapterContextCache,
+  execution: LayoutExecutionControl,
+): Promise<NumberingContext> {
+  const totalPages = layout.pages.length;
+  const chapterInfoByPage = await getChapterContextByPageCooperatively(
+    layout,
+    sections,
+    blockById,
+    chapterContextCache,
+    execution,
+  );
+  const checkpointEveryBlocks = Math.max(1, Math.floor(execution.checkpointEveryBlocks ?? 16));
+  const sectionByIndex = new Map<number, SectionMetadata>();
+  for (let sectionOrdinal = 0; sectionOrdinal < sections.length; sectionOrdinal += 1) {
+    if (sectionOrdinal % checkpointEveryBlocks === 0) {
+      await checkpointLayoutExecution(execution, {
+        phase: 'numbering-context:page',
+        index: sectionOrdinal,
+        total: sections.length,
+      });
+    }
+    const section = sections[sectionOrdinal]!;
+    sectionByIndex.set(section.sectionIndex, section);
+  }
+
+  const computedDisplayPages = await computeDisplayPageNumberCooperatively(
+    layout.pages,
+    sections,
+    chapterInfoByPage,
+    execution,
+  );
+  const displayPages: NumberingContext['displayPages'] = [];
+  for (let pageIndex = 0; pageIndex < computedDisplayPages.length; pageIndex += 1) {
+    if (pageIndex % checkpointEveryBlocks === 0) {
+      await checkpointLayoutExecution(execution, {
+        phase: 'numbering-context:page',
+        index: pageIndex,
+        total: computedDisplayPages.length,
+      });
+    }
+    const displayPage = computedDisplayPages[pageIndex]!;
+    displayPages.push({
+      ...displayPage,
+      physicalPage: pageIndex + 1,
+      pageFormat: sectionByIndex.get(displayPage.sectionIndex)?.numbering?.format ?? 'decimal',
+    });
+  }
+
+  return { totalPages, displayPages };
 }
 
 /**
@@ -3756,6 +8248,7 @@ async function remeasureAffectedBlocks(
   measureBlock: (block: FlowBlock, constraints: { maxWidth: number; maxHeight: number }) => Promise<Measure>,
   fontSignature: string,
   measureCache?: MeasureCache<Measure>,
+  execution?: LayoutExecutionControl,
 ): Promise<Measure[]> {
   const updatedMeasures: Measure[] = [...measures];
 
@@ -3765,6 +8258,10 @@ async function remeasureAffectedBlocks(
     // Only re-measure affected blocks
     if (!affectedBlockIds.has(block.id)) {
       continue;
+    }
+
+    if (execution) {
+      await checkpointLayoutExecution(execution, { phase: 'page-token:prepare', index: i, total: blocks.length });
     }
 
     try {
@@ -3781,6 +8278,7 @@ async function remeasureAffectedBlocks(
       const blockConstraints = perBlockConstraints[i];
       measureCache?.set(block, blockConstraints.maxWidth, blockConstraints.maxHeight, newMeasure, fontSignature);
     } catch (error) {
+      throwIfLayoutExecutionAborted(execution);
       // Error handling per plan: log warning, keep prior layout for block
       console.warn(`[incrementalLayout] Failed to re-measure block ${block.id} after token resolution:`, error);
       // Keep the old measure - don't update updatedMeasures[i]

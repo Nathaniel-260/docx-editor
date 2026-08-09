@@ -136,6 +136,24 @@ describe('resolveTableFrame', () => {
       } as TableAttrs);
       expect(result).toEqual({ x: 0, width: 300 });
     });
+
+    it('defaults bidiVisual tables to right alignment via the typed direction context', () => {
+      // v2-rtl-001: the v2 layout adapter carries inline w:bidiVisual through
+      // tableDirectionContext.visualDirection, which must activate the same RTL
+      // frame behavior as the legacy tableProperties.rightToLeft carrier.
+      const result = resolveTableFrame(0, 500, 300, {
+        tableDirectionContext: { visualDirection: 'rtl' },
+      } as TableAttrs);
+      expect(result).toEqual({ x: 200, width: 300 });
+    });
+
+    it('applies tblInd from the right edge for context-RTL tables without jc', () => {
+      const result = resolveTableFrame(0, 500, 300, {
+        tableIndent: { width: 40 },
+        tableDirectionContext: { visualDirection: 'rtl' },
+      } as TableAttrs);
+      expect(result).toEqual({ x: 160, width: 300 });
+    });
   });
 
   describe('with pct tableWidth', () => {
@@ -153,21 +171,6 @@ describe('resolveTableFrame', () => {
       } as TableAttrs);
       expect(result.width).toBe(750);
       expect(result.x).toBe(-125);
-    });
-
-    // SD-1513 overhang guard: a full-window (100% pct) table shifted left by a
-    // negative tblInd keeps its computed width, so it overhangs the LEFT margin
-    // only and ends short of the right margin (verified against Word; the old
-    // benchmark prediction of a right overhang was wrong).
-    it('shifts a full-window table left with negative indent, ending short of the right margin', () => {
-      const result = resolveTableFrame(0, 500, 480, {
-        tableWidth: { value: 5000, type: 'pct' },
-        tableIndent: { width: -24 },
-      } as TableAttrs);
-      expect(result.x).toBe(-24);
-      expect(result.width).toBe(524);
-      // right edge = x + width = 500, the column edge; the painted grid itself
-      // spans 500px starting at -24, so it ends 24px short of the right margin.
     });
   });
 });

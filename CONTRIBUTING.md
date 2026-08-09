@@ -1,376 +1,121 @@
 # Contributing to SuperDoc
 
-Thank you for your interest in contributing to SuperDoc! Whether you're fixing a bug, improving documentation, or adding a feature, we appreciate your help.
+Thanks for helping out. Bug reports, docs, examples, tests, and code are all
+welcome.
 
-## Table of Contents
+## Ways to contribute
 
-- [Ways to Contribute](#ways-to-contribute)
-- [Contributor License Agreement](#contributor-license-agreement)
-- [Architecture Overview](#architecture-overview)
-- [Contribution Areas](#contribution-areas)
-- [Your First PR](#your-first-pr)
-- [Development Setup](#development-setup)
-- [Pull Request Process](#pull-request-process)
-- [Release Process](#release-process)
-- [Style Guidelines](#style-guidelines)
-- [Community](#community)
+**Report a rendering bug.** Open a `.docx` in SuperDoc, compare it with
+Microsoft Word, and if they differ,
+[file an issue](https://github.com/superdoc/docx-editor/issues/new?template=bug-report.yml)
+with the file attached. A reproduction document is the single most useful thing
+you can send.
 
-## Ways to Contribute
+**Improve the docs.** They live in `apps/docs/` and ship to
+[docs.superdoc.dev](https://docs.superdoc.dev). Run `pnpm run dev:docs` to
+preview, and read `apps/docs/AUTHORING.md` before adding a page.
 
-Contributing isn't just about writing code. Here are several ways you can help:
+**Add an example.** Keep it runnable and focused on one documented outcome. All examples live in `examples/`.
 
-**Report bugs with reproduction files**
-Open a .docx in SuperDoc and compare it with Microsoft Word. If something looks different, [open an issue](https://github.com/superdoc/docx-editor/issues/new?template=bug-report.yml) with the file attached. Good bug reports with reproduction files are incredibly valuable.
+**Fix a bug or add a feature.** Start with
+[good first issues](https://github.com/superdoc/docx-editor/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+or [help wanted](https://github.com/superdoc/docx-editor/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+For anything large, open an issue first so we can agree on the approach before
+you write code.
 
-**Improve documentation**
-Our docs live in `apps/docs/` ([docs.superdoc.dev](https://docs.superdoc.dev)) and are built with Mintlify. Fix typos, add code examples, improve explanations, or write guides. Run `pnpm run dev:docs` to preview locally. Documentation PRs are always welcome and a great way to get started.
+## Prerequisites
 
-**Add examples and integrations**
-Create example projects showing SuperDoc with different frameworks (Next.js, Nuxt, Remix, etc.) in the `examples/` directory.
+- [Node.js](https://nodejs.org/) 22, pinned in `.nvmrc`
+- [pnpm](https://pnpm.io/) 10, pinned in `package.json#packageManager`
+  (`corepack enable` picks it up)
 
-**Add test coverage**
-Write unit tests or behavior tests for existing features. Better test coverage helps everyone.
+## Set up locally
 
-**Fix bugs and implement features**
-Check our [good first issues](https://github.com/superdoc/docx-editor/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) for approachable tasks, or [help wanted](https://github.com/superdoc/docx-editor/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) for meatier items.
+Fork the repository on GitHub, then:
 
-**Help the community**
-Answer questions on [Discord](https://discord.gg/wjMccuygvy).
-
-## Contributor License Agreement
-
-Before we can merge your first pull request, you'll need to agree to the SuperDoc [Contributor License Agreement](CLA.md) (CLA). It applies to any contribution to a SuperDoc repository, including code, documentation, and examples. You keep ownership of your work; the CLA gives SuperDoc the rights it needs to include, maintain, and distribute your contribution under the project's open source and commercial licenses. You only sign once, and it then covers every future contribution from the same GitHub account.
-
-**How to sign.** We're rolling out an automated GitHub CLA assistant that will post instructions on your first pull request. Review the agreement, then reply to the pull request with the acceptance phrase shown by the assistant. Until it's available, email [legal@superdoc.dev](mailto:legal@superdoc.dev) and we'll arrange a way for you to sign.
-
-**Contributing for your employer.** If your employer may own work you create, make sure you have permission to contribute, or ask your employer to sign a Corporate CLA with us. Contact [legal@superdoc.dev](mailto:legal@superdoc.dev) to arrange it. See Section 4 of the [CLA](CLA.md).
-
-## Architecture Overview
-
-SuperDoc is a document editing and rendering library for the web. Understanding its architecture will help you find the right place to make changes.
-
-### Rendering Pipeline
-
-SuperDoc uses its own rendering pipeline -- ProseMirror is NOT used for visual output:
-
-```
-DOCX File
-  → super-converter (parse OOXML into ProseMirror document)
-    → v1 layout-adapter (super-editor: convert PM nodes into FlowBlocks)
-      → layout-engine (paginate FlowBlocks into Layouts)
-        → DomPainter (render Layouts to DOM)
+```bash
+git clone https://github.com/<your-username>/docx-editor.git
+cd docx-editor
+pnpm install
+pnpm dev
 ```
 
-A hidden ProseMirror `Editor` instance manages document state and editing commands, but its DOM is never shown to the user. All visual rendering goes through DomPainter.
+`pnpm dev` gives you a live editor to try your changes in.
 
-The PM → FlowBlock adapter is owned by `super-editor`
-(`src/editors/v1/core/layout-adapter`), not by `layout-engine`. The layout
-engine packages consume `FlowBlock[]` and shared layout contracts only.
-
-### Project Structure
-
-```
-packages/
-  superdoc/              Main entry point (npm: superdoc)
-  react/                 React wrapper (@superdoc-dev/react)
-  super-editor/          ProseMirror editor core
-    src/editors/v1/
-      core/
-        super-converter/ DOCX import/export (OOXML ↔ ProseMirror)
-        layout-adapter/  ProseMirror → FlowBlock[] projection (v1-owned)
-      extensions/        Editing behaviors (bold, lists, tables, etc.)
-  layout-engine/         Layout & pagination pipeline
-    layout-engine/       Pagination algorithms
-    painters/dom/        DOM rendering (DomPainter)
-    style-engine/        OOXML style resolution & cascade
-    contracts/           Shared type definitions
-  ai/                    AI integration
-  collaboration-yjs/     Collaboration server
-shared/                  Internal utilities
-examples/                Framework integration examples
-tests/                   Public test suites and fixtures
-```
-
-### Where to Make Changes
+## Where to make changes
 
 | What you want to change | Where to look |
-|--------------------------|---------------|
-| How something looks (visual rendering) | `layout-engine/painters/dom/` |
-| Style resolution (fonts, colors, borders) | `layout-engine/style-engine/` |
-| Data flowing from editor to renderer | `super-editor/src/editors/v1/core/layout-adapter/` |
-| Editing behavior (keyboard, commands) | `super-editor/src/editors/v1/extensions/` |
-| DOCX import/export | `super-editor/src/editors/v1/core/super-converter/` |
-| React integration | `packages/react/` |
-| Main entry point (Vue) | `packages/superdoc/` |
+|---|---|
+| Visual rendering | `packages/layout-engine/painters/dom/` |
+| Style resolution (fonts, colors, borders) | `packages/layout-engine/style-engine/` |
+| Editing behavior (keyboard, commands) | v2 document runtime commands and adapters |
+| DOCX import and export | v2 document runtime import/export code |
+| Main entry point | `packages/superdoc/` |
+| React wrapper | `packages/react/` |
 
-### Key Design Principle
+Design note worth knowing before you touch import: the importer stores raw OOXML
+properties and the style engine resolves them at render time. Resolving styles
+during import bakes them into node attributes and loses the original document
+intent on export.
 
-**The importer stores raw OOXML properties. The style-engine resolves them at render time.**
-
-The converter (`super-converter/`) parses and stores only what is explicitly in the XML. The style-engine (`layout-engine/style-engine/`) handles all cascade logic (defaults -> table style -> conditional formatting -> inline overrides). Don't resolve styles during import -- it bakes them into node attributes and loses the original document intent on export.
-
-## Contribution Areas
-
-These are areas where community contributions are especially welcome. Check [issues labeled `good first issue`](https://github.com/superdoc/docx-editor/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) for specific tasks.
-
-| Area | Difficulty | Where to Look | What to Do |
-|------|-----------|---------------|------------|
-| Documentation | Easy | [docs.superdoc.dev](https://docs.superdoc.dev) | Fix gaps, add code examples, improve explanations |
-| Examples | Easy | `examples/` | Create framework integration examples |
-| Test coverage | Easy-Medium | `tests/` and package-local `*.test.*` files | Add tests for existing features |
-| Rendering parity | Medium | `layout-engine/painters/dom/` | Open a .docx in Word and SuperDoc, fix visual differences |
-| Browser compatibility | Medium | `super-editor/`, `layout-engine/` | Fix Firefox/Safari-specific bugs |
-| Copy/paste | Medium | `super-editor/src/editors/v1/extensions/` | Fix formatting loss when pasting from Word, Google Docs, browsers |
-| DOCX import coverage | Medium-Hard | `super-editor/src/editors/v1/core/super-converter/` | Support additional OOXML tags and elements |
-
-## Your First PR
-
-Here's a step-by-step walkthrough to make your first contribution:
-
-### 1. Find something to work on
-
-- Browse [good first issues](https://github.com/superdoc/docx-editor/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-- Or pick from the [contribution areas](#contribution-areas) above
-- Comment on the issue to let others know you're working on it
-
-### 2. Fork and set up
+## Test your change
 
 ```bash
-# Fork the repo on GitHub, then:
-git clone https://github.com/<your-username>/superdoc.git
-cd superdoc
-
-# Install dependencies (pnpm 9+ required)
-pnpm install
-
-# Start the dev server
-pnpm dev
-```
-
-The dev server gives you a live editor to test changes.
-
-### 3. Create a branch
-
-```bash
-git checkout -b fix/your-change-description
-# or: feat/your-change-description
-# or: docs/your-change-description
-```
-
-### 4. Find the relevant code
-
-Use the [architecture overview](#architecture-overview) and the "Where to Make Changes" table to locate the right files. When in doubt, search for keywords:
-
-```bash
-# Find files by name
-find packages/ -name "*.js" | xargs grep -l "your-keyword"
-
-# Search file contents
-grep -r "your-keyword" packages/ --include="*.js" -l
-```
-
-### 5. Make your change
-
-- Follow existing code patterns in the file you're editing
-- Keep changes focused -- one fix or feature per PR
-- Add or update tests for your changes
-
-### 6. Test locally
-
-```bash
-# Run the full test suite
-pnpm test
-
-# Run tests for a specific package
-pnpm run test:editor        # super-editor tests
-pnpm run test:superdoc      # superdoc package tests
-
-# Check formatting and linting
-pnpm run format:check
+pnpm test          # all packages
+pnpm test:superdoc # just the superdoc package
 pnpm run lint
-```
-
-### 7. Commit and push
-
-```bash
-git add <files>
-git commit -m "fix: describe your change"
-git push origin fix/your-change-description
-```
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/) for your commit message (see [Commit Messages](#commit-messages) below).
-
-### 8. Open a Pull Request
-
-Open a PR against the `main` branch. In the description:
-- Describe what you changed and why
-- Link to the related issue (e.g., `Closes #123`)
-- Include screenshots for visual changes
-- Add a test plan if applicable
-
-CI will run automatically. A maintainer will review your PR and provide feedback. On your first pull request you'll also need to sign the [Contributor License Agreement](#contributor-license-agreement) before it can be merged.
-
-## Development Setup
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) 18+
-- [pnpm](https://pnpm.io/) 9+ (`npm install -g pnpm`)
-
-### Quick Start
-
-```bash
-git clone https://github.com/<your-username>/superdoc.git
-cd superdoc
-pnpm install
-pnpm dev
-```
-
-### Useful Commands
-
-```bash
-pnpm dev          # Start dev server (from examples/)
-pnpm build        # Build all packages
-pnpm test         # Run all tests
-pnpm run lint     # Run ESLint
-pnpm run format   # Run Prettier
-```
-
-## Pull Request Process
-
-### Adding a public API
-
-Any change that grows the public surface ships with explicit assertions for the shape consumers will see. The gates below catch missing surface but **do not catch wrong-but-explicit types** — a misannotated signature can compile, pass the consumer matrix, and still break consumer TypeScript builds. Be deliberate about what you assert.
-
-Three kinds of public surface change, and what each requires:
-
-**A. New public method on `SuperDoc` / `DocumentApi` / a UI handle.** Add a consumer fixture under `tests/consumer-typecheck/src/` that asserts BOTH the parameter shape and the return shape. The pattern (see `search-match.ts` for a real example):
-
-```ts
-declare const sd: SuperDoc;
-const _paramOk: AssertEqual<Parameters<SuperDoc['myMethod']>[0], MyParam> = true;
-const _returnOk: AssertEqual<ReturnType<SuperDoc['myMethod']>, MyReturn> = true;
-sd.myMethod(realRuntimeValue); // exercises the call site
-```
-
-Why both: a migration narrowed `SuperDoc.search` from `string | RegExp` to `string` and slipped past every existing gate because the return-type fixture was there but the parameter-type fixture was not.
-
-**B. New event in `SuperDocEventMap` or new `Config.on*` callback.** Add a consumer fixture that asserts the payload type:
-
-```ts
-sd.on('my-event', (payload) => {
-  const _payloadOk: AssertEqual<typeof payload, MyEventPayload> = true;
-});
-// @ts-expect-error: unknown event names must be rejected
-sd.on('my-evnt', () => {});
-```
-
-When the event fires from SuperDoc itself (not bridged from upstream), also add a runtime test in `SuperDoc.test.js` that registers a handler and asserts the emitted payload matches. Types prove consumer usability; runtime tests prove the value the runtime actually emits. They are not the same gate.
-
-**C. New public export from `superdoc` (a new entry in `packages/superdoc/src/public/index.ts`, a new value re-exported from a public subpath, or a new subpath in `package.json` `exports`).** The facade source IS the contract (SD-3175 path-as-contract, finalized in SD-3212 PR C). Gates enforce consistency on every PR:
-
-- **`verify-public-facade-emit.cjs`** -- parses each `src/public/**` facade source file directly and asserts the emitted `.d.ts` matches. No `expectedNames` allowlist to update; adding a named export to the facade source is the only action needed.
-- **`snapshot.mjs --all --check`** -- locks the three snapshot families. `root` covers the four `package.json#exports` sources (`types.import`, `types.require`, `import`, `require`); `legacy` covers `superdoc/*` subpath resolved exports; `super-editor-package` covers `@superdoc/super-editor`'s `package.json#exports` keys. Drift fails CI; run `snapshot.mjs --family <name> --write` to regenerate one family after an intentional change.
-- **`check-root-classification-closure.mjs`** -- no `supported-root` or `legacy-root` export may reference an `internal-candidate` type in its declared public type. New exports require an entry in `tests/consumer-typecheck/snapshots/superdoc-root-classification.json`.
-- **`typecheck-matrix.mjs`** -- every typed public subpath has at least one matrix scenario. New subpath = new fixture under `tests/consumer-typecheck/src/` + corresponding matrix entry + inventory line in `docs/architecture/package-boundaries.md`.
-- **`check-all-public-types-fixture.mjs`** -- derives the expected type-only root export list from `superdoc-root-classification.json` and fails if `src/all-public-types.ts` is missing assertions or has stale ones.
-- **`src/all-public-types.ts`** -- exercised by the SD-2842 matrix scenarios to catch any-collapses on customer-facing types. New type-only root export = add `import { X } from 'superdoc';` plus `const _real_X: AssertNotAny<X> = true;`.
-
-The point of these gates is to keep customer TypeScript builds working. A new public surface that ships without an explicit fixture can collapse to `any`, narrow silently, or fail to resolve for consumers without the team noticing until upgrade.
-
-### Branch Naming
-
-- `feature/description` for new features
-- `fix/description` for bug fixes
-- `docs/description` for documentation changes
-- `perf/description` for performance improvements
-
-### Commit Messages
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-feat: add real-time cursor sharing
-
-- Implement cursor position tracking
-- Add websocket connection for updates
-
-Closes #123
-```
-
-Your commit type determines the version bump on release:
-
-| Commit Type | Version Bump | Example |
-|-------------|-------------|---------|
-| `fix:` | Patch (0.0.X) | `fix: resolve cursor positioning bug` |
-| `feat:` | Minor (0.X.0) | `feat: add PDF export functionality` |
-| `feat!:` or `BREAKING CHANGE:` | Major (X.0.0) | `feat!: redesign document API` |
-| `chore:`, `docs:`, `refactor:`, `test:` | No version change | `docs: update README` |
-
-### Automated Checks
-
-When you open a PR, the following checks run automatically:
-
-- Commit message validation
-- Code formatting (Prettier)
-- Linting (ESLint)
-- Unit tests
-- Visual regression tests (if UI changes)
-
-### Before Submitting
-
-- [ ] Changes are focused (one fix/feature per PR)
-- [ ] Tests added or updated
-- [ ] Test suite passes locally (`pnpm test`)
-- [ ] Code is formatted (`pnpm run format:check`)
-- [ ] Commit messages follow conventional commits
-- [ ] PR description links to related issue
-- [ ] If you added a public API: appropriate fixture from [Adding a public API](#adding-a-public-api) — public method (Parameters + ReturnType), public event/callback (payload type + runtime assertion where practical), or public export (the gate lists). `pnpm check:public` passes.
-
-## Release Process
-
-SuperDoc uses automated CI/CD with semantic-release. No manual version bumps are needed.
-
-- **`main` branch** -> Pre-release versions (`@next` tag on npm)
-- **`stable` branch** -> Stable versions (`@latest` tag on npm)
-
-Every merge to `main` publishes a pre-release automatically. Stable releases are promoted from `main` via a GitHub Actions workflow.
-
-## Style Guidelines
-
-- Use JavaScript with JSDoc type annotations for all new code
-- Follow the existing code style (enforced by ESLint and Prettier)
-- Use ES6+ features
-- Document public APIs using JSDoc
-- Keep lines under 100 characters
-
-```bash
-# Check formatting
-pnpm run format:check
-
-# Auto-fix formatting
 pnpm run format
-
-# Run linting
-pnpm run lint
-
-# Fix linting issues
-pnpm run lint:fix
 ```
 
-## Community
+Unit tests sit next to the source they cover. Test placement, fixture rules, and
+DOCX fixture privacy are documented in [`tests/README.md`](tests/README.md).
+Read the fixture privacy section before committing a `.docx`: fixtures are
+synthetic by default, and `pnpm check:docx-privacy` will fail on a document it
+cannot verify.
 
-- **[Discord](https://discord.gg/wjMccuygvy)** -- Chat with the team and other contributors
-- **[Docs](https://docs.superdoc.dev)** -- API reference and guides
+For rendering changes, run the unit suites and then compare the affected `.docx`
+side by side in Microsoft Word and SuperDoc. There is no pixel-diff gate.
 
-### Code of Conduct
+Full local CI is a separate, slower step and needs
+[Bun](https://bun.sh/) 1.3.13 on your PATH for the checks that parse TypeScript
+directly:
 
-This project and everyone participating in it are governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [support@superdoc.dev](mailto:support@superdoc.dev).
+```bash
+pnpm ci:local
+```
 
-### Recognition
+## Open a pull request
 
-We value every contribution. Community contributors are featured in our [README](https://github.com/superdoc/docx-editor#community-contributors) and recognized on Discord.
+Keep the PR focused on one fix or feature. Use
+[Conventional Commits](https://www.conventionalcommits.org/) for the commit
+message, since the release version is derived from it:
 
----
+| Prefix | Release |
+|---|---|
+| `fix:` | patch |
+| `feat:` | minor |
+| `feat!:` or `BREAKING CHANGE:` | major |
+| `chore:`, `docs:`, `refactor:`, `test:` | none |
 
-Questions? Join our [Discord](https://discord.gg/wjMccuygvy).
+A local Git hook checks the message format before the commit lands.
+
+Before you open the PR:
+
+- [ ] `pnpm test` passes
+- [ ] `pnpm run format:check` and `pnpm run lint` pass
+- [ ] Tests added or updated
+- [ ] The description says what changed and why, and links the issue
+- [ ] Screenshots for visual changes
+- [ ] If you grew the public API surface, you added a fixture under
+      `tests/consumer-typecheck/src/` asserting both the parameter and return
+      shapes, and `pnpm check:public` passes
+
+CI runs on your PR and a maintainer will review it.
+
+## Community and conduct
+
+- [Discord](https://discord.com/invite/b9UuaZRyaB) for questions and discussion
+- [Docs](https://docs.superdoc.dev) for the API reference and guides
+
+This project follows our [Code of Conduct](CODE_OF_CONDUCT.md). Report
+unacceptable behavior to [conduct@superdoc.dev](mailto:conduct@superdoc.dev).

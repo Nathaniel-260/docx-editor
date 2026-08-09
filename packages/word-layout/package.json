@@ -21,6 +21,7 @@
     "@superdoc/common": "workspace:*"
   },
   "devDependencies": {
-    "vitest": "catalog:"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

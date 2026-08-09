@@ -12,7 +12,7 @@
  *  - The neutral substrate works on fixtures that omit `pmStart`/`pmEnd`
  *    entirely.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import {
   LAYOUT_BOUNDARY_SCHEMA,
   buildLayoutSourceIdentityForFragment,

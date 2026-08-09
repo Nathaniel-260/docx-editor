@@ -1,124 +1,147 @@
 /**
- * SuperDoc public facade: ui entry.
+ * SuperDoc public facade: `superdoc/ui` entry.
  *
- * SD-3183 under SD-3178 (Phase 3 of SD-3175). Largest supported-surface
- * facade entry. Mirrors the named surface reachable via the `superdoc/ui`
- * subpath.
+ * v2-native browser-only UI controller. This entry exposes
+ * `createSuperDocUI`, the controller's slice/handle types, and the public
+ * Document API shapes the controller surfaces.
  *
- * Classification per SD-3147 is enforced by the public-surface metadata. The
- * facade includes both supported names and legacy/public-compat names; tier
- * distinction is documentation posture, not facade inclusion.
- *
- * Strategy: re-export through the narrow `@superdoc/super-editor/ui`
- * subpath rather than the broad `@superdoc/super-editor` root. SD-2803
- * created that subpath specifically so consumers of `superdoc/ui` do
- * not drag the editor root/main barrel: Vue components, the SuperDoc
- * app shell, and other top-level UI infrastructure. The bundle still
- * pulls SuperConverter, jszip, xml-js, and similar shared chunks
- * because the UI controller depends on them transitively; what the
- * narrow path avoids is the *app-shell* / root-barrel chunk.
+ * v2 NOTE: this is NOT the v1 re-export. `superdoc@2` removed the v1 editor
+ * package, so this facade routes through the local, self-contained v2 UI
+ * controller under `./ui/**`. The controller is a thin layer over the public
+ * v2 active-editor facade (`superdoc.activeEditor`), its read-only-guarded
+ * browser Document API (`activeEditor.doc`, async-capable in browser), and
+ * SuperDoc events — no v1 editor command/state/view/chain surface and no
+ * private v2 runtime packages are imported. SDK/headless document automation
+ * remains synchronous on its own surface.
  *
  * Rules for this file:
  *   - AIDEV-NOTE: Named exports only. No `export *`.
- *   - AIDEV-NOTE: Re-export source MUST stay `@superdoc/super-editor/ui`,
- *     NOT `@superdoc/super-editor`. Routing through the root barrel
- *     regresses the strategic UI bundle shape by pulling the app-shell
- *     chunk (Vue components, SuperDoc app, etc.). That's the
- *     regression of SD-2803. `packages/superdoc/scripts/audit-bundle.cjs`
- *     enforces this on the emitted `dist/public/ui.es.js` by rejecting
- *     side-effect imports of the root/main barrel chunks. It does NOT
- *     and cannot claim the bundle is shared-chunk-free: SuperConverter,
- *     jszip, and xml-js chunks are pulled by both `dist/ui.es.js` and
- *     `dist/public/ui.es.js` because the UI controller depends on them.
- *   - AIDEV-NOTE: The postbuild gate `verify-public-facade-emit.cjs` parses this file
- *     and verifies that the emitted declarations expose exactly these
- *     named exports. The verifier postbuild fails on drift.
- *   - This entry does not re-export `Editor` or `EditorCommands`, so
- *     the verifier skips the command-signature probe.
+ *   - AIDEV-NOTE: Re-export source MUST stay the local `./ui/**` v2-native
+ *     controller. Do NOT re-introduce the v1 editor UI subpath — that surface
+ *     was removed in `superdoc@2` and `check-private-core.cjs` forbids any v1
+ *     editor artifact in the emitted package.
+ *   - AIDEV-NOTE: `verify-public-facade-emit.cjs` parses this file and verifies
+ *     the emitted declarations expose exactly these named exports.
  */
-export {
-  BUILT_IN_COMMAND_IDS,
-  createSuperDocUI,
-  shallowEqual,
-} from '@superdoc/super-editor/ui';
+
+export { createSuperDocUI } from './ui/create-super-doc-ui.js';
+export { shallowEqual } from './ui/equality.js';
+export { BUILT_IN_COMMAND_IDS } from './ui/commands.js';
 
 export type {
+  // Reactive substrate
+  EqualityFn,
+  SelectorFn,
+  Subscribable,
+  // Controller
+  SuperDocUI,
+  BorrowedSuperDocUI,
+  SuperDocUIOptions,
+  SuperDocUIState,
+  SuperDocUIScope,
+  SuperDocLike,
+  SuperDocEditorLike,
+  // Command surface
   CommandHandle,
+  CommandState,
+  CommandExecutionResult,
+  WorkflowReceipt,
+  WorkflowActionResult,
+  WorkflowScrollResult,
+  SelectionRestoreResult,
+  SuperDocUIReason,
   CommandsHandle,
-  CommentAddress,
-  CommentAnchorCapture,
-  CommentInfo,
-  CommentsHandle,
-  CommentsListQuery,
-  CommentsListResult,
-  CommentsSlice,
-  ContentControlViewportAddress,
-  ContentControlsHandle,
-  ContentControlsSlice,
-  ContextMenuContribution,
   ContextMenuItem,
-  ContextMenuWhenInput,
+  // The argument a custom command receives. Exported so the callback can be
+  // extracted into a named function or stored in a typed variable; without it
+  // the only way to annotate one is to leave it inline and rely on contextual
+  // typing. `CustomCommandRegistration` names it in both `execute` and
+  // `getState`, so a consumer implementing that interface is required to name a
+  // type they could not import.
+  CustomCommandContext,
   CustomCommandHandle,
   CustomCommandHandleState,
   CustomCommandRegistration,
   CustomCommandRegistrationResult,
-  DocumentExportInput,
-  DocumentHandle,
-  DocumentSlice,
-  DynamicCommandHandle,
-  EntityAddress,
-  EqualityFn,
-  FontFamilyOption,
-  FontSizeOption,
-  FontsHandle,
-  FontsSlice,
   MetadataHandle,
-  Receipt,
-  ScrollIntoViewInput,
-  ScrollIntoViewOutput,
-  SelectionAnchorRectOptions,
-  SelectionCapture,
+  // Handles
   SelectionHandle,
-  SelectionInfo,
-  SelectionPoint,
-  SelectionRestoreResult,
-  SelectionSlice,
-  SelectionTarget,
-  SelectorFn,
-  Subscribable,
-  SuperDocEditorLike,
-  SuperDocLike,
-  SuperDocUI,
-  SuperDocUIOptions,
-  SuperDocUIScope,
-  SuperDocUIState,
-  TextAddress,
-  TextSegment,
-  TextTarget,
-  ToolbarCommandHandleState,
   ToolbarHandle,
+  CommentsHandle,
+  TrackChangesHandle,
+  ContentControlsHandle,
+  ContentControlFocusResult,
+  FontsHandle,
+  ZoomHandle,
+  DocumentHandle,
+  ViewportHandle,
+  StylesHandle,
+  ActiveParagraphStyle,
+  // Slices
+  SliceStatus,
+  SelectionSlice,
+  SelectionCapture,
+  CommentAnchorCapture,
   ToolbarSnapshotSlice,
+  CommentsSlice,
+  TrackChangesSlice,
+  ContentControlsSlice,
+  FontsSlice,
+  ZoomSlice,
+  DocumentSlice,
+  StylesSlice,
+  // Style catalogue shapes (re-surfaced from @superdoc/document-api)
+  StyleCatalogView,
+  StyleCatalogItemType,
+  StyleCatalogFilterType,
+  StyleProvenance,
+  StyleCatalogItemVisibility,
+  StyleCatalogItemUsage,
+  StyleCatalogItemPreview,
+  StyleCatalogItem,
+  StyleCatalogDefaults,
+  StyleCatalogDiagnostic,
+  StyleCatalogSourceStatus,
+  StylesGetCatalogInput,
+  StylesGetCatalogResult,
+  // Item / option shapes
+  CommentInfo,
+  CommentsListQuery,
   TrackChangeInfo,
   TrackChangePointHit,
-  TrackChangesHandle,
   TrackChangesItem,
-  TrackChangesListResult,
-  TrackChangesSlice,
+  FontFamilyOption,
+  FontSizeOption,
+  // Addresses
+  CommentAddress,
   TrackedChangeAddress,
-  UIToolbarCommandState,
-  ViewportContext,
-  ViewportContextAtInput,
+  ContentControlViewportAddress,
   ViewportEntityAddress,
-  ViewportEntityAtInput,
   ViewportEntityHit,
-  ViewportGetRectInput,
-  ViewportHandle,
-  ViewportPositionAtInput,
-  ViewportPositionHit,
+  ViewportContext,
+  // Viewport geometry
   ViewportRect,
+  ViewportGetRectInput,
   ViewportRectResult,
-  ZoomHandle,
-  ZoomMode,
-  ZoomSlice,
-  ZoomViewportMetrics,
-} from '@superdoc/super-editor/ui';
+  // Re-surfaced public Document API shapes. `BrowserDocumentApi` is what the
+  // controller hands back on `CustomCommandContext.doc`, so a consumer writing
+  // a custom command needs to be able to name it. `PartialBrowserDocumentApi`
+  // is the input side: what a duck-typed host may supply as `activeEditor.doc`.
+  // `DocumentApi` is the synchronous SDK counterpart.
+  BrowserDocumentApi,
+  PartialBrowserDocumentApi,
+  DocumentApi,
+  Receipt,
+  SelectionInfo,
+  SelectionTarget,
+  SelectionPoint,
+  TextTarget,
+  TextAddress,
+  ScrollIntoViewInput,
+  ScrollIntoViewOutput,
+  EntityAddress,
+  CommentsListResult,
+  TrackChangesListResult,
+  ContentControlsListResult,
+  ContentControlInfo,
+} from './ui/types.js';

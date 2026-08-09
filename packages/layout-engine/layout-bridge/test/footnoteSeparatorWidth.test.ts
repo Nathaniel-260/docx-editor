@@ -6,7 +6,7 @@
  * The default-content separator (no imported content overrides) renders at ~half column.
  * The continuation separator renders at full column.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure } from '@superdoc/contracts';
 import { incrementalLayout } from '../src/incrementalLayout';
 

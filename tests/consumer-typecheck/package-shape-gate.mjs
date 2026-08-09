@@ -74,12 +74,14 @@ function hasSourceCondition(value) {
 }
 
 function getCjsEntrypoints(exportsMap) {
-  return Object.entries(exportsMap).flatMap(([entrypoint, value]) => {
-    if (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'require')) {
-      return [entrypoint];
-    }
+  const hasRequireCondition = (value) => {
+    if (!value || typeof value !== 'object') return false;
+    if (Object.prototype.hasOwnProperty.call(value, 'require')) return true;
+    return Object.values(value).some(hasRequireCondition);
+  };
 
-    return [];
+  return Object.entries(exportsMap).flatMap(([entrypoint, value]) => {
+    return hasRequireCondition(value) ? [entrypoint] : [];
   });
 }
 

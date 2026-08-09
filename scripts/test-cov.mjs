@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /*
- * Runs Vitest coverage across the whole monorepo via Vitest workspace.
+ * Runs coverage across the whole monorepo through Vite+ (`vp test run`).
  * Usage: npm run test:cov -- [path/glob or flags]
  *
  * Notes:
- * - Aggregates coverage for core packages: super-editor, superdoc, and ai.
+ * - Aggregates coverage for the superdoc package.
  * - Accepts any Vitest CLI flags and test path globs relative to repo root.
  */
 import { spawn } from 'child_process';
@@ -13,11 +13,11 @@ import fs from 'fs';
 
 const repoRoot = process.cwd();
 
-const vitestBin = path.resolve(
+const vpBin = path.resolve(
   repoRoot,
   'node_modules',
   '.bin',
-  process.platform === 'win32' ? 'vitest.cmd' : 'vitest'
+  process.platform === 'win32' ? 'vp.cmd' : 'vp'
 );
 
 // Pass through any user-provided arguments unchanged
@@ -48,9 +48,9 @@ const defaultCoverageArgs = [
   ...coverageExcludePatterns.map((pattern) => `--coverage.exclude=${pattern}`),
 ];
 
-const vitestArgs = ['run', ...defaultCoverageArgs, ...userArgs];
+const vpArgs = ['test', 'run', ...defaultCoverageArgs, ...userArgs];
 
-const child = spawn(vitestBin, vitestArgs, {
+const child = spawn(vpBin, vpArgs, {
   stdio: 'inherit',
   env: process.env,
 });
@@ -64,9 +64,7 @@ child.on('close', (code) => {
         const data = JSON.parse(raw);
 
         const normalize = (p) => p.replaceAll('\\\\', '/');
-        const editorRootAbs = normalize(path.join(repoRoot, 'packages', 'super-editor')) + '/';
         const superdocRootAbs = normalize(path.join(repoRoot, 'packages', 'superdoc')) + '/';
-        const aiRootAbs = normalize(path.join(repoRoot, 'packages', 'ai')) + '/';
 
         function getTotals(obj) {
           const s = obj.statements || { total: 0, covered: 0 };
@@ -121,20 +119,10 @@ child.on('close', (code) => {
           };
         })();
 
-        const superEditor = aggForPackage({
-          absPrefix: editorRootAbs,
-          relSegment: '/packages/super-editor/',
-          relPrefix: 'packages/super-editor/',
-        });
         const superDoc = aggForPackage({
           absPrefix: superdocRootAbs,
           relSegment: '/packages/superdoc/',
           relPrefix: 'packages/superdoc/',
-        });
-        const aiPackage = aggForPackage({
-          absPrefix: aiRootAbs,
-          relSegment: '/packages/ai/',
-          relPrefix: 'packages/ai/',
         });
 
         const fmt = (n) => `${n.toFixed(1)} %`;
@@ -144,20 +132,11 @@ child.on('close', (code) => {
         console.log(`🔧 Functions: ${fmt(globalTotals.functions)}`);
         console.log(`📏 Lines: ${fmt(globalTotals.lines)}`);
 
-        console.log('\nsuper-editor package:');
-        console.log(`▌📄 Statements: ${fmt(superEditor.statements)}`);
-        console.log(`▌🔧 Functions: ${fmt(superEditor.functions)}`);
-        console.log(`▌📏 Lines: ${fmt(superEditor.lines)}`);
-
         console.log('\nsuperdoc package:');
         console.log(`▌📄 Statements: ${fmt(superDoc.statements)}`);
         console.log(`▌🔧 Functions: ${fmt(superDoc.functions)}`);
         console.log(`▌📏 Lines: ${fmt(superDoc.lines)}`);
 
-        console.log('\nai package:');
-        console.log(`▌📄 Statements: ${fmt(aiPackage.statements)}`);
-        console.log(`▌🔧 Functions: ${fmt(aiPackage.functions)}`);
-        console.log(`▌📏 Lines: ${fmt(aiPackage.lines)}`);
       }
     }
   } catch {}

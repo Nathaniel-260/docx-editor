@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-import type { SuperDoc, Editor, Transaction } from 'superdoc';
+import type { SuperDoc } from 'superdoc';
 
 /**
  * Types for @superdoc-dev/react
@@ -17,6 +17,9 @@ type SuperDocConstructorConfig = ConstructorParameters<typeof SuperDoc>[0];
 
 /** SuperDoc instance type - from superdoc package */
 export type SuperDocInstance = InstanceType<typeof SuperDoc>;
+
+type SuperDocActiveEditor = NonNullable<SuperDocInstance['activeEditor']>;
+type SuperDocActiveEditorDoc = SuperDocActiveEditor extends { doc?: infer T } ? T : never;
 
 /** Document mode - extracted from Config.documentMode */
 export type DocumentMode = NonNullable<SuperDocConstructorConfig['documentMode']>;
@@ -37,53 +40,42 @@ export type SuperDocConfig = SuperDocConstructorConfig;
 // Callback Event Types
 // =============================================================================
 
-// Re-export Editor type from superdoc
-export type { Editor } from 'superdoc';
+/**
+ * Runtime editor facade reported by `superdoc@2` callback events.
+ *
+ * v2 no longer exposes the v1 ProseMirror/Tiptap `Editor` type. Consumers that
+ * need document operations should use the SuperDoc instance and Document API;
+ * callback editor values are intentionally structural runtime evidence.
+ */
+export interface SuperDocRuntimeEditor {
+  editorVersion?: 2;
+  /**
+   * The public, read-only-guarded browser Document API facade for the active
+   * editor in inline v2 mode (`editor.doc`). Derived from the `superdoc`
+   * instance type so this wrapper does not need its own Document API package
+   * dependency.
+   */
+  doc?: SuperDocActiveEditorDoc;
+  [key: string]: unknown;
+}
+
+/** Transaction-like payload emitted by the runtime. v2 does not expose a ProseMirror transaction type. */
+export type SuperDocRuntimeTransaction = unknown;
 
 /** Event passed to onReady callback */
-export interface SuperDocReadyEvent {
-  superdoc: SuperDocInstance;
-}
+export type SuperDocReadyEvent = Parameters<NonNullable<SuperDocConfig['onReady']>>[0];
 
 /** Event passed to onEditorCreate callback */
-export interface SuperDocEditorCreateEvent {
-  editor: Editor;
-}
+export type SuperDocEditorCreateEvent = Parameters<NonNullable<SuperDocConfig['onEditorCreate']>>[0];
 
 /** Surface where an editor event originated. */
 export type EditorSurface = 'body' | 'header' | 'footer';
 
 /** Event passed to onEditorUpdate callback. Mirrors superdoc's EditorUpdateEvent. */
-export interface SuperDocEditorUpdateEvent {
-  /** The primary editor associated with the update. For header/footer edits, this is the main body editor. */
-  editor: Editor;
-  /** The editor instance that emitted the update. For body edits, this matches `editor`. */
-  sourceEditor: Editor;
-  /** The surface where the edit originated. */
-  surface: EditorSurface;
-  /** Relationship ID for header/footer edits. */
-  headerId?: string | null;
-  /** Header/footer variant (`default`, `first`, `even`, `odd`) when available. */
-  sectionType?: string | null;
-}
+export type SuperDocEditorUpdateEvent = Parameters<NonNullable<SuperDocConfig['onEditorUpdate']>>[0];
 
 /** Event passed to onTransaction callback. Mirrors superdoc's EditorTransactionEvent. */
-export interface SuperDocTransactionEvent {
-  /** The primary editor associated with the transaction. For header/footer edits, this is the main body editor. */
-  editor: Editor;
-  /** The editor instance that emitted the transaction. For body edits, this matches `editor`. */
-  sourceEditor: Editor;
-  /** The ProseMirror transaction emitted by the source editor. */
-  transaction: Transaction;
-  /** Time spent applying the transaction, in milliseconds. */
-  duration?: number;
-  /** The surface where the transaction originated. */
-  surface: EditorSurface;
-  /** Relationship ID for header/footer edits. */
-  headerId?: string | null;
-  /** Header/footer variant (`default`, `first`, `even`, `odd`) when available. */
-  sectionType?: string | null;
-}
+export type SuperDocTransactionEvent = Parameters<NonNullable<SuperDocConfig['onTransaction']>>[0];
 
 /**
  * Event passed to onContentError callback. Re-derived from the core
@@ -149,6 +141,11 @@ type ExplicitCallbackProps =
   | 'onZoomChange'
   | 'onViewportChange';
 
+// V2 branch: there is no `editorVersion` / `editorIntegration` React prop.
+// `@superdoc-dev/react` wraps `superdoc@2`, which always runs the DOCX Engine
+// editor. Customer runtime selection was removed, so these props no longer
+// exist on the public component surface.
+
 /**
  * Explicitly typed callback props to ensure proper TypeScript inference.
  * These override any loosely-typed callbacks from SuperDocConfig.
@@ -192,7 +189,16 @@ interface ReactProps {
   /** Render function for loading state */
   renderLoading?: () => ReactNode;
 
-  /** Hide the toolbar container. When true, no toolbar is rendered. @default false */
+  /**
+   * Hide the toolbar container. When true, no toolbar is rendered.
+   *
+   * Prefer `ui.toolbar: false`, which says this in the core configuration and
+   * applies to every framework. `ui: false` also hides the toolbar, but it
+   * turns off every built-in surface — comments, context menu, and the rest —
+   * so reach for it only when the application owns the whole interface.
+   *
+   * This prop is the older spelling and still wins when set. @default false
+   */
   hideToolbar?: boolean;
 
   /** Enable contained mode for fixed-height container embedding. When true, SuperDoc
@@ -215,7 +221,8 @@ interface ReactProps {
  * Callback props are explicitly typed to ensure proper TypeScript inference.
  */
 export interface SuperDocEditorProps
-  extends Omit<SuperDocConfig, InternalProps | OptionalInReact | ExplicitCallbackProps>,
+  extends
+    Omit<SuperDocConfig, InternalProps | OptionalInReact | ExplicitCallbackProps>,
     Partial<Pick<SuperDocConfig, OptionalInReact>>,
     CallbackProps,
     ReactProps {}

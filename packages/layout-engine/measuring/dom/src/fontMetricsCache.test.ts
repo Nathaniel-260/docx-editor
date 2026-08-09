@@ -3,8 +3,14 @@
  * Verifies that actual Canvas TextMetrics are used instead of hardcoded approximations.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { getFontMetrics, clearFontMetricsCache, getFontMetricsCacheSize } from './fontMetricsCache';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
+import {
+  getFontMetrics,
+  clearFontMetricsCache,
+  getFontMetricsCacheSize,
+  getCalibratedBodyEmptyLine,
+  getCalibratedNaturalSingleLine,
+} from './fontMetricsCache';
 
 describe('fontMetricsCache', () => {
   // Create a canvas context for testing
@@ -20,6 +26,23 @@ describe('fontMetricsCache', () => {
     deterministicFamily: 'Noto Sans',
     fallbackStack: ['Noto Sans', 'Arial', 'sans-serif'],
   };
+
+  it('uses Word-native natural-line calibration for evidenced fonts', () => {
+    expect(getCalibratedNaturalSingleLine('Aptos, sans-serif', 16)).toBeCloseTo(19.584, 3);
+    expect(getCalibratedNaturalSingleLine('"Helvetica", sans-serif', 16)).toBeCloseTo(19.2, 3);
+    // SD-4125 marker-font mutations: 11pt Symbol resolves to a 13.44pt
+    // first-line box (17.92 CSS px).
+    expect(getCalibratedNaturalSingleLine('Symbol, serif', 44 / 3)).toBeCloseTo(17.92, 3);
+    // SD-1331 Word PDF: consecutive 11pt Nunito Sans lines start 15.12pt
+    // apart (20.16 CSS px), including regular and bold paragraphs.
+    expect(getCalibratedNaturalSingleLine('Nunito Sans, sans-serif', 44 / 3)).toBeCloseTo(20.16, 3);
+    expect(getCalibratedNaturalSingleLine('Unknown Font', 16)).toBeUndefined();
+  });
+
+  it('uses the Word mutation-derived empty body-line calibration for Arial and its physical substitute', () => {
+    expect(getCalibratedBodyEmptyLine('Arial, sans-serif', 16)).toBeCloseTo(18.4, 3);
+    expect(getCalibratedBodyEmptyLine('Liberation Sans, sans-serif', 16)).toBeCloseTo(18.4, 3);
+  });
 
   describe('getFontMetrics', () => {
     it('returns positive ascent and descent values', () => {

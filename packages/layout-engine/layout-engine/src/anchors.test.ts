@@ -19,6 +19,20 @@ import type {
 
 describe('anchors', () => {
   describe('isPageRelativeAnchor', () => {
+    it('treats simple positioning as page-relative regardless of positionV', () => {
+      const block: ImageBlock = {
+        kind: 'image',
+        id: 'img-simple',
+        src: 'test.png',
+        anchor: {
+          isAnchored: true,
+          simplePos: { x: 12, y: 34 },
+          vRelativeFrom: 'paragraph',
+        },
+      };
+      expect(isPageRelativeAnchor(block)).toBe(true);
+    });
+
     it('should return true for vRelativeFrom="page"', () => {
       const block: ImageBlock = {
         kind: 'image',
@@ -655,29 +669,37 @@ describe('anchors', () => {
       expect(anchorsForPara0?.[0].block.id).toBe('drawing-1');
     });
 
-    it('prefers explicit anchorParagraphId for anchored drawings', () => {
+    it('should fall back from skipped section marker anchor paragraphs to the nearest renderable paragraph', () => {
       const blocks: FlowBlock[] = [
         {
           kind: 'paragraph',
-          id: 'nearest-para',
-          runs: [],
+          id: 'visible-para',
+          runs: [{ kind: 'text', text: 'Visible anchor text' }],
         },
         {
           kind: 'drawing',
-          id: 'drawing-anchored',
+          id: 'shape-group-1',
           drawingKind: 'shapeGroup',
-          geometry: { width: 60, height: 30, rotation: 0 },
+          geometry: { width: 726, height: 2 },
           anchor: {
             isAnchored: true,
+            hRelativeFrom: 'column',
             vRelativeFrom: 'paragraph',
-            offsetV: 32,
+            offsetH: 7,
+            offsetV: 25,
           },
-          attrs: { anchorParagraphId: 'target-para' },
+          attrs: { anchorParagraphId: 'section-marker' },
         } as DrawingBlock,
         {
           kind: 'paragraph',
-          id: 'target-para',
-          runs: [],
+          id: 'section-marker',
+          runs: [{ kind: 'text', text: '' }],
+          attrs: { sectPrMarker: true },
+        },
+        {
+          kind: 'sectionBreak',
+          id: 'section-break',
+          type: 'nextPage',
         },
       ];
       const measures: Measure[] = [
@@ -688,20 +710,28 @@ describe('anchors', () => {
         },
         {
           kind: 'drawing',
-          width: 60,
-          height: 30,
+          drawingKind: 'shapeGroup',
+          width: 726,
+          height: 2,
+          geometry: { width: 726, height: 2 },
+          scale: 1,
         } as DrawingMeasure,
         {
           kind: 'paragraph',
           lines: [],
           totalHeight: 0,
         },
+        {
+          kind: 'sectionBreak',
+        },
       ];
 
       const result = collectAnchoredDrawings(blocks, measures);
-      expect(result.has(0)).toBe(false);
-      expect(result.has(2)).toBe(true);
-      expect(result.get(2)?.[0].block.id).toBe('drawing-anchored');
+
+      expect(result.size).toBe(1);
+      expect(result.has(0)).toBe(true);
+      expect(result.has(2)).toBe(false);
+      expect(result.get(0)?.[0]?.block.id).toBe('shape-group-1');
     });
 
     it('should return empty map when no paragraphs exist', () => {
@@ -902,7 +932,7 @@ describe('anchors', () => {
       expect(result.byParagraph.get(2)?.[0].block.id).toBe('field-1');
     });
 
-    it('walks back to a taller paragraph when tblpY exceeds the immediate predecessor', () => {
+    it('falls back to the preceding regular paragraph when no following paragraph exists', () => {
       const blocks: FlowBlock[] = [
         { kind: 'paragraph', id: 'info', runs: [{ text: 'Long body copy.' }] },
         makeFloatingTable('field-1', 3.8),
@@ -919,7 +949,9 @@ describe('anchors', () => {
       ];
 
       const result = collectAnchoredTables(blocks, measures);
-      expect(result.byParagraph.get(0)?.[0].block.id).toBe('field-2');
+      const anchored = result.byParagraph.get(3)?.[0];
+      expect(anchored?.block.id).toBe('field-2');
+      expect(anchored?.layoutOffsetV).toBe(56);
     });
 
     it('anchors a table after a spacer paragraph to the following text paragraph', () => {
@@ -944,7 +976,7 @@ describe('anchors', () => {
       expect(result.byParagraph.get(2)?.[0].block.id).toBe('wrap-table');
     });
 
-    it('does not forward to a trailing empty paragraph when tables sit between empty spacers', () => {
+    it('anchors multiple tables to a trailing empty paragraph', () => {
       const blocks: FlowBlock[] = [
         { kind: 'paragraph', id: 'before', runs: [] },
         makeFloatingTable('table-a', 0.07),
@@ -959,11 +991,10 @@ describe('anchors', () => {
       ];
 
       const result = collectAnchoredTables(blocks, measures);
-      expect(result.byParagraph.get(0)?.map((entry) => entry.block.id)).toEqual(['table-a', 'table-b']);
-      expect(result.byParagraph.has(3)).toBe(false);
+      expect(result.byParagraph.get(3)?.map((entry) => entry.block.id)).toEqual(['table-a', 'table-b']);
     });
 
-    it('anchors a large-offset table to a forward checkbox line in the next question', () => {
+    it('anchors a large-offset table to the immediately following heading', () => {
       const blocks: FlowBlock[] = [
         { kind: 'paragraph', id: 'info', runs: [{ text: 'Long body copy.' }] },
         makeFloatingTable('field-1', 3.8),
@@ -984,9 +1015,9 @@ describe('anchors', () => {
       ];
 
       const result = collectAnchoredTables(blocks, measures);
-      const anchored = result.byParagraph.get(6)?.[0];
+      const anchored = result.byParagraph.get(5)?.[0];
       expect(anchored?.block.id).toBe('field-2');
-      expect(anchored?.layoutOffsetV).toBe(3);
+      expect(anchored?.layoutOffsetV).toBe(56);
       expect(anchored?.lineScopedOnAnchor).toBe(false);
     });
   });

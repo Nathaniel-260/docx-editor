@@ -152,8 +152,10 @@
   --sd-ui-comments-body-text: var(--sd-ui-text);
   --sd-ui-comments-body-size: var(--sd-comment-body-size, var(--sd-font-size-400));
   --sd-ui-comments-resolved-text: var(--sd-color-green-500);
-  --sd-ui-comments-insert-text: var(--sd-comment-tc-insert-color, var(--sd-color-green-500));
+  --sd-ui-comments-insert-text: var(--sd-comment-tc-insert-color, #1f6feb);
   --sd-ui-comments-delete-text: var(--sd-comment-tc-delete-color, var(--sd-color-rose-500));
+  --sd-ui-comments-move-to-text: var(--sd-comment-tc-move-to-color, var(--sd-color-green-500));
+  --sd-ui-comments-move-from-text: var(--sd-comment-tc-move-from-color, var(--sd-color-green-500));
   --sd-ui-comments-dropdown-border: var(--sd-ui-border);
   --sd-ui-comments-dropdown-bg: var(--sd-ui-bg);
   --sd-ui-comments-dropdown-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
@@ -182,8 +184,8 @@
   --sd-comments-selection-background: #1354ff55;
 
   /* Styles: tracked changes — old names honored via fallback */
-  --sd-tracked-changes-insert-background: var(--sd-track-insert-bg, #399c7222);
-  --sd-tracked-changes-insert-border: var(--sd-track-insert-border, #00853d);
+  --sd-tracked-changes-insert-background: var(--sd-track-insert-bg, #1f6feb22);
+  --sd-tracked-changes-insert-border: var(--sd-track-insert-border, #1f6feb);
   --sd-tracked-changes-insert-border-width: 1px;
   --sd-tracked-changes-insert-text: currentColor;
   --sd-tracked-changes-insert-decoration-line: none;
@@ -195,9 +197,42 @@
   --sd-tracked-changes-delete-text: currentColor;
   --sd-tracked-changes-delete-decoration-thickness: 2px;
   --sd-tracked-changes-format-border: var(--sd-track-format-border, gold);
-  --sd-tracked-changes-insert-background-focused: #399c7244;
+  --sd-tracked-changes-move-to-border: var(--sd-tracked-changes-semantic-color, #00853d);
+  --sd-tracked-changes-move-to-background: var(--sd-tracked-changes-semantic-background, #00853d22);
+  --sd-tracked-changes-move-to-background-focused: var(--sd-tracked-changes-semantic-background-focused, #00853d44);
+  --sd-tracked-changes-move-to-text: var(--sd-tracked-changes-semantic-color, #00853d);
+  --sd-tracked-changes-move-from-border: var(--sd-tracked-changes-semantic-color, #00853d);
+  --sd-tracked-changes-move-from-background: var(--sd-tracked-changes-semantic-background, #00853d22);
+  --sd-tracked-changes-move-from-background-focused: var(--sd-tracked-changes-semantic-background-focused, #00853d44);
+  --sd-tracked-changes-move-from-text: var(--sd-tracked-changes-semantic-color, #00853d);
+  --sd-tracked-changes-insert-background-focused: #1f6feb44;
   --sd-tracked-changes-delete-background-focused: #cb0e4744;
   --sd-tracked-changes-format-background-focused: #ffd70033;
+
+  /* Styles: tracked table-structure changes (whole-table / table-row
+     insertion/deletion, table split). These categories are CSS-themed ONLY —
+     they are not part of modules.trackChanges.semanticColors. Override these
+     variables to recolor them. */
+  --sd-tracked-changes-table-insertion-border: #1f6feb;
+  --sd-tracked-changes-table-insertion-background: #1f6feb22;
+  --sd-tracked-changes-table-insertion-background-focused: #1f6feb44;
+  --sd-tracked-changes-table-insertion-text: currentColor;
+  --sd-tracked-changes-table-deletion-border: #cb0e47;
+  --sd-tracked-changes-table-deletion-background: #cb0e4722;
+  --sd-tracked-changes-table-deletion-background-focused: #cb0e4744;
+  --sd-tracked-changes-table-deletion-text: #cb0e47;
+  --sd-tracked-changes-table-row-insertion-border: #1f6feb;
+  --sd-tracked-changes-table-row-insertion-background: #1f6feb22;
+  --sd-tracked-changes-table-row-insertion-background-focused: #1f6feb44;
+  --sd-tracked-changes-table-row-insertion-text: currentColor;
+  --sd-tracked-changes-table-row-deletion-border: #cb0e47;
+  --sd-tracked-changes-table-row-deletion-background: #cb0e4722;
+  --sd-tracked-changes-table-row-deletion-background-focused: #cb0e4744;
+  --sd-tracked-changes-table-row-deletion-text: #cb0e47;
+  --sd-tracked-changes-table-split-border: #bc4c00;
+  --sd-tracked-changes-table-split-background: #bc4c0022;
+  --sd-tracked-changes-table-split-background-focused: #bc4c0044;
+  --sd-tracked-changes-table-split-text: #bc4c00;
 
   /* Styles: content controls (SDT) — blue accent, intentionally standalone.
      These theme the BUILT-IN chrome (modules.contentControls.chrome: 'default'). */
@@ -244,32 +279,33 @@
   --sd-ui-floating-edge-offset: 16px;
 
   /* UI: find/replace surface */
-  --sd-ui-find-replace-gap: 8px;
-  --sd-ui-find-replace-input-height: 30px;
+  --sd-ui-find-replace-gap: 6px;
+  --sd-ui-find-replace-input-height: 32px;
   --sd-ui-find-replace-input-padding: 4px 8px;
   --sd-ui-find-replace-input-font-size: var(--sd-ui-font-size-400, 14px);
   --sd-ui-find-replace-input-bg: var(--sd-ui-surface-bg, #fff);
   --sd-ui-find-replace-input-border: var(--sd-ui-border);
   --sd-ui-find-replace-input-focus-border: var(--sd-ui-action);
-  --sd-ui-find-replace-input-radius: 4px;
+  --sd-ui-find-replace-input-radius: 6px;
   --sd-ui-find-replace-count-color: var(--sd-ui-text-muted, #6b7280);
-  --sd-ui-find-replace-count-font-size: var(--sd-ui-font-size-300, 13px);
+  --sd-ui-find-replace-count-font-size: 12px;
   --sd-ui-find-replace-btn-size: 28px;
-  --sd-ui-find-replace-btn-radius: 4px;
+  --sd-ui-find-replace-btn-radius: 6px;
   --sd-ui-find-replace-btn-hover-bg: var(--sd-ui-hover-bg, rgba(0, 0, 0, 0.06));
   --sd-ui-find-replace-btn-color: var(--sd-ui-text);
   --sd-ui-find-replace-btn-disabled-opacity: 0.4;
-  --sd-ui-find-replace-toggle-active-bg: var(--sd-color-blue-100, #dbeafe);
-  --sd-ui-find-replace-toggle-active-color: var(--sd-color-blue-700, #1d4ed8);
+  --sd-ui-find-replace-toggle-active-bg: color-mix(in srgb, var(--sd-ui-action) 12%, transparent);
+  --sd-ui-find-replace-toggle-active-color: var(--sd-ui-action);
+  --sd-ui-find-replace-toggle-active-border: color-mix(in srgb, var(--sd-ui-action) 30%, transparent);
   --sd-ui-find-replace-action-btn-bg: var(--sd-ui-action);
   --sd-ui-find-replace-action-btn-color: #fff;
   --sd-ui-find-replace-action-btn-hover-bg: var(--sd-ui-action-hover, var(--sd-ui-action));
   --sd-ui-find-replace-nav-gap: 2px;
   --sd-ui-find-replace-options-gap: 4px;
   --sd-ui-find-replace-btn-icon-font-size: 12px;
-  --sd-ui-find-replace-btn-toggle-font-size: 12px;
-  --sd-ui-find-replace-action-btn-padding: 4px 10px;
-  --sd-ui-find-replace-btn-toggle-padding: 4px 8px;
+  --sd-ui-find-replace-btn-toggle-font-size: 11px;
+  --sd-ui-find-replace-action-btn-padding: 0 12px;
+  --sd-ui-find-replace-btn-toggle-padding: 0 3px;
   --sd-ui-find-replace-count-inset: 8px;
 
   /* Search highlights (editor + presentation mode) */

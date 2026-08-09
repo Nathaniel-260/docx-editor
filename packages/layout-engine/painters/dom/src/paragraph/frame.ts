@@ -1,5 +1,4 @@
 import type { ParaFragment, ResolvedFragmentItem } from '@superdoc/contracts';
-import { assertFragmentPmPositions } from '../pm-position-validation.js';
 
 export type FragmentFrameSection = 'body' | 'header' | 'footer';
 
@@ -9,10 +8,6 @@ export const applyParagraphFragmentPmAttributes = (
   section?: FragmentFrameSection,
   resolvedItem?: ResolvedFragmentItem,
 ): void => {
-  if (section === 'body' || section === undefined) {
-    assertFragmentPmPositions(fragment, 'paragraph fragment');
-  }
-
   const pmStart = resolvedItem ? resolvedItem.pmStart : fragment.pmStart;
   if (pmStart != null) {
     el.dataset.pmStart = String(pmStart);

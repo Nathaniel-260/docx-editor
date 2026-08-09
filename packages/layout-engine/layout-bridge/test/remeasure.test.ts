@@ -10,7 +10,7 @@
  * - Edge cases (empty runs, very narrow widths, whitespace-only content)
  */
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vite-plus/test';
 import {
   EMPTY_SDT_PLACEHOLDER_TEXT,
   computeLinePmRange,
@@ -18,7 +18,42 @@ import {
   type Run,
   type TabStop,
 } from '@superdoc/contracts';
+import { LIST_MARKER_GAP } from '@superdoc/common/layout-constants';
 import { remeasureParagraph } from '../src/remeasure.ts';
+
+describe('inline box fast remeasurement', () => {
+  it('drops inline boxes with a named fail-closed diagnostic', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'boxed-remeasure',
+      runs: [{ text: 'boxed', fontFamily: 'Arial', fontSize: 16 }],
+      inlineBoxes: [
+        {
+          id: 'citation',
+          from: 0,
+          to: 5,
+          layout: {
+            paddingInlineStart: 4,
+            paddingInlineEnd: 4,
+            paddingBlockStart: 2,
+            paddingBlockEnd: 2,
+            gapBefore: 0,
+            gapAfter: 0,
+            borderWidth: 1,
+          },
+          appearance: {},
+        },
+      ],
+    };
+
+    const measure = remeasureParagraph(block, 200);
+
+    expect(measure.lines.every((line) => line.inlineBoxes === undefined)).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('layout.inline-box-remeasure-unsupported'));
+    warn.mockRestore();
+  });
+});
 
 /**
  * Character width constant for consistent text measurement mocking.
@@ -188,8 +223,21 @@ describe('remeasureParagraph', () => {
       expect(measure.lines[0].fromChar).toBe(0);
       expect(measure.lines[0].toChar).toBe(5);
       expect(measure.lines[0].width).toBe(5 * CHAR_WIDTH);
-      expect(measure.lines[0].lineHeight).toBe(16 * 1.2); // fontSize * 1.2
-      expect(measure.totalHeight).toBe(16 * 1.2);
+      expect(measure.lines[0].lineHeight).toBe(16 * 1.15);
+      expect(measure.totalHeight).toBe(16 * 1.15);
+    });
+
+    it('applies horizontal glyph scaling to fast-path widths and wrapping', () => {
+      const unscaled = createBlock([textRun('dated February 2025')]);
+      const scaled = createBlock([textRun('dated February 2025', { horizontalScale: 0.9 })]);
+
+      const unscaledNatural = remeasureParagraph(unscaled, 1000);
+      const scaledNatural = remeasureParagraph(scaled, 1000);
+      const widthBetween = unscaledNatural.lines[0].width * 0.95;
+
+      expect(scaledNatural.lines[0].width).toBeCloseTo(unscaledNatural.lines[0].width * 0.9, 5);
+      expect(remeasureParagraph(unscaled, widthBetween).lines.length).toBeGreaterThan(1);
+      expect(remeasureParagraph(scaled, widthBetween).lines).toHaveLength(1);
     });
 
     it('measures multiple runs on one line when they fit', () => {
@@ -210,7 +258,120 @@ describe('remeasureParagraph', () => {
       const measure = remeasureParagraph(block, 60);
 
       expect(measure.lines.length).toBeGreaterThan(1);
-      expect(measure.totalHeight).toBeGreaterThan(16 * 1.2); // Multiple lines
+      expect(measure.totalHeight).toBeGreaterThan(16 * 1.15); // Multiple lines
+    });
+
+    it('uses line-specific float widths and restores full width below the float', () => {
+      const block = createBlock([textRun('one two three four five six seven eight nine ten')]);
+      const measure = remeasureParagraph(block, 200, 0, [
+        [{ offsetX: 0, width: 50 }],
+        [{ offsetX: 0, width: 50 }],
+        [{ offsetX: 0, width: 200 }],
+      ]);
+
+      expect(measure.lines.length).toBeGreaterThanOrEqual(3);
+      expect(measure.lines[0].maxWidth).toBe(50);
+      expect(measure.lines[1].maxWidth).toBe(50);
+      expect(measure.lines[2].maxWidth).toBe(200);
+    });
+
+    it('positions a single available region without narrowing the paragraph fragment', () => {
+      const block = createBlock([textRun('Hello')]);
+      const measure = remeasureParagraph(block, 200, 0, [[{ offsetX: 80, width: 100 }]]);
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].maxWidth).toBe(100);
+      expect(measure.lines[0].segments?.[0]?.x).toBe(80);
+    });
+
+    it('composes both sides of a centered float on the same physical line', () => {
+      const block = createBlock([textRun('AAAA BBBB CCCC DDDD')]);
+      const measure = remeasureParagraph(block, 200, 0, [
+        [
+          { offsetX: 0, width: 50 },
+          { offsetX: 150, width: 50 },
+        ],
+        [{ offsetX: 0, width: 200 }],
+      ]);
+
+      expect(measure.lines).toHaveLength(2);
+      expect(measure.lines[0].segments).toHaveLength(2);
+      expect(measure.lines[0].segments?.[0]).toMatchObject({
+        runIndex: 0,
+        fromChar: 0,
+        toChar: 5,
+        x: 0,
+      });
+      expect(measure.lines[0].segments?.[1]).toMatchObject({
+        runIndex: 0,
+        fromChar: 5,
+        toChar: 10,
+        x: 150,
+      });
+      expect(measure.lines[1].fromChar).toBe(10);
+    });
+
+    it('skips a wrap-side sliver that would force-break the leading word', () => {
+      const block = createBlock([textRun('Development continues')]);
+      const measure = remeasureParagraph(block, 200, 0, [
+        [
+          { offsetX: 0, width: 9 },
+          { offsetX: 80, width: 120 },
+        ],
+        [{ offsetX: 0, width: 200 }],
+      ]);
+
+      expect(measure.lines[0].segments).toHaveLength(1);
+      expect(measure.lines[0].segments?.[0]).toMatchObject({
+        runIndex: 0,
+        fromChar: 0,
+        toChar: 12,
+        x: 80,
+      });
+    });
+
+    it('accounts for a first-line indent without shifting the right-side region', () => {
+      const block = createBlock([textRun('AAAA BBBB CCCC')], { indent: { firstLine: 20 } });
+      const measure = remeasureParagraph(block, 220, 0, [
+        [
+          { offsetX: 0, width: 70 },
+          { offsetX: 150, width: 50 },
+        ],
+        [{ offsetX: 0, width: 220 }],
+      ]);
+
+      expect(measure.lines[0].segments?.[0]).toMatchObject({ fromChar: 0, toChar: 5, x: 0 });
+      expect(measure.lines[0].segments?.[1]).toMatchObject({ fromChar: 5, toChar: 10, x: 130 });
+    });
+
+    it.each([
+      {
+        label: 'right-to-left paragraph',
+        attrs: { directionContext: { inlineDirection: 'rtl' as const, writingMode: 'horizontal-tb' as const } },
+        runAttrs: {},
+      },
+      {
+        label: 'run bidi context',
+        attrs: {},
+        runAttrs: { bidi: { rtl: true } },
+      },
+      {
+        label: 'context-sensitive capitalization',
+        attrs: {},
+        runAttrs: { textTransform: 'capitalize' as const },
+      },
+    ])('falls back to one safe region for $label', ({ attrs, runAttrs }) => {
+      const block = createBlock([textRun('AAAA BBBB CCCC DDDD', runAttrs)], attrs);
+      const measure = remeasureParagraph(block, 200, 0, [
+        [
+          { offsetX: 0, width: 50 },
+          { offsetX: 150, width: 50 },
+        ],
+      ]);
+
+      expect(measure.lines[0].maxWidth).toBe(50);
+      expect(measure.lines[0].toChar).toBe(5);
+      expect(measure.lines[1].fromChar).toBe(5);
     });
 
     it('returns empty measure for empty runs array', () => {
@@ -300,8 +461,32 @@ describe('remeasureParagraph', () => {
       const measure = remeasureParagraph(block, 200);
 
       expect(measure.lines).toHaveLength(1);
-      // Line height should be based on largest font (24px * 1.2 = 28.8px)
-      expect(measure.lines[0].lineHeight).toBe(24 * 1.2);
+      // Line height should be based on largest font (24px * 1.15 = 27.6px)
+      expect(measure.lines[0].lineHeight).toBe(24 * 1.15);
+    });
+
+    it('applies explicit auto multiplier spacing to the natural single-line height', () => {
+      const block = createBlock([textRun('Compact line', { fontSize: 16 })], {
+        spacing: { line: 1.05, lineUnit: 'multiplier', lineRule: 'auto' },
+      });
+      const measure = remeasureParagraph(block, 200);
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].lineHeight).toBeCloseTo(16 * 1.15 * 1.05, 6);
+      expect(measure.totalHeight).toBeCloseTo(16 * 1.15 * 1.05, 6);
+    });
+
+    it('applies auto spacing to the Word-calibrated natural line height for Aptos', () => {
+      const fontSize = 44 / 3;
+      const lineMultiplier = 259 / 240;
+      const block = createBlock([textRun('Contract “ACC”', { fontFamily: 'Aptos', fontSize })], {
+        spacing: { line: lineMultiplier, lineUnit: 'multiplier', lineRule: 'auto' },
+      });
+      const measure = remeasureParagraph(block, 100.8);
+
+      expect(measure.lines).toHaveLength(2);
+      expect(measure.lines[0]?.lineHeight).toBeCloseTo(fontSize * 1.224 * lineMultiplier, 6);
+      expect(measure.lines[1]?.lineHeight).toBeCloseTo(fontSize * 1.224 * lineMultiplier, 6);
     });
 
     it('handles runs with different formatting on same line', () => {
@@ -319,6 +504,23 @@ describe('remeasureParagraph', () => {
   });
 
   describe('Tab Stop Tests', () => {
+    it('keeps a Word-authored tabbed suffix on the line when it is within the subpixel tolerance', () => {
+      // Reduced from SD-4125's engineering-form columns. The paragraph has
+      // 858 twips of column width, a 344-twip left indent, and an authored
+      // start tab at 787 twips. Canvas leaves the final glyph inside the real
+      // line edge but inside the historical 0.5px safety reservation.
+      const block = createBlock([textRun('00'), tabRun(), textRun('0', { horizontalScale: 0.4672 })], {
+        indent: { left: 344 / TWIPS_PER_PX },
+        tabs: [{ pos: 787, val: 'start' }],
+      });
+
+      const measure = remeasureParagraph(block, 858 / TWIPS_PER_PX);
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].hasExplicitTabStops).toBe(true);
+      expect(measure.lines[0].width).toBeLessThanOrEqual(measure.lines[0].maxWidth);
+    });
+
     it('advances cursor to correct position for tab at explicit stop', () => {
       // Tab at 48px (720 TWIPS = 0.5 inch)
       const tabStop: TabStop = { pos: 720, val: 'start' };
@@ -894,9 +1096,36 @@ describe('remeasureParagraph', () => {
 
       expect(measure.lines.length).toBe(2);
       const firstLine = measure.lines[0];
-      // Breaks after "Hello " (6 chars)
+      // Breaks after "Hello " (6 chars), but the consumed wrap space is not charged to line width.
       expect(firstLine.toChar - firstLine.fromChar).toBe(6);
-      expect(firstLine.width).toBeCloseTo(6 * CHAR_WIDTH);
+      expect(firstLine.width).toBeCloseTo(5 * CHAR_WIDTH);
+    });
+
+    it('keeps a word when only the following wrap space overflows', () => {
+      const block = createBlock([textRun('abcd ef')]);
+      const measure = remeasureParagraph(block, 50);
+
+      expect(measure.lines.length).toBe(2);
+      expect(measure.lines[0].fromChar).toBe(0);
+      expect(measure.lines[0].toChar).toBe(5);
+      expect(measure.lines[0].width).toBeCloseTo(4 * CHAR_WIDTH);
+      expect(measure.lines[1].fromChar).toBe(5);
+    });
+
+    it('includes run letter spacing in measured line width', () => {
+      const block = createBlock([textRun('abc', { letterSpacing: 2 })]);
+      const measure = remeasureParagraph(block, 200);
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].width).toBeCloseTo(3 * CHAR_WIDTH + 2 * 2);
+    });
+
+    it('uses condensed run letter spacing for line-break decisions', () => {
+      const block = createBlock([textRun('abcd ef', { letterSpacing: -2 })]);
+      const measure = remeasureParagraph(block, 60);
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].width).toBeCloseTo(7 * CHAR_WIDTH + 6 * -2);
     });
 
     it('breaks mid-word when no whitespace is available (forced break)', () => {
@@ -1027,7 +1256,7 @@ describe('remeasureParagraph', () => {
       const measure = remeasureParagraph(block, 100);
 
       // Line height should be based on largest font
-      expect(measure.lines[0].lineHeight).toBe(30 * 1.2);
+      expect(measure.lines[0].lineHeight).toBe(30 * 1.15);
     });
 
     it('handles paragraph with no attrs defined', () => {
@@ -1133,10 +1362,10 @@ describe('remeasureParagraph', () => {
       const measure = remeasureParagraph(block, 200);
 
       expect(measure.lines).toHaveLength(2);
-      expect(measure.lines[0].lineHeight).toBe(24 * 1.2);
+      expect(measure.lines[0].lineHeight).toBe(24 * 1.15);
       expect(measure.lines[1].fromRun).toBe(1);
       expect(measure.lines[1].toRun).toBe(1);
-      expect(measure.lines[1].lineHeight).toBe(24 * 1.2);
+      expect(measure.lines[1].lineHeight).toBe(24 * 1.15);
     });
 
     it('preserves multiple trailing explicit lineBreak runs as multiple empty lines', () => {
@@ -1296,9 +1525,9 @@ describe('remeasureParagraph', () => {
       ]);
       const measure = remeasureParagraph(block, 200);
 
-      // All runs on same line, lineHeight should be max (20 * 1.2 = 24)
+      // All runs on same line, lineHeight should be max (20 * 1.15 = 23)
       expect(measure.lines).toHaveLength(1);
-      expect(measure.lines[0].lineHeight).toBe(20 * 1.2);
+      expect(measure.lines[0].lineHeight).toBe(20 * 1.15);
     });
 
     it('handles alternating text and tab runs', () => {
@@ -1376,6 +1605,38 @@ describe('remeasureParagraph', () => {
 
       expect(measure.lines[0].maxWidth).toBeCloseTo(528, 5);
       expect(measure.marker?.markerTextWidth).toBeCloseTo(18.65625, 5);
+    });
+
+    it('preserves a list marker when the direct paragraph indent omits hanging', () => {
+      const block = createBlock([textRun('A list paragraph')], {
+        // Imported DOCX paragraphs can override w:ind without repeating the
+        // numbering level's hanging value. wordLayout remains paint-ready.
+        indent: { left: 38, right: 1, firstLine: 0 },
+        wordLayout: {
+          indentLeftPx: 38,
+          hangingPx: 18,
+          textStartPx: 38,
+          marker: {
+            markerText: '(a)',
+            markerBoxWidthPx: 18,
+            markerX: 20,
+            glyphWidthPx: 13,
+            textStartX: 38,
+            gutterWidthPx: 8,
+            justification: 'left',
+            suffix: 'tab',
+            run: {
+              fontFamily: 'Arial, sans-serif',
+              fontSize: 10.666666666666666,
+            },
+          },
+        },
+      } as ParagraphBlock['attrs']);
+
+      const measure = remeasureParagraph(block, 358);
+
+      expect(measure.marker?.markerTextWidth).toBe(13);
+      expect(measure.marker?.markerWidth).toBe(13 + LIST_MARKER_GAP);
     });
 
     it('handles hanging indent with left indent for list formatting', () => {
@@ -1456,9 +1717,9 @@ describe('remeasureParagraph', () => {
 
     it('handles varying line heights across lines', () => {
       const block = createBlock([
-        textRun('Small', { fontSize: 12 }), // First line: 12 * 1.2 = 14.4
+        textRun('Small', { fontSize: 12 }), // First line: 12 * 1.15 = 13.8
         textRun(' '),
-        textRun('Large'.repeat(10), { fontSize: 24 }), // Subsequent lines: 24 * 1.2 = 28.8
+        textRun('Large'.repeat(10), { fontSize: 24 }), // Subsequent lines: 24 * 1.15 = 27.6
       ]);
       const measure = remeasureParagraph(block, 100);
 
@@ -1639,124 +1900,171 @@ describe('remeasureParagraph', () => {
     });
   });
 
-  describe('atomic runs', () => {
-    it('does not retain image line height after rewinding past an inline image break point', () => {
-      const block = createBlock([
-        textRun('A '),
-        {
-          kind: 'image',
-          src: 'data:image/png;base64,abc',
-          width: 179,
-          height: 179,
-          pmStart: 3,
-          pmEnd: 4,
-        },
-        textRun('B'.repeat(30)),
-      ]);
-
-      // Fits "A " + image, then overflows on following text and rewinds to the space.
-      const measure = remeasureParagraph(block, 200);
-
-      expect(measure.lines.length).toBeGreaterThan(1);
-      expect(measure.lines[0].toRun).toBe(0);
-      expect(measure.lines[0].toChar).toBe(2);
-      expect(measure.lines[0].maxImageHeight).toBeUndefined();
-      expect(measure.lines[0].lineHeight).toBeCloseTo(16 * 1.2);
-      expect(measure.lines[1].maxImageHeight).toBe(179);
-    });
-
-    it('measures image-only paragraphs with correct width and line height', () => {
-      const block = createBlock([
-        {
-          kind: 'image',
-          src: 'data:image/png;base64,abc',
-          width: 179,
-          height: 179,
-          pmStart: 1,
-          pmEnd: 2,
-        },
-      ]);
-      block.attrs = { alignment: 'center' };
-
-      const measure = remeasureParagraph(block, 179.8);
+  describe('vanished run remeasurement', () => {
+    it('keeps vanished text out of fast remeasure width and line height', () => {
+      const block = createBlock([textRun('abcdef', { fontSize: 72, vanish: true }), textRun('X', { fontSize: 12 })]);
+      const measure = remeasureParagraph(block, 1000);
 
       expect(measure.lines).toHaveLength(1);
-      expect(measure.lines[0].width).toBe(179);
-      expect(measure.lines[0].lineHeight).toBe(179);
-      expect(measure.lines[0].maxImageHeight).toBe(179);
-      expect(measure.totalHeight).toBe(179);
+      expect(measure.lines[0].fromRun).toBe(0);
+      expect(measure.lines[0].toRun).toBe(1);
+      expect(measure.lines[0].width).toBe(CHAR_WIDTH);
+      expect(measure.lines[0].lineHeight).toBe(12 * 1.15);
     });
 
-    it('sizes field annotation pills from displayLabel + padding (not run.width/height)', () => {
-      // Regression: field annotation runs carry no top-level width/height, so the old
-      // atomic sizing measured them 0x0 and the pill collapsed. The shared sizer now
-      // measures the label (4 chars * 10px) + pill padding (8px) = 48px wide.
-      const block = createBlock([
-        {
-          kind: 'fieldAnnotation',
-          variant: 'text',
-          displayLabel: 'Name',
-          fontSize: 16,
-          pmStart: 1,
-          pmEnd: 2,
-        } as unknown as Run,
+    it('does not advance visible text through a vanished tab run', () => {
+      const block = createBlock([tabRun({ fontSize: 16, vanish: true }), textRun('X', { fontSize: 12 })]);
+      const measure = remeasureParagraph(block, 1000);
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].fromRun).toBe(0);
+      expect(measure.lines[0].toRun).toBe(1);
+      expect(measure.lines[0].width).toBe(CHAR_WIDTH);
+      expect(measure.lines[0].lineHeight).toBe(12 * 1.15);
+    });
+
+    it('uses visible tab font size when vanished text precedes a tab run', () => {
+      const visibleTabBlock = createBlock([tabRun({ fontSize: 12 })]);
+      const hiddenBeforeTabBlock = createBlock([
+        textRun('abcdef', { fontSize: 72, vanish: true }),
+        tabRun({ fontSize: 12 }),
       ]);
 
-      const measure = remeasureParagraph(block, 200);
+      const visibleTabMeasure = remeasureParagraph(visibleTabBlock, 1000);
+      const hiddenBeforeTabMeasure = remeasureParagraph(hiddenBeforeTabBlock, 1000);
+
+      expect(visibleTabMeasure.lines[0].lineHeight).toBe(12 * 1.15);
+      expect(hiddenBeforeTabMeasure.lines).toHaveLength(1);
+      expect(hiddenBeforeTabMeasure.lines[0].width).toBe(visibleTabMeasure.lines[0].width);
+      expect(hiddenBeforeTabMeasure.lines[0].lineHeight).toBe(visibleTabMeasure.lines[0].lineHeight);
+    });
+  });
+
+  describe('inline image baseline alignment parity', () => {
+    const imageRun = (overrides?: Partial<Run>): Run =>
+      ({ kind: 'image', src: 'data:image/png;base64,AAAA', width: 11, height: 10, ...overrides }) as Run;
+
+    it('emits baseline alignment for a small inline image + text after reflow', () => {
+      const block = createBlock([textRun('1.'), imageRun({ pmStart: 2, pmEnd: 3 }), textRun(' Title')]);
+      const measure = remeasureParagraph(block, 500);
 
       expect(measure.lines).toHaveLength(1);
-      expect(measure.lines[0].width).toBe(48);
-      // Pill height = fontSize * 1.2 + vertical padding (6) = 25.2, taller than the
-      // 16px-text line height, so it drives both maxImageHeight and lineHeight.
-      expect(measure.lines[0].maxImageHeight).toBeCloseTo(16 * 1.2 + 6);
-      expect(measure.lines[0].lineHeight).toBeCloseTo(16 * 1.2 + 6);
+      expect(measure.lines[0].inlineImageAlignments).toEqual([{ runIndex: 1, verticalAlign: 'baseline' }]);
+      // Image width is preserved in the reflowed line width (no longer dropped).
+      expect(measure.lines[0].width).toBeGreaterThan(0);
     });
 
-    it('sizes math runs from precomputed dimensions without adding dist* margins', () => {
-      const block = createBlock([
-        {
-          kind: 'math',
-          ommlJson: {},
-          textContent: '',
-          width: 30,
-          height: 24,
-          // dist* is not part of the math box; it must be ignored.
-          distLeft: 9,
-          distTop: 9,
-          pmStart: 1,
-          pmEnd: 2,
-        } as unknown as Run,
-      ]);
+    it('keeps a tall inline image top-aligned after reflow (no baseline entry)', () => {
+      const block = createBlock([textRun('Before '), imageRun({ width: 40, height: 40, pmStart: 7, pmEnd: 8 })]);
+      const measure = remeasureParagraph(block, 500);
 
-      const measure = remeasureParagraph(block, 200);
-
-      expect(measure.lines).toHaveLength(1);
-      expect(measure.lines[0].width).toBe(30);
-      expect(measure.lines[0].maxImageHeight).toBe(24);
+      expect(measure.lines[0].inlineImageAlignments).toBeUndefined();
+      expect(measure.lines[0].lineHeight).toBe(40);
+      expect(measure.totalHeight).toBe(40);
     });
 
-    it('right-aligns a field annotation following an end tab (atomic group sizing)', () => {
-      // Regression: the tab look-ahead measured the field with getRunWidth (0), so the
-      // group width was zero and the aligned branch was skipped, leaving the pill at the
-      // tab stop instead of ending on it. The pill is 'AB' (2*10) + 8 padding = 28px, so
-      // a right (end) stop at 100px must start it at 72px.
-      const tabStop: TabStop = { pos: pxToTwips(100), val: 'end' };
-      const field = {
-        kind: 'fieldAnnotation',
-        variant: 'text',
-        displayLabel: 'AB',
-        fontSize: 16,
-        pmStart: 3,
-        pmEnd: 4,
-      } as unknown as Run;
-      const block = createBlock([textRun('X'), tabRun(), field], { tabs: [tabStop] });
+    it('does not baseline an image with an explicit verticalAlign', () => {
+      const block = createBlock([textRun('x'), imageRun({ verticalAlign: 'top', pmStart: 1, pmEnd: 2 })]);
+      const measure = remeasureParagraph(block, 500);
 
-      const measure = remeasureParagraph(block, 200);
+      expect(measure.lines[0].inlineImageAlignments).toBeUndefined();
+    });
 
-      expect(measure.lines).toHaveLength(1);
-      const fieldSegment = measure.lines[0].segments?.find((segment) => segment.runIndex === 2);
-      expect(fieldSegment?.width).toBe(28);
-      expect(fieldSegment?.x).toBeCloseTo(72, 1);
+    it('does not baseline a zero-width image after reflow', () => {
+      const block = createBlock([textRun('x'), imageRun({ width: 0, height: 10, pmStart: 1, pmEnd: 2 })]);
+      const measure = remeasureParagraph(block, 500);
+
+      expect(measure.lines[0].inlineImageAlignments).toBeUndefined();
+    });
+
+    it('does not baseline an image-only line (no text metrics)', () => {
+      const block = createBlock([imageRun({ pmStart: 0, pmEnd: 1 })]);
+      const measure = remeasureParagraph(block, 500);
+
+      expect(measure.lines[0].inlineImageAlignments).toBeUndefined();
+    });
+  });
+
+  /**
+   * This fallback wrapper is used for narrow columns, float-constrained
+   * paragraphs, and textboxes. It must break CJK the same way the primary
+   * measurer in `measuring/dom` does, or the same document wraps differently
+   * depending on which path measured it.
+   */
+  describe('CJK Line Breaking', () => {
+    const FORBIDDEN_LINE_START = '、。，．：；！？）］｝〉》」』】〕';
+    const FORBIDDEN_LINE_END = '（［｛〈《「『【〔';
+
+    const lineTexts = (text: string, maxWidth: number): string[] => {
+      const block = createBlock([textRun(text)]);
+      return remeasureParagraph(block, maxWidth).lines.map((line) => text.slice(line.fromChar, line.toChar));
+    };
+
+    it('never opens a line with a forbidden closer', () => {
+      const clause = '第一条，第二条，第三条，第四条，第五条。';
+
+      for (const maxWidth of [30, 40, 50, 60, 70, 80]) {
+        const texts = lineTexts(clause, maxWidth);
+        expect(texts.join('')).toBe(clause);
+        for (const text of texts.slice(1)) {
+          expect(FORBIDDEN_LINE_START.includes(text[0])).toBe(false);
+        }
+      }
+    });
+
+    it('never ends a line with a forbidden opener', () => {
+      const clause = '适用（一）（二）（三）（四）（五）';
+
+      for (const maxWidth of [30, 40, 50, 60, 70, 80]) {
+        const texts = lineTexts(clause, maxWidth);
+        expect(texts.join('')).toBe(clause);
+        for (const text of texts.slice(0, -1)) {
+          expect(FORBIDDEN_LINE_END.includes(text[text.length - 1])).toBe(false);
+        }
+      }
+    });
+
+    it('applies kinsoku when the overflowing glyph is Latin', () => {
+      // `甲（` fits, `A` does not. The overflowing glyph is Latin, but the
+      // boundary still lands after a forbidden opener.
+      const text = '甲（A';
+      const texts = lineTexts(text, 25);
+
+      expect(texts.join('')).toBe(text);
+      for (const line of texts.slice(0, -1)) {
+        expect(FORBIDDEN_LINE_END.includes(line[line.length - 1])).toBe(false);
+      }
+    });
+
+    it('prefers a passed ideograph boundary over an earlier space', () => {
+      // The overflowing glyph is `A`, but `本合同` offered break opportunities
+      // after the space. Rewinding to the space strands `甲方` on a short line.
+      const text = '甲方 本合同ABC';
+      const texts = lineTexts(text, 65);
+
+      expect(texts.join('')).toBe(text);
+      expect(texts[0].length).toBeGreaterThan('甲方 '.length);
+    });
+
+    it('breaks astral ideographs on code-point boundaries', () => {
+      const text = '\u{20000}\u{20001}\u{20002}\u{20003}\u{20004}';
+      const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/;
+
+      for (const maxWidth of [25, 35, 45, 55, 65]) {
+        const texts = lineTexts(text, maxWidth);
+        expect(texts.join('')).toBe(text);
+        for (const line of texts) expect(line).not.toMatch(lone);
+      }
+    });
+
+    it('breaks between ideographs rather than rewinding to an earlier space', () => {
+      // Every ideograph is a break opportunity, so the fitter must not rewind to
+      // the space and strand `甲方` alone on the first line.
+      const text = '甲方 本合同由甲乙双方签署并生效';
+      const texts = lineTexts(text, 80);
+
+      expect(texts.join('')).toBe(text);
+      expect(texts[0].length).toBeGreaterThan('甲方 '.length);
     });
   });
 });

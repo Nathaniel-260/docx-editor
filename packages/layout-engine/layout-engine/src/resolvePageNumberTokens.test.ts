@@ -82,6 +82,51 @@ describe('resolvePageNumberTokens', () => {
       expect((blocks[0] as ParagraphBlock).runs[1].token).toBe('pageNumber');
     });
 
+    it('resolves PAGE from local layout order when a resumed window uses global page numbers', () => {
+      const blocks: FlowBlock[] = [
+        {
+          kind: 'paragraph',
+          id: 'para-resumed',
+          runs: [{ text: '0', token: 'pageNumber', fontFamily: 'Arial', fontSize: 12 } as TextRun],
+        } as ParagraphBlock,
+      ];
+      const measures: Measure[] = [{ kind: 'paragraph', lines: [], totalHeight: 0 }];
+      const layout: Layout = {
+        pageSize: { w: 612, h: 792 },
+        pages: [
+          {
+            number: 41,
+            fragments: [
+              {
+                kind: 'para',
+                blockId: 'para-resumed',
+                fromLine: 0,
+                toLine: 1,
+                x: 0,
+                y: 0,
+                width: 100,
+              },
+            ],
+          },
+        ],
+      };
+      const numberingCtx: NumberingContext = {
+        totalPages: 1,
+        displayPages: [
+          {
+            physicalPage: 41,
+            displayNumber: 37,
+            displayText: '37',
+            sectionIndex: 4,
+          },
+        ],
+      };
+
+      const result = resolvePageNumberTokens(layout, blocks, measures, numberingCtx);
+
+      expect((result.updatedBlocks.get('para-resumed') as ParagraphBlock).runs[0].text).toBe('37');
+    });
+
     it('should resolve explicit PAGE field format using section-aware display number', () => {
       const blocks: FlowBlock[] = [
         {
@@ -1114,5 +1159,65 @@ describe('resolvePageNumberTokens', () => {
       expect(originalTable.rows[0].cells[0].paragraph.runs[0].text).toBe('0');
       expect(originalTable.rows[0].cells[0].paragraph.runs[0].token).toBe('pageNumber');
     });
+  });
+});
+
+describe('atomic-first-page — provisional page-count fields (body tokens)', () => {
+  const measures: Measure[] = [{ kind: 'paragraph', lines: [], totalHeight: 0 }];
+  const layoutFor = (blockId: string): Layout => ({
+    pageSize: { w: 612, h: 792 },
+    pages: [
+      {
+        number: 1,
+        fragments: [{ kind: 'para', blockId, fromLine: 0, toLine: 1, x: 0, y: 0, width: 100 }],
+      },
+    ],
+  });
+  const numberingCtx: NumberingContext = {
+    totalPages: 3,
+    displayPages: [{ physicalPage: 1, displayNumber: 1, displayText: '1', sectionIndex: 0 }],
+  };
+
+  it('resolves PAGE immediately but preserves cached NUMPAGES text under provisional mode', () => {
+    const blocks: FlowBlock[] = [
+      {
+        kind: 'paragraph',
+        id: 'para-prov',
+        runs: [
+          { text: '0', token: 'pageNumber', fontFamily: 'Arial', fontSize: 12 } as TextRun,
+          { text: '48', token: 'totalPageCount', fontFamily: 'Arial', fontSize: 12 } as TextRun,
+          { text: '9', token: 'sectionPageCount', fontFamily: 'Arial', fontSize: 12 } as TextRun,
+        ],
+      } as ParagraphBlock,
+    ];
+
+    const result = resolvePageNumberTokens(layoutFor('para-prov'), blocks, measures, numberingCtx, {
+      pageCountFieldsExact: false,
+    });
+
+    const updated = result.updatedBlocks.get('para-prov') as ParagraphBlock;
+    expect(updated.runs[0].text).toBe('1');
+    expect(updated.runs[1].text).toBe('48');
+    expect(updated.runs[2].text).toBe('9');
+  });
+
+  it('renders an em dash for a provisional total with no cached result and upgrades it in exact mode', () => {
+    const blocks: FlowBlock[] = [
+      {
+        kind: 'paragraph',
+        id: 'para-dash',
+        runs: [{ text: '', token: 'totalPageCount', fontFamily: 'Arial', fontSize: 12 } as TextRun],
+      } as ParagraphBlock,
+    ];
+
+    const provisional = resolvePageNumberTokens(layoutFor('para-dash'), blocks, measures, numberingCtx, {
+      pageCountFieldsExact: false,
+    });
+    const provisionalBlock = provisional.updatedBlocks.get('para-dash') as ParagraphBlock;
+    expect(provisionalBlock.runs[0].text).toBe('—');
+
+    const exact = resolvePageNumberTokens(layoutFor('para-dash'), [provisionalBlock], measures, numberingCtx);
+    const exactBlock = exact.updatedBlocks.get('para-dash') as ParagraphBlock;
+    expect(exactBlock.runs[0].text).toBe('3');
   });
 });

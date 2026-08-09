@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { findWordBoundaries, findParagraphBoundaries } from '../src/index.ts';
 import type { FlowBlock } from '@superdoc/contracts';
 

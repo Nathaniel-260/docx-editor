@@ -32,29 +32,33 @@ const stubAdapter = () =>
   }) as any;
 
 describe('executeCommentsCreate parentId alias', () => {
-  it('accepts the contract param name parentId and threads the reply', () => {
+  it('accepts the public parentId and threads the reply', () => {
     const adapter = stubAdapter();
-    const receipt = executeCommentsCreate(adapter, { text: 'Reply body', parentId: 'c1' } as any);
+    const receipt = executeCommentsCreate(adapter, { text: 'Reply body', parentId: 'c1' });
+
     expect(receipt.success).toBe(true);
-    expect(adapter.reply).toHaveBeenCalledTimes(1);
-    expect(adapter.reply.mock.calls[0][0]).toEqual({ parentCommentId: 'c1', text: 'Reply body' });
+    expect(adapter.reply).toHaveBeenCalledWith({ parentCommentId: 'c1', text: 'Reply body' }, undefined);
   });
 
-  it('accepts both keys when they agree (dual-dialect callers)', () => {
+  it('accepts both parent keys when they agree', () => {
     const adapter = stubAdapter();
-    const receipt = executeCommentsCreate(adapter, {
-      text: 'Reply body',
-      parentId: 'c1',
-      parentCommentId: 'c1',
-    } as any);
-    expect(receipt.success).toBe(true);
-    expect(adapter.reply).toHaveBeenCalledTimes(1);
+    executeCommentsCreate(adapter, { text: 'Reply body', parentId: 'c1', parentCommentId: 'c1' });
+
+    expect(adapter.reply).toHaveBeenCalledWith({ parentCommentId: 'c1', text: 'Reply body' }, undefined);
   });
 
-  it('rejects disagreeing parentId / parentCommentId', () => {
-    expect(() =>
-      executeCommentsCreate(stubAdapter(), { text: 'x', parentId: 'c1', parentCommentId: 'c2' } as any),
-    ).toThrow(/disagree/);
+  it('rejects conflicting parent keys before calling the adapter', () => {
+    const adapter = stubAdapter();
+    const invoke = () => executeCommentsCreate(adapter, { text: 'Reply body', parentId: 'c1', parentCommentId: 'c2' });
+
+    expect(invoke).toThrow(/disagree/);
+    try {
+      invoke();
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'INVALID_INPUT' });
+    }
+    expect(adapter.reply).not.toHaveBeenCalled();
+    expect(adapter.add).not.toHaveBeenCalled();
   });
 });
 
@@ -93,6 +97,113 @@ describe('executeCommentsCreate validation', () => {
     const receipt = executeCommentsCreate(adapter, { text: 'hello', target });
     expect(receipt.success).toBe(true);
     expect(receipt.id).toBe('c1');
+  });
+
+  it('forwards durable external identity, V1-compatible authorship, and metadata for roots and replies', () => {
+    const adapter = stubAdapter();
+    const target = { kind: 'text' as const, blockId: 'b1', range: { start: 0, end: 5 } };
+    const correlation = {
+      externalId: 'external-comment-42',
+      author: 'External Reviewer',
+      authorId: 'external-user-7',
+      authorEmail: 'reviewer@example.test',
+      authorImage: 'https://example.test/reviewer.png',
+      metadata: {
+        verdict: 'verified',
+        review: { id: 'review-9', statementIds: ['s-1', 's-2'] },
+      },
+    };
+
+    executeCommentsCreate(adapter, { target, text: 'Root finding', ...correlation });
+    executeCommentsCreate(adapter, {
+      parentCommentId: 'c1',
+      text: 'Reply finding',
+      ...correlation,
+      externalId: 'external-comment-43',
+    });
+
+    expect(adapter.add).toHaveBeenCalledWith({ target, text: 'Root finding', ...correlation }, undefined);
+    expect(adapter.reply).toHaveBeenCalledWith(
+      {
+        parentCommentId: 'c1',
+        text: 'Reply finding',
+        ...correlation,
+        externalId: 'external-comment-43',
+      },
+      undefined,
+    );
+  });
+
+  it('normalizes the V1 caller-supplied commentId to externalId for roots and replies', () => {
+    const adapter = stubAdapter();
+    const target = { kind: 'text' as const, blockId: 'b1', range: { start: 0, end: 5 } };
+
+    executeCommentsCreate(adapter, {
+      target,
+      text: 'Root finding',
+      commentId: 'external-comment-42',
+      author: 'External Reviewer',
+    });
+    executeCommentsCreate(adapter, {
+      parentCommentId: 'external-comment-42',
+      text: 'Reply finding',
+      commentId: 'external-comment-43',
+    });
+
+    expect(adapter.add).toHaveBeenCalledWith(
+      {
+        target,
+        text: 'Root finding',
+        externalId: 'external-comment-42',
+        author: 'External Reviewer',
+      },
+      undefined,
+    );
+    expect(adapter.reply).toHaveBeenCalledWith(
+      {
+        parentCommentId: 'external-comment-42',
+        text: 'Reply finding',
+        externalId: 'external-comment-43',
+      },
+      undefined,
+    );
+  });
+
+  it('rejects conflicting caller-supplied commentId and externalId before dispatch', () => {
+    const adapter = stubAdapter();
+    const target = { kind: 'text' as const, blockId: 'b1', range: { start: 0, end: 5 } };
+
+    expect(() =>
+      executeCommentsCreate(adapter, {
+        target,
+        text: 'Finding',
+        commentId: 'external-comment-42',
+        externalId: 'different-comment-42',
+      }),
+    ).toThrow(/commentId and externalId disagree/);
+    expect(adapter.add).not.toHaveBeenCalled();
+    expect(adapter.reply).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid attribution and lossy metadata before dispatch', () => {
+    const adapter = stubAdapter();
+    const target = { kind: 'text' as const, blockId: 'b1', range: { start: 0, end: 5 } };
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    expect(() => executeCommentsCreate(adapter, { target, text: 'Finding', externalId: '   ' })).toThrow(
+      /externalId must be a non-empty string/,
+    );
+    expect(() => executeCommentsCreate(adapter, { target, text: 'Finding', externalId: '🚀'.repeat(1_025) })).toThrow(
+      /externalId must be at most 1024 characters/,
+    );
+    expect(() => executeCommentsCreate(adapter, { target, text: 'Finding', metadata: cyclic as any })).toThrow(
+      /cyclic values are not supported/,
+    );
+    expect(() =>
+      executeCommentsCreate(adapter, { target, text: 'Finding', metadata: { confidence: Number.NaN } }),
+    ).toThrow(/numbers must be finite/);
+    expect(adapter.add).not.toHaveBeenCalled();
   });
 });
 

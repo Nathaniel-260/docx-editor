@@ -6,15 +6,9 @@
  *
  * Why this script exists (rather than turning on project-wide checkJs):
  *
- * The codebase uses `customConditions: ["source"]`, which makes TypeScript
- * resolve `import { Editor } from '@superdoc/super-editor'` to the source
- * `.js`/`.ts` files of the workspace package. With `// @ts-check` on any
- * file in this package, TS follows those imports and type-checks the
- * super-editor source too — about 6500 errors. Those errors are real but
- * are not what this gate is for; that's separate SD-2863 work. The gate
- * here is "files in CHECKED_FILES must stay clean, and new public-
- * reachable JSDoc files must either opt into @ts-check or be allowlisted
- * with a reason."
+ * The gate here is "files in CHECKED_FILES must stay clean, and new
+ * public-reachable JSDoc files must either opt into @ts-check or be
+ * allowlisted with a reason."
  *
  * Two gates run here:
  *
@@ -29,8 +23,8 @@
  *      are checked by the main `pnpm check:types` (`tsc -b`) run.
  *
  *   2. RATCHET — Discover every public-reachable .js file with JSDoc
- *      type annotations (transitively from `superdoc`, `superdoc/super-
- *      editor`, `superdoc/ui`). The committed debt snapshot at
+ *      type annotations (transitively from the supported `superdoc` root
+ *      package entry). The committed debt snapshot at
  *      `jsdoc-debt-snapshot.json` is the set of public JSDoc files that
  *      do NOT yet have `// @ts-check`. The ratchet fails if:
  *        - A NEW public JSDoc file lands without `// @ts-check` and
@@ -92,37 +86,18 @@ const {
 
 const REACHABILITY_EXEMPT_CHECKED_FILES = new Set(REACHABILITY_EXEMPT_LIST);
 
-// PUBLIC entry points used by the ratchet's public-surface walk. These
-// are the files consumers reach through `superdoc`, `superdoc/super-editor`,
-// and `superdoc/ui`; the script transitively follows their imports to
-// build the public-reachable .js set.
+// PUBLIC entry points used by the ratchet's public-surface walk. The v2
+// package exposes only the root entry plus stylesheet assets; removed v1
+// compatibility subpaths are intentionally absent.
 const PUBLIC_ENTRY_FILES = [
   'packages/superdoc/src/index.js',
-  'packages/superdoc/src/super-editor.js',
-  'packages/superdoc/src/ui.js',
 ];
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.vue'];
 
-const PACKAGE_EXPORT_SOURCES = {
-  '@superdoc/super-editor': 'packages/super-editor/src/index.ts',
-  '@superdoc/super-editor/blank-docx': 'packages/super-editor/src/editors/v1/core/blank-docx.ts',
-  '@superdoc/super-editor/document-api-adapters': 'packages/super-editor/src/editors/v1/document-api-adapters/index.ts',
-  '@superdoc/super-editor/markdown': 'packages/super-editor/src/editors/v1/core/helpers/markdown/index.ts',
-  '@superdoc/super-editor/parts-runtime': 'packages/super-editor/src/editors/v1/core/parts/init-parts-runtime.ts',
-  '@superdoc/super-editor/ui': 'packages/super-editor/src/ui/index.ts',
-};
+const PACKAGE_EXPORT_SOURCES = {};
 
 const SOURCE_ALIASES = [
-  ['@core/', 'packages/super-editor/src/editors/v1/core/'],
-  ['@extensions/', 'packages/super-editor/src/editors/v1/extensions/'],
-  ['@features/', 'packages/super-editor/src/editors/v1/features/'],
-  ['@components/', 'packages/super-editor/src/editors/v1/components/'],
-  ['@helpers/', 'packages/super-editor/src/editors/v1/core/helpers/'],
-  ['@converter/', 'packages/super-editor/src/editors/v1/core/super-converter/'],
-  ['@tests/', 'packages/super-editor/src/editors/v1/tests/'],
-  ['@translator', 'packages/super-editor/src/editors/v1/core/super-converter/v3/node-translator/'],
-  ['@utils/', 'packages/super-editor/src/editors/v1/utils/'],
   ['@shared/', 'shared/'],
 ];
 
@@ -172,11 +147,6 @@ const tryResolveSourcePath = (basePath) => {
 const resolveSourceSpecifier = (specifier, containingFile) => {
   if (Object.prototype.hasOwnProperty.call(PACKAGE_EXPORT_SOURCES, specifier)) {
     return path.join(repoRoot, PACKAGE_EXPORT_SOURCES[specifier]);
-  }
-  if (specifier.startsWith('@superdoc/super-editor/')) {
-    return tryResolveSourcePath(
-      path.join(repoRoot, 'packages/super-editor/src', specifier.slice('@superdoc/super-editor/'.length)),
-    );
   }
   if (specifier.startsWith('.')) {
     return tryResolveSourcePath(path.resolve(path.dirname(containingFile), specifier));
@@ -372,7 +342,7 @@ if (nonPublicCheckedFiles.length > 0) {
   preflightFailures.push('CHECKED_FILES contains entries not on the public superdoc export surface:');
   for (const f of nonPublicCheckedFiles) preflightFailures.push(`  - ${f}`);
   preflightFailures.push(
-    'Gated files must be exported from superdoc, superdoc/super-editor, or superdoc/ui ' +
+    'Gated files must be exported from the supported superdoc root entry ' +
       '(or listed in REACHABILITY_EXEMPT_CHECKED_FILES with an explicit reason).',
   );
 }

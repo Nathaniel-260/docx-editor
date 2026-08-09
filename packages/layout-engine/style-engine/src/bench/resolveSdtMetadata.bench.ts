@@ -1,4 +1,4 @@
-import { bench } from 'vitest';
+import { bench } from 'vite-plus/test';
 import { clearSdtMetadataCache, resolveSdtMetadata } from '../index.js';
 
 function makeBenchAttrs(hash: string): Record<string, unknown> {

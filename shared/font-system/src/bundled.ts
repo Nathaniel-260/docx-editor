@@ -30,7 +30,7 @@ export function getBundledFontAssetBase(): string {
 
 // Whether the bundled pack is served page-globally WITHOUT per-instance config. A host that serves
 // the pack for the whole page can call `markBundledPackPresent()`; consumers normally signal it per
-// instance via `fonts.resolveAssetUrl` / `fonts.assetBaseUrl` (e.g. `@superdoc-dev/fonts`). The
+// instance via `fonts.resolveAssetUrl` / `fonts.assetBaseUrl` (e.g. `@superdoc/fonts`). The
 // built-in CDN build no longer sets this - it is baseline-by-default. Drives the config-presence
 // gate (`deriveBundledActivation`) so the toolbar/resolver light up the rich pack only when served.
 let bundledPackPresent = false;

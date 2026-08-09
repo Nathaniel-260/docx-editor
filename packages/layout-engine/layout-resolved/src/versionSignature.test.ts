@@ -1,15 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { deriveBlockVersion, sourceAnchorSignature } from './versionSignature.js';
+import { describe, expect, it } from 'vite-plus/test';
+import { deriveBlockVersion, derivePmInteriorVersion, sourceAnchorSignature } from './versionSignature.js';
 import type {
   FlowBlock,
   ImageBlock,
   ImageRun,
+  MarkerTrackedChange,
   ParagraphBlock,
   SourceAnchor,
   TableBlock,
   TabRun,
   TextRun,
-  VectorShapeDrawing,
+  TrackedChangeMeta,
 } from '@superdoc/contracts';
 
 describe('sourceAnchorSignature', () => {
@@ -77,8 +78,274 @@ describe('deriveBlockVersion - bidi', () => {
   });
 });
 
+describe('deriveBlockVersion - horizontal scale', () => {
+  const makeParagraph = (horizontalScale?: number): FlowBlock => ({
+    kind: 'paragraph',
+    id: 'scaled-paragraph',
+    attrs: {},
+    runs: [
+      {
+        text: 'February 2025',
+        fontFamily: 'Arial',
+        fontSize: 16,
+        ...(horizontalScale != null ? { horizontalScale } : {}),
+      } as TextRun,
+    ],
+  });
+
+  it('invalidates the block version when OOXML character width changes', () => {
+    expect(deriveBlockVersion(makeParagraph(0.9))).not.toBe(deriveBlockVersion(makeParagraph()));
+  });
+});
+
+describe('deriveBlockVersion - nested SDT containers', () => {
+  const childSdt = {
+    type: 'structuredContent',
+    scope: 'block',
+    id: 'child-sdt',
+    alias: 'Client Name',
+    tag: 'client-name',
+    lockMode: 'unlocked',
+  } as const;
+  const outerGroup = {
+    type: 'structuredContent',
+    scope: 'block',
+    id: 'outer-group',
+    lockMode: 'unlocked',
+  } as const;
+  const makeParagraph = (containerSdt?: typeof outerGroup): ParagraphBlock => ({
+    kind: 'paragraph',
+    id: 'payment-terms',
+    attrs: {
+      sdt: childSdt,
+      ...(containerSdt ? { containerSdt } : {}),
+    },
+    runs: [{ kind: 'text', text: 'Payment Terms', fontFamily: 'Arial', fontSize: 16 }],
+  });
+
+  it('invalidates painted DOM when a live group.wrap adds an outer container (SD-3617)', () => {
+    expect(deriveBlockVersion(makeParagraph(outerGroup))).not.toBe(deriveBlockVersion(makeParagraph()));
+  });
+});
+
+describe('deriveBlockVersion - text run hyperlinks', () => {
+  const makeParagraph = (link?: TextRun['link']): ParagraphBlock => ({
+    kind: 'paragraph',
+    id: 'link-version',
+    attrs: {},
+    runs: [
+      {
+        text: 'SuperDoc website',
+        fontFamily: 'Arial',
+        fontSize: 16,
+        ...(link ? { link } : {}),
+      },
+    ],
+  });
+
+  it('changes when a text run gains or loses a hyperlink', () => {
+    const plain = deriveBlockVersion(makeParagraph());
+    const linked = deriveBlockVersion(makeParagraph({ href: 'https://www.superdoc.dev/', rId: 'rId1', version: 2 }));
+
+    expect(linked).not.toBe(plain);
+  });
+
+  it('changes when a text run hyperlink target changes', () => {
+    const first = deriveBlockVersion(makeParagraph({ href: 'https://first.example/', rId: 'rId1', version: 2 }));
+    const second = deriveBlockVersion(makeParagraph({ href: 'https://second.example/', rId: 'rId2', version: 2 }));
+
+    expect(second).not.toBe(first);
+  });
+
+  it('is stable when hyperlink metadata is identical', () => {
+    const first = deriveBlockVersion(makeParagraph({ href: 'https://example.com/', rId: 'rId1', version: 2 }));
+    const second = deriveBlockVersion(makeParagraph({ href: 'https://example.com/', rId: 'rId1', version: 2 }));
+
+    expect(second).toBe(first);
+  });
+});
+
+describe('deriveBlockVersion - paragraph tracked-change anchors', () => {
+  const makeParagraphPropertyTrackedChange = (id: string): MarkerTrackedChange => ({
+    kind: 'format',
+    id,
+    author: 'Test Reviewer',
+    date: '2026-07-08T15:31:00Z',
+    type: 'formatting',
+    subtype: 'paragraph-formatting',
+    storyKey: 'body',
+    targetKind: 'paragraph',
+    groupedIds: [id],
+  });
+
+  const makeParagraph = (trackedChangeId?: string): ParagraphBlock => ({
+    kind: 'paragraph',
+    id: 'paragraph-property-tracked-change-version',
+    attrs: {
+      indent: { left: 48 },
+      ...(trackedChangeId
+        ? {
+            paragraphPropertyTrackedChange: makeParagraphPropertyTrackedChange(trackedChangeId),
+          }
+        : {}),
+    },
+    runs: [{ text: 'Indented paragraph', fontFamily: 'Arial', fontSize: 16 }],
+  });
+
+  it('changes when a paragraph property tracked-change anchor is added', () => {
+    const plain = deriveBlockVersion(makeParagraph());
+    const tracked = deriveBlockVersion(makeParagraph('tc-format-1'));
+
+    expect(tracked).not.toBe(plain);
+  });
+
+  it('changes when only the paragraph property tracked-change identity changes', () => {
+    const first = deriveBlockVersion(makeParagraph('tc-format-1'));
+    const second = deriveBlockVersion(makeParagraph('tc-format-2'));
+
+    expect(second).not.toBe(first);
+  });
+});
+
+describe('deriveBlockVersion - list marker tracked-change anchors', () => {
+  const makeMarkerTrackedChange = (id: string): MarkerTrackedChange => ({
+    kind: 'insert',
+    id,
+    author: 'SuperDoc',
+    date: '2026-07-09T21:59:14.632Z',
+    type: 'structural',
+    subtype: 'paragraph-mark-insertion',
+    storyKey: 'body',
+    targetKind: 'list-item',
+    semanticColorKey: 'insertion',
+    groupedIds: [id],
+  });
+
+  const makeParagraph = (trackedChangeId?: string): ParagraphBlock => ({
+    kind: 'paragraph',
+    id: 'list-marker-tracked-change-version',
+    attrs: {
+      numberingProperties: { numId: 3, ilvl: 0 },
+      wordLayout: {
+        marker: {
+          markerText: '1.',
+          markerBoxWidthPx: 24,
+          run: { fontFamily: 'Arial', fontSize: 16 },
+          ...(trackedChangeId ? { trackedChange: makeMarkerTrackedChange(trackedChangeId) } : {}),
+        },
+      },
+    },
+    runs: [{ text: 'testing', fontFamily: 'Arial', fontSize: 16 }],
+  });
+
+  it('changes when a list marker tracked-change anchor is added', () => {
+    const plain = deriveBlockVersion(makeParagraph());
+    const tracked = deriveBlockVersion(makeParagraph('tc-list-marker-1'));
+
+    expect(tracked).not.toBe(plain);
+  });
+
+  it('changes when only the list marker tracked-change identity changes', () => {
+    const first = deriveBlockVersion(makeParagraph('tc-list-marker-1'));
+    const second = deriveBlockVersion(makeParagraph('tc-list-marker-2'));
+
+    expect(second).not.toBe(first);
+  });
+
+  it('uses the same list/paragraph tracked-change signature inside table cells', () => {
+    const makeTable = (paragraph: ParagraphBlock): TableBlock => ({
+      kind: 'table',
+      id: 'table-with-tracked-list',
+      rows: [{ id: 'row', cells: [{ id: 'cell', blocks: [paragraph] }] }],
+    });
+    const first = makeParagraph('tc-list-marker-1');
+    const changedMarker = {
+      ...first,
+      attrs: {
+        ...first.attrs,
+        wordLayout: {
+          ...first.attrs?.wordLayout,
+          marker: { ...first.attrs?.wordLayout?.marker, markerText: 'A.' },
+        },
+      },
+    } as ParagraphBlock;
+    const changedPropertyRevision = {
+      ...first,
+      attrs: {
+        ...first.attrs,
+        paragraphPropertyTrackedChange: {
+          ...makeMarkerTrackedChange('tc-list-format-2'),
+          kind: 'format',
+          type: 'formatting',
+          subtype: 'list-formatting',
+        },
+      },
+    } as ParagraphBlock;
+
+    const base = deriveBlockVersion(makeTable(first));
+    expect(deriveBlockVersion(makeTable(changedMarker))).not.toBe(base);
+    expect(deriveBlockVersion(makeTable(changedPropertyRevision))).not.toBe(base);
+  });
+});
+
+describe('deriveBlockVersion - vanished text runs', () => {
+  const makeParagraph = (vanish?: boolean): ParagraphBlock => ({
+    kind: 'paragraph',
+    id: 'vanish-version',
+    attrs: {},
+    runs: [
+      {
+        text: 'Hidden',
+        fontFamily: 'Arial',
+        fontSize: 16,
+        ...(vanish ? { vanish } : {}),
+      },
+    ],
+  });
+
+  it('changes when only vanish changes', () => {
+    expect(deriveBlockVersion(makeParagraph(true))).not.toBe(deriveBlockVersion(makeParagraph()));
+  });
+
+  it('changes when only a tab run vanish flag changes', () => {
+    const tab: TabRun = { kind: 'tab', text: '\t', fontFamily: 'Arial', fontSize: 16 };
+    const plain: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'vanish-tab-version',
+      attrs: {},
+      runs: [tab],
+    };
+    const hidden: ParagraphBlock = {
+      ...plain,
+      runs: [{ ...tab, vanish: true }],
+    };
+
+    expect(deriveBlockVersion(hidden)).not.toBe(deriveBlockVersion(plain));
+  });
+});
+
+describe('deriveBlockVersion - text transform', () => {
+  const makeParagraph = (textTransform?: TextRun['textTransform']): ParagraphBlock => ({
+    kind: 'paragraph',
+    id: 'text-transform-version',
+    attrs: {},
+    runs: [
+      {
+        text: 'Caps',
+        fontFamily: 'Arial',
+        fontSize: 16,
+        ...(textTransform ? { textTransform } : {}),
+      },
+    ],
+  });
+
+  it('changes when only textTransform changes', () => {
+    expect(deriveBlockVersion(makeParagraph('uppercase'))).not.toBe(deriveBlockVersion(makeParagraph()));
+  });
+});
+
 describe('deriveBlockVersion - tracked-change colors', () => {
-  const makeParagraph = (color: string): ParagraphBlock => ({
+  const makeParagraph = (color: string, trackedChange: Partial<TrackedChangeMeta> = {}): ParagraphBlock => ({
     kind: 'paragraph',
     id: 'tracked-color',
     attrs: {},
@@ -92,6 +359,7 @@ describe('deriveBlockVersion - tracked-change colors', () => {
           id: 'tc-1',
           author: 'Alice',
           color,
+          ...trackedChange,
         },
       },
     ],
@@ -109,6 +377,109 @@ describe('deriveBlockVersion - tracked-change colors', () => {
     const b = deriveBlockVersion(makeParagraph('#8250df'));
 
     expect(a).toBe(b);
+  });
+
+  it('changes when only the tracked-change semantic color changes', () => {
+    const gold = deriveBlockVersion(
+      makeParagraph('#8250df', {
+        semanticColorKey: 'cell-merge',
+        semanticColor: '#d4a72c',
+        subtype: 'cell-merge',
+        targetKind: 'cell',
+        semanticAnchorScope: 'affected-range',
+      }),
+    );
+    const amber = deriveBlockVersion(
+      makeParagraph('#8250df', {
+        semanticColorKey: 'cell-merge',
+        semanticColor: '#bf8700',
+        subtype: 'cell-merge',
+        targetKind: 'cell',
+        semanticAnchorScope: 'affected-range',
+      }),
+    );
+
+    expect(amber).not.toBe(gold);
+  });
+
+  it('changes when only the tracked-change semantic category metadata changes', () => {
+    const merge = deriveBlockVersion(
+      makeParagraph('#8250df', {
+        semanticColorKey: 'cell-merge',
+        semanticColor: '#d4a72c',
+        subtype: 'cell-merge',
+        targetKind: 'cell',
+        semanticAnchorScope: 'affected-range',
+      }),
+    );
+    const split = deriveBlockVersion(
+      makeParagraph('#8250df', {
+        semanticColorKey: 'cell-split',
+        semanticColor: '#d4a72c',
+        subtype: 'cell-split',
+        targetKind: 'cell',
+        semanticAnchorScope: 'direct',
+      }),
+    );
+
+    expect(split).not.toBe(merge);
+  });
+});
+
+describe('deriveBlockVersion - table tracked-change semantic colors', () => {
+  const makeTrackedChange = (semanticColor: string, overrides: Partial<TrackedChangeMeta> = {}): TrackedChangeMeta => ({
+    kind: 'format',
+    id: 'tc-cell',
+    author: 'Alice',
+    color: '#8250df',
+    semanticColorKey: 'cell-merge',
+    semanticColor,
+    subtype: 'cell-merge',
+    targetKind: 'cell',
+    semanticAnchorScope: 'affected-range',
+    ...overrides,
+  });
+
+  const makeTable = (input: {
+    rowTrackedChange?: TrackedChangeMeta;
+    cellTrackedChange?: TrackedChangeMeta;
+  }): TableBlock => ({
+    kind: 'table',
+    id: 'tracked-table',
+    rows: [
+      {
+        id: 'row-1',
+        ...(input.rowTrackedChange ? { attrs: { trackedChange: input.rowTrackedChange } } : {}),
+        cells: [
+          {
+            id: 'cell-1',
+            ...(input.cellTrackedChange ? { attrs: { trackedChange: input.cellTrackedChange } } : {}),
+            blocks: [
+              {
+                kind: 'paragraph',
+                id: 'table-cell-p',
+                attrs: {},
+                runs: [{ text: 'Cell', fontFamily: 'Arial', fontSize: 16 }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  it('changes when only a row-level tracked-change semantic color changes', () => {
+    const gold = deriveBlockVersion(makeTable({ rowTrackedChange: makeTrackedChange('#d4a72c') }));
+    const amber = deriveBlockVersion(makeTable({ rowTrackedChange: makeTrackedChange('#bf8700') }));
+
+    expect(amber).not.toBe(gold);
+  });
+
+  it('changes when only a cell-level tracked-change semantic color changes', () => {
+    const gold = deriveBlockVersion(makeTable({ cellTrackedChange: makeTrackedChange('#d4a72c') }));
+    const amber = deriveBlockVersion(makeTable({ cellTrackedChange: makeTrackedChange('#bf8700') }));
+
+    expect(amber).not.toBe(gold);
   });
 });
 
@@ -201,50 +572,6 @@ describe('deriveBlockVersion - tab underline', () => {
   });
 });
 
-describe('deriveBlockVersion - vector shape effects', () => {
-  const makeVectorShape = (
-    overrides: Partial<VectorShapeDrawing['effects']['outerShadow']> = {},
-  ): VectorShapeDrawing => ({
-    kind: 'drawing',
-    id: 'shadow-shape',
-    drawingKind: 'vectorShape',
-    geometry: { width: 100, height: 50, rotation: 0, flipH: false, flipV: false },
-    shapeKind: 'rect',
-    fillColor: '#ffffff',
-    strokeColor: '#000000',
-    strokeWidth: 1,
-    effects: {
-      outerShadow: {
-        type: 'outerShadow',
-        blurRadius: 6,
-        distance: 4,
-        direction: 45,
-        color: '#a6a6a6',
-        opacity: 0.4,
-        ...overrides,
-      },
-    },
-  });
-
-  it.each([
-    ['blurRadius', { blurRadius: 7 }],
-    ['distance', { distance: 5 }],
-    ['direction', { direction: 90 }],
-    ['color', { color: '#000000' }],
-    ['opacity', { opacity: 0.8 }],
-  ] as const)('changes when outer shadow %s changes', (_field, overrides) => {
-    expect(deriveBlockVersion(makeVectorShape(overrides))).not.toBe(deriveBlockVersion(makeVectorShape()));
-  });
-
-  it('changes when the vector shape effect extent changes', () => {
-    const base = makeVectorShape();
-    const withExtent = makeVectorShape();
-    withExtent.effectExtent = { left: 2, top: 2, right: 14, bottom: 14 };
-
-    expect(deriveBlockVersion(withExtent)).not.toBe(deriveBlockVersion(base));
-  });
-});
-
 describe('deriveBlockVersion - table image content', () => {
   const makeTableWithImage = (image: ImageBlock): TableBlock => ({
     kind: 'table',
@@ -312,32 +639,122 @@ describe('deriveBlockVersion - table image content', () => {
 
     expect(second).not.toBe(first);
   });
+});
 
-  it('changes when a table image shape clip path changes', () => {
-    const ellipse = deriveBlockVersion(
-      makeTableWithImage({ ...baseImage, shapeClipPath: 'ellipse(50% 50% at 50% 50%)' }),
-    );
-    const circle = deriveBlockVersion(makeTableWithImage({ ...baseImage, shapeClipPath: 'circle(50% at 50% 50%)' }));
-
-    expect(circle).not.toBe(ellipse);
+describe('deriveBlockVersion - table text run hyperlinks', () => {
+  const makeTableWithTextLink = (link?: TextRun['link']): TableBlock => ({
+    kind: 'table',
+    id: 'table-with-text-link',
+    rows: [
+      {
+        id: 'row-1',
+        cells: [
+          {
+            id: 'cell-1',
+            blocks: [
+              {
+                kind: 'paragraph',
+                id: 'cell-p1',
+                attrs: {},
+                runs: [
+                  {
+                    text: 'SuperDoc website',
+                    fontFamily: 'Arial',
+                    fontSize: 16,
+                    pmStart: 1,
+                    pmEnd: 17,
+                    ...(link ? { link } : {}),
+                  } as TextRun,
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
   });
 
-  it('changes when a table image attrs shape clip path changes', () => {
-    const ellipse = deriveBlockVersion(
-      makeTableWithImage({ ...baseImage, attrs: { shapeClipPath: 'ellipse(50% 50% at 50% 50%)' } }),
+  it('changes when a table cell text run hyperlink target changes', () => {
+    const first = deriveBlockVersion(
+      makeTableWithTextLink({ href: 'https://first.example/', rId: 'rId1', version: 2 }),
     );
-    const circle = deriveBlockVersion(
-      makeTableWithImage({ ...baseImage, attrs: { shapeClipPath: 'circle(50% at 50% 50%)' } }),
+    const second = deriveBlockVersion(
+      makeTableWithTextLink({ href: 'https://second.example/', rId: 'rId2', version: 2 }),
     );
 
-    expect(circle).not.toBe(ellipse);
+    expect(second).not.toBe(first);
   });
 
-  it('changes when a block image objectFit changes', () => {
-    const contain = deriveBlockVersion({ ...baseImage, objectFit: 'contain' });
-    const cover = deriveBlockVersion({ ...baseImage, objectFit: 'cover' });
+  it('changes when only a table cell text run vanish flag changes', () => {
+    const plain = deriveBlockVersion(makeTableWithTextLink());
+    const hidden = deriveBlockVersion({
+      ...makeTableWithTextLink(),
+      rows: [
+        {
+          id: 'row-1',
+          cells: [
+            {
+              id: 'cell-1',
+              blocks: [
+                {
+                  kind: 'paragraph',
+                  id: 'cell-p1',
+                  attrs: {},
+                  runs: [
+                    {
+                      text: 'SuperDoc website',
+                      fontFamily: 'Arial',
+                      fontSize: 16,
+                      pmStart: 1,
+                      pmEnd: 17,
+                      vanish: true,
+                    } as TextRun,
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
 
-    expect(cover).not.toBe(contain);
+    expect(hidden).not.toBe(plain);
+  });
+
+  it('changes when only a table cell text run textTransform changes', () => {
+    const plain = deriveBlockVersion(makeTableWithTextLink());
+    const caps = deriveBlockVersion({
+      ...makeTableWithTextLink(),
+      rows: [
+        {
+          id: 'row-1',
+          cells: [
+            {
+              id: 'cell-1',
+              blocks: [
+                {
+                  kind: 'paragraph',
+                  id: 'cell-p1',
+                  attrs: {},
+                  runs: [
+                    {
+                      text: 'SuperDoc website',
+                      fontFamily: 'Arial',
+                      fontSize: 16,
+                      pmStart: 1,
+                      pmEnd: 17,
+                      textTransform: 'uppercase',
+                    } as TextRun,
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(caps).not.toBe(plain);
   });
 });
 
@@ -440,6 +857,37 @@ describe('deriveBlockVersion - inline image runs', () => {
     expect(linked).not.toBe(unlinked);
   });
 
+  it('changes when an inline image tracked-change decoration is added or removed', () => {
+    const trackedChange: TrackedChangeMeta = {
+      kind: 'insert',
+      id: 'tc-image-insert',
+      author: 'Reviewer',
+      semanticColorKey: 'image-insertion',
+      targetKind: 'image',
+    };
+    const plain = deriveBlockVersion(makeParagraphWithImageRun(baseImageRun));
+    const tracked = deriveBlockVersion(makeParagraphWithImageRun({ ...baseImageRun, trackedChange }));
+
+    expect(tracked).not.toBe(plain);
+  });
+
+  it('changes when inline image tracked-change identity changes', () => {
+    const first: TrackedChangeMeta = {
+      kind: 'insert',
+      id: 'tc-image-insert-1',
+      semanticColorKey: 'image-insertion',
+      targetKind: 'image',
+    };
+    const second: TrackedChangeMeta = {
+      ...first,
+      id: 'tc-image-insert-2',
+    };
+
+    expect(deriveBlockVersion(makeParagraphWithImageRun({ ...baseImageRun, trackedChange: second }))).not.toBe(
+      deriveBlockVersion(makeParagraphWithImageRun({ ...baseImageRun, trackedChange: first })),
+    );
+  });
+
   it('changes when inline image SDT metadata changes', () => {
     const plain = deriveBlockVersion(makeParagraphWithImageRun(baseImageRun));
     const locked = deriveBlockVersion(
@@ -476,30 +924,6 @@ describe('deriveBlockVersion - inline image runs', () => {
     expect(deriveBlockVersion(makeTableWithImageRun(clipA))).not.toBe(deriveBlockVersion(makeTableWithImageRun(clipB)));
   });
 
-  it('changes when inline image shape mask changes', () => {
-    const ellipse = {
-      ...baseImageRun,
-      shapeClipPath: 'ellipse(50% 50% at 50% 50%)',
-    } as ImageRun;
-    const circle = {
-      ...baseImageRun,
-      shapeClipPath: 'circle(50% at 50% 50%)',
-    } as ImageRun;
-
-    expect(deriveBlockVersion(makeParagraphWithImageRun(circle))).not.toBe(
-      deriveBlockVersion(makeParagraphWithImageRun(ellipse)),
-    );
-  });
-
-  it('changes when inline image object fit changes', () => {
-    const cover = { ...baseImageRun, objectFit: 'cover' } as ImageRun;
-    const fill = { ...baseImageRun, objectFit: 'fill' } as ImageRun;
-
-    expect(deriveBlockVersion(makeParagraphWithImageRun(fill))).not.toBe(
-      deriveBlockVersion(makeParagraphWithImageRun(cover)),
-    );
-  });
-
   it('changes when a table-cell inline image visual property changes', () => {
     const plain = deriveBlockVersion(makeTableWithImageRun(baseImageRun));
     const filtered = deriveBlockVersion(makeTableWithImageRun({ ...baseImageRun, grayscale: true }));
@@ -509,5 +933,130 @@ describe('deriveBlockVersion - inline image runs', () => {
 
     expect(filtered).not.toBe(plain);
     expect(linked).not.toBe(plain);
+  });
+
+  it('changes when a table-cell inline image tracked-change decoration changes', () => {
+    const plain = deriveBlockVersion(makeTableWithImageRun(baseImageRun));
+    const tracked = deriveBlockVersion(
+      makeTableWithImageRun({
+        ...baseImageRun,
+        trackedChange: {
+          kind: 'insert',
+          id: 'tc-table-image',
+          semanticColorKey: 'image-insertion',
+          targetKind: 'image',
+        },
+      }),
+    );
+
+    expect(tracked).not.toBe(plain);
+  });
+});
+
+describe('pm positions and paint stamps (painter plan P5)', () => {
+  const tableWithCellPm = (pmBase: number, secondRunStart?: number): TableBlock =>
+    ({
+      kind: 'table',
+      id: 'pm-table',
+      rows: [
+        {
+          id: 'row-1',
+          cells: [
+            {
+              id: 'cell-1',
+              blocks: [
+                {
+                  kind: 'paragraph',
+                  id: 'cell-para',
+                  runs: [
+                    { text: 'Cell', fontFamily: 'Arial', fontSize: 12, pmStart: pmBase, pmEnd: pmBase + 4 },
+                    {
+                      text: ' text',
+                      fontFamily: 'Arial',
+                      fontSize: 12,
+                      pmStart: secondRunStart ?? pmBase + 4,
+                      pmEnd: (secondRunStart ?? pmBase + 4) + 5,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }) as unknown as TableBlock;
+
+  it('table stamps are pm-free: a pm-only drift keeps deriveBlockVersion byte-equal', () => {
+    // The stamp is the product reuse mechanism; positions are coordinates,
+    // not content. Re-adding any pm-derived term here reintroduces the
+    // rebuild-every-keystroke storm on downstream table pages (P5).
+    expect(deriveBlockVersion(tableWithCellPm(100))).toBe(deriveBlockVersion(tableWithCellPm(140)));
+  });
+
+  const relativePart = (version: string): string => version.slice(0, version.lastIndexOf('@'));
+  const basePart = (version: string): number => Number(version.slice(version.lastIndexOf('@') + 1));
+
+  it('derivePmInteriorVersion: relative part is drift-insensitive, base tracks the shift, redistribution changes the relative part', () => {
+    const at100 = derivePmInteriorVersion(tableWithCellPm(100));
+    const at140 = derivePmInteriorVersion(tableWithCellPm(140));
+    // Uniform shift: relative offsets unchanged (the remap proof) while the
+    // absolute base moves by exactly the drift (the uniformity witness).
+    expect(relativePart(at100)).toBe(relativePart(at140));
+    expect(basePart(at140) - basePart(at100)).toBe(40);
+    // Interior redistribution (a moved PM node emits no run): second run
+    // shifts within the block -> relative part differs (rebuild).
+    expect(relativePart(at100)).not.toBe(relativePart(derivePmInteriorVersion(tableWithCellPm(100, 106))));
+  });
+
+  it('derivePmInteriorVersion covers paragraph runs and reports pm-less blocks as pm:none', () => {
+    const para = (pmBase: number): ParagraphBlock =>
+      ({
+        kind: 'paragraph',
+        id: 'p',
+        runs: [{ text: 'abc', fontFamily: 'Arial', fontSize: 12, pmStart: pmBase, pmEnd: pmBase + 3 }],
+      }) as unknown as ParagraphBlock;
+    expect(relativePart(derivePmInteriorVersion(para(5)))).toBe(relativePart(derivePmInteriorVersion(para(50))));
+    expect(basePart(derivePmInteriorVersion(para(50))) - basePart(derivePmInteriorVersion(para(5)))).toBe(45);
+    const noPm = {
+      kind: 'paragraph',
+      id: 'p2',
+      runs: [{ text: 'abc', fontFamily: 'Arial', fontSize: 12 }],
+    } as unknown as ParagraphBlock;
+    expect(derivePmInteriorVersion(noPm)).toBe('pm:none');
+  });
+});
+
+describe('deriveBlockVersion - inline boxes', () => {
+  const makeParagraph = (paddingInlineStart = 4, backgroundColor = '#eef2ff'): ParagraphBlock => ({
+    kind: 'paragraph',
+    id: 'inline-box-version',
+    runs: [{ text: 'Citation', fontFamily: 'Arial', fontSize: 12 }],
+    inlineBoxes: [
+      {
+        id: 'citation',
+        from: 0,
+        to: 8,
+        layout: {
+          paddingInlineStart,
+          paddingInlineEnd: 4,
+          paddingBlockStart: 1,
+          paddingBlockEnd: 1,
+          gapBefore: 1,
+          gapAfter: 1,
+          borderWidth: 1,
+        },
+        appearance: { backgroundColor, borderColor: '#a5b4fc', borderStyle: 'solid', borderRadius: 4 },
+      },
+    ],
+  });
+
+  it('changes when only inline-box metrics or appearance change', () => {
+    const base = deriveBlockVersion(makeParagraph());
+    expect(deriveBlockVersion(makeParagraph(8))).not.toBe(base);
+    expect(deriveBlockVersion(makeParagraph(4, '#ffffff'))).not.toBe(base);
+  });
+
+  it('is stable when inline-box content is identical', () => {
+    expect(deriveBlockVersion(makeParagraph())).toBe(deriveBlockVersion(makeParagraph()));
   });
 });

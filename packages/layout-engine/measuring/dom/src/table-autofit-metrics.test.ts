@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { TableCell } from '@superdoc/contracts';
 import type { TableBlock } from '@superdoc/contracts';
 import { measureBlock } from './index.js';
@@ -6,6 +6,7 @@ import { buildAutoFitWorkingGridInput } from './autofit-normalize.js';
 import { computeFixedTableColumnWidths } from './fixed-table-columns.js';
 import {
   buildAutoFitTableResultCacheKey,
+  buildTableCellContentMetricsCacheKey,
   clearTableAutoFitMeasurementCaches,
   measureTableAutoFitContentMetrics,
   measureTableCellContentMetrics,
@@ -50,6 +51,225 @@ describe('table-autofit-metrics', () => {
 
     expect(metrics.minWidthPx).toBeCloseTo(expected.maxWidthPx, 3);
     expect(metrics.maxWidthPx).toBeGreaterThan(metrics.minWidthPx);
+  });
+
+  it('reserves inline box edges in the intrinsic minimum width', async () => {
+    const paragraph = {
+      kind: 'paragraph' as const,
+      id: 'inline-box-autofit-paragraph',
+      runs: [{ text: 'citation', fontFamily: 'Arial', fontSize: 12 }],
+    };
+    const plain: TableCell = {
+      id: 'plain-inline-box-cell',
+      attrs: { padding: { left: 0, right: 0, top: 0, bottom: 0 } },
+      blocks: [paragraph],
+    };
+    const boxed: TableCell = {
+      ...plain,
+      id: 'boxed-inline-box-cell',
+      blocks: [
+        {
+          ...paragraph,
+          inlineBoxes: [
+            {
+              id: 'citation',
+              from: 0,
+              to: 8,
+              layout: {
+                paddingInlineStart: 6,
+                paddingInlineEnd: 8,
+                paddingBlockStart: 0,
+                paddingBlockEnd: 0,
+                gapBefore: 2,
+                gapAfter: 4,
+                borderWidth: 1,
+              },
+              appearance: {},
+            },
+          ],
+        },
+      ],
+    };
+
+    const [plainMetrics, boxedMetrics] = await Promise.all([
+      measureTableCellContentMetrics(plain, { maxWidth: 400, measureBlock }),
+      measureTableCellContentMetrics(boxed, { maxWidth: 400, measureBlock }),
+    ]);
+
+    expect(boxedMetrics.minWidthPx - plainMetrics.minWidthPx).toBeCloseTo(22, 3);
+    expect(boxedMetrics.maxWidthPx - plainMetrics.maxWidthPx).toBeCloseTo(22, 3);
+  });
+
+  it('does not combine box edges from separate intrinsic tokens', async () => {
+    const layout = {
+      paddingInlineStart: 6,
+      paddingInlineEnd: 8,
+      paddingBlockStart: 0,
+      paddingBlockEnd: 0,
+      gapBefore: 2,
+      gapAfter: 4,
+      borderWidth: 1,
+    };
+    const plain: TableCell = {
+      id: 'plain-two-box-cell',
+      attrs: { padding: { left: 0, right: 0, top: 0, bottom: 0 } },
+      blocks: [{ kind: 'paragraph', id: 'plain-two-boxes', runs: [{ text: 'citation citation' }] }],
+    };
+    const boxed: TableCell = {
+      ...plain,
+      id: 'boxed-two-box-cell',
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'boxed-two-boxes',
+          runs: [{ text: 'citation citation' }],
+          inlineBoxes: [
+            { id: 'first', from: 0, to: 8, layout, appearance: {} },
+            { id: 'second', from: 9, to: 17, layout, appearance: {} },
+          ],
+        },
+      ],
+    };
+
+    const [plainMetrics, boxedMetrics] = await Promise.all([
+      measureTableCellContentMetrics(plain, { maxWidth: 400, measureBlock }),
+      measureTableCellContentMetrics(boxed, { maxWidth: 400, measureBlock }),
+    ]);
+
+    expect(boxedMetrics.minWidthPx - plainMetrics.minWidthPx).toBeCloseTo(22, 3);
+    expect(boxedMetrics.maxWidthPx - plainMetrics.maxWidthPx).toBeCloseTo(44, 3);
+  });
+
+  it('treats CJK ideographs as breakable intrinsic-width units', async () => {
+    const cjkCell: TableCell = {
+      id: 'cell-cjk-clause',
+      attrs: {
+        padding: { left: 0, right: 0, top: 0, bottom: 0 },
+      },
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'para-cjk-clause',
+          runs: [
+            {
+              text: '示例文本内容占位符样张测试用字符替换排版验证示例',
+              fontFamily: 'Arial',
+              fontSize: 12,
+            },
+          ],
+        },
+      ],
+    };
+    const singleIdeographCell: TableCell = {
+      id: 'cell-cjk-single',
+      attrs: {
+        padding: { left: 0, right: 0, top: 0, bottom: 0 },
+      },
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'para-cjk-single',
+          runs: [{ text: '示', fontFamily: 'Arial', fontSize: 12 }],
+        },
+      ],
+    };
+
+    const metrics = await measureTableCellContentMetrics(cjkCell, { maxWidth: 624, measureBlock });
+    const singleIdeograph = await measureTableCellContentMetrics(singleIdeographCell, {
+      maxWidth: 624,
+      measureBlock,
+    });
+
+    expect(metrics.minWidthPx).toBeCloseTo(singleIdeograph.maxWidthPx, 3);
+    expect(metrics.maxWidthPx).toBeGreaterThan(metrics.minWidthPx * 10);
+  });
+
+  it('preserves an explicit equal DOCX grid when the wider-looking cell is breakable CJK text', async () => {
+    const preferredColumnWidth = 312;
+    const cellWidth = { value: 4680, type: 'dxa' } as const;
+    const table: TableBlock = {
+      kind: 'table',
+      id: 'sd-4064-equal-bilingual-grid',
+      attrs: {
+        tableWidth: { width: preferredColumnWidth * 2, type: 'px' },
+      },
+      columnWidths: [preferredColumnWidth, preferredColumnWidth],
+      rows: [
+        {
+          id: 'row-header',
+          cells: [
+            {
+              id: 'cell-header-en',
+              attrs: { tableCellProperties: { cellWidth } },
+              blocks: [
+                {
+                  kind: 'paragraph',
+                  id: 'para-header-en',
+                  runs: [{ text: 'LOREMIP', fontFamily: 'Arial', fontSize: 12 }],
+                },
+              ],
+            },
+            {
+              id: 'cell-header-zh',
+              attrs: { tableCellProperties: { cellWidth } },
+              blocks: [
+                {
+                  kind: 'paragraph',
+                  id: 'para-header-zh',
+                  runs: [{ text: '示例', fontFamily: 'Arial', fontSize: 12 }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'row-body',
+          cells: [
+            {
+              id: 'cell-body-en',
+              attrs: { tableCellProperties: { cellWidth } },
+              blocks: [
+                {
+                  kind: 'paragraph',
+                  id: 'para-body-en',
+                  runs: [
+                    {
+                      text: 'Lorem ipsum dolor sit amet consectetur adipiscing elit.',
+                      fontFamily: 'Arial',
+                      fontSize: 12,
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              id: 'cell-body-zh',
+              attrs: { tableCellProperties: { cellWidth } },
+              blocks: [
+                {
+                  kind: 'paragraph',
+                  id: 'para-body-zh',
+                  runs: [
+                    {
+                      text: '示例文本内容占位符样张测试用字符替换排版验证示例文本内容占位符样张测试用字符替换排版。',
+                      fontFamily: 'Arial',
+                      fontSize: 12,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const measure = await measureBlock(table, { maxWidth: preferredColumnWidth * 2 });
+
+    expect(measure.kind).toBe('table');
+    if (measure.kind !== 'table') throw new Error('expected table measure');
+    expect(measure.columnWidths[0]).toBeCloseTo(preferredColumnWidth, 3);
+    expect(measure.columnWidths[1]).toBeCloseTo(preferredColumnWidth, 3);
   });
 
   it('keeps non-breaking-space tokens together across adjacent styled runs', async () => {
@@ -222,6 +442,115 @@ describe('table-autofit-metrics', () => {
     expect(metrics.maxWidthPx).toBeCloseTo(expected.maxWidthPx, 3);
   });
 
+  it('treats vanished text as zero-width intrinsic content', async () => {
+    const hiddenPrefixCell: TableCell = {
+      id: 'cell-hidden-prefix',
+      attrs: {
+        padding: { left: 0, right: 0, top: 0, bottom: 0 },
+      },
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'para-hidden-prefix',
+          runs: [
+            { text: 'SuperLongHiddenToken', fontFamily: 'Arial', fontSize: 12, vanish: true },
+            { text: 'Visible', fontFamily: 'Arial', fontSize: 12 },
+          ],
+        },
+      ],
+    };
+
+    const visibleOnlyCell: TableCell = {
+      id: 'cell-visible-only',
+      attrs: {
+        padding: { left: 0, right: 0, top: 0, bottom: 0 },
+      },
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'para-visible-only',
+          runs: [{ text: 'Visible', fontFamily: 'Arial', fontSize: 12 }],
+        },
+      ],
+    };
+
+    const hiddenOnlyCell: TableCell = {
+      id: 'cell-hidden-only',
+      attrs: {
+        padding: { left: 0, right: 0, top: 0, bottom: 0 },
+      },
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'para-hidden-only',
+          runs: [{ text: 'SuperLongHiddenToken', fontFamily: 'Arial', fontSize: 12, vanish: true }],
+        },
+      ],
+    };
+
+    const hiddenPrefix = await measureTableCellContentMetrics(hiddenPrefixCell, { maxWidth: 400, measureBlock });
+    const visibleOnly = await measureTableCellContentMetrics(visibleOnlyCell, { maxWidth: 400, measureBlock });
+    const hiddenOnly = await measureTableCellContentMetrics(hiddenOnlyCell, { maxWidth: 400, measureBlock });
+
+    expect(hiddenPrefix.minWidthPx).toBeCloseTo(visibleOnly.minWidthPx, 3);
+    expect(hiddenPrefix.maxWidthPx).toBeCloseTo(visibleOnly.maxWidthPx, 3);
+    expect(hiddenOnly).toEqual({ minWidthPx: 0, maxWidthPx: 0 });
+  });
+
+  it('treats control blocks inside cells as zero-width AutoFit content', async () => {
+    const controlOnlyCell: TableCell = {
+      id: 'cell-control-blocks',
+      attrs: {
+        padding: { left: 0, right: 0, top: 0, bottom: 0 },
+      },
+      blocks: [
+        { kind: 'pageBreak', id: 'page-break-before', attrs: { source: 'pageBreakBefore' } },
+        { kind: 'columnBreak', id: 'column-break' },
+        { kind: 'sectionBreak', id: 'section-break', type: 'continuous', margins: {} },
+      ],
+    };
+
+    const metrics = await measureTableCellContentMetrics(controlOnlyCell, { maxWidth: 400, measureBlock });
+
+    expect(metrics).toEqual({ minWidthPx: 0, maxWidthPx: 0 });
+  });
+
+  it('ignores table-cell pageBreakBefore controls when measuring neighboring content', async () => {
+    const cell: TableCell = {
+      id: 'cell-page-break-before-content',
+      attrs: {
+        padding: { left: 0, right: 0, top: 0, bottom: 0 },
+      },
+      blocks: [
+        { kind: 'pageBreak', id: 'page-break-before', attrs: { source: 'pageBreakBefore' } },
+        {
+          kind: 'paragraph',
+          id: 'para-after-page-break-before',
+          runs: [{ text: 'AfterBreak', fontFamily: 'Arial', fontSize: 12 }],
+        },
+      ],
+    };
+    const paragraphOnlyCell: TableCell = {
+      id: 'cell-paragraph-only',
+      attrs: {
+        padding: { left: 0, right: 0, top: 0, bottom: 0 },
+      },
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'para-after-page-break-before',
+          runs: [{ text: 'AfterBreak', fontFamily: 'Arial', fontSize: 12 }],
+        },
+      ],
+    };
+
+    const metrics = await measureTableCellContentMetrics(cell, { maxWidth: 400, measureBlock });
+    const expected = await measureTableCellContentMetrics(paragraphOnlyCell, { maxWidth: 400, measureBlock });
+
+    expect(metrics.minWidthPx).toBeCloseTo(expected.minWidthPx, 3);
+    expect(metrics.maxWidthPx).toBeCloseTo(expected.maxWidthPx, 3);
+  });
+
   it('treats image blocks as atomic min/max contributors and adds horizontal chrome', async () => {
     const cell: TableCell = {
       id: 'cell-image',
@@ -247,6 +576,33 @@ describe('table-autofit-metrics', () => {
 
     expect(metrics.minWidthPx).toBe(137);
     expect(metrics.maxWidthPx).toBe(137);
+  });
+
+  it('reserves the authored total width for OOXML double-border chrome', async () => {
+    const cell: TableCell = {
+      id: 'cell-double-border',
+      attrs: {
+        padding: { left: 0, right: 0, top: 0, bottom: 0 },
+        borders: {
+          left: { style: 'double', width: 2 / 3 },
+          right: { style: 'double', width: 2 / 3 },
+        },
+      },
+      blocks: [
+        {
+          kind: 'image',
+          id: 'image-double-border',
+          src: 'data:image/png;base64,abc',
+          width: 120,
+          height: 40,
+        },
+      ],
+    };
+
+    const metrics = await measureTableCellContentMetrics(cell, { maxWidth: 400, measureBlock });
+
+    expect(metrics.minWidthPx).toBeCloseTo(120 + 4 / 3, 4);
+    expect(metrics.maxWidthPx).toBeCloseTo(120 + 4 / 3, 4);
   });
 
   it('measures nested percentage tables against the containing cell width', async () => {
@@ -360,6 +716,159 @@ describe('table-autofit-metrics', () => {
     expect(first).toEqual(second);
     expect(measuringSpy).toHaveBeenCalledTimes(2);
     expect(changed.maxWidthPx).toBeGreaterThan(first.maxWidthPx);
+  });
+
+  it('reuses intrinsic metrics across cell and paragraph identity-only differences', async () => {
+    const measuringSpy = vi.fn(measureBlock);
+    const first: TableCell = {
+      id: 'CELL-A',
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'PARAGRAPH-A',
+          runs: [{ text: 'same geometry', fontFamily: 'Arial', fontSize: 12 }],
+        },
+      ],
+    };
+    const second: TableCell = {
+      ...first,
+      id: 'CELL-B',
+      blocks: first.blocks?.map((block) => ({ ...block, id: 'PARAGRAPH-B' })),
+    };
+
+    const firstMetrics = await measureTableCellContentMetrics(first, {
+      maxWidth: 400,
+      measureBlock: measuringSpy,
+      identityNeutralCache: true,
+    });
+    const secondMetrics = await measureTableCellContentMetrics(second, {
+      maxWidth: 400,
+      measureBlock: measuringSpy,
+      identityNeutralCache: true,
+    });
+
+    expect(secondMetrics).toEqual(firstMetrics);
+    expect(measuringSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('changes identity-sensitive keys only when strict cache mode is selected', () => {
+    const first: TableCell = {
+      id: 'CELL-A',
+      blocks: [{ kind: 'paragraph', id: 'PARAGRAPH-A', runs: [{ text: 'same geometry' }] }],
+    };
+    const second: TableCell = {
+      ...first,
+      id: 'CELL-B',
+      blocks: [{ kind: 'paragraph', id: 'PARAGRAPH-B', runs: [{ text: 'same geometry' }] }],
+    };
+
+    const strictFirst = buildTableCellContentMetricsCacheKey(first, { maxWidth: 400 });
+    const strictSecond = buildTableCellContentMetricsCacheKey(second, { maxWidth: 400 });
+    const contentFirst = buildTableCellContentMetricsCacheKey(first, {
+      maxWidth: 400,
+      identityNeutralCache: true,
+    });
+    const contentSecond = buildTableCellContentMetricsCacheKey(second, {
+      maxWidth: 400,
+      identityNeutralCache: true,
+    });
+
+    expect(strictFirst).not.toBe(strictSecond);
+    expect(contentFirst).toBe(contentSecond);
+  });
+
+  it('changes cell content keys when only nested inline-box metrics or appearance change', () => {
+    const cell = (paddingInlineStart: number, backgroundColor: string): TableCell => ({
+      id: 'inline-box-cell',
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'inline-box-paragraph',
+          runs: [{ text: 'Citation' }],
+          inlineBoxes: [
+            {
+              id: 'citation',
+              from: 0,
+              to: 8,
+              layout: {
+                paddingInlineStart,
+                paddingInlineEnd: 4,
+                paddingBlockStart: 1,
+                paddingBlockEnd: 1,
+                gapBefore: 1,
+                gapAfter: 1,
+                borderWidth: 1,
+              },
+              appearance: { backgroundColor },
+            },
+          ],
+        },
+      ],
+    });
+    const base = buildTableCellContentMetricsCacheKey(cell(4, '#eef2ff'), { maxWidth: 400 });
+
+    expect(buildTableCellContentMetricsCacheKey(cell(8, '#eef2ff'), { maxWidth: 400 })).not.toBe(base);
+    expect(buildTableCellContentMetricsCacheKey(cell(4, '#ffffff'), { maxWidth: 400 })).not.toBe(base);
+    expect(buildTableCellContentMetricsCacheKey(cell(4, '#eef2ff'), { maxWidth: 400 })).toBe(base);
+  });
+
+  it('reuses cached cell metrics when only absolute source positions shift', async () => {
+    const measuringSpy = vi.fn(measureBlock);
+    const originalCell: TableCell = {
+      id: 'cell-position-shift',
+      sourceAnchor: {
+        sourceNodeId: 'CELL0001',
+        pmRange: { from: 100, to: 120 },
+      },
+      blocks: [
+        {
+          kind: 'paragraph',
+          id: 'para-position-shift',
+          sourceAnchor: {
+            sourceNodeId: 'PARA0001',
+            pmRange: { from: 101, to: 119 },
+          },
+          runs: [
+            {
+              text: 'Position-independent content',
+              fontFamily: 'Arial',
+              fontSize: 12,
+              pmStart: 102,
+              pmEnd: 130,
+            },
+          ],
+        },
+      ],
+    };
+    const shiftedCell: TableCell = {
+      ...originalCell,
+      sourceAnchor: {
+        ...originalCell.sourceAnchor,
+        pmRange: { from: 101, to: 121 },
+      },
+      blocks: originalCell.blocks?.map((block) =>
+        block.kind === 'paragraph'
+          ? {
+              ...block,
+              sourceAnchor: {
+                ...block.sourceAnchor,
+                pmRange: { from: 102, to: 120 },
+              },
+              runs: block.runs.map((run) => ({
+                ...run,
+                pmStart: (run.pmStart ?? 0) + 1,
+                pmEnd: (run.pmEnd ?? 0) + 1,
+              })),
+            }
+          : block,
+      ),
+    };
+
+    const first = await measureTableCellContentMetrics(originalCell, { maxWidth: 400, measureBlock: measuringSpy });
+    const shifted = await measureTableCellContentMetrics(shiftedCell, { maxWidth: 400, measureBlock: measuringSpy });
+
+    expect(shifted).toEqual(first);
+    expect(measuringSpy).toHaveBeenCalledTimes(1);
   });
 
   it('invalidates cached cell metrics when the available width changes', async () => {

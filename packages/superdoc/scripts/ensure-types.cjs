@@ -53,14 +53,6 @@ function copyHandwrittenDtsFiles(srcDir, destDir) {
   return copied;
 }
 
-const handwrittenCopiedSuperEditor = copyHandwrittenDtsFiles(
-  path.join(repoRoot, 'packages/super-editor/src'),
-  path.join(distRoot, 'super-editor/src'),
-);
-if (handwrittenCopiedSuperEditor > 0) {
-  console.log(`[ensure-types] ✓ Copied ${handwrittenCopiedSuperEditor} hand-written .d.ts files from super-editor/src`);
-}
-
 // SD-2893: emit declarations for the shared/common subpaths reachable from the
 // public surface. Adding shared/ to vite-plugin-dts's `include` would shift the
 // common-ancestor of all source files to the repo root and reorganise the
@@ -160,11 +152,11 @@ const SHARED_COMMON_DTS_TARGETS = typeSurface.sharedCommonDtsTargets;
   console.log('[ensure-types] ✓ Emitted @superdoc/font-system declarations');
 }
 
-// SD-2978: the package advertises CJS runtime entry points for `.`, `./types`,
-// and `./super-editor`. Node16/NodeNext TypeScript consumers resolving those
-// entries through `require` need CJS declaration entry points (`.d.cts`) so the
-// type graph is honest about the runtime module kind. Generate named CJS
-// declaration shims from the ESM entry declarations. A plain
+// The package advertises CJS runtime entry points for `.`. Node16/NodeNext
+// TypeScript consumers resolving those entries through `require` need CJS
+// declaration entry points (`.d.cts`) so the type graph is honest about the
+// runtime module kind. Generate named CJS declaration shims from the ESM entry
+// declarations. A plain
 // `export * from './entry.js'` is not valid here: TypeScript still treats that
 // as a CJS declaration importing an ESM declaration and raises TS1479.
 const cjsDeclarationShims = [
@@ -174,53 +166,28 @@ const cjsDeclarationShims = [
     target: './index.js',
   },
   {
-    file: path.join(distRoot, 'super-editor/src/types.d.cts'),
-    source: path.join(distRoot, 'super-editor/src/types.d.ts'),
-    target: './types.js',
-  },
-  {
-    file: path.join(distRoot, 'superdoc/src/super-editor.d.cts'),
-    source: path.join(distRoot, 'superdoc/src/super-editor.d.ts'),
-    target: './super-editor.js',
-  },
-  // SD-3178: explicit public facade root entry. The CJS shim is generated
-  // now so that Phase 4 (the `package.json#exports` flip) does not need a
-  // separate pipeline change.
-  {
     file: path.join(distRoot, 'superdoc/src/public/index.d.cts'),
     source: path.join(distRoot, 'superdoc/src/public/index.d.ts'),
     target: './index.js',
   },
-  // SD-3179: legacy headless-toolbar facade entry.
+  // v2-native public UI facade entries. The `./ui` and `./ui/react` exports
+  // advertise CJS `require` conditions, so emit named CJS declaration shims
+  // alongside the ESM `.d.ts` so a `require('superdoc/ui')` consumer resolves
+  // the same named exports.
   {
-    file: path.join(distRoot, 'superdoc/src/public/legacy/headless-toolbar.d.cts'),
-    source: path.join(distRoot, 'superdoc/src/public/legacy/headless-toolbar.d.ts'),
-    target: './headless-toolbar.js',
-  },
-  // SD-3207: legacy headless-toolbar framework helpers.
-  {
-    file: path.join(distRoot, 'superdoc/src/public/legacy/headless-toolbar-react.d.cts'),
-    source: path.join(distRoot, 'superdoc/src/public/legacy/headless-toolbar-react.d.ts'),
-    target: './headless-toolbar-react.js',
+    file: path.join(distRoot, 'superdoc/src/public/ui.d.cts'),
+    source: path.join(distRoot, 'superdoc/src/public/ui.d.ts'),
+    target: './ui.js',
   },
   {
-    file: path.join(distRoot, 'superdoc/src/public/legacy/headless-toolbar-vue.d.cts'),
-    source: path.join(distRoot, 'superdoc/src/public/legacy/headless-toolbar-vue.d.ts'),
-    target: './headless-toolbar-vue.js',
+    file: path.join(distRoot, 'superdoc/src/public/ui-react.d.cts'),
+    source: path.join(distRoot, 'superdoc/src/public/ui-react.d.ts'),
+    target: './ui-react.js',
   },
-  // SD-3184: types facade — type-only entry. The existing `./types`
-  // subpath has split types.import/types.require declarations, so the
-  // facade needs a real .d.cts shim. `typeOnly: true` forces the shim
-  // to re-export every name with `export type`, never `export declare
-  // const`, even for names that have value origins upstream (defineNode,
-  // defineMark, isNodeType, assertNodeType, isMarkType). This matches
-  // the ESM .d.ts which uses `export type { ... }` for the same names
-  // and the runtime contract (`dist/public/types.es.js` is empty).
   {
-    file: path.join(distRoot, 'superdoc/src/public/types.d.cts'),
-    source: path.join(distRoot, 'superdoc/src/public/types.d.ts'),
-    target: './types.js',
-    typeOnly: true,
+    file: path.join(distRoot, 'superdoc/src/public/collaboration-upgrade-engine.d.cts'),
+    source: path.join(distRoot, 'superdoc/src/public/collaboration-upgrade-engine.d.ts'),
+    target: './collaboration-upgrade-engine.js',
   },
 ];
 
@@ -261,11 +228,9 @@ function emitCjsDeclarationShim({ file, source, target, typeOnly = false }) {
     const hasType = Boolean(resolved.flags & ts.SymbolFlags.Type);
 
     // typeOnly: re-export every name as a type, regardless of upstream
-    // origin. SD-3184: `superdoc/types` is contracted as type-only, so
-    // value-origin names (defineNode, defineMark, isNodeType,
-    // assertNodeType, isMarkType) must NOT appear as `export declare
-    // const` in the CJS shim — that would advertise a runtime value
-    // the empty runtime bundle does not provide.
+    // origin. Some generated type-only shims need value-origin names to stay
+    // type-only; otherwise they would advertise runtime values that the
+    // corresponding runtime bundle does not provide.
     if (typeOnly) {
       const typeAlias = `__Cjs_${name}`;
       importLines.push(`import type { ${name} as ${typeAlias} } from '${target}' with { "resolution-mode": "import" };`);
@@ -311,13 +276,23 @@ if (!hasSuperDocExport) {
 // maps bare @superdoc/common to dist/shared/common/comments-types.d.ts.
 function inlineCommonRuntimeDeclarations(filePath) {
   let fileContent = fs.readFileSync(filePath, 'utf8');
-  if (!fileContent.includes('@superdoc/common')) return false;
+  const commonRuntimeImportPatterns = [
+    /import\s*\{[^}]*\}\s*from\s*['"]@superdoc\/common['"];?\s*\n?/g,
+    /import\s*\{[^}]*\}\s*from\s*['"]@superdoc\/common\/document-types['"];?\s*\n?/g,
+    /import\s*\{[^}]*\}\s*from\s*['"]@superdoc\/common\/helpers\/get-file-object['"];?\s*\n?/g,
+    /import\s*\{[^}]*\}\s*from\s*['"]@superdoc\/common\/helpers\/compare-superdoc-versions['"];?\s*\n?/g,
+    /import\s*\{[^}]*\}\s*from\s*['"][^'"]*\/shared\/common(?:\/index)?(?:\.js)?['"];?\s*\n?/g,
+    /import\s*\{[^}]*\}\s*from\s*['"][^'"]*\/shared\/common\/document-types(?:\.js)?['"];?\s*\n?/g,
+    /import\s*\{[^}]*\}\s*from\s*['"][^'"]*\/shared\/common\/helpers\/get-file-object(?:\.js)?['"];?\s*\n?/g,
+    /import\s*\{[^}]*\}\s*from\s*['"][^'"]*\/shared\/common\/helpers\/compare-superdoc-versions(?:\.js)?['"];?\s*\n?/g,
+  ];
 
-  fileContent = fileContent
-    .replace(/import\s*\{[^}]*\}\s*from\s*['"]@superdoc\/common['"];?\s*\n?/g, '')
-    .replace(/import\s*\{[^}]*\}\s*from\s*['"]@superdoc\/common\/document-types['"];?\s*\n?/g, '')
-    .replace(/import\s*\{[^}]*\}\s*from\s*['"]@superdoc\/common\/helpers\/get-file-object['"];?\s*\n?/g, '')
-    .replace(/import\s*\{[^}]*\}\s*from\s*['"]@superdoc\/common\/helpers\/compare-superdoc-versions['"];?\s*\n?/g, '');
+  const hasCommonRuntimeImport = commonRuntimeImportPatterns.some((pattern) => pattern.test(fileContent));
+  if (!hasCommonRuntimeImport) return false;
+
+  for (const pattern of commonRuntimeImportPatterns) {
+    fileContent = fileContent.replace(pattern, '');
+  }
 
   const hasExportedBlankDocxDeclaration = /\bexport\s+declare\s+const\s+BlankDOCX\b/.test(fileContent);
   const declarations = [
@@ -346,8 +321,8 @@ if (inlinedCommonTargets.length) {
 // ---------------------------------------------------------------------------
 // Fix pnpm node_modules paths in ALL .d.ts files (SD-2227)
 //
-// vite-plugin-dts resolves bare specifiers like 'prosemirror-view' to physical
-// pnpm paths like '../../node_modules/.pnpm/prosemirror-view@1.41.5/node_modules/prosemirror-view/dist/index.js'.
+// vite-plugin-dts resolves bare specifiers like 'some-package' to physical
+// pnpm paths like '../../node_modules/.pnpm/some-package@1.2.3/node_modules/some-package/dist/index.js'.
 // Consumers don't have these paths — rewrite them back to bare specifiers.
 // ---------------------------------------------------------------------------
 
@@ -377,9 +352,8 @@ const PNPM_PATH_RE = /(['"])([^'"]*\/node_modules\/\.pnpm\/[^/]+\/node_modules\/
 // that vite-plugin-dts sometimes emits from path alias resolution.
 const BAD_ABSOLUTE_PATH_RE = /(['"])packages\/superdoc\/src\/([^'"]+)\1/g;
 
-// vite-plugin-dts incorrectly resolves subpath exports (e.g. @superdoc/super-editor/types)
-// by appending the subpath to the main entry: '../../super-editor/src/index.js/types'
-// or '../../super-editor/src/index.ts/types'
+// vite-plugin-dts can incorrectly resolve subpath exports by appending the
+// subpath to the main entry, e.g. '../../entry/index.js/types'.
 // Fix: rewrite index.(js|ts)/<subpath> → <subpath>.js
 const BAD_SUBPATH_RE = /(['"])([^'"]*\/index\.(?:js|ts))(\/[^'"]+)\1/g;
 
@@ -410,9 +384,8 @@ function appendJsExtensionToRelativeSpecifier(specifier, filePath) {
 // `dist/document-api/`. Without this, packed consumers see the bare
 // specifier in the .d.ts files, fail to resolve it, and fall through
 // to the `_internal-shims.d.ts` `any` shim that is generated below.
-// The doc-api types re-exported via `superdoc/ui` would then be
-// useless (every value assignable, no checking), defeating the public
-// re-export surface added in SD-2815.
+// Without this, the doc-api types reached from public SuperDoc declarations
+// would fall through to an `any` shim and lose checking.
 const DOC_API_PATH_RE = /(['"])@superdoc\/document-api(\/[^'"]+)?\1/g;
 function rewriteDocApiPaths(fileContent, filePath) {
   return fileContent.replace(DOC_API_PATH_RE, (_match, quote, subpath = '') => {
@@ -484,7 +457,6 @@ const UNSHIMMED_PRIVATE_SPECIFIERS = new Set(typeSurface.unshimmedPrivateSpecifi
 function shouldSkipWorkspaceShim(mod) {
   return (
     mod.startsWith('.') ||
-    mod.startsWith('@superdoc/super-editor') ||
     mod.startsWith('@superdoc/document-api') ||
     isRelocatedSpecifier(mod) ||
     UNSHIMMED_PRIVATE_SPECIFIERS.has(mod)
@@ -587,31 +559,6 @@ if (fixedFiles > 0) {
   console.log(`[ensure-types] ✓ Fixed ${totalReplacements} import paths in ${fixedFiles} .d.ts files`);
 }
 
-// ---------------------------------------------------------------------------
-// Normalize the public superdoc/super-editor facade types.
-//
-// The runtime bundle intentionally exposes a curated facade over the packaged
-// super-editor output. vite-plugin-dts currently collapses this file down to a
-// plain `export *` and drops the extra helper re-exports, so patch the entry
-// point explicitly to keep the type surface aligned with runtime.
-// ---------------------------------------------------------------------------
-
-const superEditorFacadePath = path.join(distRoot, 'superdoc/src/super-editor.d.ts');
-const expectedSuperEditorFacade = [
-  "export * from '../../super-editor/src/editors/v1/index.js';",
-  "export * from '../../super-editor/src/index.js';",
-  "export { BLANK_DOCX_BASE64 } from '../../super-editor/src/editors/v1/core/blank-docx.js';",
-  "export { getDocumentApiAdapters } from '../../super-editor/src/editors/v1/document-api-adapters/index.js';",
-  "export { markdownToPmDoc } from '../../super-editor/src/editors/v1/core/helpers/markdown/index.js';",
-  "export { initPartsRuntime } from '../../super-editor/src/editors/v1/core/parts/init-parts-runtime.js';",
-  '',
-].join('\n');
-
-if (fs.readFileSync(superEditorFacadePath, 'utf8') !== expectedSuperEditorFacade) {
-  fs.writeFileSync(superEditorFacadePath, expectedSuperEditorFacade);
-  console.log('[ensure-types] ✓ Normalized superdoc/super-editor facade types');
-}
-
 for (const shim of cjsDeclarationShims) {
   emitCjsDeclarationShim(shim);
 }
@@ -645,8 +592,8 @@ console.log('[ensure-types] ✓ Verified type entry points');
 
 // `shouldSkipWorkspaceShim` is intentionally retained: it is no longer used
 // by shim generation, but kept as documentation for the relocation policy
-// (relocated specifiers + UNSHIMMED_PRIVATE_SPECIFIERS + super-editor /
-// document-api legacy public surface). Future audit rules that need to
+// (relocated specifiers + UNSHIMMED_PRIVATE_SPECIFIERS + document-api public
+// surface). Future audit rules that need to
 // classify workspace specifiers can reuse it.
 void shouldSkipWorkspaceShim;
 

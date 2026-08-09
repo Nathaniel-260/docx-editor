@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { OOXML_PCT_DIVISOR, resolveTableWidthAttr } from '../tables.js';
 
 describe('OOXML_PCT_DIVISOR', () => {

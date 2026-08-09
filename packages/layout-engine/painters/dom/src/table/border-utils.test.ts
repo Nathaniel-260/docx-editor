@@ -10,7 +10,7 @@
  * - createTableBorderOverlay: Border overlay element creation
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import type { BorderSpec, CellBorders, TableBorders, TableBorderValue, TableFragment } from '@superdoc/contracts';
 import {
   applyBorder,
@@ -23,7 +23,7 @@ import {
   swapTableBordersLR,
   swapCellBordersLR,
   resolveBorderConflict,
-  bevelToneSpec,
+  createThinDoubleBorderOverlay,
 } from './border-utils.js';
 
 describe('applyBorder', () => {
@@ -40,26 +40,101 @@ describe('applyBorder', () => {
     expect(element.style.borderTop).toMatch(/2px solid (#FF0000|rgb\(255,\s*0,\s*0\))/i);
   });
 
-  // SD-3308: OOXML w:sz on a double border is the width of EACH rule; Word renders
-  // rule + gap + rule at ~3x that width (measured: sz12 = 1.5pt rules, 6px band at
-  // 100dpi). The shared contracts band helper emits 3x the authored single-rule
-  // width, floored at 3px so CSS renders both rules.
-  it('renders a double border at three times the authored rule width', () => {
-    const border: BorderSpec = { style: 'double', width: 2, color: '#FF0000' };
-    applyBorder(element, 'Top', border);
-    expect(element.style.borderTop).toMatch(/6px double (#FF0000|rgb\(255,\s*0,\s*0\))/i);
-  });
-
-  it('floors a hairline double border at 3px so both rules render', () => {
-    const border: BorderSpec = { style: 'double', width: 1, color: '#FF0000' };
+  it('should apply border with double style', () => {
+    const border: BorderSpec = { style: 'double', width: 3, color: '#FF0000' };
     applyBorder(element, 'Top', border);
     expect(element.style.borderTop).toMatch(/3px double (#FF0000|rgb\(255,\s*0,\s*0\))/i);
   });
 
-  it('scales a heavy double border by the same three-times rule', () => {
-    const border: BorderSpec = { style: 'double', width: 4, color: '#FF0000' };
+  it('keeps the authored thin-double component widths separate from screen-pixel rasterization', () => {
+    const border: BorderSpec = { style: 'double', width: 2 / 3, color: '#FF0000' };
+
     applyBorder(element, 'Top', border);
-    expect(element.style.borderTop).toMatch(/12px double (#FF0000|rgb\(255,\s*0,\s*0\))/i);
+
+    expect(element.style.borderTopWidth).toBe('0.666667px');
+    expect(element.style.borderTopStyle).toBe('double');
+    expect(element.style.borderTopColor).toBe('transparent');
+    expect(element.dataset.superdocThinDoubleBorder).toBe('true');
+    expect(element.style.getPropertyValue('--sd-table-double-top-color')).toBe('#FF0000');
+    expect(element.style.getPropertyValue('--sd-table-double-top-stroke')).toBe('0.222222px');
+    expect(element.style.getPropertyValue('--sd-table-double-top-offset')).toBe('0.444444px');
+    expect(element.classList.contains('superdoc-thin-double-border')).toBe(true);
+  });
+
+  it('keeps authored thin-double geometry independent of display density', () => {
+    const previousDevicePixelRatio = window.devicePixelRatio;
+    Object.defineProperty(window, 'devicePixelRatio', {
+      configurable: true,
+      value: 2,
+    });
+
+    try {
+      applyBorder(element, 'Top', { style: 'double', width: 2 / 3, color: '#FF0000' });
+
+      expect(element.style.borderTopWidth).toBe('0.666667px');
+      expect(element.style.getPropertyValue('--sd-table-double-top-stroke')).toBe('0.222222px');
+      expect(element.style.getPropertyValue('--sd-table-double-top-offset')).toBe('0.444444px');
+    } finally {
+      Object.defineProperty(window, 'devicePixelRatio', {
+        configurable: true,
+        value: previousDevicePixelRatio,
+      });
+    }
+  });
+
+  it('removes only the replaced side from the thin double raster fallback', () => {
+    applyBorder(element, 'Top', { style: 'double', width: 2 / 3, color: '#FF0000' });
+    applyBorder(element, 'Right', { style: 'double', width: 2 / 3, color: '#00FF00' });
+
+    applyBorder(element, 'Top', { style: 'single', width: 1, color: '#0000FF' });
+
+    expect(element.style.borderTop).toMatch(/1px solid (#0000FF|rgb\(0,\s*0,\s*255\))/i);
+    expect(element.style.getPropertyValue('--sd-table-double-top-color')).toBe('');
+    expect(element.style.getPropertyValue('--sd-table-double-right-color')).toBe('#00FF00');
+    expect(element.dataset.superdocThinDoubleBorder).toBe('true');
+    expect(element.classList.contains('superdoc-thin-double-border')).toBe(true);
+
+    applyBorder(element, 'Right', { style: 'none', width: 0 });
+
+    expect(element.dataset.superdocThinDoubleBorder).toBeUndefined();
+    expect(element.classList.contains('superdoc-thin-double-border')).toBe(false);
+  });
+
+  it('creates an unclipped two-stroke SVG overlay for each thin double side', () => {
+    applyBorder(element, 'Top', { style: 'double', width: 2 / 3, color: '#FF0000' });
+    applyBorder(element, 'Right', { style: 'double', width: 2 / 3, color: '#00FF00' });
+
+    const overlay = createThinDoubleBorderOverlay(document, element, {
+      left: '10px',
+      top: '20px',
+      width: '100px',
+      height: '40px',
+    });
+
+    expect(overlay).not.toBeNull();
+    expect(overlay!.dataset.superdocThinDoubleBorderOverlay).toBe('true');
+    expect(overlay!.style.left).toBe('10px');
+    expect(overlay!.style.top).toBe('20px');
+    expect(overlay!.querySelectorAll('rect')).toHaveLength(4);
+    expect(overlay!.querySelectorAll('rect[data-side="top"]')).toHaveLength(2);
+    expect(overlay!.querySelectorAll('rect[data-side="right"]')).toHaveLength(2);
+    expect(overlay!.querySelector('rect[data-side="top"][data-layer="outer"]')?.getAttribute('shape-rendering')).toBe(
+      'crispEdges',
+    );
+    expect((overlay!.querySelector('rect[data-side="top"][data-layer="outer"]') as SVGRectElement).style.height).toBe(
+      'var(--sd-table-double-top-paint-stroke)',
+    );
+    expect((overlay!.querySelector('rect[data-side="top"][data-layer="inner"]') as SVGRectElement).style.y).toBe(
+      'var(--sd-table-double-top-paint-offset)',
+    );
+    expect(overlay!.style.getPropertyValue('--sd-table-double-top-paint-stroke')).toBe(
+      'max(var(--sd-table-double-top-stroke), calc(1px * var(--sd-render-zoom-inverse, 1)))',
+    );
+    expect(overlay!.style.getPropertyValue('--sd-table-double-top-paint-offset')).toBe(
+      'max(var(--sd-table-double-top-offset), calc(2px * var(--sd-render-zoom-inverse, 1)))',
+    );
+    expect(overlay!.style.getPropertyValue('--sd-table-double-top-color')).toBe('#FF0000');
+    expect(overlay!.style.getPropertyValue('--sd-table-double-right-color')).toBe('#00FF00');
   });
 
   it('should apply border with dashed style', () => {
@@ -74,41 +149,23 @@ describe('applyBorder', () => {
     expect(element.style.borderTop).toMatch(/1px dotted (#0000FF|rgb\(0,\s*0,\s*255\))/i);
   });
 
-  // SD-3308: compound styles carry their full measured band width so layout
-  // (content inset, row reservation) matches Word; the visible rules are painted
-  // by the compound nested-rectangle path, which makes this CSS border transparent.
-  it('renders a triple border at its full band width (5 segments of the authored width)', () => {
+  it('should convert triple to solid CSS', () => {
     const border: BorderSpec = { style: 'triple', width: 2, color: '#FF0000' };
     applyBorder(element, 'Top', border);
-    expect(element.style.borderTop).toMatch(/10px solid (#FF0000|rgb\(255,\s*0,\s*0\))/i);
+    expect(element.style.borderTop).toMatch(/2px solid (#FF0000|rgb\(255,\s*0,\s*0\))/i);
   });
 
-  it('renders thinThickSmallGap at its full band width (w + 0.75pt gap + 0.75pt rule)', () => {
-    const border: BorderSpec = { style: 'thinThickSmallGap', width: 4, color: '#FF0000' };
-    applyBorder(element, 'Top', border);
-    expect(element.style.borderTop).toMatch(/6px solid (#FF0000|rgb\(255,\s*0,\s*0\))/i);
-  });
-
-  // SD-3308: dashSmallGap is a dash variant; CSS dashed is the accepted
-  // approximation (same as dotDash/dotDotDash).
-  it('renders dashSmallGap as CSS dashed at the authored width', () => {
-    const border: BorderSpec = { style: 'dashSmallGap', width: 2, color: '#00FF00' };
-    applyBorder(element, 'Top', border);
-    expect(element.style.borderTop).toMatch(/2px dashed (#00FF00|rgb\(0,\s*255,\s*0\))/i);
-  });
-
-  it('should handle thick border at the authored width', () => {
+  it('should handle thick border with width multiplier', () => {
     const border: BorderSpec = { style: 'thick', width: 1, color: '#000000' };
     applyBorder(element, 'Top', border);
-    // SD-3028: thick paints at the authored w:sz width (no 2x), min 1px — matches
-    // getBorderBandWidthPx in contracts/border-band.ts and border-band.test.ts.
-    expect(element.style.borderTop).toMatch(/1px solid (#000000|rgb\(0,\s*0,\s*0\))/i);
+    // Thick borders use max(width * 2, 3)
+    expect(element.style.borderTop).toMatch(/3px solid (#000000|rgb\(0,\s*0,\s*0\))/i);
   });
 
-  it('paints a wider thick border at the authored width', () => {
+  it('should handle thick border with larger width', () => {
     const border: BorderSpec = { style: 'thick', width: 3, color: '#000000' };
     applyBorder(element, 'Top', border);
-    expect(element.style.borderTop).toMatch(/3px solid (#000000|rgb\(0,\s*0,\s*0\))/i);
+    expect(element.style.borderTop).toMatch(/6px solid (#000000|rgb\(0,\s*0,\s*0\))/i);
   });
 
   it('should set border to none for none style', () => {
@@ -595,101 +652,5 @@ describe('resolveBorderConflict (ECMA-376 §17.4.66)', () => {
     const light = { style: 'single' as const, width: 1, color: '#FFFFFF' };
     // brightness(R+B+2G): dark=0 < light=1020 → dark wins
     expect(resolveBorderConflict(light, dark)).toEqual(dark);
-  });
-
-  // SD-3308: the §17.4.66 weight tables must cover the compound styles so they
-  // win/lose conflicts the way Word resolves them.
-  it('compound thinThick styles outweigh single rules', () => {
-    const single = { style: 'single' as const, width: 1, color: '#000000' };
-    const compound = { style: 'thinThickSmallGap' as const, width: 1, color: '#000000' };
-    // weight: single = 1×1 = 1, thinThickSmallGap = 2 lines × number 9 = 18
-    expect(resolveBorderConflict(single, compound)).toEqual(compound);
-    expect(resolveBorderConflict(compound, single)).toEqual(compound);
-  });
-
-  it('dashSmallGap outweighs plain dashed (style number 20 vs 5)', () => {
-    const dashed = { style: 'dashed' as const, width: 1, color: '#000000' };
-    const dashSmallGap = { style: 'dashSmallGap' as const, width: 1, color: '#000000' };
-    expect(resolveBorderConflict(dashed, dashSmallGap)).toEqual(dashSmallGap);
-  });
-});
-
-describe('bevelToneSpec (separate-borders outset/inset, SD-3028)', () => {
-  const outset = (color: string) => ({ style: 'outset' as const, width: 1, color });
-  const inset = (color: string) => ({ style: 'inset' as const, width: 1, color });
-
-  it('raises the table frame for outset: top/left light, bottom/right dark', () => {
-    expect(bevelToneSpec(outset('#000000'), 'top', 'table')).toMatchObject({ style: 'single', color: '#F0F0F0' });
-    expect(bevelToneSpec(outset('#000000'), 'left', 'table')).toMatchObject({ color: '#F0F0F0' });
-    expect(bevelToneSpec(outset('#000000'), 'bottom', 'table')).toMatchObject({ color: '#A0A0A0' });
-    expect(bevelToneSpec(outset('#000000'), 'right', 'table')).toMatchObject({ color: '#A0A0A0' });
-  });
-
-  it('sinks the cells for outset: top/left dark, bottom/right light (legacy HTML look)', () => {
-    expect(bevelToneSpec(outset('#000000'), 'top', 'cell')).toMatchObject({ color: '#A0A0A0' });
-    expect(bevelToneSpec(outset('#000000'), 'bottom', 'cell')).toMatchObject({ color: '#F0F0F0' });
-  });
-
-  it('inset mirrors both owners', () => {
-    expect(bevelToneSpec(inset('#000000'), 'top', 'table')).toMatchObject({ color: '#A0A0A0' });
-    expect(bevelToneSpec(inset('#000000'), 'top', 'cell')).toMatchObject({ color: '#F0F0F0' });
-  });
-
-  it('derives tones from an explicit color: light = the color, dark = half intensity', () => {
-    expect(bevelToneSpec(outset('#FF0000'), 'top', 'table')).toMatchObject({ color: '#FF0000' });
-    expect(bevelToneSpec(outset('#FF0000'), 'bottom', 'table')).toMatchObject({ color: '#7f0000' });
-  });
-
-  it('passes other styles through unchanged', () => {
-    const single = { style: 'single' as const, width: 1, color: '#123456' };
-    expect(bevelToneSpec(single, 'top', 'table')).toBe(single);
-    expect(bevelToneSpec(undefined, 'top', 'cell')).toBeUndefined();
-  });
-});
-
-describe('extended ST_Border values (dashDotStroked / threeDEmboss / threeDEngrave) (SD-3028)', () => {
-  let el: HTMLElement;
-  beforeEach(() => {
-    el = document.createElement('div');
-  });
-
-  // These are valid ECMA-376 ST_Border values (spec order 21/22/23). They must paint as
-  // their CSS approximation, NOT hit the invalid-style 'solid' fallback (which warns).
-  it('paints dashDotStroked as dashed', () => {
-    applyBorder(el, 'Top', { style: 'dashDotStroked', width: 1, color: '#000000' });
-    expect(el.style.borderTopStyle).toBe('dashed');
-  });
-
-  it('paints threeDEmboss as a CSS ridge bevel', () => {
-    applyBorder(el, 'Top', { style: 'threeDEmboss', width: 1, color: '#000000' });
-    expect(el.style.borderTopStyle).toBe('ridge');
-  });
-
-  it('paints threeDEngrave as a CSS groove bevel', () => {
-    applyBorder(el, 'Top', { style: 'threeDEngrave', width: 1, color: '#000000' });
-    expect(el.style.borderTopStyle).toBe('groove');
-  });
-
-  it('does not warn (they are allowed styles, not the invalid fallback)', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    for (const style of ['dashDotStroked', 'threeDEmboss', 'threeDEngrave'] as const) {
-      applyBorder(document.createElement('div'), 'Top', { style, width: 1, color: '#000000' });
-    }
-    expect(warn).not.toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
-  // §17.4.66 conflict weight = lines x style number. Spec order 21/22/23 ranks these
-  // above the gap families (<=20) and below outset/inset (24/25) at equal line count.
-  it('ranks dashDotStroked (21) above dashed (5) and dashSmallGap (20) at equal weight', () => {
-    const dashed = { style: 'dashed' as const, width: 1, color: '#000000' };
-    const dashDotStroked = { style: 'dashDotStroked' as const, width: 1, color: '#000000' };
-    expect(resolveBorderConflict(dashed, dashDotStroked)).toEqual(dashDotStroked);
-  });
-
-  it('ranks threeDEngrave (23) above threeDEmboss (22) at equal weight', () => {
-    const emboss = { style: 'threeDEmboss' as const, width: 1, color: '#000000' };
-    const engrave = { style: 'threeDEngrave' as const, width: 1, color: '#000000' };
-    expect(resolveBorderConflict(emboss, engrave)).toEqual(engrave);
   });
 });

@@ -8,6 +8,20 @@ export const DEFAULT_COMMENTS_DISPLAY_MODE = 'sidebar';
 export const VALID_COMMENTS_DISPLAY_MODES = new Set(['auto', 'sidebar', 'inline']);
 
 /**
+ * Whether a context-menu event landed inside the tracked-change carrier that
+ * is already visually active. The review visual owner maintains this marker,
+ * so the right-click path can stay synchronous and avoid a catalog lookup or
+ * document-wide DOM query.
+ *
+ * @param {EventTarget | null} target
+ * @returns {boolean}
+ */
+export function isActiveTrackedChangeContextMenuTarget(target) {
+  const element = /** @type {{ closest?: (selector: string) => unknown } | null} */ (target);
+  return typeof element?.closest === 'function' && element.closest('.track-change-focused') != null;
+}
+
+/**
  * Normalize adaptive comments UI policy fields.
  *
  * @param {false | Record<string, unknown> | undefined} commentsConfig

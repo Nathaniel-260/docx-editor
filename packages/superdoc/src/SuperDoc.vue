@@ -1,15 +1,12 @@
 <script setup>
 import '@superdoc/common/styles/common-styles.css';
-// In the monorepo dev app, consume the editor stylesheet from source so local
-// CSS edits take effect immediately instead of depending on a rebuilt dist CSS.
-import '../../super-editor/src/style.css';
-
 import { superdocIcons } from './icons.js';
 //prettier-ignore
 import {
   getCurrentInstance,
   inject,
   ref,
+  shallowRef,
   unref,
   onMounted,
   onBeforeUnmount,
@@ -18,15 +15,15 @@ import {
   reactive,
   watch,
   defineAsyncComponent,
+  markRaw,
 } from 'vue';
 import { storeToRefs } from 'pinia';
 
-import CommentsLayer from './components/CommentsLayer/CommentsLayer.vue';
 import CommentDialog from '@superdoc/components/CommentsLayer/CommentDialog.vue';
 import FloatingComments from '@superdoc/components/CommentsLayer/FloatingComments.vue';
-import HrbrFieldsLayer from '@superdoc/components/HrbrFieldsLayer/HrbrFieldsLayer.vue';
-import WhiteboardLayer from './components/Whiteboard/WhiteboardLayer.vue';
+import PdfCommentsLayer from '@superdoc/components/CommentsLayer/PdfCommentsLayer.vue';
 import { useWhiteboard } from './components/Whiteboard/use-whiteboard';
+import WhiteboardLayer from './components/Whiteboard/WhiteboardLayer.vue';
 import useSelection from '@superdoc/helpers/use-selection';
 
 import { useSuperdocStore } from '@superdoc/stores/superdoc-store';
@@ -34,40 +31,75 @@ import { useCommentsStore } from '@superdoc/stores/comments-store';
 
 import { DOCX, PDF, HTML } from '@superdoc/common';
 import { composeAuthorColorResolver } from '@superdoc/contracts';
-import {
-  SuperEditor,
-  AIWriter,
-  PresentationEditor,
-  getTrackedChangeIndex,
-  TrackChangesBasePluginKey,
-} from '@superdoc/super-editor';
-import { ySyncPluginKey } from 'y-prosemirror';
 import HtmlViewer from './components/HtmlViewer/HtmlViewer.vue';
 import useComment from './components/CommentsLayer/use-comment';
-import AiLayer from './components/AiLayer/AiLayer.vue';
-import { useSelectedText } from './composables/use-selected-text';
-import { useAi } from './composables/use-ai';
+import { collectRemovedCommentIds } from './components/CommentsLayer/collect-removed-comment-ids.js';
 import { useHighContrastMode } from './composables/use-high-contrast-mode';
 import { useCommentSmallScreen } from './composables/use-comment-small-screen.js';
 import { useCompactCommentPopover } from './composables/use-compact-comment-popover.js';
 import { getVisibleThreadAnchorClientY } from './helpers/comment-focus.js';
+import { mergeDefined } from './core/config/merge-defined.js';
+import { getV2TrackedChangeMutationImpact } from './helpers/v2-review-mutation-impact.js';
+import { resolveV2ReviewTargetCommentId } from './helpers/v2-review-target.js';
+import {
+  createV2AuthorRequiredNotificationGate,
+  V2_AUTHOR_REQUIRED_CODE,
+  V2_AUTHOR_REQUIRED_MESSAGE,
+} from './helpers/v2-author-required-rejection.js';
+import { DOCUMENT_EDITOR_SELECTION_SOURCE } from './helpers/selection-source.js';
+import { hasOutsideV2DomRangeSelection, shouldPreserveHostV2Selection } from './helpers/v2-selection-sync.js';
 import { useUiFontFamily } from './composables/useUiFontFamily.js';
 import { usePasswordPrompt } from './composables/use-password-prompt.js';
 import { useFindReplace } from './composables/use-find-replace.js';
+import { claimFindShortcut, releaseFindShortcut, shouldHandleFindShortcut } from './composables/find-shortcut-owner.js';
 import { useViewportFit } from './composables/use-viewport-fit.js';
-import { createV1EditorRuntimeAdapter } from './core/editor-runtime/v1/v1-editor-runtime-adapter.js';
+import { useLinkPopover } from './composables/use-link-popover.js';
+import { createV2EditorRuntimeAdapter } from './core/editor-runtime/v2/v2-editor-runtime-adapter.js';
+import { createV2SessionShortcutRoutes } from './core/editor-runtime/v2/v2-session-shortcut-routes.js';
 import { markRuntimeRoot, unmarkRuntimeRoot } from './core/editor-runtime/root-marker.js';
-import { collectTouchedTrackedChangeIds } from './helpers/collect-touched-tracked-change-ids.js';
-import { transactionTouchesStructuralChange } from './helpers/transaction-touches-structural-change.js';
+import { resolveV2Integration } from './core/v2-integration/v2-integration.js';
+import { resolveV2CollaborationTarget } from './core/collaboration/resolve-v2-collaboration-target.js';
 import SurfaceHost from './components/surfaces/SurfaceHost.vue';
 import {
   DEFAULT_COMMENTS_DISPLAY_MODE,
+  isActiveTrackedChangeContextMenuTarget,
   RIGHT_CLICK_COMMENT_SUPPRESS_MS,
   VALID_COMMENTS_DISPLAY_MODES,
 } from './helpers/comment-small-screen.js';
 
 const PdfViewer = defineAsyncComponent(() => import('./components/PdfViewer/PdfViewer.vue'));
 const getDocumentLoadPassword = (doc) => doc.password ?? proxy.$superdoc.config.password;
+// Preserve the distinction between no collaboration request and a malformed
+// request. Invalid input is a terminal preflight failure; it must never be
+// silently reinterpreted as a local editor boot.
+const resolveDocumentV2Collaboration = (doc) => {
+  const rawConfig = doc?.v2Collaboration;
+  const config = rawConfig && typeof rawConfig === 'object' && 'value' in rawConfig ? rawConfig.value : rawConfig;
+  if (config == null) return { state: 'absent' };
+  const resolution = resolveV2CollaborationTarget({
+    v2Collaboration: config,
+    documentType: doc?.type ?? null,
+    documentCount: documents.value.length,
+    ...(typeof window !== 'undefined' ? { authEndpointBaseUrl: window.location.href } : {}),
+  });
+  if (!resolution.ok) {
+    return {
+      state: 'invalid',
+      failure: {
+        code:
+          resolution.reason === 'invalid-room-mode'
+            ? 'collaboration-open-intent-invalid'
+            : 'collaboration-config-invalid',
+        message: `SuperDoc rejected the v2 collaboration configuration (${resolution.reason}).`,
+      },
+    };
+  }
+  const { providerFamily: providerType, ...target } = resolution.target;
+  return {
+    state: 'valid',
+    config: { providerType, ...target },
+  };
+};
 
 // Stores
 const superdocStore = useSuperdocStore();
@@ -83,6 +115,7 @@ const {
   activeSelection,
   activeZoom,
   zoomMode,
+  measurementUnit,
   viewportMetrics,
 } = storeToRefs(superdocStore);
 const { handlePageReady, modules, user, getDocument } = superdocStore;
@@ -132,6 +165,7 @@ const {
   editorCommentPositions,
   hasInitializedLocations,
   isCommentHighlighted,
+  hasOpenTrackedChanges,
 } = storeToRefs(commentsStore);
 const {
   showAddComment,
@@ -141,6 +175,7 @@ const {
   syncTrackedChangePositionsWithDocument,
   syncTrackedChangeComments,
   addComment,
+  addHydratedComment,
   getComment,
   resolveCommentPositionEntry,
   belongsToDocument,
@@ -152,6 +187,15 @@ const {
 const { proxy } = getCurrentInstance();
 commentsStore.proxy = proxy;
 
+// Resolve the single v2 integration object. superdoc@2 source-resolves the
+// private v2 browser shell locally; customers do not provide a runtime switch.
+const resolvedEditorIntegration = resolveV2Integration(proxy.$superdoc.config);
+// ui-phase2-001: the v2 DOCX editor wrapper comes from the private integration.
+const V2DocumentEditor = markRaw(resolvedEditorIntegration.EditorComponent);
+// ui-phase4-002: v2 ruler (optional). Falls back to the stub editor component's
+// sibling null when the integration does not provide one.
+const V2Ruler = resolvedEditorIntegration.RulerComponent ? markRaw(resolvedEditorIntegration.RulerComponent) : null;
+
 const floatingComments = computed(() => {
   const currentFloatingComments = unref(commentsStore.getFloatingComments);
   return Array.isArray(currentFloatingComments) ? currentFloatingComments : [];
@@ -160,22 +204,29 @@ const floatingComments = computed(() => {
 const { isHighContrastMode } = useHighContrastMode();
 const { uiFontFamily } = useUiFontFamily();
 
-const isViewingMode = () => proxy?.$superdoc?.config?.documentMode === 'viewing';
+// Review visibility reads the comments-store reactive authority
+// (`viewingVisibility`), updated by `SuperDoc.ts#syncViewingVisibility` on init
+// and on every `setDocumentMode`. Reading the reactive state instead of polling
+// `proxy.$superdoc.config` keeps V2 geometry/layout-engine options and
+// `shouldRenderCommentsInViewing` from running on stale computed values after a
+// mode transition (the document-mode-change split-source-of-truth bug).
+const isViewingMode = () => commentsStore.viewingVisibility.documentMode === 'viewing';
 const allowSelectionInViewMode = () => !!proxy?.$superdoc?.config?.allowSelectionInViewMode;
 const isViewingCommentsVisible = computed(
-  () => isViewingMode() && proxy?.$superdoc?.config?.comments?.visible === true,
+  () => isViewingMode() && commentsStore.viewingVisibility.commentsVisible === true,
 );
 const isFindReplaceEnabled = computed(() => {
-  const val = proxy?.$superdoc?.config?.modules?.surfaces?.findReplace;
-  return val === true || (typeof val === 'object' && val !== null);
+  // Single source of truth: the profile already folds in `ui.search`,
+  // `modules.surfaces.findReplace`, and `ui: false`.
+  return proxy?.$superdoc?.uiConfig?.search?.enabled === true;
 });
 const isViewingTrackChangesVisible = computed(
-  () => isViewingMode() && proxy?.$superdoc?.config?.trackChanges?.visible === true,
+  () => isViewingMode() && commentsStore.viewingVisibility.trackChangesVisible === true,
 );
-const shouldRenderCommentsInViewing = computed(() => {
-  if (!isViewingMode()) return true;
-  return isViewingCommentsVisible.value || isViewingTrackChangesVisible.value;
-});
+// One source of truth for "emit review geometry in viewing": the comments-store
+// computed derived from the same reactive `viewingVisibility` state. Pinia
+// auto-unwraps the store computed to its boolean value on access.
+const shouldRenderCommentsInViewing = computed(() => commentsStore.shouldRenderReviewInViewing);
 
 const resolvedProofingConfig = computed(() => {
   if (proxy.$superdoc.config.proofing !== undefined) {
@@ -187,7 +238,14 @@ const resolvedProofingConfig = computed(() => {
 const commentsModuleConfig = computed(() => {
   const config = modules.comments;
   if (config === false || config == null) return null;
-  return config;
+  // `modules.comments` is the live object: the runtime writes interaction
+  // policy onto it and collaboration keeps reading it, so it stays the base
+  // layer and only the profile's presentation options are layered over it.
+  // Merging in this direction (rather than copying `ui` options back onto the
+  // shared object) keeps policy and collaboration state untouched.
+  const presentation = proxy.$superdoc?.uiConfig?.comments?.options;
+  if (!presentation || Object.keys(presentation).length === 0) return config;
+  return mergeDefined(config, presentation);
 });
 
 const superdocStyleVars = computed(() => {
@@ -195,8 +253,8 @@ const superdocStyleVars = computed(() => {
     '--sd-ui-font-family': uiFontFamily.value,
   };
 
-  const commentsConfig = proxy.$superdoc.config.modules?.comments;
-  if (!commentsConfig || commentsConfig === false) return vars;
+  const commentsConfig = commentsModuleConfig.value;
+  if (!commentsConfig) return vars;
 
   if (commentsConfig.highlightHoverColor) {
     vars['--sd-comments-highlight-hover'] = commentsConfig.highlightHoverColor;
@@ -239,35 +297,87 @@ const {
   layers,
 });
 
+// V2 branch: DOCX is always routed through the v2 host shell wrapper
+// (`V2DocumentEditor`). PDF / HTML keep their viewer-specific paths.
+const isV2Mode = computed(() => true);
+
+// ui-phase3-001: v2 geometry bridge state. `v2GeometryRender` holds the
+// latest payload reported by `V2DocumentEditor` after each render-epoch change;
+// `v2GeometryEpoch` is the last epoch we successfully published into the
+// comments store so the RAF batcher can drop duplicate ticks. `v2Geometry-
+// Available` flips true once we've published at least one geometry
+// snapshot — it gates first appearance of `showCommentsSidebar` in v2 mode so
+// the sidebar does not appear before painted carriers exist.
+// `v2ReviewSidebarUnlocked` latches after that first publish so a transient
+// remount on Enter cannot unmount the sidebar via the geometry gate.
+const v2GeometryRender = shallowRef(null);
+const v2GeometryAvailable = ref(false);
+const v2ReviewSidebarUnlocked = ref(false);
+const v2GeometryEpoch = ref(null);
+let v2GeometryRafHandle = 0;
+let v2TrackedChangeRestampRetainPaints = 0;
+let v2TrackedChangeRestampRetentionReason = null;
+const TRACKED_CHANGE_CARRIERS_RESTAMPED_EVENT = 'superdoc:v2-tracked-change-carriers-restamped';
+
 // Create a ref to pass to the composable
 const activeEditorRef = computed(() => proxy.$superdoc.activeEditor);
+
+// The SuperDoc-owned UI controller (`superdoc.ui`). The shell is a consumer:
+// SuperDoc creates it and destroys it, so nothing here may tear it down.
+const getSuperDocUI = () => proxy.$superdoc?.ui ?? null;
+const UNAVAILABLE_COMMAND_STATE = Object.freeze({ enabled: false, active: false, supported: false });
+/** `CommandExecutionResult` is `boolean | receipt`, so `false` reads as "did not run". */
+const UNAVAILABLE_COMMAND_RESULT = false;
 
 // Find/replace controller — uses surfaces to show a floating find/replace popover.
 const findReplace = useFindReplace({
   getSurfaceManager: () => surfaceManager,
   getActiveEditor: () => proxy.$superdoc?.activeEditor,
   activeEditorRef,
-  getFindReplaceConfig: () => proxy.$superdoc?.config?.modules?.surfaces?.findReplace,
+  // The profile folds `ui.search` over `modules.surfaces.findReplace`. Reading
+  // the legacy field directly is what made `ui: { search: true }` draw the
+  // toolbar button while `resolveConfig()` still saw `undefined` and refused to
+  // open. `enabled` is the switch; `options` carries texts, placement, and the
+  // custom renderer, so both have to come from the same resolved profile.
+  getFindReplaceConfig: () =>
+    proxy.$superdoc?.uiConfig?.search?.enabled ? proxy.$superdoc.uiConfig.search.options : false,
+  // V2 find/replace routes through the shared UI controller's search slice,
+  // which is backed by the single host search session (`host.search`).
+  getSuperDocUI,
 });
-
-// Use the active runtime for selected text when available; fall back to the
-// legacy active editor during startup and in tests.
-const { selectedText } = useSelectedText(activeEditorRef, {
-  getActiveRuntime: () => proxy.$superdoc?.getActiveRuntime?.(),
-});
-
-// Use the AI composable
-const {
-  showAiLayer,
-  showAiWriter,
-  aiWriterPosition,
-  aiLayer,
-  initAiLayer,
-  showAiWriterAtCursor,
-  handleAiWriterClose,
-  handleAiToolClick,
-} = useAi({
-  activeEditorRef,
+const getLinkPopoverSurfaceManager = () => {
+  if (surfaceManager) return surfaceManager;
+  if (typeof proxy.$superdoc?.openSurface !== 'function') return null;
+  return {
+    open: (request) => proxy.$superdoc.openSurface(request),
+  };
+};
+const linkPopover = useLinkPopover({
+  getSurfaceManager: getLinkPopoverSurfaceManager,
+  getActiveEditor: () => proxy.$superdoc?.activeEditor,
+  getUi: getSuperDocUI,
+  getResolver: () =>
+    // Only a suppressed surface returns a resolver that closes. `enabled` is
+    // false for the default config too — it means "a custom resolver is
+    // configured" — so vetoing on it would suppress the built-in link editor
+    // for every consumer who never set one. When the surface is merely
+    // unconfigured, this resolves to `undefined`, which the composable answers
+    // with `{ type: 'default' }`.
+    //
+    // Already resolved across both spellings by `normalizeUiConfig`. Do not
+    // read `config.modules.links.popoverResolver` here: that would ignore the
+    // canonical `ui.linkPopover.popoverResolver` entirely, which is the bug
+    // this surface shipped with (#1099).
+    proxy.$superdoc?.uiConfig?.linkPopover?.suppressed
+      ? () => ({ type: 'none' })
+      : proxy.$superdoc?.uiConfig?.linkPopover?.options?.popoverResolver,
+  getLayerElement: () => layers.value,
+  emitException: (payload) => {
+    proxy.$superdoc?.emit('exception', {
+      ...payload,
+      editor: proxy.$superdoc?.activeEditor ?? null,
+    });
+  },
 });
 
 const pdfConfig = proxy.$superdoc.config.modules?.pdf || {};
@@ -323,20 +433,9 @@ const queueTrackedChangeCommentResync = ({ editor, changeIds = null, broadcastCh
 
 const scheduleReplayTrackedChangeSync = () => {
   pendingReplayTrackedChangeSync.value = true;
-
-  const activeDocId = proxy.$superdoc?.activeEditor?.options?.documentId;
-  const hasPresentationBridge = Boolean(activeDocId && PresentationEditor.getInstance(activeDocId) && layers.value);
-
-  // Always schedule a fallback flush. In layout mode, replay can remove the last
-  // comment/tracked-change anchor, which means no commentPositions event is emitted.
-  // Without this fallback, pending replay sync can stay stuck forever.
   nextTick(() => {
     flushPendingReplayTrackedChangeSync();
   });
-
-  // In layout mode we still flush on comment-position updates when they arrive.
-  // For non-layout/viewing-hidden cases, the nextTick fallback above is the primary path.
-  if (!hasPresentationBridge || !shouldRenderCommentsInViewing.value) return;
 };
 
 const handleDocumentReady = (documentId, container) => {
@@ -364,19 +463,22 @@ const getPendingCommentTargetClientY = () => {
   return layers.value.getBoundingClientRect().top + top * zoom;
 };
 
-const handleCommentToolClick = () => {
-  const result = showAddComment(proxy.$superdoc, getPendingCommentTargetClientY());
+const handleCommentToolClick = async () => {
+  const result = await showAddComment(proxy.$superdoc, getPendingCommentTargetClientY());
   if (result?.ok === false) return;
+  if (!isV2Mode.value) return;
+
+  const pendingPosition = buildV2PendingPositionEntry();
+  if (pendingPosition) publishV2PendingPositionEntry(pendingPosition);
 };
 
-const handleToolClick = (tool) => {
+const handleToolClick = async (tool) => {
   const toolOptions = {
     comments: () => handleCommentToolClick(),
-    ai: () => handleAiToolClick(),
   };
 
   if (tool in toolOptions) {
-    toolOptions[tool](activeSelection.value, selectionPosition.value);
+    await toolOptions[tool](activeSelection.value, selectionPosition.value);
   }
 
   activeSelection.value = null;
@@ -385,40 +487,92 @@ const handleToolClick = (tool) => {
 
 const handleHighlightClick = () => (toolsMenuPosition.top = null);
 
-const onCommentsLoaded = ({ editor, comments, replacedFile }) => {
-  if (editor.options.shouldLoadComments || replacedFile) {
-    nextTick(() => {
-      commentsStore.processLoadedDocxComments({
-        superdoc: proxy.$superdoc,
-        editor,
-        comments,
-        documentId: editor.options.documentId,
-        replacedFile,
-      });
-    });
+// Shell-owned per-document state for the v2 runtime adapter.
+const subDocumentRoots = new Map();
+const v2Runtimes = new Map();
+const v2CommandShortcutBindings = new Map();
+const v2SessionShortcutBindings = new Map();
+let v2RuntimeSeq = 0;
+
+const clearV2CommandShortcutBinding = (documentId) => {
+  const entry = v2CommandShortcutBindings.get(documentId);
+  if (!entry) return;
+  v2CommandShortcutBindings.delete(documentId);
+  try {
+    entry.unbind?.();
+  } catch (err) {
+    console.warn('[SuperDoc] v2 command-shortcut unbind failed', err);
   }
 };
 
-const onEditorBeforeCreate = ({ editor }) => {
-  proxy.$superdoc?.broadcastEditorBeforeCreate(editor);
+const resolveV2LinkWorkflowOpener = () => {
+  const toolbar = proxy.$superdoc?.toolbar;
+  if (!toolbar || typeof toolbar.getToolbarItemByName !== 'function') return null;
+  return () => {
+    const linkItem = toolbar.getToolbarItemByName('link');
+    if (!linkItem || linkItem.disabled?.value === true) return;
+    if (linkItem.expand && typeof linkItem.expand === 'object' && 'value' in linkItem.expand) {
+      linkItem.expand.value = true;
+    }
+    toolbar.updateToolbarState?.();
+  };
 };
 
-const onEditorContentControlFocus = (payload) => {
-  proxy.$superdoc.emit('content-control:active-change', payload);
+const installV2CommandShortcutBinding = ({ documentId, bindEditShortcuts }) => {
+  if (!documentId) return;
+  clearV2CommandShortcutBinding(documentId);
+  if (typeof bindEditShortcuts !== 'function') return;
+  const openLinkWorkflow = resolveV2LinkWorkflowOpener();
+  const unbind = bindEditShortcuts({
+    commandRoute: {
+      // Fail closed, and keep the promise shape: a queued shortcut that
+      // settles after teardown still gets an awaitable result rather than
+      // `undefined`, which would throw for any caller chaining `.then()`.
+      executeAsync: (commandId, payload) => {
+        const ui = getSuperDocUI();
+        if (!ui) return Promise.resolve(UNAVAILABLE_COMMAND_RESULT);
+        return ui.commands.executeAsync(commandId, payload);
+      },
+      // Fail closed: a shortcut must never read as enabled when the shell has
+      // outlived its SuperDoc instance.
+      getState: (commandId) => getSuperDocUI()?.commands.get(commandId).getState() ?? UNAVAILABLE_COMMAND_STATE,
+    },
+    ...(openLinkWorkflow ? { openLinkWorkflow } : {}),
+  });
+  v2CommandShortcutBindings.set(documentId, { unbind });
 };
 
-const onEditorContentControlBlur = (payload) => {
-  proxy.$superdoc.emit('content-control:active-change', payload);
+const clearV2SessionShortcutBinding = (documentId) => {
+  const entry = v2SessionShortcutBindings.get(documentId);
+  if (!entry) return;
+  v2SessionShortcutBindings.delete(documentId);
+  try {
+    entry.unbind?.();
+  } catch (err) {
+    console.warn('[SuperDoc] v2 session-shortcut unbind failed', err);
+  }
 };
 
-const onEditorContentControlClick = (payload) => {
-  proxy.$superdoc.emit('content-control:click', payload);
+// v2-keyboard-005: install the shell/session/reference shortcut binding. Toolbar
+// focus routes to the built-in toolbar chrome; field update and page-field
+// insertion route through the public Document API facade. Header/footer focus
+// and Escape session exit stay unprovided (no public host seam), so the binder
+// fails closed for those rather than reaching V1 internals. Mutating reference
+// shortcuts honor viewing/read-only suppression.
+const installV2SessionShortcutBinding = ({ documentId, bindSessionShortcuts, documentApi }) => {
+  if (!documentId) return;
+  clearV2SessionShortcutBinding(documentId);
+  if (typeof bindSessionShortcuts !== 'function') return;
+  const routes = createV2SessionShortcutRoutes({
+    resolveToolbarElement: () => proxy.$superdoc?.toolbar?.toolbarContainer ?? null,
+    getDocumentApi: () => documentApi ?? null,
+  });
+  const unbind = bindSessionShortcuts({
+    routes,
+    isMutationAllowed: () => !isViewingMode(),
+  });
+  v2SessionShortcutBindings.set(documentId, { unbind });
 };
-
-// Shell-owned per-document state for the v1 runtime adapter.
-const subDocumentRoots = new Map();
-const v1Runtimes = new Map();
-let v1RuntimeSeq = 0;
 
 /**
  * Store the shell-owned wrapper for a document editor. This wrapper is outside
@@ -432,145 +586,1422 @@ const setSubDocumentRoot = (doc, el) => {
   else subDocumentRoots.delete(doc.id);
 };
 
-/**
- * Register a pending v1 runtime at editor creation. The visible
- * PresentationEditor is attached later from onEditorReady.
- * @param {string} documentId
- * @param {Object} editor - the live v1 Editor instance
- */
-const registerV1Runtime = (documentId, editor) => {
+const clearV2RuntimeRegistration = (documentId) => {
+  clearV2CommandShortcutBinding(documentId);
+  clearV2SessionShortcutBinding(documentId);
+  const entry = v2Runtimes.get(documentId);
+  if (!entry) return;
+  proxy.$superdoc.unregisterEditorRuntime(entry.runtimeId);
+  v2Runtimes.delete(documentId);
+  const hostRoot = subDocumentRoots.get(documentId);
+  if (hostRoot) unmarkRuntimeRoot(hostRoot);
+};
+
+const registerV2Runtime = ({ documentId, host, mount, facade }) => {
   const root = subDocumentRoots.get(documentId);
   if (!root) {
-    console.warn('[SuperDoc] v1 runtime host root unavailable; skipping runtime registration for', documentId);
-    return;
+    console.warn('[SuperDoc] v2 runtime host root unavailable; skipping runtime registration for', documentId);
+    return false;
   }
 
-  const existing = v1Runtimes.get(documentId);
-  if (existing) existing.adapter.runtime.dispose();
+  if (v2Runtimes.has(documentId)) {
+    clearV2RuntimeRegistration(documentId);
+  }
 
-  const runtimeId = `v1:${documentId}:${++v1RuntimeSeq}`;
-  const adapter = createV1EditorRuntimeAdapter({
+  const runtimeId = `v2:${documentId}:${++v2RuntimeSeq}`;
+  const adapter = createV2EditorRuntimeAdapter({
     id: runtimeId,
     documentId,
     root,
-    editor,
-    setGlobalZoom: (factor) => PresentationEditor.setGlobalZoom(factor),
+    host,
+    getLegacyEditorProjection: () => facade,
     onUnregister: (id) => {
       proxy.$superdoc.unregisterEditorRuntime(id);
-      const current = v1Runtimes.get(documentId);
-      if (current && current.runtimeId === id) v1Runtimes.delete(documentId);
+      const current = v2Runtimes.get(documentId);
+      if (current && current.runtimeId === id) v2Runtimes.delete(documentId);
       const hostRoot = subDocumentRoots.get(documentId);
       if (hostRoot) unmarkRuntimeRoot(hostRoot);
     },
   });
 
+  adapter.attachMountHandle(mount ?? null);
   markRuntimeRoot(root, runtimeId);
   proxy.$superdoc.registerEditorRuntime(adapter.runtime);
-  v1Runtimes.set(documentId, { runtimeId, adapter });
-  proxy.$superdoc.setActiveRuntime(runtimeId, 'v1-editor-create');
+  v2Runtimes.set(documentId, { runtimeId, adapter });
+  proxy.$superdoc.setActiveRuntime(runtimeId, 'v2-editor-ready');
+  return true;
 };
 
-const onEditorCreate = ({ editor }) => {
-  const { documentId } = editor.options;
-  const doc = getDocument(documentId);
-  doc.setEditor(editor);
-  registerV1Runtime(documentId, editor);
-  proxy.$superdoc.setActiveEditor(editor);
-  editor.on?.('contentControlFocus', onEditorContentControlFocus);
-  editor.on?.('contentControlBlur', onEditorContentControlBlur);
-  editor.on?.('contentControlClick', onEditorContentControlClick);
-  proxy.$superdoc.broadcastEditorCreate(editor);
-  // Initialize the ai layer
-  initAiLayer(true);
+// ui-phase2-001: V2 ready / failure handlers. These DO NOT impersonate the v1
+// `Editor` / `DocumentRendererRuntime` surface. Instead, the shell publishes a
+// small v2 facade on `proxy.$superdoc.activeEditor` so existing read-only
+// access patterns (`activeEditor.options.documentId`) keep working while
+// v1-only methods (`commands`, `state`, `view`, `chain`, `can`) are absent by
+// design. Visible shell chrome that previously called those v1-only methods
+// is gated by `isV2Mode` and the editorVersion=2 capability surface.
+// One committed paint carries the exact review identities for its mounted
+// window. The isolated review worker resolves comments and tracked changes at
+// one canonical coordinate; this controller applies both row families in one
+// Pinia patch while the existing presentation owner remains in place.
+// Rows and geometry stay separate: review work never delays canonical paint.
+const v2ReviewWindowController = resolvedEditorIntegration.createReviewWindowController({
+  applyReviewWindow: (ctx, result) =>
+    commentsStore.applyReviewWindowFromV2?.({
+      superdoc: ctx?.superdoc,
+      commentsAdapter: ctx?.commentsAdapter,
+      trackedChangesAdapter: ctx?.trackedChangesAdapter,
+      documentId: ctx?.documentId,
+      commentItems: result?.comments?.items,
+      trackedChangeItems: result?.trackedChanges?.items,
+      requestedCommentIds: result?.comments?.requestedIds,
+      requestedTrackedChangeIds: result?.trackedChanges?.requestedIds,
+      unresolvedCommentIds: result?.comments?.unresolvedCommentIds,
+      trackedList: {
+        complete: false,
+        visibleWindowSource: 'visible-window',
+      },
+      patch: (callback) => commentsStore.$patch(callback),
+    }) ?? { ok: false, reason: 'store-action-missing' },
+});
+
+// ui-phase2-001 / plan §Workstream 3: renderable V2 terminal failure state for
+// the active document surface, keyed by documentId. The visible failure UI is
+// owned by the V2 browser shell overlay; this store lets shell chrome read the
+// last typed failure (reason + content-safe detail) without re-deriving it.
+const v2EditorFailures = ref({});
+
+// A missing-author rejection is non-terminal: keep one content-safe status per
+// mounted document, and re-arm that document after a successful mutation or a
+// fresh open. The per-document gate prevents one tab/document from suppressing
+// another inside a multi-document SuperDoc instance.
+const v2AuthorRequiredGate = createV2AuthorRequiredNotificationGate();
+const v2AuthorRequiredMessages = ref({});
+const v2AuthorRequiredStatus = computed(() => Object.values(v2AuthorRequiredMessages.value)[0] ?? null);
+const v2AuthorRequiredScope = (documentId) =>
+  typeof documentId === 'string' && documentId.length > 0 ? `document:${documentId}` : 'document:default';
+
+const clearV2AuthorRequired = (documentId) => {
+  const scope = v2AuthorRequiredScope(documentId);
+  v2AuthorRequiredGate.clear(scope);
+  if (!v2AuthorRequiredMessages.value[scope]) return;
+  const next = { ...v2AuthorRequiredMessages.value };
+  delete next[scope];
+  v2AuthorRequiredMessages.value = next;
 };
 
-/**
- * Handle editor-ready event from SuperEditor
- * @param {Object} payload
- * @param {Editor} payload.editor - The Editor instance
- * @param {PresentationEditor} payload.presentationEditor - The PresentationEditor wrapper
- */
-const onEditorReady = ({ editor, presentationEditor }) => {
-  // Legacy (non-layout-engine) editors return early below; the seeded
-  // initial zoom for their CSS-fallback transform must apply first.
-  ensureInitialFallbackZoom();
-  if (!presentationEditor) return;
+const maybeNotifyV2AuthorRequired = (documentId, event) => {
+  const scope = v2AuthorRequiredScope(documentId);
+  if (!v2AuthorRequiredGate.shouldNotify(scope, event)) return;
+  v2AuthorRequiredMessages.value = {
+    ...v2AuthorRequiredMessages.value,
+    [scope]: V2_AUTHOR_REQUIRED_MESSAGE,
+  };
+  proxy.$superdoc.emit('exception', {
+    error: new Error(V2_AUTHOR_REQUIRED_MESSAGE),
+    code: V2_AUTHOR_REQUIRED_CODE,
+    editor: null,
+    ...(typeof documentId === 'string' && documentId.length > 0 ? { documentId } : {}),
+    // Preserve the original typed receipt for API consumers (content-safe: a
+    // code + reason string, never document text or an imported author).
+    ...(event.failureSource === 'receipt' && event.failure ? { receipt: event.failure } : {}),
+  });
+};
 
-  // Store presentationEditor reference for mode changes
-  const { documentId } = editor.options;
-  const doc = getDocument(documentId);
-  if (doc) {
-    // Notify the password prompt coordinator so a pending retry resolves.
-    passwordPrompt.handleEditorReady(doc);
+const getV2EditorFailure = (documentId) =>
+  documentId && v2EditorFailures.value[documentId] ? v2EditorFailures.value[documentId] : null;
 
-    doc.setPresentationEditor(presentationEditor);
-    // Passwords are only needed during the initial encrypted-file load.
-    // Clear the per-document copy once the editor is ready so the value does
-    // not linger on the reactive document model.
-    if (doc.password) doc.password = undefined;
+const setV2EditorFailure = (documentId, failure) => {
+  if (!documentId) return;
+  v2EditorFailures.value = { ...v2EditorFailures.value, [documentId]: failure };
+};
+
+const clearV2EditorFailure = (documentId) => {
+  if (!documentId || !v2EditorFailures.value[documentId]) return;
+  const next = { ...v2EditorFailures.value };
+  delete next[documentId];
+  v2EditorFailures.value = next;
+};
+
+const clearActiveV2EditorFacade = (documentId = null) => {
+  const activeEditor = proxy.$superdoc?.activeEditor;
+  const activeDocumentId = documentId ?? activeEditor?.documentId ?? activeEditor?.options?.documentId ?? null;
+  if (!activeDocumentId) {
+    if (activeEditor?.editorVersion === 2) {
+      proxy.$superdoc.setActiveEditor(null);
+    }
+    return;
   }
 
-  const v1Runtime = v1Runtimes.get(documentId);
-  if (v1Runtime) v1Runtime.adapter.attachPresentationEditor(presentationEditor);
-  presentationEditor.setContextMenuDisabled?.(proxy.$superdoc.config.disableContextMenu);
-  getTrackedChangeIndex(editor);
+  if (documentId && activeEditor?.editorVersion === 2) {
+    const currentDocumentId = activeEditor.documentId ?? activeEditor.options?.documentId ?? null;
+    if (currentDocumentId && currentDocumentId !== documentId) return;
+  }
 
-  // Listen for fresh comment positions from the layout engine.
-  // PresentationEditor emits this after every layout with PM positions collected
-  // from the current document, ensuring positions are never stale.
-  presentationEditor.on('commentPositions', ({ positions }) => {
-    const commentsConfig = proxy.$superdoc.config.modules?.comments;
-    if (!commentsConfig || commentsConfig === false) return;
-    if (!shouldRenderCommentsInViewing.value) {
-      commentsStore.clearEditorCommentPositions?.();
+  const doc = activeDocumentId ? getDocument(activeDocumentId) : null;
+  if (doc) {
+    doc.isReady = false;
+    if (typeof doc.setEditor === 'function') doc.setEditor(null);
+  }
+  const hadRegisteredRuntime = v2Runtimes.has(activeDocumentId);
+  clearV2RuntimeRegistration(activeDocumentId);
+  if (!hadRegisteredRuntime && activeEditor?.editorVersion === 2) {
+    const currentDocumentId = activeEditor.documentId ?? activeEditor.options?.documentId ?? null;
+    if (currentDocumentId === activeDocumentId) {
+      proxy.$superdoc.setActiveEditor(null);
+    }
+  }
+};
+
+// Build the narrow public `activeEditor.extensions` facet from the v2 host's
+// extension manager. Exposes command execution + diagnostics without leaking
+// the raw private manager or its command handles. Returns null when no
+// extensions are registered on the active document.
+const createV2ExtensionsFacet = (host) => {
+  const manager = typeof host?.getExtensionManager === 'function' ? host.getExtensionManager() : null;
+  if (!manager) return null;
+  const registry = manager.commands;
+  return {
+    commands: {
+      execute: (id, payload) => registry.execute(id, payload),
+      getState: (id) => {
+        const handle = registry.get(id);
+        if (!handle) return null;
+        const state = handle.getState() ?? {};
+        // The runtime command state has no dedicated reason channel; expose the
+        // enabled flag and leave `reason` null until one is surfaced.
+        return { enabled: !state.disabled, reason: null };
+      },
+      list: () =>
+        registry.list().map((handle) => {
+          const state = handle.getState() ?? {};
+          return state.label ? { id: handle.id, label: state.label } : { id: handle.id };
+        }),
+    },
+    diagnostics: {
+      getSnapshot: () => manager.diagnostics(),
+    },
+  };
+};
+
+const onV2EditorReady = (payload) => {
+  if (!payload) return;
+  // A successful open clears any prior terminal failure for this surface.
+  clearV2EditorFailure(payload.documentId ?? null);
+  clearV2AuthorRequired(payload.documentId ?? null);
+  const {
+    host,
+    mount,
+    documentId,
+    capabilities,
+    editCommands,
+    bindEditShortcuts,
+    bindSessionShortcuts,
+    commentsAdapter,
+    trackedChangesAdapter,
+    documentApi,
+    documentMutationReadiness,
+    documentApiUnavailableReason,
+    pageMetrics,
+    pageLayout,
+    pageFurniture,
+    presence,
+    lock,
+    fonts,
+    replaceFile,
+    upgradeToCollaboration,
+  } = payload;
+  const saveV2Bytes = async (saveOptions = {}) => {
+    if (!host || typeof host.save !== 'function') {
+      throw new Error('v2-editor: save unavailable');
+    }
+    return host.save(saveOptions);
+  };
+  // Map the public `commentsType` contract onto the v2 serializer's comment
+  // export policy. `clean` strips comments; everything else (default /
+  // `external`) preserves them. v2 export authority lives in the v2 session
+  // serializer — we never route v2 comments through the disabled v1
+  // editor-backed comment serialization path.
+  const exportV2Docx = async (options = {}) => {
+    const commentExportMode = options?.commentsType === 'clean' ? 'strip' : 'preserve';
+    const bytes = await saveV2Bytes({ format: 'docx', commentExportMode });
+    return new Blob([bytes], { type: DOCX });
+  };
+  const replaceV2File = async (source) => {
+    if (typeof replaceFile !== 'function') {
+      throw new Error('v2-editor: replaceFile unavailable');
+    }
+    return replaceFile(source);
+  };
+  const upgradeV2ToCollaboration = async (source, collaboration) => {
+    if (typeof upgradeToCollaboration !== 'function') {
+      throw new Error('v2-editor: upgradeToCollaboration unavailable');
+    }
+    return upgradeToCollaboration(source, collaboration);
+  };
+  const focusV2Editable = (options = {}) => {
+    if (mount?.focus && typeof mount.focus.focus === 'function') {
+      return mount.focus.focus(options);
+    }
+    return false;
+  };
+  const createV2AuthoringFailure = (reason, detail = undefined) => {
+    const result = { ok: false, reason };
+    if (detail) result.detail = detail;
+    return result;
+  };
+  const readV2QueryItems = (result) => (Array.isArray(result?.items) ? result.items : []);
+  const normalizeV2Occurrence = (occurrence) => {
+    const value = Number(occurrence);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  };
+  const resolveV2TextMatch = async ({ text, occurrence = 0 } = {}) => {
+    if (typeof text !== 'string' || text.length === 0) {
+      return createV2AuthoringFailure('invalid-text', 'text must be a non-empty string');
+    }
+    if (!documentApi?.query || typeof documentApi.query.match !== 'function') {
+      return createV2AuthoringFailure('query-unavailable', 'activeEditor.doc.query.match is not available');
+    }
+    const occurrenceIndex = normalizeV2Occurrence(occurrence);
+    const result = await documentApi.query.match({
+      select: { type: 'text', pattern: text },
+      limit: occurrenceIndex + 1,
+    });
+    const items = readV2QueryItems(result);
+    const item = items[occurrenceIndex] ?? null;
+    if (!item?.target) {
+      return createV2AuthoringFailure('text-not-found', `text not found: ${text}`);
+    }
+    return {
+      ok: true,
+      item,
+      target: item.target,
+      ref: typeof item?.handle?.ref === 'string' ? item.handle.ref : null,
+      text,
+      occurrence: occurrenceIndex,
+      total: Number.isFinite(Number(result?.total)) ? Number(result.total) : items.length,
+    };
+  };
+  const collapseV2SelectionTarget = (target, collapse) => {
+    if (!target || typeof target !== 'object' || target.kind !== 'selection') return target;
+    if (collapse !== 'start' && collapse !== 'end') return target;
+    const point = collapse === 'start' ? target.start : target.end;
+    if (!point) return target;
+    return {
+      kind: 'selection',
+      start: point,
+      end: point,
+      ...(target.story ? { story: target.story } : {}),
+    };
+  };
+  const applyV2SelectionTarget = async ({ target, collapse = null, focus = true } = {}) => {
+    if (!target || typeof target !== 'object') {
+      return createV2AuthoringFailure('invalid-target', 'target must be a SelectionTarget object');
+    }
+    const selectionTarget = collapseV2SelectionTarget(target, collapse);
+    const editing = host?.getHandles?.()?.editing ?? null;
+    const selectionTargets = editing?.selectionTargets ?? null;
+    if (typeof selectionTargets?.apply !== 'function') {
+      return createV2AuthoringFailure(
+        'selection-target-unavailable',
+        'editing.selectionTargets.apply is not available',
+      );
+    }
+    let result;
+    try {
+      result = selectionTargets.apply(selectionTarget);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return createV2AuthoringFailure('selection-target-threw', message);
+    }
+    if (!result?.ok) {
+      return createV2AuthoringFailure(result?.reason ?? 'selection-target-rejected', result?.detail);
+    }
+    if (focus !== false) await Promise.resolve(focusV2Editable());
+    return { ok: true, mode: result.mode ?? 'range' };
+  };
+  const currentV2AuthoringMode = () => (proxy.$superdoc.config.documentMode === 'suggesting' ? 'tracked' : 'direct');
+  const readV2CurrentSelectionTarget = () => {
+    const editing = host?.getHandles?.()?.editing ?? null;
+    const selection = editing?.selection ?? null;
+    if (typeof selection?.toSelectionTarget !== 'function') {
+      return createV2AuthoringFailure(
+        'selection-target-unavailable',
+        'editing.selection.toSelectionTarget is not available',
+      );
+    }
+    const result = selection.toSelectionTarget();
+    if (!result || result.kind === 'rejected') {
+      const rejection = result?.rejection ?? {};
+      return createV2AuthoringFailure(
+        rejection.reason ?? rejection.code ?? 'selection-target-rejected',
+        rejection.detail,
+      );
+    }
+    if (!result.target || typeof result.target !== 'object') {
+      return createV2AuthoringFailure('selection-target-rejected', 'selection target was not produced');
+    }
+    return {
+      ok: true,
+      target: result.target,
+      mode: result.mode ?? 'range',
+      story: result.story,
+    };
+  };
+  const failureFromV2Receipt = (receipt, fallbackReason) => {
+    const failure = receipt?.failure ?? receipt;
+    return createV2AuthoringFailure(
+      failure?.code ?? receipt?.reason ?? fallbackReason,
+      failure?.message ?? failure?.detail ?? receipt?.detail,
+    );
+  };
+  const v2Authoring = {
+    focusEditable: focusV2Editable,
+    readBlocks: (input = { includeText: true }) => documentApi?.blocks?.list?.(input),
+    setSelectionTarget: (input = {}) => applyV2SelectionTarget(input),
+    setSelectionByText: async (input = {}) => {
+      const resolved = await resolveV2TextMatch(input);
+      if (!resolved.ok) return resolved;
+      const applied = await applyV2SelectionTarget({
+        target: resolved.target,
+        collapse: input?.collapse ?? null,
+        focus: input?.focus,
+      });
+      if (!applied.ok) return applied;
+      return {
+        ok: true,
+        mode: applied.mode,
+        text: resolved.text,
+        occurrence: resolved.occurrence,
+        target: resolved.target,
+      };
+    },
+    replaceTextByText: async ({ findText, replacement, occurrence = 0, mode = 'direct' } = {}) => {
+      if (typeof replacement !== 'string') {
+        return createV2AuthoringFailure('invalid-replacement', 'replacement must be a string');
+      }
+      if (!documentApi?.text || typeof documentApi.text.replace !== 'function') {
+        return createV2AuthoringFailure('text-replace-unavailable', 'activeEditor.doc.text.replace is not available');
+      }
+      const resolved = await resolveV2TextMatch({ text: findText, occurrence });
+      if (!resolved.ok) return resolved;
+      const input = resolved.ref
+        ? { ref: resolved.ref, text: replacement, mode }
+        : { target: resolved.target, text: replacement, mode };
+      const receipt = await documentApi.text.replace(input);
+      if (receipt?.ok === false) {
+        return createV2AuthoringFailure(receipt.reason ?? 'text-replace-failed', receipt.detail);
+      }
+      await Promise.resolve(documentMutationReadiness?.whenPainted?.(receipt));
+      return {
+        ok: true,
+        receipt,
+        text: replacement,
+        replacedText: findText,
+        occurrence: normalizeV2Occurrence(occurrence),
+      };
+    },
+    replaceSelection: async ({ target, replacement = '', mode = 'direct' } = {}) => {
+      if (!target || typeof target !== 'object') {
+        return createV2AuthoringFailure('invalid-target', 'target must be a SelectionTarget object');
+      }
+      if (typeof replacement !== 'string') {
+        return createV2AuthoringFailure('invalid-replacement', 'replacement must be a string');
+      }
+      if (!documentApi?.text || typeof documentApi.text.replace !== 'function') {
+        return createV2AuthoringFailure('text-replace-unavailable', 'activeEditor.doc.text.replace is not available');
+      }
+      const receipt = await documentApi.text.replace({ target, text: replacement, mode });
+      if (receipt?.ok === false) {
+        return createV2AuthoringFailure(receipt.reason ?? 'text-replace-failed', receipt.detail);
+      }
+      await Promise.resolve(documentMutationReadiness?.whenPainted?.(receipt));
+      return {
+        ok: true,
+        receipt,
+        text: replacement,
+      };
+    },
+    serializeSelectionToClipboard: async ({ includeHtml = true } = {}) => {
+      if (!documentApi?.clipboard || typeof documentApi.clipboard.serializeSelection !== 'function') {
+        return createV2AuthoringFailure(
+          'clipboard-serialize-unavailable',
+          'activeEditor.doc.clipboard.serializeSelection is not available',
+        );
+      }
+      const selected = readV2CurrentSelectionTarget();
+      if (!selected.ok) return selected;
+      let serialized;
+      try {
+        serialized = await documentApi.clipboard.serializeSelection({
+          target: selected.target,
+          includeHtml: includeHtml !== false,
+        });
+      } catch (error) {
+        return createV2AuthoringFailure(
+          'clipboard-serialize-threw',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      if (!serialized?.payload) {
+        return createV2AuthoringFailure(
+          'clipboard-serialize-failed',
+          'clipboard serialization did not return a payload',
+        );
+      }
+      return {
+        ok: true,
+        payload: serialized.payload,
+        plan: serialized.plan,
+        target: selected.target,
+        mode: selected.mode,
+      };
+    },
+    pasteClipboardPayload: async ({
+      payload,
+      target = null,
+      mode = currentV2AuthoringMode(),
+      fallback = undefined,
+    } = {}) => {
+      if (!payload || typeof payload !== 'object') {
+        return createV2AuthoringFailure('invalid-clipboard-payload', 'payload must be a ClipboardPayload object');
+      }
+      if (!documentApi?.clipboard || typeof documentApi.clipboard.insert !== 'function') {
+        return createV2AuthoringFailure(
+          'clipboard-insert-unavailable',
+          'activeEditor.doc.clipboard.insert is not available',
+        );
+      }
+      let pasteTarget = target;
+      let selectionMode = null;
+      if (!pasteTarget) {
+        const selected = readV2CurrentSelectionTarget();
+        if (!selected.ok) return selected;
+        pasteTarget = selected.target;
+        selectionMode = selected.mode;
+      }
+      if (!pasteTarget || typeof pasteTarget !== 'object') {
+        return createV2AuthoringFailure('invalid-target', 'target must be a SelectionTarget or ClipboardTarget object');
+      }
+      const input = {
+        payload,
+        target: pasteTarget,
+        changeMode: mode === 'tracked' ? 'tracked' : 'direct',
+        ...(fallback !== undefined ? { fallback } : {}),
+      };
+      const receipt = await documentApi.clipboard.insert(input);
+      if (!receipt || receipt.success === false || receipt.ok === false) {
+        return failureFromV2Receipt(receipt, 'clipboard-insert-failed');
+      }
+      await Promise.resolve(documentMutationReadiness?.whenPainted?.(receipt));
+      return {
+        ok: true,
+        receipt,
+        target: pasteTarget,
+        mode: selectionMode,
+      };
+    },
+    pastePlainText: async ({ text, target = null, mode = currentV2AuthoringMode() } = {}) => {
+      if (typeof text !== 'string') {
+        return createV2AuthoringFailure('invalid-text', 'text must be a string');
+      }
+      return v2Authoring.pasteClipboardPayload({
+        payload: {
+          source: 'api',
+          items: [{ type: 'text/plain', kind: 'string', data: text }],
+        },
+        target,
+        mode,
+      });
+    },
+  };
+  const facade = {
+    editorVersion: 2,
+    documentId,
+    host,
+    mount,
+    options: {
+      documentId,
+      documentMode: proxy.$superdoc.config.documentMode,
+    },
+    // Stable disabled / not-shipped status mirror — the host capability
+    // snapshot is the source of truth; this is a convenience surface for the
+    // shell so it does not have to re-read `host.getCapabilities()` on every
+    // toolbar tick.
+    capabilities: capabilities ?? host?.getCapabilities?.() ?? null,
+    save: saveV2Bytes,
+    exportDocx: exportV2Docx,
+    replaceFile: replaceV2File,
+    upgradeToCollaboration: upgradeV2ToCollaboration,
+    // Mutation-plane consolidation: `activeEditor.doc` is the SuperDoc-facing
+    // browser Document API surface. It is the host-provided,
+    // contract-classified facade emitted by the v2 browser shell
+    // (`host.getDocumentFacade().doc`). The host facade is the single read-only
+    // enforcement plane: mutations fail closed in viewing/review mode, reads
+    // pass through, and `doc.selection.current` is the host-owned live
+    // selection. Worker-backed browser facades return promises; SDK/headless
+    // inline callers keep the synchronous Document API.
+    doc: documentApi ?? null,
+    // Visual readiness helper emitted beside the document facade. Callers that
+    // need painted overlay/sidebar/geometry evidence await
+    // `documentMutationReadiness.whenPainted(...)` after a committed receipt.
+    documentMutationReadiness: documentMutationReadiness ?? null,
+    // Stable reason when the browser Document API facade is unavailable. Null
+    // when `doc.comments` / `doc.trackChanges` are live.
+    documentApiUnavailableReason: documentApiUnavailableReason ?? null,
+    focus: focusV2Editable,
+    // Bounded authoring bridge for browser proof/setup code. This is not a v1
+    // ProseMirror compatibility projection; it resolves public Document API
+    // targets and applies them through the v2 host's editable selection handle.
+    authoring: v2Authoring,
+    editCommands: editCommands ?? null,
+    // ui-phase3-002: v2 comments adapter — used by comments-store and
+    // CommentDialog to route create / reply / edit / resolve / delete through
+    // v2 host APIs. Always present in v2 mode; null when the v2 editor host
+    // boot failed.
+    v2Comments: commentsAdapter ?? null,
+    // ui-phase3-003: v2 tracked-change adapter — used by comments-store and
+    // CommentDialog to list / focus / accept / reject tracked changes through
+    // v2 host APIs. Always present in v2 mode; null when the v2 editor host
+    // boot failed.
+    v2TrackedChanges: trackedChangesAdapter ?? null,
+    // ui-phase4-001: v2 page metrics + zoom runtime. Always present in v2
+    // mode (null only if the v2 editor host boot failed). Consumers:
+    //   - SuperDoc.vue's `activeZoom` watcher calls `pageMetrics.setZoom`
+    //   - rulers, floating layers, whiteboard overlays consume
+    //     `pageMetrics.getSnapshot()` / `subscribe(...)`.
+    pageMetrics: pageMetrics ?? null,
+    // ui-phase4-002: narrow v2 page-layout bridge for ruler / margin chrome.
+    // Always present in v2 mode (null only if the v2 editor host boot failed).
+    // Routes margin edits through `doc.sections.setPageMargins(...)` under
+    // the hood; never exposes raw host/session/adapter handles to Vue.
+    pageLayout: pageLayout ?? null,
+    // Host-visible page-furniture geometry
+    // readback. Always present in v2 mode (null only if the v2 editor host
+    // boot failed). Host-visible proofs read
+    // `superdoc.activeEditor.pageFurniture.getSnapshot()` to associate painted
+    // header/footer regions with their story ref ids.
+    pageFurniture: pageFurniture ?? null,
+    // v2 collaboration cursor UI readback. Product-owned browser shell
+    // facade; exposes normalized presence/overlay state only, never raw
+    // provider/awareness/Yjs handles.
+    presence: presence ?? null,
+    // v2 collaboration lock metadata facade. Backed by the same single-doc
+    // collaborative root Y.Doc as document content/presence.
+    lock: lock ?? null,
+    // Read-only review sidecar facet. The snapshot contains only rows from the
+    // currently committed page window; custom UI consumes it without starting
+    // an independent whole-document comments/track-changes catalog read.
+    reviewWindow: {
+      getDiagnostics: () => v2ReviewWindowController.getDiagnostics(),
+      getSnapshot: () => v2ReviewWindowController.getSnapshot?.() ?? null,
+      subscribe: (listener) => v2ReviewWindowController.subscribe?.(listener) ?? (() => undefined),
+    },
+    // Narrow public v2 extension facet (commands + diagnostics). Null when no
+    // `config.extensions` are registered on the active document. Backed by the
+    // host extension manager; never exposes the raw manager or command handles.
+    extensions: createV2ExtensionsFacet(host),
+    // Font parity: the active document's font runtime facet (read/write font API + report stream).
+    // `SuperDoc.ts` routes `superdoc.fonts.*` and the `fonts-changed` relay through this for v2.
+    fonts: fonts ?? host?.getFontRuntime?.() ?? null,
+    /**
+     * The v2 active-editor facade explicitly does NOT carry v1 commands /
+     * state / view / chain / can. Document mutations (comments, tracked
+     * changes, history) go through `activeEditor.doc.*` — the browser
+     * Document API facade above. Narrow read / focus / reveal / active-target
+     * controls use their explicit bridge surfaces (`v2Comments` /
+     * `v2TrackedChanges`); those are not review mutation routes. Chrome that
+     * still expects the old surface must fail closed in superdoc@2.
+     */
+    commands: null,
+    state: null,
+    view: null,
+  };
+
+  const doc = getDocument(documentId);
+  if (doc) {
+    doc.isReady = true;
+    if (typeof doc.setEditor === 'function') doc.setEditor(facade);
+  }
+  const runtimeRegistered = registerV2Runtime({ documentId, host, mount, facade });
+  if (!runtimeRegistered) {
+    proxy.$superdoc.setActiveEditor(facade);
+  }
+  proxy.$superdoc.broadcastEditorCreate(facade);
+  installV2CommandShortcutBinding({ documentId, bindEditShortcuts });
+  installV2SessionShortcutBinding({ documentId, bindSessionShortcuts, documentApi });
+  if (resolveDocumentV2Collaboration(getDocument(documentId)).state === 'valid') {
+    onEditorCollaborationReady({ editor: facade });
+  }
+  // ui-phase4-002: flip the reactive readiness signal so the ruler template
+  // re-evaluates `shouldShowV2Ruler(doc)` now that pageMetrics + pageLayout
+  // are attached to the active editor facade.
+  if (pageMetrics && pageLayout) v2RulerReady.value = true;
+
+  // ui-phase3-002 / ui-phase3-003: register the v2 comment + tracked-change
+  // adapters on the store so its adapter-identity guard
+  // (`isCurrentV2TrackedChangesAdapter`) can drop stale async results, then
+  // hand the committed-window controller its context. Committed page windows
+  // are the sole passive source for built-in review presentation.
+  const commentsModuleEnabled = proxy.$superdoc.config.modules?.comments !== false;
+  if (commentsAdapter && commentsModuleEnabled) {
+    commentsStore.setV2CommentsAdapter?.(commentsAdapter);
+  }
+  if (trackedChangesAdapter && commentsModuleEnabled) {
+    commentsStore.setV2TrackedChangesAdapter?.(trackedChangesAdapter);
+  }
+  // Surface ownership is not capability ownership. `ui.comments: false`
+  // suppresses the built-in sidebar but custom UI still consumes the bounded
+  // review feed, so the controller must attach whenever either adapter exists.
+  if (commentsAdapter || trackedChangesAdapter) {
+    v2ReviewWindowController.setContext({
+      superdoc: proxy.$superdoc,
+      documentId,
+      commentsAdapter: commentsAdapter ?? null,
+      trackedChangesAdapter: trackedChangesAdapter ?? null,
+      resolveReviewWindow: (input) => host.resolveReviewWindow(input),
+    });
+  }
+  if (areDocumentsReady.value && !proxy.$superdoc.config.collaboration) {
+    isReady.value = true;
+  }
+  // Mark floating-comments fallback so the v2-mode shell does not idle on
+  // the v1-only locations-update event.
+  isFloatingCommentsReady.value = true;
+  hasInitializedLocations.value = true;
+};
+
+// ui-phase3-002: v2 selection mirror used to gate the create-comment
+// affordance in v2 mode. v1's `selectionPosition` is fed by PM coordsAtPos
+// which v2 never emits, so we maintain a separate flag and feed the floating
+// "+" tool from the v2 selection snapshot instead.
+const v2HasRangeSelection = ref(false);
+const v2SelectionSnapshot = shallowRef(null);
+let v2SelectionToolbarRafHandle = 0;
+let v2SelectionToolbarTimeoutHandle = 0;
+let v2DomSelectionRafHandle = 0;
+const V2_SELECTION_TOOLBAR_SYNC_RETRY_FRAMES = 3;
+const buildV2EditorUpdatePayload = ({
+  editor,
+  sourceEditor,
+  surface = 'body',
+  headerId = null,
+  sectionType = null,
+} = {}) => {
+  const activeEditor = proxy.$superdoc?.activeEditor ?? null;
+  const effectiveEditor = editor ?? sourceEditor ?? activeEditor ?? undefined;
+  return {
+    editor: effectiveEditor,
+    sourceEditor: sourceEditor ?? effectiveEditor,
+    surface,
+    headerId,
+    sectionType,
+  };
+};
+
+const emitV2EditorUpdate = (payload = {}) => {
+  proxy.$superdoc.emit('editor-update', buildV2EditorUpdatePayload(payload));
+};
+
+const cancelScheduledV2SelectionToolbarSync = () => {
+  if (v2SelectionToolbarRafHandle && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(v2SelectionToolbarRafHandle);
+  }
+  if (v2SelectionToolbarTimeoutHandle) {
+    clearTimeout(v2SelectionToolbarTimeoutHandle);
+  }
+  v2SelectionToolbarRafHandle = 0;
+  v2SelectionToolbarTimeoutHandle = 0;
+};
+
+const scheduleV2SelectionToolbarStateSync = (remainingAttempts = V2_SELECTION_TOOLBAR_SYNC_RETRY_FRAMES) => {
+  cancelScheduledV2SelectionToolbarSync();
+
+  const run = () => {
+    v2SelectionToolbarRafHandle = 0;
+    v2SelectionToolbarTimeoutHandle = 0;
+    syncV2SelectionToolbarState();
+
+    if (v2HasRangeSelection.value && isCommentsEnabled.value && !selectionPosition.value && remainingAttempts > 0) {
+      scheduleV2SelectionToolbarStateSync(remainingAttempts - 1);
+    }
+  };
+
+  if (typeof requestAnimationFrame === 'function') {
+    v2SelectionToolbarRafHandle = requestAnimationFrame(run);
+    return;
+  }
+
+  v2SelectionToolbarTimeoutHandle = setTimeout(run, 0);
+};
+
+const cancelScheduledV2DomSelectionSync = () => {
+  if (v2DomSelectionRafHandle && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(v2DomSelectionRafHandle);
+  }
+  v2DomSelectionRafHandle = 0;
+};
+
+const clearV2SelectionToolbarState = () => {
+  v2HasRangeSelection.value = false;
+  v2SelectionSnapshot.value = null;
+  cancelScheduledV2SelectionToolbarSync();
+  syncV2SelectionToolbarState();
+};
+
+const isV2DomRangeSelection = (selection, root) => {
+  if (!selection || selection.rangeCount < 1 || selection.isCollapsed || !root) return false;
+  const range = selection.getRangeAt(0);
+  return root.contains(range.startContainer) && root.contains(range.endContainer);
+};
+
+const applyCurrentV2DomSelection = () => {
+  v2DomSelectionRafHandle = 0;
+  if (!isV2Mode.value) return;
+
+  let handles = null;
+  try {
+    handles = proxy.$superdoc?.activeEditor?.host?.getHandles?.() ?? null;
+  } catch {
+    handles = null;
+  }
+
+  const documentMode = proxy.$superdoc?.config?.documentMode;
+  if (documentMode === 'editing' || documentMode === 'suggesting') {
+    // ui-phase3-002: In editable modes the v2 host owns pointer text selection
+    // and cancels the browser's native selectstart (see editable-input.ts), so
+    // a held host range must never be overwritten by a leftover DOM slice.
+    // When the host holds NO range, a native DOM range may still be the source
+    // of truth (programmatic selection APIs and test scaffolding create one
+    // without going through the host pointer path), so only then fall through
+    // to the DOM-selection mirror below.
+    const hostSnapshot = handles?.editing?.selection?.getSnapshot?.() ?? null;
+    if (shouldPreserveHostV2Selection(documentMode, hostSnapshot)) {
+      const root = getActiveV2MountContainer();
+      const selection = window.getSelection?.() ?? null;
+      if (hasOutsideV2DomRangeSelection(selection, root)) {
+        clearV2SelectionToolbarState();
+        return;
+      }
+
+      v2HasRangeSelection.value = true;
+      v2SelectionSnapshot.value = hostSnapshot;
+      scheduleV2SelectionToolbarStateSync();
       return;
     }
+  } else if (documentMode !== 'viewing') {
+    clearV2SelectionToolbarState();
+    return;
+  }
 
-    // Map PM positions to visual layout coordinates
-    const mappedPositions = presentationEditor.getCommentBounds(positions, layers.value);
-    handleEditorLocationsUpdate(mappedPositions);
-    flushPendingReplayTrackedChangeSync();
+  const root = getActiveV2MountContainer();
+  const selection = window.getSelection?.() ?? null;
 
-    // Ensure floating comments can render once the layout engine starts emitting positions.
-    // For DOCX, handleDocumentReady doesn't fire (it's wired to PDFViewer), so this is
-    // the primary trigger for hasInitializedLocations in editor-based documents.
-    if (!hasInitializedLocations.value) {
-      hasInitializedLocations.value = true;
+  if (!isV2DomRangeSelection(selection, root)) {
+    clearV2SelectionToolbarState();
+    return;
+  }
+
+  const result = handles?.editing?.selectionTargets?.applyDomSelection?.(selection);
+  if (!result?.ok || result.mode !== 'range') {
+    clearV2SelectionToolbarState();
+    return;
+  }
+
+  v2HasRangeSelection.value = true;
+  v2SelectionSnapshot.value = handles?.editing?.selection?.getSnapshot?.() ?? null;
+  scheduleV2SelectionToolbarStateSync();
+};
+
+const scheduleV2DomSelectionSync = () => {
+  if (!isV2Mode.value) return;
+  cancelScheduledV2DomSelectionSync();
+  if (typeof requestAnimationFrame !== 'function') {
+    applyCurrentV2DomSelection();
+    return;
+  }
+  v2DomSelectionRafHandle = requestAnimationFrame(applyCurrentV2DomSelection);
+};
+
+const handleDocumentSelectionChange = () => {
+  scheduleV2DomSelectionSync();
+};
+
+const onV2SelectionChanged = ({ hasRangeSelection, snapshot } = {}) => {
+  v2HasRangeSelection.value = hasRangeSelection === true;
+  v2SelectionSnapshot.value = hasRangeSelection === true ? (snapshot ?? null) : null;
+  if (v2HasRangeSelection.value) {
+    scheduleV2SelectionToolbarStateSync();
+    return;
+  }
+
+  cancelScheduledV2SelectionToolbarSync();
+  syncV2SelectionToolbarState();
+};
+
+const getActiveV2MountContainer = () => {
+  return v2GeometryRender.value?.mountContainer ?? proxy.$superdoc?.activeEditor?.mount?.container ?? null;
+};
+
+const escapeCssIdent = (value) => {
+  const raw = String(value);
+  if (globalThis.CSS?.escape) return globalThis.CSS.escape(raw);
+  return raw.replace(/["\\]/g, '\\$&');
+};
+
+const findV2SelectionAnchorElement = () => {
+  const snapshot = v2SelectionSnapshot.value;
+  const root = getActiveV2MountContainer();
+  if (!snapshot || !root?.querySelector) return null;
+  const anchor = snapshot.anchor ?? null;
+  const ids = [anchor?.fragmentId, anchor?.blockId, anchor?.position?.anchor?.nativeId].filter(
+    (id) => id != null && id !== '',
+  );
+
+  for (const id of ids) {
+    const escaped = escapeCssIdent(id);
+    const match =
+      root.querySelector(`[data-source-node-id="${escaped}"]`) ??
+      root.querySelector(`[data-layout-block-ref="${escaped}"]`) ??
+      root.querySelector(`[data-layout-fragment-id="${escaped}"]`);
+    if (match instanceof HTMLElement) return match;
+  }
+  return null;
+};
+
+function getSelectionBoundingBox(root = null) {
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount < 1 || selection.isCollapsed) return null;
+
+  const range = selection.getRangeAt(0);
+  if (!range) return null;
+
+  if (root) {
+    const { startContainer, endContainer } = range;
+    if (!root.contains(startContainer) || !root.contains(endContainer)) return null;
+  }
+
+  try {
+    const rect = range.getBoundingClientRect();
+    if (!rect || (rect.width <= 0 && rect.height <= 0)) return null;
+    return rect;
+  } catch {
+    return null;
+  }
+}
+
+const rectToLayerBounds = (rect) => {
+  if (!rect || !layers.value) return null;
+  const layerRect = layers.value.getBoundingClientRect();
+  return {
+    top: rect.top - layerRect.top,
+    left: rect.left - layerRect.left,
+    right: rect.right - layerRect.left,
+    bottom: rect.bottom - layerRect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+};
+
+const readV2PageIndex = (element) => {
+  let current = element;
+  while (current && current.nodeType === 1) {
+    const raw = current.dataset?.pageIndex;
+    if (raw != null && raw !== '') {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed)) return parsed;
     }
-  });
+    current = current.parentElement;
+  }
+  return null;
+};
 
-  editor.on?.('tracked-changes-changed', ({ editor: sourceEditor, source }) => {
-    if (source === 'body-edit') return;
-    if (!shouldRenderCommentsInViewing.value) {
-      commentsStore.clearEditorCommentPositions?.();
-      return;
-    }
-    syncTrackedChangeComments({ superdoc: proxy.$superdoc, editor: sourceEditor ?? editor });
-  });
+const buildV2FloatingSelection = () => {
+  if (!v2HasRangeSelection.value || !isCommentsEnabled.value) return null;
 
-  presentationEditor.on('paginationUpdate', ({ layout }) => {
-    const totalPages = layout.pages.length;
-    proxy.$superdoc.emit('pagination-update', { totalPages, superdoc: proxy.$superdoc });
-  });
+  const selectionRect = getSelectionBoundingBox(getActiveV2MountContainer());
+  const bounds = rectToLayerBounds(selectionRect) ?? buildV2PendingPositionEntry()?.bounds ?? null;
+  if (!bounds) return null;
 
-  presentationEditor.on('headerFooterUpdate', (payload = {}) => {
-    proxy.$superdoc.emit('editor-update', buildEditorUpdatePayload(payload));
-  });
+  const documentId = proxy.$superdoc?.activeEditor?.options?.documentId ?? proxy.$superdoc?.activeEditor?.documentId;
+  if (!documentId) return null;
 
-  presentationEditor.on('headerFooterTransaction', (payload = {}) => {
-    emitEditorTransaction(buildEditorTransactionPayload(payload));
+  const pageIndex = readV2PageIndex(findV2SelectionAnchorElement());
+  return useSelection({
+    selectionBounds: bounds,
+    page: pageIndex != null ? pageIndex + 1 : 1,
+    documentId,
+    // Reuse the document editor selection path so the comments shell can keep
+    // using the same floating comment tool in v2 mode.
+    source: DOCUMENT_EDITOR_SELECTION_SOURCE,
   });
 };
 
-const onEditorDestroy = () => {
-  proxy.$superdoc.broadcastEditorDestroy();
+const buildV2PendingPositionEntry = () => {
+  if (!layers.value) return null;
+  const target = findV2SelectionAnchorElement();
+  if (!target) return null;
+  const rect = target.getBoundingClientRect();
+  if (!rect || (rect.width <= 0 && rect.height <= 0)) return null;
+  const layerRect = layers.value.getBoundingClientRect();
+  const bounds = {
+    top: rect.top - layerRect.top,
+    left: rect.left - layerRect.left,
+    right: rect.right - layerRect.left,
+    bottom: rect.bottom - layerRect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+  const pageIndex = readV2PageIndex(target);
+  return {
+    threadId: 'pending',
+    key: 'pending',
+    kind: 'pending',
+    storyKey: 'body',
+    bounds,
+    ...(pageIndex != null ? { pageIndex } : {}),
+    ...(v2GeometryEpoch.value != null ? { generation: v2GeometryEpoch.value } : {}),
+  };
 };
 
-const onEditorFocus = ({ editor }) => {
-  const documentId = editor?.options?.documentId;
-  const entry = documentId ? v1Runtimes.get(documentId) : null;
-  if (entry) proxy.$superdoc.setActiveRuntime(entry.runtimeId, 'v1-editor-focus');
-  proxy.$superdoc.setActiveEditor(editor);
+const syncV2SelectionToolbarState = () => {
+  if (!isV2Mode.value) return;
+  if (!v2HasRangeSelection.value) {
+    activeSelection.value = null;
+    resetSelection();
+    return;
+  }
+
+  const selection = buildV2FloatingSelection();
+  if (!selection) {
+    activeSelection.value = null;
+    resetSelection();
+    return;
+  }
+
+  handleSelectionChange(selection);
+};
+
+const publishV2PendingPositionEntry = (entry) => {
+  if (!entry) return;
+  handleEditorLocationsUpdate({
+    ...(editorCommentPositions.value ?? {}),
+    pending: entry,
+  });
+};
+
+// TCS Phase 0 / 002: framework-agnostic geometry publisher. Owns alias
+// caching, pending-row preservation, missing-mount/layers clearing, and
+// scroll/resize/zoom recollection (see `v2-geometry-publisher.js`). The
+// SuperDoc.vue side only feeds payloads and observes the published state.
+const v2GeometryPublisher = resolvedEditorIntegration.createGeometryPublisher({
+  getLayersContainer: () => layers.value ?? null,
+  isCommentsEnabled: () => shouldRenderCommentsInViewing.value,
+  publishPositions: (positions, options) => handleEditorLocationsUpdate(positions, options),
+  clearPositions: () => {
+    commentsStore.clearEditorCommentPositions?.();
+  },
+  readCurrentPositions: () => editorCommentPositions.value ?? {},
+  setGeometryAvailable: (value) => {
+    const next = Boolean(value);
+    v2GeometryAvailable.value = next;
+    if (next) {
+      v2ReviewSidebarUnlocked.value = true;
+      v2GeometryEpoch.value = v2GeometryPublisher.getLastEpoch();
+    }
+  },
+});
+
+const armV2TrackedChangeRestampGeometryRetention = (reason = 'tracked-change-restamp') => {
+  v2TrackedChangeRestampRetainPaints = Math.max(v2TrackedChangeRestampRetainPaints, 3);
+  v2TrackedChangeRestampRetentionReason = reason;
+};
+
+const takeV2TrackedChangeRestampGeometryRetention = () => {
+  // Render epochs and worker mutation events cross separate async channels.
+  // Firefox can observe the new paint before its receipt reaches this shell,
+  // so every render-epoch publish is a geometry handoff: retain last-known
+  // positions for still-open TC rows. Scroll/resize/page-window recollects call
+  // the publisher without this option and continue to clear stale geometry.
+  const reason =
+    v2TrackedChangeRestampRetainPaints > 0
+      ? (v2TrackedChangeRestampRetentionReason ?? 'tracked-change-restamp')
+      : 'render-epoch-handoff';
+  if (v2TrackedChangeRestampRetainPaints > 0) v2TrackedChangeRestampRetainPaints -= 1;
+  if (v2TrackedChangeRestampRetainPaints <= 0) {
+    v2TrackedChangeRestampRetentionReason = null;
+  }
+  return {
+    retainMissingTrackedChangeGeometry: true,
+    reason,
+  };
+};
+
+const clearV2TrackedChangeRestampGeometryRetention = () => {
+  v2TrackedChangeRestampRetainPaints = 0;
+  v2TrackedChangeRestampRetentionReason = null;
+};
+
+const resolveV2GeometryPublishOptions = (options) => (typeof options === 'function' ? options() : options);
+
+const scheduleV2GeometryPublish = (payload, options = undefined) => {
+  v2GeometryRender.value = payload;
+  if (v2GeometryRafHandle && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(v2GeometryRafHandle);
+  }
+  if (typeof requestAnimationFrame !== 'function') {
+    void v2GeometryPublisher.publish(v2GeometryRender.value, resolveV2GeometryPublishOptions(options));
+    return;
+  }
+  v2GeometryRafHandle = requestAnimationFrame(() => {
+    v2GeometryRafHandle = 0;
+    void v2GeometryPublisher.publish(v2GeometryRender.value, resolveV2GeometryPublishOptions(options));
+  });
+};
+
+const onV2Render = (payload) => {
+  if (!payload) return;
+  scheduleV2GeometryPublish(payload, () => takeV2TrackedChangeRestampGeometryRetention());
+  if (v2HasRangeSelection.value) scheduleV2SelectionToolbarStateSync();
+};
+
+// ui-phase4-001: receive v2 page metrics snapshots from V2DocumentEditor so
+// SuperDoc consumers receive a stable `pagination-update` event. Snapshot shape:
+//   `{ snapshot: V2PageMetricsSnapshot, host, mount, stage }`.
+const v2PageMetricsSnapshot = shallowRef(null);
+const v2MountStagesByDocumentId = new Map();
+let latestV2MountStage = null;
+const onV2PageMetrics = (payload) => {
+  if (!payload?.snapshot) return;
+  const snapshot = payload.snapshot;
+  const metricStage = payload.stage;
+  if (typeof HTMLElement !== 'undefined' && metricStage instanceof HTMLElement) {
+    latestV2MountStage = metricStage;
+    const stageDocumentId = metricStage.dataset?.superdocV2DocumentId;
+    if (stageDocumentId) v2MountStagesByDocumentId.set(stageDocumentId, metricStage);
+  }
+  v2PageMetricsSnapshot.value = snapshot;
+  const totalPages = Array.isArray(snapshot.pages) ? snapshot.pages.length : 0;
+  // The pagination-update event payload mirrors the v1 shape
+  // (`{ totalPages, superdoc }`) so existing consumers don't need to
+  // discriminate on editor version. The richer snapshot is reachable
+  // through `superdoc.activeEditor.pageMetrics.getSnapshot()`.
+  proxy.$superdoc.emit('pagination-update', { totalPages, superdoc: proxy.$superdoc });
+  // ui-phase4-002: keep the ruler container offset aligned with the v2 paint
+  // wrapper. Repaint may shift the wrapper bounds (zoom changes, page count
+  // changes, scroll); sync once per snapshot so the ruler stays glued to the
+  // page stack.
+  nextTick(() => {
+    syncV2RulerOffset();
+    setupV2RulerObservers();
+  });
+};
+
+const onV2RenderCleared = (payload) => {
+  linkPopover.destroy();
+  cancelScheduledV2DomSelectionSync();
+  cancelScheduledV2SelectionToolbarSync();
+  if (v2GeometryRafHandle && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(v2GeometryRafHandle);
+  }
+  v2GeometryRafHandle = 0;
+  v2GeometryRender.value = null;
+  v2GeometryEpoch.value = null;
+  v2GeometryAvailable.value = false;
+  v2ReviewSidebarUnlocked.value = false;
+  clearV2TrackedChangeRestampGeometryRetention();
+  v2GeometryPublisher.reset();
+  v2HasRangeSelection.value = false;
+  v2SelectionSnapshot.value = null;
+  activeSelection.value = null;
+  resetSelection();
+  v2PageMetricsSnapshot.value = null;
+  const clearedDocumentId = payload?.documentId == null ? null : String(payload.documentId);
+  commentsStore.cancelImportedTrackedChangeBootstrap?.(clearedDocumentId ?? undefined);
+  if (clearedDocumentId) v2MountStagesByDocumentId.delete(clearedDocumentId);
+  if (
+    latestV2MountStage &&
+    (clearedDocumentId == null || latestV2MountStage.dataset?.superdocV2DocumentId === clearedDocumentId)
+  ) {
+    latestV2MountStage = null;
+  }
+  // Invalidate the in-flight committed window before adapter teardown. The
+  // controller's generation fence drops any late sidecar result.
+  v2ReviewWindowController.reset('render-cleared');
+  commentsStore.setV2CommentsAdapter?.(null);
+  commentsStore.setV2TrackedChangesAdapter?.(null);
+  commentsStore.clearEditorCommentPositions?.();
+  clearActiveV2EditorFacade(payload?.documentId ?? null);
+  // ui-phase4-002: tear down ruler observers on document switch / dispose.
+  cleanupV2RulerObservers();
+  v2RulerHostStyle.value = {};
+  v2RulerReady.value = false;
+};
+
+const onV2HostEvent = (document, event) => {
+  if (!event) return;
+  const documentId = document?.id ?? null;
+  if (event.type === 'review-mutation:started') {
+    v2ReviewWindowController.beginMutation(event.reviewMutation);
+    return;
+  }
+  if (event.type === 'review-mutation:aborted') {
+    v2ReviewWindowController.settleMutation(event.reviewMutation?.token, {
+      outcome: 'aborted',
+      resumeDomains: ['comments', 'trackedChanges'],
+      trackedRowCount: commentsStore.getV2TrackedChangeRowCount?.(documentId) ?? null,
+    });
+    return;
+  }
+  if (event.type === 'reviewTarget:changed') {
+    syncSidebarActiveCommentFromV2ReviewTarget(event.next);
+    return;
+  }
+  if (event.type === 'collaboration:remote-changed') {
+    if (event.reviewChanged !== false) {
+      v2ReviewWindowController.invalidate('collaboration:remote-review-changed');
+      // Comment-only remote commits do not necessarily repaint the document.
+      // Re-read the last committed target set at the sidecar's latest exact
+      // coordinate; the controller still coalesces rapid remote updates.
+      v2ReviewWindowController.refreshCommittedWindow('collaboration:remote-review-changed');
+    }
+    return;
+  }
+  if (event.type === 'source:complete') {
+    proxy.$superdoc.broadcastSourceComplete();
+    return;
+  }
+  if (event.type === 'source:signals-complete') {
+    proxy.$superdoc.broadcastSourceSignalsComplete();
+    return;
+  }
+  if (event.type === 'mutation:rejected') {
+    if (event.reviewMutation?.token) {
+      v2ReviewWindowController.settleMutation(event.reviewMutation.token, {
+        outcome: 'rejected',
+        resumeDomains: ['comments', 'trackedChanges'],
+        trackedRowCount: commentsStore.getV2TrackedChangeRowCount?.(documentId) ?? null,
+      });
+    }
+    maybeNotifyV2AuthorRequired(documentId, event);
+    return;
+  }
+  if (event.type === 'mutation:committed') {
+    // A successful mutation clears any prior non-terminal author-required notice.
+    clearV2AuthorRequired(documentId);
+    emitV2EditorUpdate();
+  }
+  if (event.type !== 'mutation:committed') return;
+  // Review-metadata-only commits do not produce a canonical page paint, so
+  // explicitly refresh the last committed bounded window. Ordinary document
+  // typing does paint again: the window controller compares the exact IDs and
+  // keeps an identical in-flight/applied read instead of restarting it for
+  // every fresh route id. Tracked-edit receipts reconcile their affected rows
+  // below. A changed painted ID set naturally starts a new bounded read.
+  // History can restore review metadata and a painted carrier in separate
+  // scheduling turns. Re-read only the last committed target set at the
+  // sidecar's latest exact coordinate so undo/redo cannot leave an active
+  // highlight paired with a stale resolved sidebar row. This is one bounded
+  // worker read per history action; typing continues to rely on committed
+  // paints and does not take this path.
+  if (event.origin === 'history') {
+    v2ReviewWindowController.refreshCommittedWindow(`history-${event.direction}`);
+  } else if (event.reviewSidecarOnly === true) {
+    v2ReviewWindowController.refreshCommittedWindow('review-sidecar-committed');
+  }
+  const reviewImpact = getV2TrackedChangeMutationImpact(event);
+  if (Array.isArray(reviewImpact?.remappedPairs) && reviewImpact.remappedPairs.length > 0) {
+    // Keep the comments-list row continuous across review-group identity remaps
+    // (common on the first keystroke after Enter in suggesting mode).
+    commentsStore.remapTrackedChangeIdentities?.(reviewImpact.remappedPairs, { documentId });
+  }
+  if (reviewImpact) {
+    // Typing/Enter in suggesting mode can repaint the remounted DOM before TC
+    // annotation carriers are restamped. Render-epoch geometry publishes in
+    // that window may legitimately be carrier-less; keep last-known TC geometry
+    // there, while viewport scroll/resize recollects remain strict.
+    armV2TrackedChangeRestampGeometryRetention('tracked-change-mutation');
+  }
+  const activeEditor = proxy.$superdoc?.activeEditor ?? null;
+  const reconciliation = reviewImpact
+    ? commentsStore.reconcileTrackedChangeMutationFromV2?.({
+        superdoc: proxy.$superdoc,
+        adapter: activeEditor?.v2TrackedChanges ?? null,
+        documentId,
+        ...reviewImpact,
+      })
+    : Promise.resolve({ ok: true });
+  if (event.reviewMutation?.token) {
+    const reviewMutation = event.reviewMutation;
+    const allResolved = Boolean(reviewImpact?.allResolved ?? event.trackedChangeAllResolved);
+    const settleReviewMutation = (result) => {
+      const reconciledAllResolved = allResolved && result?.ok === true && result?.allResolved === true;
+      v2ReviewWindowController.settleMutation(reviewMutation.token, {
+        outcome: 'committed',
+        allResolved: reconciledAllResolved,
+        resumeDomains: reconciledAllResolved ? ['comments'] : ['comments', 'trackedChanges'],
+        trackedRowCount: commentsStore.getV2TrackedChangeRowCount?.(documentId) ?? null,
+      });
+    };
+    void Promise.resolve(reconciliation).then(settleReviewMutation, () => settleReviewMutation(null));
+    return;
+  }
+  void Promise.resolve(reconciliation).catch(() => undefined);
+};
+
+const onV2LinkClick = (payload) => {
+  linkPopover.handleLinkClick(payload);
+};
+
+const recollectV2GeometryIfActive = (options = undefined) => {
+  if (!isV2Mode.value) return;
+  if (!v2GeometryPublisher.getLastPayload()) return;
+  // Scroll / resize / zoom may change layer-relative coords without advancing
+  // the v2 paint epoch. The publisher reuses the per-epoch alias cache so a
+  // recollect does not call `comments.list()` again (plan §4).
+  if (v2GeometryRafHandle && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(v2GeometryRafHandle);
+  }
+  if (typeof requestAnimationFrame !== 'function') {
+    void v2GeometryPublisher.recollect(resolveV2GeometryPublishOptions(options));
+    return;
+  }
+  v2GeometryRafHandle = requestAnimationFrame(() => {
+    v2GeometryRafHandle = 0;
+    void v2GeometryPublisher.recollect(resolveV2GeometryPublishOptions(options));
+  });
+};
+
+// Coordinate the V2 review surface across `setDocumentMode` transitions as one
+// coherent step. By the time `document-mode-change` fires, SuperDoc.ts has
+// already updated the reactive viewing-visibility authority and applied the
+// tracked-change render preferences to the host runtime. We then refresh the
+// last committed review window and republish floating geometry after repaint.
+// Review rows and geometry stay separate; neither can delay canonical paint.
+const handleV2DocumentModeChange = () => {
+  if (!isV2Mode.value) return;
+  try {
+    v2ReviewWindowController.refreshCommittedWindow('document-mode-change');
+  } catch (err) {
+    console.warn('[SuperDoc][v2] document-mode review-window refresh failed', err);
+  }
+
+  const republishGeometry = () => {
+    if (!isV2Mode.value) return;
+    if (shouldRenderCommentsInViewing.value) {
+      // Force a fresh publish against the freshly painted carriers (anchors may
+      // have moved when the inline tracked-change projection switched).
+      if (v2GeometryRender.value) {
+        scheduleV2GeometryPublish(v2GeometryRender.value);
+      } else {
+        recollectV2GeometryIfActive();
+      }
+    } else {
+      // Both comments and tracked changes hidden in viewing mode: clear stale
+      // floating geometry so cards do not hover over removed anchors.
+      commentsStore.clearEditorCommentPositions?.();
+      v2GeometryAvailable.value = false;
+    }
+  };
+
+  // Wait for the host repaint that `setDocumentMode` triggered before reading
+  // layer-relative bounds. nextTick flushes Vue's reactive update; a following
+  // animation frame lets the v2 surface finish its repaint.
+  void nextTick(() => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => republishGeometry());
+    } else {
+      republishGeometry();
+    }
+  });
+};
+
+const getV2EditorFailureMessage = (reason) => {
+  switch (reason) {
+    case 'editing-mount-required':
+      return 'SuperDoc could not load the document editor because the page did not provide a mount container.';
+    case 'source-load-failed':
+      return 'SuperDoc could not load the document editor because the document source could not be prepared.';
+    case 'unsupported-cdn-v2-editor':
+      return 'SuperDoc could not load the document editor because this build does not include the V2 runtime.';
+    case 'v2-integration-unavailable':
+      return 'SuperDoc could not load the document editor because the bundled V2 runtime is unavailable in this environment.';
+    case 'worker-init-failed':
+      return 'SuperDoc could not load the document editor because the browser worker failed to start.';
+    case 'input-too-large-for-inline-review':
+      return 'SuperDoc could not load the document editor because this document is too large to open without the browser worker.';
+    case 'collaboration-unsupported-huge-document':
+      return 'SuperDoc could not load the document editor because large documents cannot be opened with collaboration enabled yet.';
+    case 'collaboration-v1-config-unsupported':
+      return 'SuperDoc v2 cannot use modules.collaboration because it is the SuperDoc v1 collaboration API. SuperDoc did not attach the provider or change the document. Configure Document.v2Collaboration with a v2 room instead.';
+    case 'collaboration-room-format-unsupported':
+      return 'SuperDoc v2 cannot open this collaboration state because it is not stored in the SuperDoc v2 room format. No changes were made.';
+    case 'collaboration-room-format-conflict':
+      return 'SuperDoc v2 found conflicting room formats in one collaboration document. No changes were made.';
+    case 'collaboration-room-corrupt':
+      return 'SuperDoc v2 found a structurally invalid collaboration room. No changes were made.';
+    case 'collaboration-v2-room-missing':
+      return 'SuperDoc v2 could not find a committed v2 collaboration room. No changes were made. Use roomMode: "create" only when creating a new room.';
+    case 'collaboration-v2-room-already-exists':
+      return 'SuperDoc v2 was asked to create a collaboration room that already exists. Use roomMode: "join" to open it.';
+    case 'collaboration-v2-room-initializing':
+      return 'The SuperDoc v2 collaboration room is still initializing. Join mode did not modify it.';
+    case 'collaboration-open-intent-invalid':
+      return 'SuperDoc v2 received an invalid collaboration room mode. No provider was connected.';
+    case 'collaboration-config-invalid':
+      return 'SuperDoc v2 received an invalid collaboration configuration. No provider was connected.';
+    default:
+      return 'SuperDoc could not load the document editor.';
+  }
+};
+
+const normalizeV2EditorFailureDetail = (detail) =>
+  typeof detail === 'string' && detail.trim().length > 0 ? detail.trim() : null;
+
+const onV2EditorFailed = (payload) => {
+  clearActiveV2EditorFacade(payload?.documentId ?? null);
+  const reason = typeof payload?.reason === 'string' && payload.reason.length > 0 ? payload.reason : 'open-failed';
+  const detail = normalizeV2EditorFailureDetail(payload?.detail);
+  const documentId =
+    typeof payload?.documentId === 'string' && payload.documentId.length > 0 ? payload.documentId : null;
+  const message = getV2EditorFailureMessage(reason);
+  // plan §Workstream 3: store a renderable terminal failure state for the
+  // active document surface. The worker failure detail is content-safe (typed
+  // phase/reason, no document bytes or sensitive paths).
+  const workerFailure =
+    payload?.workerFailure && typeof payload.workerFailure === 'object' ? payload.workerFailure : null;
+  setV2EditorFailure(documentId, {
+    reason,
+    message,
+    detail,
+    ...(workerFailure ? { workerFailure } : {}),
+  });
+  const logContext = {
+    ...(detail ? { detail } : {}),
+    ...(documentId ? { documentId } : {}),
+    ...(workerFailure ? { workerFailure } : {}),
+    reason,
+  };
+  if (
+    reason === 'collaboration-v1-config-unsupported' ||
+    reason === 'collaboration-room-format-unsupported' ||
+    reason === 'collaboration-room-format-conflict' ||
+    reason === 'collaboration-room-corrupt' ||
+    reason === 'collaboration-v2-room-missing' ||
+    reason === 'collaboration-v2-room-already-exists' ||
+    reason === 'collaboration-v2-room-initializing' ||
+    reason === 'collaboration-open-intent-invalid' ||
+    reason === 'collaboration-config-invalid'
+  ) {
+    console.warn(`[SuperDoc] ${message}`, logContext);
+  } else {
+    console.error(`[SuperDoc] ${message}`, logContext);
+  }
+  proxy.$superdoc.emit('exception', {
+    error: new Error(message),
+    code: reason,
+    ...(documentId ? { documentId } : {}),
+    editor: null,
+  });
 };
 
 // Shell-owned product DOM hit capture. Real focus/pointer hits inside a marked
@@ -588,208 +2019,6 @@ const handleRuntimePointerDown = (event) => activateRuntimeFromEvent(event, 'poi
 // events consistently; it routes through the same idempotent activation path.
 const handleRuntimeMouseDown = (event) => activateRuntimeFromEvent(event, 'mousedown');
 
-const onEditorDocumentLocked = ({ editor, isLocked, lockedBy }) => {
-  proxy.$superdoc.lockSuperdoc(isLocked, lockedBy);
-};
-
-const buildEditorPayloadBase = ({
-  editor,
-  sourceEditor,
-  surface = 'body',
-  headerId = null,
-  sectionType = null,
-} = {}) => {
-  const effectiveEditor = editor ?? sourceEditor;
-  return {
-    editor: effectiveEditor,
-    sourceEditor: sourceEditor ?? effectiveEditor,
-    surface,
-    headerId,
-    sectionType,
-  };
-};
-
-const buildEditorUpdatePayload = (payload = {}) => {
-  return buildEditorPayloadBase(payload);
-};
-
-const onEditorUpdate = (payload = {}) => {
-  proxy.$superdoc.emit('editor-update', buildEditorUpdatePayload(payload));
-};
-
-const buildEditorTransactionPayload = ({ transaction, duration, ...payload } = {}) => {
-  return {
-    ...buildEditorPayloadBase(payload),
-    transaction,
-    duration,
-  };
-};
-
-const emitEditorTransaction = (payload = {}) => {
-  if (typeof proxy.$superdoc.config.onTransaction === 'function') {
-    proxy.$superdoc.config.onTransaction(payload);
-  }
-};
-
-let selectionUpdateRafId = null;
-const onEditorSelectionChange = ({ editor }) => {
-  // Always cancel any pending RAF first — a queued callback from a previous
-  // call could fire after mode switches and repopulate stale selection state.
-  if (selectionUpdateRafId != null) {
-    cancelAnimationFrame(selectionUpdateRafId);
-    selectionUpdateRafId = null;
-  }
-
-  if (skipSelectionUpdate.value) {
-    // When comment is added selection will be equal to comment text
-    // Should skip calculations to keep text selection for comments correct
-    skipSelectionUpdate.value = false;
-    if (isViewingMode() && !allowSelectionInViewMode()) {
-      resetSelection();
-    }
-    return;
-  }
-
-  if (isViewingMode() && !allowSelectionInViewMode()) {
-    resetSelection();
-    return;
-  }
-
-  // Defer selection-related Vue reactive updates to the next animation frame.
-  // Without this, each PM transaction synchronously mutates reactive refs (selectionPosition,
-  // activeSelection, toolsMenuPosition), which triggers Vue's flushJobs microtask to re-evaluate
-  // hundreds of components — blocking the main thread for ~300ms per keystroke.
-  // RAF batches this work with the layout pipeline rerender, keeping typing responsive.
-  // Note: we capture only `editor` (not `transaction`) — by the time RAF fires,
-  // ProseMirror may have processed more keystrokes, making the transaction stale.
-  // processSelectionChange already reads editor.state.selection as the primary source.
-  selectionUpdateRafId = requestAnimationFrame(() => {
-    selectionUpdateRafId = null;
-    if (isViewingMode() && !allowSelectionInViewMode()) {
-      resetSelection();
-      return;
-    }
-    processSelectionChange(editor);
-  });
-};
-
-const processSelectionChange = (editor, transaction) => {
-  const { documentId } = editor.options;
-  const txnSelection = transaction?.selection;
-  const stateSelection = editor.state?.selection ?? editor.view?.state?.selection;
-  const selectionWithPositions =
-    (txnSelection?.$from && txnSelection?.$to && txnSelection) || stateSelection || txnSelection;
-
-  if (!selectionWithPositions) return;
-
-  const { $from, $to } = selectionWithPositions;
-  if (!$from || !$to) return;
-
-  const docSize =
-    editor.state?.doc?.content?.size ?? editor.view?.state?.doc?.content?.size ?? Number.POSITIVE_INFINITY;
-
-  if ($from.pos > docSize || $to.pos > docSize) {
-    updateSelection({ x: null, y: null, x2: null, y2: null, source: 'super-editor' });
-    return;
-  }
-
-  if ($from.pos === $to.pos) updateSelection({ x: null, y: null, x2: null, y2: null, source: 'super-editor' });
-
-  if (!layers.value) return;
-
-  const presentation = PresentationEditor.getInstance(documentId);
-  if (!presentation) {
-    // Fallback to legacy coordinate calculation if PresentationEditor not yet initialized
-    const { view } = editor;
-    const safeCoordsAtPos = (pos) => {
-      try {
-        return view.coordsAtPos(pos);
-      } catch (err) {
-        console.warn('[superdoc] Ignoring selection coords error', err);
-        return null;
-      }
-    };
-
-    const fromCoords = safeCoordsAtPos($from.pos);
-    const toCoords = safeCoordsAtPos($to.pos);
-    if (!fromCoords || !toCoords) return;
-
-    const layerBounds = layers.value.getBoundingClientRect();
-    const HEADER_HEIGHT = 96;
-    const top = Math.max(HEADER_HEIGHT, fromCoords.top - layerBounds.top);
-    const bottom = toCoords.bottom - layerBounds.top;
-    const selectionBounds = {
-      top,
-      left: fromCoords.left,
-      right: toCoords.left,
-      bottom,
-    };
-
-    const selectionResult = useSelection({
-      selectionBounds,
-      page: 1,
-      documentId,
-      source: 'super-editor',
-    });
-    handleSelectionChange(selectionResult);
-    return;
-  }
-
-  const layoutRange = presentation.getSelectionBounds($from.pos, $to.pos, layers.value);
-  if (layoutRange) {
-    const { bounds, pageIndex } = layoutRange;
-    updateSelection({
-      startX: bounds.left,
-      startY: bounds.top,
-      x: bounds.right,
-      y: bounds.bottom,
-      source: 'super-editor',
-    });
-    const selectionResult = useSelection({
-      selectionBounds: { ...bounds },
-      page: pageIndex + 1,
-      documentId,
-      source: 'super-editor',
-    });
-    handleSelectionChange(selectionResult);
-    return;
-  }
-
-  const { view } = editor;
-  const safeCoordsAtPos = (pos) => {
-    try {
-      return view.coordsAtPos(pos);
-    } catch (err) {
-      console.warn('[superdoc] Ignoring selection coords error', err);
-      return null;
-    }
-  };
-
-  const fromCoords = safeCoordsAtPos($from.pos);
-  const toCoords = safeCoordsAtPos($to.pos);
-  if (!fromCoords || !toCoords) return;
-
-  const layerBounds = layers.value.getBoundingClientRect();
-  const HEADER_HEIGHT = 96;
-  // Ensure the selection is not placed at the top of the page
-  const top = Math.max(HEADER_HEIGHT, fromCoords.top - layerBounds.top);
-  const bottom = toCoords.bottom - layerBounds.top;
-  const selectionBounds = {
-    top,
-    left: fromCoords.left,
-    right: toCoords.left,
-    bottom,
-  };
-
-  const selectionResult = useSelection({
-    selectionBounds,
-    page: 1,
-    documentId,
-    source: 'super-editor',
-  });
-  handleSelectionChange(selectionResult);
-};
-
 const onEditorCollaborationReady = ({ editor }) => {
   proxy.$superdoc.emit('collaboration-ready', { editor });
 
@@ -800,21 +2029,6 @@ const onEditorCollaborationReady = ({ editor }) => {
     const commentId = urlParams.get('commentId');
     if (commentId) scrollToComment(commentId);
   });
-};
-
-const onEditorContentError = ({ error, editor }) => {
-  proxy.$superdoc.emit('content-error', { error, editor });
-};
-
-const onEditorException = (doc, { error, editor, code }) => {
-  const handled = passwordPrompt.handleEncryptionError(doc, code, { error, editor });
-  if (handled) return true;
-  proxy.$superdoc.emit('exception', { error, editor, code, documentId: doc?.id });
-  return false;
-};
-
-const onEditorListdefinitionsChange = (params) => {
-  proxy.$superdoc.emit('list-definitions-change', params);
 };
 
 let suppressCommentActivationUntilTs = 0;
@@ -830,7 +2044,9 @@ const handleDocumentContextMenu = (event) => {
   if (!root) return;
   if (!(event.target instanceof Node) || !root.contains(event.target)) return;
   if (layers.value?.contains(event.target)) {
-    commentsStore.setActiveComment(proxy.$superdoc, null);
+    if (!isActiveTrackedChangeContextMenuTarget(event.target)) {
+      commentsStore.setActiveComment(proxy.$superdoc, null);
+    }
     commentsStore.removePendingComment(proxy.$superdoc);
     resetClickAnchor();
   }
@@ -845,16 +2061,20 @@ const editorOptions = (doc) => {
     proxy.$superdoc.listeners?.('fonts-resolved')?.length > 0 ? proxy.$superdoc.listeners('fonts-resolved')[0] : null;
   const useLayoutEngine = proxy.$superdoc.config.useLayoutEngine !== false;
 
-  const ydocFragment = doc.ydoc?.getXmlFragment?.('supereditor');
-  const ydocParts = doc.ydoc?.getMap?.('parts');
-  const ydocMeta = doc.ydoc?.getMap?.('meta');
-  const legacyContent = ydocMeta?.has('docx');
-  const ydocHasContent =
-    (ydocFragment && ydocFragment.length > 0) || (ydocParts && ydocParts.size > 0) || legacyContent;
-  const isNewFile = doc.isNewFile && !ydocHasContent;
+  const isNewFile = doc.isNewFile;
+  // INTERNAL / TEST-ONLY (WS6): `benchmarkExecutionMode` is NOT part of the
+  // typed public `Config` — it only reaches here because `SuperDoc#init`
+  // spreads the raw config object. It exists solely for bench/dev/behavior
+  // harnesses to pin the v2 execution realm. Customer browser execution is
+  // worker-only (the named collab-inline exception is decided inside the v2
+  // shell); do not type, document, or advertise this key publicly.
   const benchmarkExecutionMode = proxy.$superdoc.config?.benchmarkExecutionMode;
   const benchmarkTraceEnabled = proxy.$superdoc.config?.benchmarkTraceEnabled === true;
-
+  const collaborationResolution = resolveDocumentV2Collaboration(doc);
+  const v2Collaboration = collaborationResolution.state === 'valid' ? collaborationResolution.config : null;
+  const collaborationPreflightFailure =
+    proxy.$superdoc.config.v2CollaborationPreflightFailure ??
+    (collaborationResolution.state === 'invalid' ? collaborationResolution.failure : null);
   const options = {
     isDebug: proxy.$superdoc.config.isDebug || false,
     documentId: doc.id,
@@ -869,7 +2089,7 @@ const editorOptions = (doc) => {
     ...(benchmarkTraceEnabled ? { benchmarkTraceEnabled: true } : {}),
     allowSelectionInViewMode: proxy.$superdoc.config.allowSelectionInViewMode,
     rulers: doc.rulers,
-    rulerContainer: proxy.$superdoc.config.rulerContainer,
+    rulerContainer: resolvedRulerContainer.value,
     isInternal: proxy.$superdoc.config.isInternal,
     annotations: proxy.$superdoc.config.annotations,
     isCommentsEnabled: Boolean(commentsModuleConfig.value),
@@ -878,7 +2098,11 @@ const editorOptions = (doc) => {
       if (proxy.$superdoc.config.modules?.slashMenu && !proxy.$superdoc.config.modules?.contextMenu) {
         console.warn('[SuperDoc] modules.slashMenu is deprecated. Use modules.contextMenu instead.');
       }
-      return proxy.$superdoc.config.modules?.contextMenu ?? proxy.$superdoc.config.modules?.slashMenu;
+      // The profile already folded `ui.contextMenu` over both legacy spellings,
+      // so reading `modules.*` here is what dropped `ui.contextMenu.customItems`
+      // on the floor. Boolean legacy forms carry no items and resolve to `{}`,
+      // which the menu treats the same as the absent config it saw before.
+      return proxy.$superdoc.uiConfig.contextMenu.options;
     })(),
     /** @deprecated Use contextMenuConfig instead */
     slashMenuConfig: proxy.$superdoc.config.modules?.contextMenu ?? proxy.$superdoc.config.modules?.slashMenu,
@@ -888,36 +2112,48 @@ const editorOptions = (doc) => {
     },
     trackedChanges: proxy.$superdoc.config.modules?.trackChanges,
     experimental: proxy.$superdoc.config.experimental,
-    editorCtor: useLayoutEngine ? PresentationEditor : undefined,
-    onBeforeCreate: onEditorBeforeCreate,
-    onCreate: onEditorCreate,
-    onDestroy: onEditorDestroy,
-    onFocus: onEditorFocus,
-    onDocumentLocked: onEditorDocumentLocked,
-    onUpdate: onEditorUpdate,
-    onSelectionUpdate: onEditorSelectionChange,
+    ...(v2Collaboration ? { v2Collaboration } : {}),
+    ...(collaborationPreflightFailure ? { collaborationPreflightFailure } : {}),
     onCollaborationReady: onEditorCollaborationReady,
-    onContentError: onEditorContentError,
-    onException: (payload) => onEditorException(doc, payload),
-    onCommentsLoaded,
     onCommentsUpdate: onEditorCommentsUpdate,
-    onCommentLocationsUpdate: (payload) => onEditorCommentLocationsUpdate(doc, payload),
-    onListDefinitionsChange: onEditorListdefinitionsChange,
     onFontsResolved: onFontsResolvedFn,
+    // Painter plan P7 §1: page-count seam (layout-end; v2 vertical only).
+    onPageCountKnown: proxy.$superdoc.config.onPageCountKnown ?? null,
+    onReviewWindowCommitted: (payload) => {
+      v2ReviewWindowController.onCommittedPagePaint?.({ ...payload, documentId: doc.id });
+    },
+    // `fonts-changed` is relayed through SuperDoc.ts from the active v2 font facet.
+    // Passing the config callback directly here would double-deliver every v2 report.
     fontAssets: proxy.$superdoc.config.fonts,
-    onTransaction: onEditorTransaction,
-    ydoc: doc.ydoc,
-    collaborationProvider: doc.provider || null,
+    workerUrls: proxy.$superdoc.config.workerUrls,
+    workerStartupTimeoutMs: proxy.$superdoc.config.workerStartupTimeoutMs,
+    proofing: resolvedProofingConfig.value,
     isNewFile,
     password: getDocumentLoadPassword(doc),
     handleImageUpload: proxy.$superdoc.config.handleImageUpload,
     externalExtensions: proxy.$superdoc.config.editorExtensions || [],
+    // v2 extension runtime input. Forwarded to the v2 browser shell, which
+    // passes the array into createV2EditorHost. Legacy v1 `editorExtensions`
+    // (above) are not v2 extensions and are ignored by the v2 runtime.
+    extensions: proxy.$superdoc.config.extensions || [],
+    // PDF.js stays an optional public-shell dependency. When configured, V2
+    // lends the module lazily to the narrow PDF-in-EMF rendition strategy;
+    // the private document engine never imports or bundles PDF.js itself.
+    ...(pdfConfig?.pdfLib ? { pdfLib: pdfConfig.pdfLib } : {}),
     suppressDefaultDocxStyles: proxy.$superdoc.config.suppressDefaultDocxStyles,
-    disableContextMenu: proxy.$superdoc.config.disableContextMenu,
+    // The profile can forbid the surface, but it is not the live state:
+    // `setDisableContextMenu()` writes `config.disableContextMenu` after
+    // mount, and `editorOptions` is re-evaluated per document, so reading only
+    // the profile would revert the toggle on every remount.
+    disableContextMenu:
+      !proxy.$superdoc.uiConfig.contextMenu.enabled || proxy.$superdoc.config.disableContextMenu === true,
     jsonOverride: proxy.$superdoc.config.jsonOverride,
     viewOptions: proxy.$superdoc.config.viewOptions,
     contained: proxy.$superdoc.config.contained,
-    linkPopoverResolver: proxy.$superdoc.config.modules?.links?.popoverResolver,
+    // Resolved across both spellings, and already `undefined` for a surface
+    // that is unconfigured or suppressed, so the `enabled` gate that used to
+    // stand here is now carried by the value itself.
+    linkPopoverResolver: proxy.$superdoc.uiConfig.linkPopover.options.popoverResolver,
     layoutEngineOptions: useLayoutEngine
       ? {
           ...(proxy.$superdoc.config.layoutEngineOptions || {}),
@@ -926,7 +2162,11 @@ const editorOptions = (doc) => {
           zoom: (activeZoom.value ?? 100) / 100,
           emitCommentPositionsInViewing: isViewingMode() && shouldRenderCommentsInViewing.value,
           enableCommentsInViewing: isViewingCommentsVisible.value,
-          contentControlsChrome: proxy.$superdoc.config.modules?.contentControls?.chrome,
+          // Already resolved across both spellings by `normalizeUiConfig`. Do
+          // not reach back into `config.modules.contentControls.chrome` here:
+          // that legacy field carries `'none'` as a disable sentinel, and
+          // re-reading it would let it outrank an explicit `ui.contentControls`.
+          contentControlsChrome: proxy.$superdoc.uiConfig.contentControls.options.chrome,
           resolveTrackedChangeColor: composeAuthorColorResolver(
             proxy.$superdoc.config.modules?.trackChanges?.authorColors,
           ),
@@ -952,40 +2192,6 @@ const editorOptions = (doc) => {
   return options;
 };
 
-/**
- * Trigger a comment-positions location update
- * This is called when the PM plugin emits comment locations.
- *
- * Note: When using the layout engine, PresentationEditor emits authoritative
- * positions via the 'commentPositions' event after each layout. This handler
- * primarily serves as a fallback for non-layout-engine mode.
- *
- * @returns {void}
- */
-const onEditorCommentLocationsUpdate = (doc, { allCommentIds: activeThreadId, allCommentPositions } = {}) => {
-  const commentsConfig = proxy.$superdoc.config.modules?.comments;
-  if (!commentsConfig || commentsConfig === false) return;
-  if (!shouldRenderCommentsInViewing.value) {
-    commentsStore.clearEditorCommentPositions?.();
-    return;
-  }
-
-  const presentation = PresentationEditor.getInstance(doc.id);
-  if (!presentation) {
-    // Non-layout-engine mode: pass through raw positions
-    handleEditorLocationsUpdate(allCommentPositions, activeThreadId);
-    flushPendingReplayTrackedChangeSync();
-    return;
-  }
-
-  // Layout engine mode: map PM positions to visual layout coordinates.
-  // Note: PresentationEditor's 'commentPositions' event provides fresh positions
-  // after every layout, so this is mainly for the initial load before layout completes.
-  const mappedPositions = presentation.getCommentBounds(allCommentPositions, layers.value);
-  handleEditorLocationsUpdate(mappedPositions, activeThreadId);
-  flushPendingReplayTrackedChangeSync();
-};
-
 // Replay updates should only patch mutable comment state.
 // Identity and construction-time metadata are intentionally excluded.
 const REPLAY_MUTABLE_COMMENT_FIELDS = new Set([
@@ -993,15 +2199,20 @@ const REPLAY_MUTABLE_COMMENT_FIELDS = new Set([
   'isInternal',
   'parentCommentId',
   'trackedChangeParentId',
+  'trackedChangeThreadParentId',
   'threadingParentCommentId',
   'trackedChange',
   'trackedChangeType',
   'trackedChangeText',
   'trackedChangeDisplayType',
+  'semanticColorKey',
+  'semanticColor',
   'trackedChangeStory',
   'trackedChangeStoryKind',
   'trackedChangeStoryLabel',
   'trackedChangeAnchorKey',
+  'trackedChangeLabel',
+  'trackedChangeDetailLines',
   'deletedText',
   'resolvedTime',
   'resolvedById',
@@ -1083,11 +2294,11 @@ const syncInstantSidebarAlignmentFromEditorSelection = (commentId) => {
   }
 
   const layersElement = layers.value;
-  const { entry } = resolveCommentPositionEntry(commentId);
+  const { key, entry } = resolveCommentPositionEntry(commentId);
   const targetClientY = getVisibleThreadAnchorClientY(layersElement, entry);
 
   if (Number.isFinite(targetClientY)) {
-    requestInstantSidebarAlignment(targetClientY, commentId);
+    requestInstantSidebarAlignment(targetClientY, commentId, key ?? commentId);
     return;
   }
 
@@ -1100,6 +2311,21 @@ const isSameActiveCommentSelection = (commentId) => {
   }
 
   return String(activeComment.value) === String(commentId);
+};
+
+const syncSidebarActiveCommentFromV2ReviewTarget = (target) => {
+  if (target?.origin !== 'document') return;
+  if (shouldSuppressCommentActivation()) return;
+
+  const commentId = resolveV2ReviewTargetCommentId(target, getComment);
+  if (!commentId) return;
+
+  syncInstantSidebarAlignmentFromEditorSelection(commentId);
+  activeComment.value = commentId;
+  isCommentHighlighted.value = true;
+  setTimeout(() => {
+    isCommentHighlighted.value = false;
+  }, 0);
 };
 
 const onEditorCommentsUpdate = (params = {}) => {
@@ -1172,7 +2398,11 @@ const onEditorCommentsUpdate = (params = {}) => {
     const { id, existingComment } = resolveDocumentScopedCommentMatch(commentPayload);
     if (id && !existingComment) {
       const commentModel = useComment(commentPayload);
-      addComment({ superdoc: proxy.$superdoc, comment: commentModel, skipEditorUpdate: true });
+      addHydratedComment({
+        superdoc: proxy.$superdoc,
+        comment: commentModel,
+        skipEditorUpdate: true,
+      });
     }
   }
 
@@ -1186,7 +2416,11 @@ const onEditorCommentsUpdate = (params = {}) => {
       } else {
         const normalizedPayload = normalizeReplayCommentModelPayload(commentPayload);
         const commentModel = useComment(normalizedPayload);
-        addComment({ superdoc: proxy.$superdoc, comment: commentModel, skipEditorUpdate: true });
+        addHydratedComment({
+          superdoc: proxy.$superdoc,
+          comment: commentModel,
+          skipEditorUpdate: true,
+        });
       }
     }
   }
@@ -1204,46 +2438,9 @@ const onEditorCommentsUpdate = (params = {}) => {
       };
 
       // Remove the entire thread subtree (parent + all descendants), not only direct replies.
-      const removedCommentIds = new Set();
-      commentsList.value.forEach((comment) => {
-        if (!isInActiveDocument(comment)) return;
-        const commentId = comment.commentId != null ? String(comment.commentId) : null;
-        const importedId = comment.importedId != null ? String(comment.importedId) : null;
-        const matchesTarget =
-          (commentId && targetIds.includes(commentId)) || (importedId && targetIds.includes(importedId));
-        if (!matchesTarget) return;
-        if (commentId) removedCommentIds.add(commentId);
-        if (importedId) removedCommentIds.add(importedId);
-      });
+      const removedCommentIds = collectRemovedCommentIds(commentsList.value, targetIds, isInActiveDocument);
 
       if (removedCommentIds.size) {
-        let expanded = true;
-        while (expanded) {
-          expanded = false;
-          commentsList.value.forEach((comment) => {
-            if (!isInActiveDocument(comment)) return;
-            const commentId = comment.commentId != null ? String(comment.commentId) : null;
-            const importedId = comment.importedId != null ? String(comment.importedId) : null;
-            const parentCommentId = comment.parentCommentId != null ? String(comment.parentCommentId) : null;
-            const trackedChangeParentId =
-              comment.trackedChangeParentId != null ? String(comment.trackedChangeParentId) : null;
-
-            const isRemovedComment =
-              (commentId && removedCommentIds.has(commentId)) || (importedId && removedCommentIds.has(importedId));
-            const isDescendantOfRemovedComment =
-              (parentCommentId && removedCommentIds.has(parentCommentId)) ||
-              (trackedChangeParentId && removedCommentIds.has(trackedChangeParentId));
-            if (!isRemovedComment && !isDescendantOfRemovedComment) return;
-
-            const sizeBefore = removedCommentIds.size;
-            if (commentId) removedCommentIds.add(commentId);
-            if (importedId) removedCommentIds.add(importedId);
-            if (removedCommentIds.size > sizeBefore) {
-              expanded = true;
-            }
-          });
-        }
-
         const previousComments = [...commentsList.value];
         commentsList.value = commentsList.value.filter((comment) => {
           if (!isInActiveDocument(comment)) return true;
@@ -1307,72 +2504,55 @@ const onEditorCommentsUpdate = (params = {}) => {
   }
 };
 
-const isHistoryUndoRedoInput = (inputType) => inputType === 'historyUndo' || inputType === 'historyRedo';
+const isCommentsEnabled = computed(() => Boolean(commentsModuleConfig.value));
 
-const isCollaborationReplayTransaction = (transaction, ySyncMeta) => {
-  return Boolean(transaction?.docChanged && ySyncMeta?.isChangeOrigin);
+// PDF surface predicates (SD-3497). These are keyed off the document type, NOT
+// off `isV2Mode`. `isV2Mode` means the DOCX host is v2; it must not be read as
+// "remove every non-DOCX overlay". PDF documents are rendered by PdfViewer (not
+// V2DocumentEditor) and own their overlay adapters (PdfCommentsLayer +
+// WhiteboardLayer).
+const pdfDocuments = computed(() =>
+  Array.isArray(documents.value) ? documents.value.filter((doc) => doc?.type === PDF) : [],
+);
+const hasPdfDocument = computed(() => pdfDocuments.value.length > 0);
+const shouldRenderPdfCommentAnchors = computed(() => hasPdfDocument.value && isCommentsEnabled.value);
+const openPdfDocumentIds = computed(() => new Set(pdfDocuments.value.map((doc) => String(doc.id))));
+const isFinitePdfBound = (value) => {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string' && value.trim() !== '') return Number.isFinite(Number(value));
+  return false;
 };
-
-const isPeerCollaborationReplayTransaction = (transaction, ySyncMeta) => {
-  const inputType = transaction?.getMeta?.('inputType');
+const hasFinitePdfSelectionBounds = (comment) => {
+  const bounds = comment?.selection?.selectionBounds;
   return (
-    isCollaborationReplayTransaction(transaction, ySyncMeta) &&
-    !isHistoryUndoRedoInput(inputType) &&
-    !Boolean(ySyncMeta?.isUndoRedoOperation)
+    !!bounds &&
+    isFinitePdfBound(bounds.top) &&
+    isFinitePdfBound(bounds.left) &&
+    isFinitePdfBound(bounds.right) &&
+    isFinitePdfBound(bounds.bottom)
   );
 };
-
-const shouldResyncTrackedChangeThreads = (transaction, ySyncMeta = transaction?.getMeta?.(ySyncPluginKey)) => {
-  const inputType = transaction?.getMeta?.('inputType');
-  const isLocalHistoryUndoRedo = isHistoryUndoRedoInput(inputType);
-  const isLocalCollabUndoRedo = Boolean(ySyncMeta?.isUndoRedoOperation);
-
-  // Peer editors do not retain the local UndoManager flag. A collaborator's
-  // undo/redo arrives as a generic Yjs-origin document replay, so treat those
-  // replays as tracked-change resync points and keep the resync path idempotent.
-  return isLocalHistoryUndoRedo || isLocalCollabUndoRedo || isCollaborationReplayTransaction(transaction, ySyncMeta);
+const getPdfCommentDocumentId = (comment) => {
+  const id = comment?.fileId ?? comment?.documentId ?? comment?.selection?.documentId;
+  return id != null ? String(id) : null;
 };
-
-const collectTouchedChangeIds = (transaction) => {
-  return collectTouchedTrackedChangeIds(transaction, { trackChangesPluginKey: TrackChangesBasePluginKey });
+const belongsToOpenPdfDocument = (comment) => {
+  const ids = openPdfDocumentIds.value;
+  if (!ids.size) return false;
+  const documentId = getPdfCommentDocumentId(comment);
+  if (documentId) return ids.has(documentId);
+  return ids.size === 1;
 };
+const isPositionablePdfComment = (comment) =>
+  comment?.selection?.source === 'pdf' && hasFinitePdfSelectionBounds(comment) && belongsToOpenPdfDocument(comment);
+// Any submitted or pending PDF comment that can position from selection bounds.
+const hasPdfFloatingComments = computed(() => {
+  if (!hasPdfDocument.value) return false;
+  const fromSubmitted = floatingComments.value.some((comment) => isPositionablePdfComment(comment));
+  const fromPending = isPositionablePdfComment(pendingComment.value);
+  return fromSubmitted || fromPending;
+});
 
-const queueTrackedChangeCommentResyncForTransaction = ({ editor, transaction } = {}) => {
-  const ySyncMeta = transaction?.getMeta?.(ySyncPluginKey);
-
-  // Call sync on editor transaction for undo/redo in both local history
-  // and collaboration replay modes.
-  if (shouldResyncTrackedChangeThreads(transaction, ySyncMeta)) {
-    const documentId = editor?.options?.documentId;
-    commentsStore.syncResolvedCommentsWithDocument?.({ documentId, editor });
-    syncTrackedChangePositionsWithDocument({ documentId, editor });
-    queueTrackedChangeCommentResync({
-      editor,
-      // Remote replay should rebuild only local sidebar state. The authoritative
-      // collaboration comment update is already shared through the comments ydoc.
-      broadcastChanges: !isPeerCollaborationReplayTransaction(transaction, ySyncMeta),
-    });
-  } else if (transactionTouchesStructuralChange(transaction)) {
-    // Structural row tracked changes (whole-table insert/delete) live on node
-    // attrs, not inline marks, so the id-based targeted resync cannot see them.
-    // Force a full resync so structural bubbles appear/refresh during editing,
-    // not only on import.
-    queueTrackedChangeCommentResync({ editor });
-  } else {
-    queueTrackedChangeCommentResync({
-      editor,
-      changeIds: collectTouchedChangeIds(transaction),
-    });
-  }
-};
-
-const onEditorTransaction = (payload = {}) => {
-  queueTrackedChangeCommentResyncForTransaction(payload);
-
-  emitEditorTransaction(buildEditorTransactionPayload(payload));
-};
-
-const isCommentsEnabled = computed(() => Boolean(commentsModuleConfig.value));
 const shouldUseSidebarComments = computed(() => {
   const displayMode = commentsModuleConfig.value?.displayMode ?? DEFAULT_COMMENTS_DISPLAY_MODE;
   if (!VALID_COMMENTS_DISPLAY_MODES.has(displayMode)) return true;
@@ -1383,11 +2563,25 @@ const shouldUseSidebarComments = computed(() => {
   return !isCompactCommentsMode.value;
 });
 const showCommentsSidebar = computed(() => {
+  // ui-phase3-001: v2 mode is no longer a hard gate. The sidebar may render
+  // once `V2DocumentEditor` has published at least one render-epoch-checked
+  // geometry snapshot into `editorCommentPositions`. The v1 path is
+  // unchanged.
+  //
+  // DOCX v2 on-document overlays remain blocked until they have v2 adapters; the
+  // v2 geometry gate below keeps the sidebar from appearing before painted
+  // carriers exist. SD-3497: PDF is rendered by PdfViewer (not V2DocumentEditor)
+  // and positions its sidebar/floating comments from PDF selection bounds, so it
+  // must NOT be blocked by DOCX v2 geometry availability. Only apply the v2
+  // geometry gate when there are no PDF comment rows that can self-position.
+  if (isV2Mode.value && !v2GeometryAvailable.value && !v2ReviewSidebarUnlocked.value && !hasPdfFloatingComments.value) {
+    return false;
+  }
   if (!shouldRenderCommentsInViewing.value) return false;
   if (!shouldUseSidebarComments.value) return false;
   return (
     pendingComment.value ||
-    (floatingComments.value.length > 0 &&
+    ((floatingComments.value.length > 0 || hasOpenTrackedChanges.value) &&
       isReady.value &&
       layers.value &&
       isCommentsEnabled.value &&
@@ -1399,7 +2593,11 @@ const activeCompactComment = computed(() => {
   if (!isCommentsEnabled.value) return null;
   if (pendingComment.value) return pendingComment.value;
   if (!activeComment.value) return null;
-  return getComment(activeComment.value) ?? null;
+  const comment = getComment(activeComment.value) ?? null;
+  if (isV2Mode.value && shouldUseSidebarComments.value && comment?.trackedChange && !hasPdfFloatingComments.value) {
+    return null;
+  }
+  return comment;
 });
 const { compactCommentPopoverStyle, closeCompactCommentPopover, resetClickAnchor } = useCompactCommentPopover({
   activeComment,
@@ -1450,9 +2648,42 @@ const scrollToComment = (commentId) => {
   proxy.$superdoc.scrollToComment(commentId);
 };
 
+// ui-phase3-001: viewport listeners for v2 geometry refresh. The immediate
+// scroll recollection keeps cards anchor-coupled in contained layouts where
+// the document scrolls independently of the sidebar. When scrolling also
+// replaces the virtualized page window, the geometry publisher follows with
+// one bounded recollection at the painter's canonical post-commit stamp.
+const handleViewportScrollOrResize = () => {
+  recollectV2GeometryIfActive();
+};
+
+const handleV2TrackedChangeCarriersRestamped = (event) => {
+  if (!isV2Mode.value) return;
+  const itemIds = Array.isArray(event?.detail?.itemIds)
+    ? event.detail.itemIds.map((id) => (id == null ? '' : String(id))).filter(Boolean)
+    : [];
+  armV2TrackedChangeRestampGeometryRetention(event?.detail?.refreshReason ?? 'tracked-change-restamp');
+  recollectV2GeometryIfActive({
+    retainMissingTrackedChangeGeometry: true,
+    ...(itemIds.length > 0 ? { retainedTrackedChangeIds: itemIds } : {}),
+    reason: 'tracked-change-restamp',
+  });
+};
+
 onMounted(() => {
   document.addEventListener('contextmenu', handleDocumentContextMenu, true);
   document.addEventListener('keydown', handleDocumentShortcut, true);
+  proxy.$superdoc?.on?.('search:open', handleOpenFindRequest);
+  // Ambient find-shortcut ownership: the most recently mounted instance owns
+  // it initially; any interaction inside this instance re-claims it.
+  claimFindShortcut(findShortcutOwner);
+  superdocRoot.value?.addEventListener('pointerdown', handleFindOwnershipInteraction, true);
+  superdocRoot.value?.addEventListener('focusin', handleFindOwnershipInteraction, true);
+  superdocRoot.value?.addEventListener(TRACKED_CHANGE_CARRIERS_RESTAMPED_EVENT, handleV2TrackedChangeCarriersRestamped);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('scroll', handleViewportScrollOrResize, true);
+    window.addEventListener('resize', handleViewportScrollOrResize, true);
+  }
 
   // Capture-phase product hit routing: activate the owning runtime from real
   // focus/pointer hits. Capture so a marked root nested under shells that stop
@@ -1461,9 +2692,39 @@ onMounted(() => {
   document.addEventListener('focusin', handleRuntimeFocusIn, true);
   document.addEventListener('pointerdown', handleRuntimePointerDown, true);
   document.addEventListener('mousedown', handleRuntimeMouseDown, true);
+  document.addEventListener('pointerup', handleDocumentSelectionChange, true);
+  document.addEventListener('mouseup', handleDocumentSelectionChange, true);
+  document.addEventListener('selectionchange', handleDocumentSelectionChange);
+
+  // Refresh the committed review window and republish geometry as one transition on every
+  // document-mode change (viewing/editing/suggesting). See handler comment.
+  proxy.$superdoc?.on?.('document-mode-change', handleV2DocumentModeChange);
 
   recalculateCompactCommentsMode();
   ensureCompactMeasurementObserver();
+});
+
+// ui-phase3-001: when comments / track-changes are hidden in viewing mode
+// (or the layers / v2 mount disappears), clear the published v2 geometry so
+// the sidebar does not float over stale bounds. The recompute path picks up
+// again on the next render epoch after the user re-enables them.
+watch(shouldRenderCommentsInViewing, (value) => {
+  if (!isV2Mode.value) return;
+  if (value) {
+    if (v2GeometryRender.value) {
+      scheduleV2GeometryPublish(v2GeometryRender.value);
+    }
+  } else {
+    commentsStore.clearEditorCommentPositions?.();
+    v2GeometryAvailable.value = false;
+  }
+});
+
+// ui-phase3-001: contained-mode and layout-shell repositioning use the
+// `.superdoc--contained` / `--web-layout` class toggles which can shift the
+// layers element. Re-collect geometry whenever the layers ref reattaches.
+watch(layers, () => {
+  recollectV2GeometryIfActive();
 });
 
 function isFindShortcutEvent(e) {
@@ -1489,22 +2750,54 @@ function isFocusInsideSuperDoc() {
   );
 }
 
+/**
+ * Find (Cmd/Ctrl+F) should open the SuperDoc find bar whenever the editor is
+ * the page's active surface, matching Word/Docs. That means focus inside
+ * SuperDoc OR no specific element focused (fresh load, or a click on the page
+ * chrome), but NOT when the user is typing in some other input/editable outside
+ * SuperDoc — there the browser's native find must win. With several SuperDoc
+ * instances mounted, the ambient (no-focus) case is gated through the shared
+ * find-shortcut owner registry so only the last-interacted instance opens.
+ */
+const findShortcutOwner = {};
+
 function handleFindShortcut(e) {
   if (!isFindShortcutEvent(e)) return;
   if (!isFindReplaceEnabled.value) return;
-  if (!isFocusInsideSuperDoc()) return;
+  if (!shouldHandleFindShortcut(e, { focusInside: isFocusInsideSuperDoc(), owner: findShortcutOwner })) return;
 
   // Only steal the shortcut if the composable will actually open a surface.
-  // If the resolver returns { type: 'none' }, we must let the browser handle Cmd+F.
+  // `wouldOpen()` is the single guard for both V1 (command-backed) and V2
+  // (`host.search`-backed) drivers: for V2 it returns false unless the host
+  // exposes a usable search facade, so Cmd+F still falls through to the
+  // browser on worker/pre-ready hosts or when a resolver returns `none`.
   if (!findReplace.wouldOpen()) return;
 
   e.preventDefault();
   e.stopPropagation();
+  claimFindShortcut(findShortcutOwner);
+  findReplace.open();
+}
+
+// The instance the user last touched owns the ambient (no-focus) shortcut.
+function handleFindOwnershipInteraction() {
+  claimFindShortcut(findShortcutOwner);
+}
+
+// The toolbar search button (shell-owned) requests the find bar via a
+// `search:open` event on the SuperDoc instance so both the built-in and any
+// external toolbar open the same surface as Cmd/Ctrl+F.
+function handleOpenFindRequest() {
+  if (!isFindReplaceEnabled.value) return;
   findReplace.open();
 }
 
 function handleFormattingMarksShortcut(e) {
   if (!isFormattingMarksShortcutEvent(e)) return;
+  // ui-phase2-001: formatting-marks toggling is a v1 layout-engine
+  // preference. The v2 host does not expose a formatting-marks layout
+  // toggle in this phase; leave the shortcut to the browser.
+  if (isV2Mode.value) return;
   if (!isFocusInsideSuperDoc()) return;
 
   e.preventDefault();
@@ -1536,29 +2829,55 @@ function handleContainerKeydown(e) {
 }
 
 onBeforeUnmount(() => {
+  commentsStore.cancelImportedTrackedChangeBootstrap?.();
   passwordPrompt.destroy();
   findReplace.destroy();
-  for (const entry of Array.from(v1Runtimes.values())) {
-    entry.adapter.runtime.dispose();
+  linkPopover.destroy();
+  cancelScheduledV2DomSelectionSync();
+  cancelScheduledV2SelectionToolbarSync();
+  for (const documentId of Array.from(v2Runtimes.keys())) {
+    clearV2RuntimeRegistration(documentId);
   }
-  v1Runtimes.clear();
+  for (const documentId of Array.from(v2CommandShortcutBindings.keys())) {
+    clearV2CommandShortcutBinding(documentId);
+  }
+  for (const documentId of Array.from(v2SessionShortcutBindings.keys())) {
+    clearV2SessionShortcutBinding(documentId);
+  }
+  v2Runtimes.clear();
   subDocumentRoots.clear();
   document.removeEventListener('contextmenu', handleDocumentContextMenu, true);
   document.removeEventListener('keydown', handleDocumentShortcut, true);
+  proxy.$superdoc?.off?.('search:open', handleOpenFindRequest);
+  superdocRoot.value?.removeEventListener('pointerdown', handleFindOwnershipInteraction, true);
+  superdocRoot.value?.removeEventListener('focusin', handleFindOwnershipInteraction, true);
+  superdocRoot.value?.removeEventListener(
+    TRACKED_CHANGE_CARRIERS_RESTAMPED_EVENT,
+    handleV2TrackedChangeCarriersRestamped,
+  );
+  releaseFindShortcut(findShortcutOwner);
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('scroll', handleViewportScrollOrResize, true);
+    window.removeEventListener('resize', handleViewportScrollOrResize, true);
+  }
+  if (v2GeometryRafHandle && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(v2GeometryRafHandle);
+    v2GeometryRafHandle = 0;
+  }
   document.removeEventListener('focusin', handleRuntimeFocusIn, true);
   document.removeEventListener('pointerdown', handleRuntimePointerDown, true);
   document.removeEventListener('mousedown', handleRuntimeMouseDown, true);
-  if (selectionUpdateRafId != null) {
-    cancelAnimationFrame(selectionUpdateRafId);
-    selectionUpdateRafId = null;
-  }
+  document.removeEventListener('pointerup', handleDocumentSelectionChange, true);
+  document.removeEventListener('mouseup', handleDocumentSelectionChange, true);
+  document.removeEventListener('selectionchange', handleDocumentSelectionChange);
+  proxy.$superdoc?.off?.('document-mode-change', handleV2DocumentModeChange);
 });
 
 const selectionLayer = ref(null);
 const isDragging = ref(false);
 
 const getSelectionPosition = computed(() => {
-  if (!selectionPosition.value || selectionPosition.value.source === 'super-editor') {
+  if (!selectionPosition.value || selectionPosition.value.source === DOCUMENT_EDITOR_SELECTION_SOURCE) {
     return { x: null, y: null };
   }
 
@@ -1737,13 +3056,157 @@ const handleDragEnd = (e) => {
 };
 
 const shouldShowSelection = computed(() => {
+  if (!proxy.$superdoc.uiConfig.comments.enabled) return false;
   const config = proxy.$superdoc.config.modules?.comments;
   if (!config || config === false) return false;
   return !config.readOnly;
 });
 
-const handleSuperEditorPageMarginsChange = (doc, params) => {
-  doc.documentMarginsLastChange = params.pageMargins;
+// ui-phase4-002: reactive trigger for the ruler template. Flips true once the
+// v2 facade publishes a pageLayout runtime and false on render-cleared /
+// document switch. `proxy.$superdoc.activeEditor` itself is a plain property
+// (no Vue tracking), so we shadow the readiness signal through a ref so the
+// template re-evaluates on hydration.
+const v2RulerReady = ref(false);
+
+const unwrapDocField = (value) => {
+  if (value && typeof value === 'object' && 'value' in value) return value.value;
+  return value;
+};
+
+const shouldShowV2Ruler = (doc) => {
+  if (!isV2Mode.value) return false;
+  if (!doc || doc.type !== DOCX) return false;
+  // Parity contract (plan WS1): the ruler is paginated-only. v1 hid the ruler
+  // in web layout, and v2 has no dedicated web-layout ruler contract yet, so
+  // suppress it there until one is deliberately designed.
+  if (proxy.$superdoc.config.viewOptions?.layout === 'web') return false;
+  // `doc.rulers` is a Ref produced by `useDocument`; unwrap defensively in
+  // case the proxy access surface ever changes. It stays the live source
+  // because `toggleRuler` writes to it. The profile can only veto when the
+  // consumer forbade the surface — `enabled` alone would also veto the
+  // historical default, where `rulers` starts false and the toolbar button
+  // is what turns the ruler on.
+  if (proxy.$superdoc.uiConfig.ruler.suppressed) return false;
+  const rulersOn = Boolean(unwrapDocField(doc.rulers));
+  if (!rulersOn) return false;
+  // Re-evaluate when v2RulerReady changes.
+  if (!v2RulerReady.value) return false;
+  const editor = proxy.$superdoc?.activeEditor;
+  if (!editor || editor.editorVersion !== 2) return false;
+  const docId = unwrapDocField(doc.id);
+  const activeDocumentId = editor.documentId ?? editor.options?.documentId ?? null;
+  if (docId && activeDocumentId && docId !== activeDocumentId) return false;
+  return Boolean(editor.pageMetrics && editor.pageLayout);
+};
+
+// ui-phase4-002: ruler container alignment. Mirrors v1 document editor's
+// `syncRulerOffset` but anchors to the v2 paint wrapper (`data-v2-paint-
+// wrapper`) instead of `.presentation-editor__viewport` so the ruler stays
+// aligned with the v2 page stack rather than a v1-specific class name.
+const v2RulerHostStyle = ref({});
+let v2RulerEditorObserver = null;
+let v2RulerContainerObserver = null;
+
+// Where the ruler mounts, resolved once from the built-in UI profile. The
+// profile folds `ui.ruler.container` over the legacy `rulerContainer` alias and
+// reports `null` for a suppressed ruler, so reading the raw config here would
+// both ignore the newer spelling and hand back a target for a surface that must
+// not render.
+const resolvedRulerContainer = computed(() => proxy.$superdoc?.uiConfig?.ruler?.container ?? null);
+
+const resolveV2RulerContainer = () => {
+  const container = resolvedRulerContainer.value;
+  if (!container) return null;
+  if (typeof container === 'string') {
+    const doc = typeof document !== 'undefined' ? document : globalThis.document;
+    return doc?.querySelector(container) ?? null;
+  }
+  return typeof HTMLElement !== 'undefined' && container instanceof HTMLElement ? container : null;
+};
+
+const getV2PaintWrapperRect = () => {
+  const activeDocumentId =
+    proxy.$superdoc?.activeEditor?.documentId ?? proxy.$superdoc?.activeEditor?.options?.documentId ?? null;
+  const stage =
+    activeDocumentId == null ? latestV2MountStage : (v2MountStagesByDocumentId.get(String(activeDocumentId)) ?? null);
+  if (!stage?.isConnected) return null;
+  const wrapper = Array.from(stage.children).find((element) => element.dataset?.v2PaintWrapper === 'true') ?? stage;
+  return wrapper.getBoundingClientRect();
+};
+
+const syncV2RulerOffset = () => {
+  if (!isV2Mode.value) {
+    v2RulerHostStyle.value = {};
+    return;
+  }
+  const host = resolveV2RulerContainer();
+  if (!host) {
+    v2RulerHostStyle.value = {};
+    return;
+  }
+  const wrapperRect = getV2PaintWrapperRect();
+  if (!wrapperRect) {
+    v2RulerHostStyle.value = {};
+    return;
+  }
+  const hostRect = host.getBoundingClientRect();
+  const paddingLeft = Math.max(0, wrapperRect.left - hostRect.left);
+  const paddingRight = Math.max(0, hostRect.right - wrapperRect.right);
+  v2RulerHostStyle.value = {
+    paddingLeft: `${paddingLeft}px`,
+    paddingRight: `${paddingRight}px`,
+  };
+};
+
+const cleanupV2RulerObservers = () => {
+  try {
+    v2RulerEditorObserver?.disconnect();
+  } catch {
+    /* ignore */
+  }
+  v2RulerEditorObserver = null;
+  try {
+    v2RulerContainerObserver?.disconnect();
+  } catch {
+    /* ignore */
+  }
+  v2RulerContainerObserver = null;
+};
+
+const setupV2RulerObservers = () => {
+  cleanupV2RulerObservers();
+  if (typeof ResizeObserver === 'undefined') return;
+  const layersEl = layers.value;
+  const host = resolveV2RulerContainer();
+  if (layersEl) {
+    v2RulerEditorObserver = new ResizeObserver(() => syncV2RulerOffset());
+    v2RulerEditorObserver.observe(layersEl);
+  }
+  if (host) {
+    v2RulerContainerObserver = new ResizeObserver(() => syncV2RulerOffset());
+    v2RulerContainerObserver.observe(host);
+  }
+};
+
+// ui-phase4-002: handle margin change events from V2Ruler. Mirrors the v1
+// `handledocument editorPageMarginsChange` path so existing consumers reading
+// `doc.documentMarginsLastChange` keep working without per-version branching.
+const handleV2PageMarginsChange = (doc, event) => {
+  if (!doc || !event) return;
+  doc.documentMarginsLastChange = event.pageMargins ?? null;
+  // Emit a `page-margins-change` event so external listeners can react. The
+  // payload includes the section that was edited for v2 multi-section
+  // discoverability.
+  proxy.$superdoc.emit('page-margins-change', {
+    documentId: doc.id,
+    editorVersion: 2,
+    sectionId: event.sectionId,
+    sectionIndex: event.sectionIndex,
+    side: event.side,
+    value: event.value,
+    pageMargins: event.pageMargins,
+  });
 };
 
 const handlePdfClick = (e) => {
@@ -1788,7 +3251,7 @@ const applyFallbackZoomStyles = (zoomFactor) => {
 // imperatively. A seeded `zoom.initial` never fires the activeZoom watcher
 // (the ref starts at the seeded value), and the fallback transform targets
 // elements that do not exist until documents render - so apply once from
-// the per-document ready hooks. PresentationEditor and PdfViewer take
+// the per-document ready hooks. DocumentRendererRuntime and PdfViewer take
 // their initial value at creation (layoutEngineOptions.zoom /
 // :initial-scale) and need nothing here.
 let initialFallbackZoomApplied = false;
@@ -1805,9 +3268,19 @@ watch(
   () => activeZoom.value,
   (zoom) => {
     const zoomFactor = (zoom ?? 100) / 100;
+    const zoomPercent = zoom ?? 100;
 
-    if (proxy.$superdoc.config.useLayoutEngine !== false) {
-      PresentationEditor.setGlobalZoom(zoomFactor);
+    // Route DOCX zoom through the v2 page metrics runtime. PDF and HTML
+    // viewers stay on their existing paths (still set below).
+    const v2PageMetrics = proxy.$superdoc?.activeEditor?.pageMetrics ?? null;
+    const v2FacadeActive = isV2Mode.value && proxy.$superdoc?.activeEditor?.editorVersion === 2;
+
+    if (v2FacadeActive && v2PageMetrics?.setZoom) {
+      try {
+        v2PageMetrics.setZoom(zoomPercent);
+      } catch (err) {
+        console.warn('[SuperDoc][v2] setZoom failed', err);
+      }
     } else {
       initialFallbackZoomApplied = true;
       applyFallbackZoomStyles(zoomFactor);
@@ -1853,6 +3326,16 @@ const {
 const getPDFViewer = () => {
   return Array.isArray(pdfViewerRef.value) ? pdfViewerRef.value[0] : pdfViewerRef.value;
 };
+
+// SD-3497: mount the whiteboard overlay only for PDF documents with the
+// whiteboard module configured. `whiteboardInteractive` separates "show the
+// overlay" (driven by data + module config) from "the overlay owns pointer
+// events": when the whiteboard is disabled the layer stays visible but
+// pointer-inert so PDF text/comment selection is not blocked. When the
+// whiteboard is enabled it intentionally owns the PDF surface (documented mode
+// tradeoff; see plan section 3 pointer ownership).
+const shouldRenderPdfWhiteboard = computed(() => hasPdfDocument.value && Boolean(whiteboardModuleConfig.value));
+const whiteboardInteractive = computed(() => whiteboardEnabled.value);
 </script>
 
 <template>
@@ -1868,20 +3351,22 @@ const getPDFViewer = () => {
     :style="superdocStyleVars"
     @keydown="handleContainerKeydown"
   >
+    <p
+      v-if="v2AuthorRequiredStatus"
+      class="sd-visually-hidden"
+      role="status"
+      aria-live="assertive"
+      data-superdoc-v2-author-required
+    >
+      {{ v2AuthorRequiredStatus }}
+    </p>
     <div class="superdoc__layers layers" ref="layers" role="group">
       <!-- Floating tools menu (shows up when user has text selection)-->
+      <!-- ui-phase3-002: v2 reuses the existing shell comment tool by
+           synthesizing the same selection state the v1 path consumes. -->
       <div v-if="showToolsFloatingMenu" class="superdoc__tools tools" :style="toolsMenuPosition">
         <div class="tools-item" data-id="is-tool" @mousedown.stop.prevent="handleToolClick('comments')">
           <div class="superdoc__tools-icon" v-html="superdocIcons.comment"></div>
-        </div>
-        <!-- AI tool button -->
-        <div
-          v-if="proxy.$superdoc.config.modules.ai"
-          class="tools-item"
-          data-id="is-tool"
-          @mousedown.stop.prevent="handleToolClick('ai')"
-        >
-          <div class="superdoc__tools-icon ai-tool"></div>
         </div>
       </div>
 
@@ -1899,45 +3384,6 @@ const getPDFViewer = () => {
             v-if="selectionPosition && shouldShowSelection"
           ></div>
         </div>
-
-        <!-- Fields layer -->
-        <HrbrFieldsLayer
-          v-if="'hrbr-fields' in modules && layers"
-          :fields="modules['hrbr-fields']"
-          class="superdoc__comments-layer comments-layer"
-          style="z-index: 2"
-        />
-
-        <!-- On-document comments layer -->
-        <CommentsLayer
-          v-if="layers"
-          class="superdoc__comments-layer comments-layer"
-          style="z-index: 3"
-          :parent="layers"
-          :user="user"
-          @highlight-click="handleHighlightClick"
-        />
-
-        <!-- AI Layer for temporary highlights -->
-        <AiLayer
-          v-if="showAiLayer"
-          class="ai-layer"
-          style="z-index: 4"
-          ref="aiLayer"
-          :editor="proxy.$superdoc.activeEditor"
-        />
-
-        <!-- Whiteboard Layer -->
-        <WhiteboardLayer
-          v-if="layers && whiteboardModuleConfig"
-          style="z-index: 3"
-          :whiteboard="whiteboard"
-          :pages="whiteboardPages"
-          :page-sizes="whiteboardPageSizes"
-          :page-offsets="whiteboardPageOffsets"
-          :enabled="whiteboardEnabled"
-          :opacity="whiteboardOpacity"
-        />
 
         <div
           class="superdoc__sub-document sub-document"
@@ -1959,14 +3405,43 @@ const getPDFViewer = () => {
             ref="pdfViewerRef"
           />
 
-          <SuperEditor
+          <!-- V2 DOCX editor branch. The wrapper owns createV2EditorHost/open/mount/save/dispose. -->
+          <!-- ui-phase4-002: v2 ruler. Teleported to `rulerContainer` when
+               supplied; rendered inline above the v2 stage otherwise. Visibility tracks the existing
+               `rulers` setting per document. -->
+          <template v-if="doc.type === DOCX && V2Ruler && shouldShowV2Ruler(doc)">
+            <Teleport v-if="resolvedRulerContainer" :to="resolvedRulerContainer">
+              <div class="v2-ruler-host" :style="v2RulerHostStyle">
+                <V2Ruler
+                  :page-layout="proxy.$superdoc.activeEditor.pageLayout"
+                  :measurement-unit="measurementUnit"
+                  @page-margins-change="(event) => handleV2PageMarginsChange(doc, event)"
+                />
+              </div>
+            </Teleport>
+            <div v-else class="v2-ruler-host" :style="v2RulerHostStyle">
+              <V2Ruler
+                :page-layout="proxy.$superdoc.activeEditor.pageLayout"
+                :measurement-unit="measurementUnit"
+                @page-margins-change="(event) => handleV2PageMarginsChange(doc, event)"
+              />
+            </div>
+          </template>
+
+          <V2DocumentEditor
             v-if="doc.type === DOCX"
             :file-source="doc.data"
-            :state="doc.state"
             :document-id="doc.id"
-            :options="{ ...editorOptions(doc), rulers: doc.rulers }"
-            @editor-ready="onEditorReady"
-            @pageMarginsChange="handleSuperEditorPageMarginsChange(doc, $event)"
+            :options="editorOptions(doc)"
+            :measurement-unit="measurementUnit"
+            @v2-editor-ready="onV2EditorReady"
+            @v2-editor-failed="onV2EditorFailed"
+            @v2-render="onV2Render"
+            @v2-render-cleared="onV2RenderCleared"
+            @v2-selection-changed="onV2SelectionChanged"
+            @v2-host-event="(event) => onV2HostEvent(doc, event)"
+            @v2-link-click="onV2LinkClick"
+            @v2-page-metrics="onV2PageMetrics"
           />
 
           <!-- omitting field props -->
@@ -1978,6 +3453,24 @@ const getPDFViewer = () => {
             :document-id="doc.id"
           />
         </div>
+
+        <!-- SD-3497: PDF-scoped overlays. WhiteboardLayer mounts under the
+             comment anchors so anchors stay clickable even when the whiteboard
+             owns pointer events. PdfCommentsLayer renders the durable, clickable
+             PDF comment anchors. Neither renders for DOCX v2 documents. -->
+        <WhiteboardLayer
+          v-if="shouldRenderPdfWhiteboard"
+          class="superdoc__whiteboard-layer"
+          :whiteboard="whiteboard"
+          :pages="whiteboardPages"
+          :page-sizes="whiteboardPageSizes"
+          :page-offsets="whiteboardPageOffsets"
+          :enabled="whiteboardEnabled"
+          :interactive="whiteboardInteractive"
+          :opacity="whiteboardOpacity"
+        />
+
+        <PdfCommentsLayer v-if="shouldRenderPdfCommentAnchors" @anchor-activate="handleHighlightClick" />
       </div>
     </div>
 
@@ -1996,17 +3489,6 @@ const getPDFViewer = () => {
       <CommentDialog :comment="activeCompactComment" :parent="layers" />
     </div>
 
-    <!-- AI Writer at cursor position -->
-    <div class="ai-writer-container" v-if="showAiWriter" :style="aiWriterPosition">
-      <AIWriter
-        :selected-text="selectedText"
-        :handle-close="handleAiWriterClose"
-        :editor="proxy.$superdoc.activeEditor"
-        :api-key="proxy.$superdoc.toolbar?.config?.aiApiKey"
-        :endpoint="proxy.$superdoc.config?.modules?.ai?.endpoint"
-      />
-    </div>
-
     <!-- Surface host — generic dialog/floating overlay system -->
     <SurfaceHost :geometry-target="layers" />
   </div>
@@ -2016,6 +3498,18 @@ const getPDFViewer = () => {
 .superdoc {
   display: flex;
   position: relative;
+}
+
+.sd-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .right-sidebar {
@@ -2054,30 +3548,15 @@ const getPDFViewer = () => {
   pointer-events: none;
 }
 
+/* SD-3497: PDF whiteboard overlay sits above the rendered PDF canvas but below
+   the PDF comment anchors (z-index 6 in PdfCommentsLayer) so anchors stay
+   clickable, and below the selection layer (z-index 10). */
+.superdoc__whiteboard-layer {
+  z-index: 4;
+}
+
 .superdoc__temp-selection {
   position: absolute;
-}
-
-.superdoc__comments-layer {
-  /* position: absolute; */
-  top: 0;
-  height: 100%;
-  position: relative;
-}
-
-/* In contained mode, overlay layers must not take flow space.
- * With height:100% resolved on .superdoc__document, this element's
- * position:relative + height:100% takes the full container height,
- * pushing .superdoc__sub-document out of view. */
-.superdoc--contained .superdoc__comments-layer {
-  position: absolute;
-  width: 100%;
-  pointer-events: none;
-}
-
-/* Re-enable pointer events on comment anchors so highlights remain clickable */
-.superdoc--contained .sd-comment-anchor {
-  pointer-events: auto;
 }
 
 .superdoc__right-sidebar {

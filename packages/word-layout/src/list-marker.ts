@@ -37,6 +37,18 @@ export interface WordListMarkerDefinition {
   suffix?: string;
   /** `w:lvlJc`. Defaults to `left`. */
   justification?: string;
+  /**
+   * Effective start settings for ancestor levels `0..ilvl-1`. Registered with
+   * `ensureStartSettings` (register-if-absent) before the marker path is
+   * computed so first-emitted nested markers fall back to OOXML-defined
+   * ancestor starts instead of `1`. Real ancestor counters still win.
+   */
+  ancestorStartSettings?: Array<{
+    ilvl: number;
+    start: number;
+    restart?: number;
+    startOverridden: boolean;
+  }>;
 }
 
 export interface ComputeWordListMarkerInput {
@@ -72,6 +84,22 @@ export interface ComputeWordListMarkerResult {
  */
 export function computeWordListMarker(input: ComputeWordListMarkerInput): ComputeWordListMarkerResult {
   const { definition, manager, paragraphOrdinal } = input;
+  // Prime ancestor-level start settings first (register-if-absent) so that when
+  // the first emitted paragraph is at ilvl > 0 and no ancestor counter exists
+  // yet, ancestor path segments fall back to the OOXML-defined ancestor starts
+  // rather than 1. Real ancestor counters always take precedence in
+  // getAncestorsPath, so this never overrides genuine prior numbering.
+  if (definition.ancestorStartSettings) {
+    for (const ancestor of definition.ancestorStartSettings) {
+      manager.ensureStartSettings(
+        definition.numId,
+        ancestor.ilvl,
+        ancestor.start,
+        ancestor.restart,
+        ancestor.startOverridden,
+      );
+    }
+  }
   // Ensure start settings are recorded (idempotent).
   manager.setStartSettings(
     definition.numId,

@@ -30,7 +30,11 @@ jobs:
           filters: |
             document_api:
               - 'packages/document-api/**'
-              - 'apps/docs/document-api/**'
+              # The public gate regenerates the documentation reference to check
+              # every operation is rendered, so a change to that generator can
+              # fail this workflow.
+              - 'apps/docs/scripts/generate-document-api-reference.ts'
+              - 'apps/docs/lib/document-api-reference/**'
               - 'scripts/check-public-docapi.mjs'
               - '.nvmrc'
               - 'package.json'
@@ -59,6 +63,9 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
+
+      - name: pnpm config ownership
+        run: pnpm run check:pnpm-config
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

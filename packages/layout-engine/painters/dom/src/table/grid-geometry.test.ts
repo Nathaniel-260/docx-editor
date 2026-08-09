@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { getTableCellGridBounds } from './grid-geometry.js';
 
 describe('getTableCellGridBounds', () => {

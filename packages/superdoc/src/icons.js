@@ -5,6 +5,7 @@ import usersIconSvg from '@superdoc/common/icons/users-solid.svg?raw';
 import checkIconSvg from '@superdoc/common/icons/check-solid.svg?raw';
 import xmarkIconSvg from '@superdoc/common/icons/xmark-solid.svg?raw';
 import ellipsisVerticalSvg from '@superdoc/common/icons/ellipsis-vertical-solid.svg?raw';
+import rotateLeftSvg from '@superdoc/common/icons/rotate-left-solid.svg?raw';
 
 export const superdocIcons = {
   comment: commentIconSvg,
@@ -15,4 +16,5 @@ export const superdocIcons = {
   acceptChange: checkIconSvg,
   rejectChange: xmarkIconSvg,
   overflow: ellipsisVerticalSvg,
+  reopen: rotateLeftSvg,
 };

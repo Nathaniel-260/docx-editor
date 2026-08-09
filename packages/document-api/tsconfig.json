@@ -8,7 +8,11 @@
     "rootDir": "./src",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["vitest/globals"]
+    // Test files are excluded from this build program and run under bun,
+    // which injects describe/it at runtime; declaring vitest/globals here
+    // breaks `tsc -b` consumers (v2 bundled-runtime build) in installs that
+    // do not carry the public workspace's devDependencies.
+    "types": []
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]

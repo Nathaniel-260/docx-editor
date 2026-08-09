@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { FlowBlock, ParagraphBlock, ParagraphMeasure, TextboxDrawing } from '@superdoc/contracts';
-import { hydrateTableTextboxMeasures } from '../src/incrementalLayout';
+import { describe, it, expect, vi } from 'vite-plus/test';
+import type { FlowBlock, ParagraphBlock, ParagraphMeasure, TableBlock, TextboxDrawing } from '@superdoc/contracts';
+import { hydrateTableTextboxMeasures } from '../src/hydrateTableTextboxMeasures';
 
 const makeLine = (h: number) => ({
   fromRun: 0,
@@ -39,16 +39,23 @@ const makeTable = (cellBlocks: FlowBlock[][]): FlowBlock => ({
 });
 
 describe('hydrateTableTextboxMeasures', () => {
-  it('sets contentMeasures on a textboxShape drawing in a table cell', () => {
+  const tableTextbox = (blocks: FlowBlock[]): TextboxDrawing => {
+    const table = blocks[0] as TableBlock;
+    return table.rows[0]!.cells[0]!.blocks![0] as TextboxDrawing;
+  };
+
+  it('derives contentMeasures without mutating the source projection', () => {
     const textbox = makeTextboxBlock('tb-1');
     const blocks: FlowBlock[] = [makeTable([[textbox]])];
     const remeasure = vi.fn((_block: ParagraphBlock, _maxWidth: number) => makeMeasure([16]));
 
-    hydrateTableTextboxMeasures(blocks, remeasure);
+    const hydrated = hydrateTableTextboxMeasures(blocks, remeasure);
 
     expect(remeasure).toHaveBeenCalledOnce();
-    expect(textbox.contentMeasures).toHaveLength(1);
-    expect(textbox.contentMeasures?.[0].totalHeight).toBe(16);
+    expect(hydrated).not.toBe(blocks);
+    expect(textbox.contentMeasures).toBeUndefined();
+    expect(tableTextbox(hydrated).contentMeasures).toHaveLength(1);
+    expect(tableTextbox(hydrated).contentMeasures?.[0].totalHeight).toBe(16);
   });
 
   it('passes contentWidth reduced by horizontal insets to remeasure', () => {
@@ -67,9 +74,10 @@ describe('hydrateTableTextboxMeasures', () => {
     const blocks: FlowBlock[] = [makeTable([[para]])];
     const remeasure = vi.fn();
 
-    hydrateTableTextboxMeasures(blocks, remeasure);
+    const hydrated = hydrateTableTextboxMeasures(blocks, remeasure);
 
     expect(remeasure).not.toHaveBeenCalled();
+    expect(hydrated).toBe(blocks);
   });
 
   it('recurses into nested tables', () => {
@@ -78,19 +86,23 @@ describe('hydrateTableTextboxMeasures', () => {
     const blocks: FlowBlock[] = [makeTable([[innerTable]])];
     const remeasure = vi.fn((_block: ParagraphBlock, _maxWidth: number) => makeMeasure([14]));
 
-    hydrateTableTextboxMeasures(blocks, remeasure);
+    const hydrated = hydrateTableTextboxMeasures(blocks, remeasure);
 
     expect(remeasure).toHaveBeenCalledOnce();
-    expect(textbox.contentMeasures).toHaveLength(1);
+    expect(textbox.contentMeasures).toBeUndefined();
+    const outer = hydrated[0] as TableBlock;
+    const inner = outer.rows[0]!.cells[0]!.blocks![0] as TableBlock;
+    expect((inner.rows[0]!.cells[0]!.blocks![0] as TextboxDrawing).contentMeasures).toHaveLength(1);
   });
 
   it('skips non-table top-level blocks', () => {
     const para: FlowBlock = { kind: 'paragraph', id: 'p1', runs: [] };
     const remeasure = vi.fn();
 
-    hydrateTableTextboxMeasures([para], remeasure);
+    const hydrated = hydrateTableTextboxMeasures([para], remeasure);
 
     expect(remeasure).not.toHaveBeenCalled();
+    expect(hydrated[0]).toBe(para);
   });
 
   it('handles multiple textboxes across different cells', () => {
@@ -99,10 +111,31 @@ describe('hydrateTableTextboxMeasures', () => {
     const blocks: FlowBlock[] = [makeTable([[tb1], [tb2]])];
     const remeasure = vi.fn((_block: ParagraphBlock, _maxWidth: number) => makeMeasure([12]));
 
-    hydrateTableTextboxMeasures(blocks, remeasure);
+    const hydrated = hydrateTableTextboxMeasures(blocks, remeasure);
 
     expect(remeasure).toHaveBeenCalledTimes(2);
-    expect(tb1.contentMeasures).toHaveLength(1);
-    expect(tb2.contentMeasures).toHaveLength(1);
+    expect(tb1.contentMeasures).toBeUndefined();
+    expect(tb2.contentMeasures).toBeUndefined();
+    const table = hydrated[0] as TableBlock;
+    expect((table.rows[0]!.cells[0]!.blocks![0] as TextboxDrawing).contentMeasures).toHaveLength(1);
+    expect((table.rows[1]!.cells[0]!.blocks![0] as TextboxDrawing).contentMeasures).toHaveLength(1);
+  });
+
+  it('accepts a deeply frozen projection and preserves every source identity', () => {
+    const textbox = makeTextboxBlock('tb-frozen');
+    const blocks: FlowBlock[] = [makeTable([[textbox]])];
+    const freeze = (value: unknown, seen = new WeakSet<object>()): void => {
+      if (value == null || typeof value !== 'object' || seen.has(value as object)) return;
+      seen.add(value as object);
+      for (const child of Object.values(value as Record<string, unknown>)) freeze(child, seen);
+      Object.freeze(value);
+    };
+    freeze(blocks);
+
+    const hydrated = hydrateTableTextboxMeasures(blocks, () => makeMeasure([18]));
+
+    expect(Object.isFrozen(textbox)).toBe(true);
+    expect(textbox.contentMeasures).toBeUndefined();
+    expect(tableTextbox(hydrated).contentMeasures?.[0].totalHeight).toBe(18);
   });
 });

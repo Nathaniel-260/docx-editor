@@ -1,5 +1,3 @@
-/* eslint-env node */
-
 const strictBreakingParserOpts = {
   noteKeywords: ['BREAKING CHANGE', 'BREAKING-CHANGE'],
   notesPattern: (noteKeywordsSelection) => new RegExp(`^(${noteKeywordsSelection}):[ \\t]+(.+)$`),

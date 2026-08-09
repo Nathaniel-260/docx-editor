@@ -4,7 +4,7 @@
 
 import type { BlockNodeAddress } from './base.js';
 import type { SelectionTarget, TextAddress } from './address.js';
-import type { TextMutationRange } from './receipt.js';
+import type { ReceiptEffects, TextMutationRange } from './receipt.js';
 
 // ---------------------------------------------------------------------------
 // Error model (normative)
@@ -60,6 +60,15 @@ export interface SDMutationReceipt {
     /** Full selection target for cross-block mutations. */
     selectionTarget?: SelectionTarget;
   };
+  /**
+   * Post-mutation created-content spans (inserted visible text / blocks).
+   *
+   * `resolution.target` is the resolved mutation target / insertion point; for
+   * a collapsed insert it stays a collapsed point. Callers that need to anchor
+   * to the content a mutation CREATED (citations, comments on inserted text)
+   * read it here instead. See {@link ReceiptEffects}.
+   */
+  effects?: ReceiptEffects;
 }
 
 // ---------------------------------------------------------------------------

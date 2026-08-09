@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import {
   BUNDLED_MANIFEST,
   DEFAULT_BUNDLED_FONT_BASE,
@@ -125,11 +125,11 @@ describe('installBundledSubstitutes URL resolution', () => {
   });
 
   it('setBundledFontAssetBase overrides the default base', () => {
-    setBundledFontAssetBase('https://cdn.jsdelivr.net/npm/@superdoc-dev/fonts@1/assets/');
+    setBundledFontAssetBase('https://cdn.jsdelivr.net/npm/@superdoc/fonts@1/assets/');
     const reg = new CaptureRegistry();
     installBundledSubstitutes(reg.asRegistry());
     expect(reg.sourcesFor('Caladea')).toContain(
-      'url(https://cdn.jsdelivr.net/npm/@superdoc-dev/fonts@1/assets/Caladea-Regular.woff2)',
+      'url(https://cdn.jsdelivr.net/npm/@superdoc/fonts@1/assets/Caladea-Regular.woff2)',
     );
   });
 

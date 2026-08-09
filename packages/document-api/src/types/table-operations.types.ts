@@ -100,15 +100,38 @@ export interface MergeRangeLocator extends TableLocator {
 // ---------------------------------------------------------------------------
 
 /**
- * Where to place a newly-created table in the document.
+ * Where to place a table relative to an existing block in the document.
+ * Shared by `tables.move`'s `destination` and `create.table`'s `at` (see
+ * {@link TableCreateLocation} for the create-only `inParagraph` extension —
+ * moving an existing table in place of a paragraph split isn't supported).
  */
-export type TableCreateLocation =
+export type TableAnchorLocation =
   | { kind: 'documentStart' }
   | { kind: 'documentEnd' }
   | { kind: 'before'; target: BlockNodeAddress }
   | { kind: 'after'; target: BlockNodeAddress }
   | { kind: 'before'; nodeId: string }
   | { kind: 'after'; nodeId: string };
+
+/**
+ * Where to place a newly-created table in the document. Extends
+ * {@link TableAnchorLocation} with a create-only `inParagraph` kind.
+ */
+export type TableCreateLocation =
+  | TableAnchorLocation
+  /**
+   * Split the target paragraph at an offset and insert the table as a
+   * standalone block between the head/tail halves (Word semantics: a table
+   * cannot splice into a paragraph's runs). Offsets are visible-text by
+   * default; use `coordinateSpace: 'tracked'` for a deletion-inclusive caret
+   * coordinate. Body paragraphs only for now.
+   */
+  | {
+      kind: 'inParagraph';
+      target: BlockNodeAddress;
+      offset: number;
+      coordinateSpace?: 'visible' | 'tracked';
+    };
 
 /**
  * Generic success result for table mutation operations.
@@ -183,7 +206,7 @@ export interface TablesConvertFromTextInput {
 // ---------------------------------------------------------------------------
 
 export interface TablesMoveInput extends TableLocator {
-  destination: TableCreateLocation;
+  destination: TableAnchorLocation;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +278,20 @@ export type TablesInsertRowInput =
   | (TableLocator & { rowIndex?: never; position?: never; count?: number });
 
 export type TablesDeleteRowInput = DirectRowTargetLocator | TableScopedRowLocator;
+
+export type TableRowMoveDestination =
+  | { kind: 'first' }
+  | { kind: 'last' }
+  | { kind: 'before'; rowIndex: number }
+  | { kind: 'after'; rowIndex: number }
+  | { kind: 'before'; target: TableRowAddress }
+  | { kind: 'after'; target: TableRowAddress }
+  | { kind: 'before'; nodeId: string }
+  | { kind: 'after'; nodeId: string };
+
+export type TablesMoveRowInput = (DirectRowTargetLocator | TableScopedRowLocator) & {
+  destination: TableRowMoveDestination;
+};
 
 export type TablesSetRowHeightInput =
   | (TableScopedRowLocator & { heightPt: number; rule?: 'atLeast' | 'exact' | 'auto' })
@@ -336,6 +373,7 @@ export interface TablesSplitCellInput extends CellLocator {
 
 export interface TablesSetCellPropertiesInput extends CellLocator {
   preferredWidthPt?: number;
+  preferredWidthType?: TablePreferredWidthType;
   verticalAlign?: 'top' | 'center' | 'bottom';
   wrapText?: boolean;
   fitText?: boolean;
@@ -363,7 +401,7 @@ export interface TablesSortKey {
 }
 
 export interface TablesSortInput extends TableLocator {
-  keys: TablesSortKey[];
+  keys: [TablesSortKey, ...TablesSortKey[]];
 }
 
 export interface TablesSetAltTextInput extends TableLocator {
@@ -376,7 +414,7 @@ export interface TablesSetAltTextInput extends TableLocator {
 // ---------------------------------------------------------------------------
 
 export interface TablesSetStyleInput extends TableLocator {
-  styleId: string;
+  styleId?: string;
 }
 
 export type TablesClearStyleInput = TableLocator;
@@ -413,7 +451,6 @@ export interface TableBorderSpec {
 // Write-only patch types (used by mutation inputs)
 // ---------------------------------------------------------------------------
 
-/** All four sides required when present. */
 export interface TableMargins {
   topPt: number;
   rightPt: number;
@@ -614,10 +651,10 @@ export interface TablesSetTablePaddingInput extends TableLocator {
 }
 
 export interface TablesSetCellPaddingInput extends CellLocator {
-  topPt: number;
-  rightPt: number;
-  bottomPt: number;
-  leftPt: number;
+  topPt?: number;
+  rightPt?: number;
+  bottomPt?: number;
+  leftPt?: number;
 }
 
 export interface TablesSetCellSpacingInput extends TableLocator {

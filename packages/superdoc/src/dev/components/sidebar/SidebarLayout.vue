@@ -1,70 +1,12 @@
 <script setup>
-import { computed } from 'vue';
-
-const props = defineProps({
+defineProps({
   useWebLayout: {
     type: Boolean,
     default: false,
   },
-  useWordOverlay: {
-    type: Boolean,
-    default: false,
-  },
-  isGeneratingWordBaseline: {
-    type: Boolean,
-    default: false,
-  },
-  generatedCount: {
-    type: Number,
-    default: 0,
-  },
-  wordOverlayOpacity: {
-    type: Number,
-    default: 0.45,
-  },
-  wordOverlayOpacityLabel: {
-    type: String,
-    default: '45%',
-  },
-  wordOverlayBlendMode: {
-    type: String,
-    default: 'difference',
-  },
-  wordBaselineStatus: {
-    type: String,
-    default: '',
-  },
-  wordBaselineError: {
-    type: String,
-    default: '',
-  },
-  wordOverlayAvailable: {
-    type: Boolean,
-    default: false,
-  },
 });
 
-const emit = defineEmits([
-  'close',
-  'toggle-web-layout',
-  'toggle-overlay',
-  'generate-baseline',
-  'clear-generated-baseline',
-  'update:wordOverlayOpacity',
-  'update:wordOverlayBlendMode',
-]);
-
-const opacityModel = computed({
-  get: () => props.wordOverlayOpacity,
-  set: (value) => emit('update:wordOverlayOpacity', Number(value)),
-});
-
-const blendModeModel = computed({
-  get: () => props.wordOverlayBlendMode,
-  set: (value) => emit('update:wordOverlayBlendMode', value),
-});
-
-const hasWordReference = computed(() => props.generatedCount > 0);
+const emit = defineEmits(['close', 'toggle-web-layout']);
 
 const closeSidebar = () => {
   emit('close');
@@ -91,62 +33,6 @@ const closeSidebar = () => {
             Turn Web Layout {{ useWebLayout ? 'off' : 'on' }} (reloads)
           </button>
         </div>
-      </section>
-
-      <section v-if="!useWebLayout" class="dev-sidebar__section">
-        <h4 class="dev-sidebar__section-title">
-          <span class="dev-sidebar__section-icon dev-sidebar__section-icon--word" aria-hidden="true">W</span>
-          <span>MS Word</span>
-        </h4>
-        <div class="dev-sidebar__actions">
-          <button
-            class="dev-sidebar__button"
-            type="button"
-            :disabled="isGeneratingWordBaseline"
-            @click="emit('generate-baseline')"
-          >
-            {{ isGeneratingWordBaseline ? 'Generating Word Reference...' : 'Generate Word Reference' }}
-          </button>
-          <button
-            class="dev-sidebar__button"
-            type="button"
-            :disabled="!hasWordReference"
-            @click="emit('toggle-overlay')"
-          >
-            Word Overlay: {{ useWordOverlay ? 'ON' : 'OFF' }}
-          </button>
-          <button
-            v-if="generatedCount > 0"
-            class="dev-sidebar__button"
-            type="button"
-            :disabled="isGeneratingWordBaseline"
-            @click="emit('clear-generated-baseline')"
-          >
-            Clear Generated Reference
-          </button>
-        </div>
-
-        <label class="dev-sidebar__label">
-          <span>Opacity {{ wordOverlayOpacityLabel }}</span>
-          <input v-model.number="opacityModel" type="range" min="0" max="1" step="0.01" />
-        </label>
-
-        <label class="dev-sidebar__label">
-          <span>Blend</span>
-          <select v-model="blendModeModel">
-            <option value="difference">difference</option>
-            <option value="normal">normal</option>
-            <option value="multiply">multiply</option>
-            <option value="screen">screen</option>
-            <option value="overlay">overlay</option>
-          </select>
-        </label>
-
-        <p v-if="wordBaselineStatus" class="dev-sidebar__status">{{ wordBaselineStatus }}</p>
-        <p v-else-if="wordBaselineError" class="dev-sidebar__error">{{ wordBaselineError }}</p>
-        <p v-else-if="!wordOverlayAvailable" class="dev-sidebar__hint">
-          Overlay inactive (generate reference + layout engine).
-        </p>
       </section>
     </div>
   </div>
@@ -238,12 +124,6 @@ const closeSidebar = () => {
   background: rgba(59, 130, 246, 0.12);
 }
 
-.dev-sidebar__section-icon--word {
-  border: 1px solid rgba(37, 99, 235, 0.6);
-  color: #ffffff;
-  background: #2563eb;
-}
-
 .dev-sidebar__actions {
   display: grid;
   gap: 8px;
@@ -276,47 +156,5 @@ const closeSidebar = () => {
 .dev-sidebar__button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.dev-sidebar__label {
-  display: grid;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #475569;
-}
-
-.dev-sidebar__label input[type='range'] {
-  width: 100%;
-}
-
-.dev-sidebar__label select {
-  border: 1px solid rgba(148, 163, 184, 0.6);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 13px;
-  background: #ffffff;
-  color: #1e293b;
-}
-
-.dev-sidebar__status {
-  margin: 0;
-  font-size: 12px;
-  color: #166534;
-  font-weight: 600;
-}
-
-.dev-sidebar__error {
-  margin: 0;
-  font-size: 12px;
-  color: #b91c1c;
-  font-weight: 600;
-  white-space: pre-wrap;
-}
-
-.dev-sidebar__hint {
-  margin: 0;
-  font-size: 12px;
-  color: #94a3b8;
 }
 </style>

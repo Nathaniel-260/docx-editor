@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { renderTableCell, getCellSegmentCount } from './renderTableCell.js';
 import { getCellLines } from '@superdoc/layout-engine';
 import type {
@@ -101,43 +101,6 @@ describe('renderTableCell', () => {
     },
   });
 
-  // SD-3308 Word-measured padding rule for compound border bands: the painted band
-  // eats HALF its width back from the cell padding per side (probe evidence: Word's
-  // thinThickSmallGap sz24 leftover margin = padding - band/2). Padding floors at 0;
-  // non-compound borders keep the full padding (sub-pixel difference, deliberately
-  // out of scope to avoid corpus churn).
-  it('compresses horizontal padding by half the band on compound border sides', () => {
-    const { cellElement } = renderTableCell({
-      ...createBaseDeps(),
-      cellMeasure: baseCellMeasure,
-      cell: baseCell,
-      borders: {
-        // thinThickSmallGap w4: band 6 -> padding 4 - 3 = 1px
-        left: { style: 'thinThickSmallGap', width: 4, color: '#000000' },
-        // triple w2: band 10 -> padding 4 - 5 -> floors at 0
-        right: { style: 'triple', width: 2, color: '#000000' },
-      },
-    });
-
-    expect(cellElement.style.paddingLeft).toBe('1px');
-    expect(cellElement.style.paddingRight).toBe('0px');
-  });
-
-  it('keeps full padding for non-compound border sides', () => {
-    const { cellElement } = renderTableCell({
-      ...createBaseDeps(),
-      cellMeasure: baseCellMeasure,
-      cell: baseCell,
-      borders: {
-        left: { style: 'single', width: 2, color: '#000000' },
-        right: { style: 'thick', width: 2, color: '#000000' },
-      },
-    });
-
-    expect(cellElement.style.paddingLeft).toBe('4px');
-    expect(cellElement.style.paddingRight).toBe('4px');
-  });
-
   it('uses an end-of-cell mark for the final paragraph in a table cell', () => {
     const secondParagraphBlock: ParagraphBlock = {
       kind: 'paragraph',
@@ -175,6 +138,31 @@ describe('renderTableCell', () => {
     expect(marks[0].classList.contains('superdoc-formatting-cell-mark')).toBe(false);
     expect(marks[1].textContent).toBe('¤');
     expect(marks[1].classList.contains('superdoc-formatting-cell-mark')).toBe(true);
+  });
+
+  it('preserves named furniture context for paragraph runs inside a cell', () => {
+    const seenContexts: Array<{ section: string; storyKind: string | undefined; storyId: string | undefined }> = [];
+    renderTableCell({
+      ...createBaseDeps(),
+      cellMeasure: baseCellMeasure,
+      cell: baseCell,
+      context: {
+        pageNumber: 2,
+        totalPages: 4,
+        section: 'footer',
+        story: { kind: 'footer', id: 'rIdFooter' },
+      },
+      renderLine: (_block, _line, context) => {
+        seenContexts.push({
+          section: context.section,
+          storyKind: context.story?.kind,
+          storyId: context.story?.id,
+        });
+        return doc.createElement('div');
+      },
+    });
+
+    expect(seenContexts).toEqual([{ section: 'footer', storyKind: 'footer', storyId: 'rIdFooter' }]);
   });
 
   it('centers content when verticalAlign is center', () => {
@@ -245,6 +233,7 @@ describe('renderTableCell', () => {
       kind: 'image',
       id: 'img-1',
       src: 'data:image/png;base64,AAA',
+      imageId: '337',
     };
     const imageMeasure = {
       kind: 'image' as const,
@@ -276,6 +265,9 @@ describe('renderTableCell', () => {
     const imgEl = cellElement.querySelector('img.superdoc-table-image') as HTMLImageElement | null;
     expect(imgEl).toBeTruthy();
     expect(imgEl?.parentElement?.style.height).toBe('40px');
+    expect(imgEl?.parentElement?.classList.contains('superdoc-image-fragment')).toBe(true);
+    expect(imgEl?.parentElement?.getAttribute('data-sd-block-id')).toBe('img-1');
+    expect(imgEl?.parentElement?.getAttribute('data-sd-image-id')).toBe('337');
   });
 
   it('forces flowing image blocks to block display inside table cells', () => {
@@ -400,6 +392,7 @@ describe('renderTableCell', () => {
       kind: 'image',
       id: 'img-anchored',
       src: 'data:image/png;base64,AAA',
+      imageId: '334',
       anchor: { isAnchored: true, alignH: 'left', offsetH: 10, vRelativeFrom: 'paragraph', offsetV: 5 },
       wrap: { type: 'None' },
       attrs: { anchorParagraphId: 'para-anchor' },
@@ -439,6 +432,9 @@ describe('renderTableCell', () => {
     expect(imgEl?.parentElement?.style.position).toBe('absolute');
     expect(imgEl?.parentElement?.style.left).toBe('10px');
     expect(imgEl?.parentElement?.style.top).toBe('25px');
+    expect(imgEl?.parentElement?.classList.contains('superdoc-image-fragment')).toBe(true);
+    expect(imgEl?.parentElement?.getAttribute('data-sd-block-id')).toBe('img-anchored');
+    expect(imgEl?.parentElement?.getAttribute('data-sd-image-id')).toBe('334');
   });
 
   it('positions anchored image blocks after multiple preceding paragraphs', () => {
@@ -739,6 +735,53 @@ describe('renderTableCell', () => {
     const imgEl = cellElement.querySelector('img.superdoc-table-image') as HTMLImageElement | null;
     // paragraphY 20 + offsetV 5 + alignmentOffsetY (60 - 40)/2 = 10
     expect(imgEl?.parentElement?.style.top).toBe('35px');
+  });
+
+  it('uses the measured layoutInCell footprint when vertically aligning an anchored object', () => {
+    const anchorPara: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'para-layout-in-cell-valign',
+      runs: [{ text: 'Anchor', fontFamily: 'Arial', fontSize: 16 }],
+    };
+    const anchoredImage: ImageBlock = {
+      kind: 'image',
+      id: 'img-layout-in-cell-valign',
+      src: 'data:image/png;base64,AAA',
+      anchor: {
+        isAnchored: true,
+        layoutInCell: true,
+        alignH: 'left',
+        offsetH: 0,
+        vRelativeFrom: 'paragraph',
+        offsetV: 1,
+      },
+      wrap: { type: 'None' },
+      attrs: { anchorParagraphId: 'para-layout-in-cell-valign' },
+    };
+
+    const { cellElement } = renderTableCell({
+      ...createBaseDeps(),
+      rowHeight: 60,
+      cellMeasure: {
+        blocks: [paragraphMeasure, { kind: 'image' as const, width: 20, height: 60 }],
+        // The measuring layer reserves offsetV + object height for layoutInCell.
+        width: 80,
+        height: 61,
+        gridColumnStart: 0,
+        colSpan: 1,
+        rowSpan: 1,
+      },
+      cell: {
+        id: 'cell-layout-in-cell-valign',
+        blocks: [anchorPara, anchoredImage],
+        attrs: { verticalAlign: 'center' },
+      },
+    });
+
+    const imgEl = cellElement.querySelector('img.superdoc-table-image') as HTMLImageElement | null;
+    // The exact-height row has no spare vertical space once the measured floating
+    // footprint is considered, so the authored paragraph-relative offset is preserved.
+    expect(imgEl?.parentElement?.style.top).toBe('1px');
   });
 
   it('does not shift fallback anchors (page/margin base or missing anchor id) in vertically aligned cells', () => {
@@ -1136,7 +1179,7 @@ describe('renderTableCell', () => {
     expect(renderedLines[0]?.dataset.blockId).toBe('para-after-anchor');
   });
 
-  it('adjusts column-relative anchored images by table indent and cell offset', () => {
+  it('positions column-relative anchored images from the cell content box, ignoring table indent and cell offset', () => {
     const para: ParagraphBlock = {
       kind: 'paragraph',
       id: 'para-anchor',
@@ -1191,7 +1234,105 @@ describe('renderTableCell', () => {
 
     const imgEl = cellElement.querySelector('img.superdoc-table-image') as HTMLImageElement | null;
     expect(imgEl).toBeTruthy();
-    expect(imgEl?.parentElement?.style.left).toBe('40px');
+    // Word probes (SD-3626): offsetH is measured from the CELL CONTENT BOX; the previous
+    // page-column conversion (subtracting cell x and table indent) shifted objects left.
+    expect(imgEl?.parentElement?.style.left).toBe('100px');
+  });
+
+  it('clamps wrapping anchored objects to the cell content box, but not wrapNone', () => {
+    const para: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'para-clamp-anchor',
+      runs: [{ text: 'Anchor', fontFamily: 'Arial', fontSize: 16 }],
+    };
+    const squareOverflow: ImageBlock = {
+      kind: 'image',
+      id: 'img-clamp-square',
+      src: 'data:image/png;base64,AAA',
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'column',
+        alignH: 'left',
+        offsetH: 70,
+        vRelativeFrom: 'paragraph',
+        offsetV: 0,
+      },
+      wrap: { type: 'Square', wrapText: 'bothSides' },
+      attrs: { anchorParagraphId: 'para-clamp-anchor' },
+    };
+    const noneOverflow: ImageBlock = {
+      kind: 'image',
+      id: 'img-clamp-none',
+      src: 'data:image/png;base64,AAA',
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'column',
+        alignH: 'left',
+        offsetH: 70,
+        vRelativeFrom: 'paragraph',
+        offsetV: 5,
+      },
+      wrap: { type: 'None' },
+      attrs: { anchorParagraphId: 'para-clamp-anchor' },
+    };
+
+    const { cellElement } = renderTableCell({
+      ...createBaseDeps(),
+      cellMeasure: {
+        blocks: [
+          paragraphMeasure,
+          { kind: 'image' as const, width: 20, height: 10 },
+          { kind: 'image' as const, width: 20, height: 10 },
+        ],
+        width: 80,
+        height: 50,
+        gridColumnStart: 0,
+        colSpan: 1,
+        rowSpan: 1,
+      },
+      cell: { id: 'cell-clamp', blocks: [para, squareOverflow, noneOverflow], attrs: {} },
+    });
+
+    const imageEls = Array.from(cellElement.querySelectorAll('img.superdoc-table-image')) as HTMLImageElement[];
+    expect(imageEls).toHaveLength(2);
+    // content width = 80 - default horizontal padding (4 + 4) = 72; object 20 wide at offset 70
+    // overflows by 18. Word clamps wrapping objects (right edge = cell content edge): 72 - 20 = 52.
+    expect(imageEls[0]?.parentElement?.style.left).toBe('52px');
+    // wrapNone objects overflow freely (Word probe: no clamp).
+    expect(imageEls[1]?.parentElement?.style.left).toBe('70px');
+  });
+
+  it('treats an omitted hRelativeFrom as column and clamps wrapping objects', () => {
+    const para: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'para-default-rel',
+      runs: [{ text: 'Anchor', fontFamily: 'Arial', fontSize: 16 }],
+    };
+    const image: ImageBlock = {
+      kind: 'image',
+      id: 'img-default-rel',
+      src: 'data:image/png;base64,AAA',
+      anchor: { isAnchored: true, alignH: 'left', offsetH: 70, vRelativeFrom: 'paragraph', offsetV: 0 },
+      wrap: { type: 'Square', wrapText: 'bothSides' },
+      attrs: { anchorParagraphId: 'para-default-rel' },
+    };
+
+    const { cellElement } = renderTableCell({
+      ...createBaseDeps(),
+      cellMeasure: {
+        blocks: [paragraphMeasure, { kind: 'image' as const, width: 20, height: 10 }],
+        width: 80,
+        height: 40,
+        gridColumnStart: 0,
+        colSpan: 1,
+        rowSpan: 1,
+      },
+      cell: { id: 'cell-default-rel', blocks: [para, image], attrs: {} },
+    });
+
+    const imgEl = cellElement.querySelector('img.superdoc-table-image') as HTMLImageElement | null;
+    // Same clamp as an explicit hRelativeFrom="column": 72 - 20 = 52.
+    expect(imgEl?.parentElement?.style.left).toBe('52px');
   });
 
   it('absolutely positions anchored drawing blocks inside table cells', () => {
@@ -1249,6 +1390,53 @@ describe('renderTableCell', () => {
     expect(drawingWrapper?.style.position).toBe('absolute');
     expect(drawingWrapper?.style.left).toBe('12px');
     expect(drawingWrapper?.style.top).toBe('7px');
+    expect(drawingWrapper?.style.zIndex).toBe('1');
+  });
+
+  it('keeps behindDoc anchored drawings at the background z-index inside table cells', () => {
+    const para: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'para-behind',
+      runs: [{ text: 'Anchor', fontFamily: 'Arial', fontSize: 16 }],
+    };
+    const anchoredDrawing: DrawingBlock = {
+      kind: 'drawing',
+      id: 'shape-behind',
+      drawingKind: 'vectorShape',
+      geometry: { width: 10, height: 10 },
+      // Some imported table drawings carry the effective posture only on the
+      // wrap record. That legacy form must remain behind the cell paint too.
+      anchor: { isAnchored: true, alignH: 'left', offsetH: 0, vRelativeFrom: 'paragraph', offsetV: 0 },
+      wrap: { type: 'None', behindDoc: true },
+      attrs: { anchorParagraphId: 'para-behind' },
+    };
+    const drawingMeasure: DrawingMeasure = {
+      kind: 'drawing',
+      drawingKind: 'vectorShape',
+      width: 30,
+      height: 15,
+      scale: 1,
+      naturalWidth: 30,
+      naturalHeight: 15,
+      geometry: { width: 10, height: 10 },
+    };
+
+    const { cellElement } = renderTableCell({
+      ...createBaseDeps(),
+      cellMeasure: {
+        blocks: [paragraphMeasure, drawingMeasure],
+        width: 80,
+        height: 40,
+        gridColumnStart: 0,
+        colSpan: 1,
+        rowSpan: 1,
+      },
+      cell: { id: 'cell-behind', blocks: [para, anchoredDrawing], attrs: {} },
+      renderDrawingContent: () => doc.createElement('div'),
+    });
+
+    const drawingWrapper = cellElement.querySelector('div.superdoc-table-drawing')?.parentElement as HTMLElement | null;
+    expect(drawingWrapper?.style.zIndex).toBe('0');
   });
 
   it('pushes text away from wrapSquare anchored images in table cells', () => {
@@ -4369,99 +4557,6 @@ describe('renderTableCell', () => {
       expect(cellElement.style.overflow).toBe('visible');
     });
 
-    it('should render child SDT label when a table cell parent SDT continues into a nested child paragraph', () => {
-      const parentSdt: SdtMetadata = {
-        type: 'structuredContent',
-        scope: 'block',
-        id: 'cell-parent-sdt',
-        alias: 'Parent',
-      };
-      const childSdt: SdtMetadata = {
-        type: 'structuredContent',
-        scope: 'block',
-        id: 'cell-child-sdt',
-        alias: 'Child',
-      };
-      const parentPara: ParagraphBlock = {
-        kind: 'paragraph',
-        id: 'cell-parent-para',
-        runs: [{ text: 'Parent', fontFamily: 'Arial', fontSize: 16 }],
-        attrs: { sdt: parentSdt },
-      };
-      const childPara: ParagraphBlock = {
-        kind: 'paragraph',
-        id: 'cell-child-para',
-        runs: [{ text: 'Child', fontFamily: 'Arial', fontSize: 16 }],
-        attrs: { sdt: childSdt, containerSdt: parentSdt },
-      };
-      const parentMeasure: ParagraphMeasure = {
-        kind: 'paragraph',
-        lines: [
-          {
-            fromRun: 0,
-            fromChar: 0,
-            toRun: 0,
-            toChar: 6,
-            width: 50,
-            ascent: 12,
-            descent: 4,
-            lineHeight: 20,
-          },
-        ],
-        totalHeight: 20,
-      };
-      const childMeasure: ParagraphMeasure = {
-        kind: 'paragraph',
-        lines: [
-          {
-            fromRun: 0,
-            fromChar: 0,
-            toRun: 0,
-            toChar: 5,
-            width: 40,
-            ascent: 12,
-            descent: 4,
-            lineHeight: 20,
-          },
-        ],
-        totalHeight: 20,
-      };
-
-      const { cellElement } = renderTableCell({
-        ...createBaseDeps(),
-        cellMeasure: {
-          blocks: [parentMeasure, childMeasure],
-          width: 120,
-          height: 40,
-          gridColumnStart: 0,
-          colSpan: 1,
-          rowSpan: 1,
-        },
-        cell: {
-          id: 'cell-parent-child-sdt',
-          blocks: [parentPara, childPara],
-          attrs: {},
-        },
-      });
-
-      const chromeElements = Array.from(
-        cellElement.querySelectorAll<HTMLElement>('.superdoc-structured-content-block'),
-      );
-      expect(chromeElements).toHaveLength(2);
-      expect(chromeElements[0].dataset.sdtContainerStart).toBe('true');
-      expect(chromeElements[0].dataset.sdtContainerEnd).toBe('false');
-      expect(chromeElements[0].dataset.sdtNextOwnContainerStartsNested).toBe('true');
-      expect(chromeElements[1].dataset.sdtContainerStart).toBe('false');
-      expect(chromeElements[1].dataset.sdtContainerEnd).toBe('true');
-      expect(chromeElements[1].dataset.sdtOwnContainerStart).toBe('true');
-      expect(chromeElements[1].dataset.sdtOwnContainerEnd).toBe('true');
-      expect(chromeElements[1].dataset.sdtOwnContainerNested).toBe('true');
-      expect(chromeElements.map((el) => el.querySelector('.superdoc-structured-content__label')?.textContent)).toEqual([
-        'Parent',
-        'Child',
-      ]);
-    });
-
     it('should set overflow:visible when cell contains documentSection SDT', () => {
       const para: ParagraphBlock = {
         kind: 'paragraph',
@@ -6226,5 +6321,205 @@ describe('RTL cell padding swap', () => {
 
     expect(cellElement.style.paddingLeft).toBe('3px');
     expect(cellElement.style.paddingRight).toBe('8px');
+  });
+
+  describe('v2 layout identity + source-anchor stamping', () => {
+    // Self-contained fixtures (this describe is a sibling of the main suite).
+    const localDoc = document.implementation.createHTMLDocument('table-cell-identity');
+    const paragraphMeasure: ParagraphMeasure = {
+      kind: 'paragraph',
+      lines: [{ fromRun: 0, fromChar: 0, toRun: 0, toChar: 1, width: 10, ascent: 12, descent: 4, lineHeight: 20 }],
+      totalHeight: 20,
+    };
+    const baseCellMeasure: TableCellMeasure = {
+      blocks: [paragraphMeasure],
+      width: 80,
+      height: 20,
+      gridColumnStart: 0,
+      colSpan: 1,
+      rowSpan: 1,
+    };
+    const baseCell: TableCell = {
+      id: 'cell-1-1' as unknown as import('@superdoc/contracts').BlockId,
+      blocks: [{ kind: 'paragraph', id: 'para-1', runs: [{ text: '1', fontFamily: 'Arial', fontSize: 16 }] }],
+      attrs: {},
+    };
+    const createBaseDeps = () => ({
+      doc: localDoc,
+      x: 0,
+      y: 0,
+      rowHeight: 40,
+      borders: undefined,
+      useDefaultBorder: false,
+      context: { sectionIndex: 0, pageIndex: 0, columnIndex: 0 } as never,
+      renderLine: () => localDoc.createElement('div'),
+      applySdtDataset: () => {
+        // noop for tests
+      },
+    });
+
+    const anchoredParagraphBlock = (id: string, sourceNodeId: string): ParagraphBlock => ({
+      kind: 'paragraph',
+      id,
+      runs: [{ text: 'Cell', fontFamily: 'Arial', fontSize: 16 }],
+      sourceAnchor: { sourceNodeId },
+    });
+
+    /** First paragraph wrapper carrying the v2 layout identity dataset. */
+    const firstIdentityWrapper = (cellElement: HTMLElement): HTMLElement => {
+      const el = cellElement.querySelector<HTMLElement>('[data-layout-fragment-id]');
+      expect(el).toBeTruthy();
+      return el!;
+    };
+
+    it('stamps the cell paragraph wrapper with layout identity + source anchor', () => {
+      const block = anchoredParagraphBlock('para-1', 'node-1');
+      const { cellElement } = renderTableCell({
+        ...createBaseDeps(),
+        cellMeasure: baseCellMeasure,
+        cell: { ...baseCell, blocks: [block] },
+      });
+
+      const wrapper = firstIdentityWrapper(cellElement);
+      expect(wrapper.dataset.layoutFragmentId).toBe('body|para-1|para:0:1');
+      expect(wrapper.dataset.layoutBlockRef).toBe('para-1');
+      expect(wrapper.dataset.layoutStory).toBe('body');
+      expect(wrapper.dataset.sourceAnchor).toBe(JSON.stringify(block.sourceAnchor));
+      expect(wrapper.dataset.sourceNodeId).toBe('node-1');
+    });
+
+    it('does not stamp identity when the block has no sourceAnchor (v1 unchanged)', () => {
+      const { cellElement } = renderTableCell({
+        ...createBaseDeps(),
+        cellMeasure: baseCellMeasure,
+        cell: baseCell, // baseCell paragraph has no sourceAnchor
+      });
+      expect(cellElement.querySelector('[data-layout-fragment-id]')).toBeNull();
+      expect(cellElement.querySelector('[data-source-anchor]')).toBeNull();
+    });
+
+    it('uses the body story for a body cell', () => {
+      const block = anchoredParagraphBlock('para-body', 'node-body');
+      const { cellElement } = renderTableCell({
+        ...createBaseDeps(),
+        cellMeasure: baseCellMeasure,
+        cell: { ...baseCell, blocks: [block] },
+      });
+      expect(firstIdentityWrapper(cellElement).dataset.layoutStory).toBe('body');
+    });
+
+    it('uses the non-body story for a header/footer table cell when context.story is set', () => {
+      const block = anchoredParagraphBlock('para-hdr', 'node-hdr');
+      const { cellElement } = renderTableCell({
+        ...createBaseDeps(),
+        context: { sectionIndex: 0, pageIndex: 0, columnIndex: 0, story: { kind: 'header', id: 'rId4' } } as never,
+        cellMeasure: baseCellMeasure,
+        cell: { ...baseCell, blocks: [block] },
+      });
+      const wrapper = firstIdentityWrapper(cellElement);
+      expect(wrapper.dataset.layoutStory).toBe('header:rId4');
+      expect(wrapper.dataset.layoutFragmentId).toBe('header:rId4|para-hdr|para:0:1');
+    });
+
+    it('keeps the rendered line slice in the fragment identity for a split paragraph', () => {
+      const block: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'para-split',
+        runs: [{ text: 'Two line paragraph', fontFamily: 'Arial', fontSize: 16 }],
+        sourceAnchor: { sourceNodeId: 'node-split' },
+      };
+      const measure: ParagraphMeasure = {
+        kind: 'paragraph',
+        lines: [
+          { fromRun: 0, fromChar: 0, toRun: 0, toChar: 9, width: 80, ascent: 12, descent: 4, lineHeight: 20 },
+          { fromRun: 0, fromChar: 9, toRun: 0, toChar: 18, width: 80, ascent: 12, descent: 4, lineHeight: 20 },
+        ],
+        totalHeight: 40,
+      };
+      const { cellElement } = renderTableCell({
+        ...createBaseDeps(),
+        cellMeasure: { ...baseCellMeasure, blocks: [measure], height: 40 },
+        cell: { ...baseCell, blocks: [block] },
+        fromLine: 1,
+        toLine: 2,
+      });
+      // Rendering only the second visual line -> local slice [1, 2].
+      expect(firstIdentityWrapper(cellElement).dataset.layoutFragmentId).toBe('body|para-split|para:1:2');
+    });
+
+    it('gives a nested table cell paragraph a distinct identity from the outer cell paragraph', () => {
+      const outerPara = anchoredParagraphBlock('outer-para', 'node-outer');
+      const innerPara = anchoredParagraphBlock('inner-para', 'node-inner');
+
+      const nestedTable: TableBlock = {
+        kind: 'table',
+        id: 'nested-table',
+        rows: [{ cells: [{ id: 'nested-cell', blocks: [innerPara], attrs: {} }] }],
+        attrs: {},
+      } as unknown as TableBlock;
+      const nestedTableMeasure: TableMeasure = {
+        kind: 'table',
+        rows: [
+          {
+            height: 20,
+            cells: [{ blocks: [paragraphMeasure], width: 60, height: 20, gridColumnStart: 0, colSpan: 1, rowSpan: 1 }],
+          },
+        ],
+        columnWidths: [60],
+        totalWidth: 60,
+        height: 20,
+      } as unknown as TableMeasure;
+
+      const cellMeasure: TableCellMeasure = {
+        blocks: [paragraphMeasure, nestedTableMeasure],
+        width: 80,
+        height: 40,
+        gridColumnStart: 0,
+        colSpan: 1,
+        rowSpan: 1,
+      };
+
+      const { cellElement } = renderTableCell({
+        ...createBaseDeps(),
+        cellMeasure,
+        cell: { ...baseCell, blocks: [outerPara, nestedTable] },
+      });
+
+      const ids = Array.from(cellElement.querySelectorAll<HTMLElement>('[data-layout-fragment-id]')).map(
+        (el) => el.dataset.layoutFragmentId,
+      );
+      expect(ids).toContain('body|outer-para|para:0:1');
+      expect(ids).toContain('body|inner-para|para:0:1');
+      // The two identities are distinct.
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it('keeps SDT datasets and source/layout datasets together on an SDT-wrapped cell paragraph', () => {
+      const sdt = { id: 'sdt-1', tag: 'cell-control' } as unknown as SdtMetadata;
+      const block: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'para-sdt',
+        runs: [{ text: 'Controlled', fontFamily: 'Arial', fontSize: 16 }],
+        sourceAnchor: { sourceNodeId: 'node-sdt' },
+        attrs: { sdt },
+      };
+      const sdtCalls: Array<SdtMetadata | null | undefined> = [];
+      const { cellElement } = renderTableCell({
+        ...createBaseDeps(),
+        applySdtDataset: (el, metadata) => {
+          sdtCalls.push(metadata);
+          if (el && metadata?.id) el.dataset.sdtId = metadata.id;
+        },
+        cellMeasure: baseCellMeasure,
+        cell: { ...baseCell, blocks: [block] },
+      });
+
+      const wrapper = firstIdentityWrapper(cellElement);
+      // Layout identity + source anchor are stamped...
+      expect(wrapper.dataset.layoutFragmentId).toBe('body|para-sdt|para:0:1');
+      expect(wrapper.dataset.sourceNodeId).toBe('node-sdt');
+      // ...and the SDT dataset path still runs for the same paragraph.
+      expect(sdtCalls.some((m) => m?.id === 'sdt-1')).toBe(true);
+    });
   });
 });

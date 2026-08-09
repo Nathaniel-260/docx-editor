@@ -5,6 +5,7 @@ import type {
   TextAddress,
   TrackedChangeAddress,
 } from './address.js';
+import type { BlockNodeAddress } from './base.js';
 import type { BookmarkAddress } from '../bookmarks/bookmarks.types.js';
 import type { StoryLocator } from './story.types.js';
 export type ReceiptInsert = TrackedChangeAddress;
@@ -78,7 +79,7 @@ export type ReceiptFailure = {
 // Review warnings
 //
 // AIDEV-NOTE: `ReviewWarning` is the single shared warning carrier
-// for review features (comments and tracked changes). The shared
+// for the v2 review features (comments and tracked changes). The shared
 // foundation requires one carrier so comments export and
 // tracked-change export / degradation policy do not invent
 // parallel surfaces. Spec language `warning` maps to `severity: 'warning'`
@@ -90,7 +91,8 @@ export type ReceiptFailure = {
 //   - source had malformed optional sidecar data that was ignored while
 //     preserving core data
 //   - generated fixture uses direct OOXML rather than Word-authored provenance
-//   - Word cannot visually represent a richer headless structural intent exactly
+//   - Word cannot visually represent a richer v2 headless structural intent
+//     exactly
 //
 // Forbidden semantic loss (e.g. dropping a persisted comment, losing thread
 // topology, deleting an anchor that the cross-feature rules say must survive)
@@ -130,25 +132,82 @@ export type ReviewWarning = {
  * operation. Callers maintain their own held-ref state by applying these
  * deltas:
  *
- * - Any caller-held text address whose `range.start` is `>= atChar` in the
- *   same `story` gets `range.start += delta` (and similarly `range.end`).
- * - Any caller-held text address whose range straddles `atChar` is
- *   *invalidated* — the kernel already lists those in `invalidatedRefs`.
+ * `atChar` is story-absolute. When `blockId` and `atCharInBlock` are both
+ * present, they identify the same shift in block-local visible coordinates.
+ * Consumers that store block-local ranges must fail closed when that pair is
+ * absent rather than interpreting `atChar` as a block offset.
  *
  * Negative `delta` describes a deletion. Positive `delta` describes an
  * insertion (e.g. when a `<w:del>` is rejected and its content is restored
  * to the visible flow).
  *
- * One entry per story. Cross-story shifts are reported as separate entries.
+ * One entry is emitted per story. Cross-story shifts are reported separately.
  */
 export interface TextRangeShift {
   /** The story whose text was shifted. */
   story: StoryLocator;
   /** Character offset in the story's flattened text where the shift begins. */
   atChar: number;
+  /** Block containing the shift, when the producer can prove one. */
+  blockId?: string;
+  /** Visible character offset within `blockId`, paired with `blockId`. */
+  atCharInBlock?: number;
   /** Net change in characters. Negative for deletions, positive for insertions. */
   delta: number;
 }
+// ---------------------------------------------------------------------------
+// Created-content effects
+//
+// `resolution.target` is the resolved mutation target / insertion point. It is
+// NOT the newly created visible content — for a collapsed insert it stays a
+// collapsed point at the insertion site. Callers that need the span of content
+// a mutation CREATED (e.g. to anchor a citation / comment to inserted text)
+// read it from `effects` instead. This keeps `resolution.target` semantics
+// stable across insert / replace / delete / format while still exposing the
+// post-mutation created spans.
+// ---------------------------------------------------------------------------
+
+/** A visible text span created by a mutation (e.g. `doc.insert`). */
+export interface TextMutationEffect {
+  kind: 'insertedText';
+  /**
+   * Block-absolute address of the created span. `range.start` is the base
+   * offset within the target block (nonzero when text was appended into a
+   * non-empty paragraph), so callers can shift phrase-relative offsets.
+   */
+  target: TextAddress;
+  /** Selection target covering the created span, for selection-consuming APIs. */
+  selectionTarget: SelectionTarget;
+  /** The visible text that was created. */
+  text: string;
+}
+
+/** A block created by a structural mutation (e.g. paragraph/heading insert). */
+export interface BlockMutationEffect {
+  kind: 'insertedBlock';
+  /** Address of the created block. */
+  target: BlockNodeAddress;
+  /**
+   * The created block's visible text span, when the inserted text is known and
+   * simple enough to address. Omitted for rich content where an exact text
+   * span is not currently available.
+   */
+  insertedText?: TextMutationEffect;
+}
+
+/**
+ * Post-mutation created-content lane. Additive and operation-agnostic: insert
+ * populates `insertedText` (and `insertedBlocks` for structural inserts);
+ * future mutations can populate the same lane without changing
+ * `resolution.target`.
+ */
+export interface ReceiptEffects {
+  /** Visible text spans created by the mutation, in document order. */
+  insertedText?: TextMutationEffect[];
+  /** Blocks created by the mutation, in document order. */
+  insertedBlocks?: BlockMutationEffect[];
+}
+
 export type ReceiptSuccess = {
   success: true;
   /**
@@ -177,8 +236,10 @@ export type ReceiptSuccess = {
    */
   textRangeShifts?: TextRangeShift[];
   /**
-   * Transaction id of the successful commit. Optional and additive — engines
-   * that lack a per-tx identity omit it.
+   * Transaction id of the successful commit. Optional and
+   * additive — engines that lack a per-tx identity omit it. v2 populates
+   * this for every successful mutation so callers can wire the receipt to
+   * their own history bookkeeping (undo / redo correlation, audit logs).
    */
   txId?: string;
   /**
@@ -188,6 +249,12 @@ export type ReceiptSuccess = {
    * The first real emitter is comment export.
    */
   warnings?: ReviewWarning[];
+  /**
+   * Post-mutation created-content spans (inserted visible text / blocks).
+   * Distinct from `resolution.target`, which is the resolved mutation target /
+   * insertion point. See {@link ReceiptEffects}.
+   */
+  effects?: ReceiptEffects;
 };
 export type ReceiptFailureResult = {
   success: false;

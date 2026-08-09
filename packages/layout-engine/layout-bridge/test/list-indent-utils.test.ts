@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import type { ParagraphBlock } from '@superdoc/contracts';
 import {
   isListItem,
@@ -110,7 +110,7 @@ describe('list-indent-utils', () => {
       expect(isListItem(0, block)).toBe(true);
     });
 
-    it('should return true when hanging indent pattern is detected', () => {
+    it('should not infer a list from paragraph indentation alone', () => {
       const block: ParagraphBlock = {
         kind: 'paragraph',
         id: '1-paragraph',
@@ -122,7 +122,7 @@ describe('list-indent-utils', () => {
           },
         },
       };
-      expect(isListItem(0, block)).toBe(true);
+      expect(isListItem(0, block)).toBe(false);
     });
 
     it('should return false when only left indent without hanging', () => {

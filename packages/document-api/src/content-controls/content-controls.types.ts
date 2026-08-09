@@ -5,8 +5,9 @@
  * typed-control operations. All downstream types reference these definitions.
  */
 
-import type { NodeKind } from '../types/base.js';
+import type { BlockNodeAddress, NodeKind } from '../types/base.js';
 import type { SelectionTarget } from '../types/address.js';
+import type { SDFragment } from '../types/fragment.js';
 import type { ReceiptFailure, ReceiptInsert } from '../types/receipt.js';
 
 // ---------------------------------------------------------------------------
@@ -184,6 +185,21 @@ export interface ContentControlTarget {
   nodeId: string;
 }
 
+export type ContentControlMoveDestination =
+  | ContentControlTarget
+  | { kind: 'documentStart' }
+  | { kind: 'documentEnd' }
+  | { kind: 'before'; target: ContentControlTarget }
+  | { kind: 'after'; target: ContentControlTarget }
+  /**
+   * Drop the control at an arbitrary caret inside a paragraph (SD-3779). `target`
+   * addresses the destination paragraph and `offset` is a text-character offset
+   * within it (0 = paragraph start). Mirrors `ImageCreateLocation`'s `inParagraph`
+   * variant so drag-and-drop can land a content control anywhere in the body, not
+   * just relative to another SDT. Direct-mode only.
+   */
+  | { kind: 'inParagraph'; target: BlockNodeAddress; offset?: number };
+
 /**
  * Canonical content control info returned by all read/list operations.
  * Replaces the old `SdtNodeInfo`.
@@ -198,7 +214,10 @@ export interface ContentControlInfo {
   binding?: ContentControlBinding;
   raw?: Record<string, unknown>;
   target: ContentControlTarget;
+  selectionTarget?: SelectionTarget | null;
   text?: string;
+  /** Authoritative structural emptiness when the adapter can determine it. */
+  isEmpty?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +274,19 @@ export interface CreateContentControlInput {
   alias?: string;
   lockMode?: LockMode;
   content?: string;
+  /**
+   * Structured block preset authored from HTML. Supported only for block
+   * content controls. Mutually exclusive with `content` and `json`.
+   */
+  html?: string;
+  /**
+   * Structured block preset authored from SDFragment-compatible JSON. Legacy
+   * type-discriminated fragment shapes are validated at runtime too.
+   *
+   * Supported only for block content controls. Mutually exclusive with
+   * `content` and `html`.
+   */
+  json?: SDFragment | Record<string, unknown> | Array<Record<string, unknown>>;
 }
 
 export interface ContentControlsListQuery extends ContentControlsPaginationOptions {
@@ -310,7 +342,7 @@ export interface ContentControlsCopyInput {
 
 export interface ContentControlsMoveInput {
   target: ContentControlTarget;
-  destination: ContentControlTarget;
+  destination: ContentControlMoveDestination;
 }
 
 export interface ContentControlsPatchInput {

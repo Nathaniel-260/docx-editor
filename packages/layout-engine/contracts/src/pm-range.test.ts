@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { computeFragmentPmRange, computeLinePmRange } from './index.js';
 import type { Line, ParagraphBlock } from './index.js';
 
@@ -266,5 +266,37 @@ describe('pm-range', () => {
       expect(result.pmStart).toBe(5);
       expect(result.pmEnd).toBe(6); // atomic runs have size 1
     });
+  });
+
+  it('does not change PM ranges or make text atomic when an inline box is present', () => {
+    const plain: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'inline-box-pm-range',
+      runs: [{ text: 'Citation', fontFamily: 'Arial', fontSize: 14, pmStart: 10, pmEnd: 18 }],
+    };
+    const boxed: ParagraphBlock = {
+      ...plain,
+      inlineBoxes: [
+        {
+          id: 'citation',
+          from: 1,
+          to: 7,
+          layout: {
+            paddingInlineStart: 4,
+            paddingInlineEnd: 4,
+            paddingBlockStart: 1,
+            paddingBlockEnd: 1,
+            gapBefore: 1,
+            gapAfter: 1,
+            borderWidth: 1,
+          },
+          appearance: { backgroundColor: '#eef2ff' },
+        },
+      ],
+    };
+    const line = makeLine({ fromRun: 0, fromChar: 1, toRun: 0, toChar: 7 });
+
+    expect(computeLinePmRange(boxed, line)).toEqual(computeLinePmRange(plain, line));
+    expect(computeLinePmRange(boxed, line)).toEqual({ pmStart: 11, pmEnd: 17 });
   });
 });

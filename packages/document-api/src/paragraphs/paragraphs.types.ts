@@ -6,7 +6,8 @@
  */
 
 import type { BlockNodeAddress } from '../types/base.js';
-import type { ReceiptFailure } from '../types/receipt.js';
+import type { ReceiptFailure, ReceiptInsert } from '../types/receipt.js';
+import type { SDRunProps } from '../types/sd-props.js';
 
 // ---------------------------------------------------------------------------
 // Target
@@ -28,6 +29,8 @@ export interface ParagraphMutationSuccess {
   success: true;
   target: ParagraphTarget;
   resolution: MutationResolution;
+  /** Logical tracked-change entities created or revised by this mutation. */
+  trackedChangeRefs?: ReceiptInsert[];
 }
 
 export interface ParagraphMutationFailure {
@@ -45,7 +48,9 @@ export type ParagraphMutationResult = ParagraphMutationSuccess | ParagraphMutati
 export const PARAGRAPH_ALIGNMENTS = ['left', 'center', 'right', 'justify'] as const;
 export type ParagraphAlignment = (typeof PARAGRAPH_ALIGNMENTS)[number];
 
-export const TAB_STOP_ALIGNMENTS = ['left', 'center', 'right', 'decimal', 'bar'] as const;
+// `clear` is the OOXML `w:tab w:val="clear"` entry: it persists a tab stop that
+// suppresses an inherited (style/default) tab stop at the same position.
+export const TAB_STOP_ALIGNMENTS = ['left', 'center', 'right', 'decimal', 'bar', 'clear'] as const;
 export type TabStopAlignment = (typeof TAB_STOP_ALIGNMENTS)[number];
 
 export const TAB_STOP_LEADERS = ['none', 'dot', 'hyphen', 'underscore', 'heavy', 'middleDot'] as const;
@@ -64,8 +69,20 @@ export type LineRule = (typeof LINE_RULES)[number];
 // Input types
 // ---------------------------------------------------------------------------
 
-/** paragraphs.setStyle */
-export interface ParagraphsSetStyleInput {
+export type ParagraphSemanticStyleRole =
+  | { kind: 'defaultParagraph' }
+  | { kind: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 }
+  | { kind: 'title' }
+  | { kind: 'subtitle' };
+
+/** paragraphs.setStyle — concrete catalog identity or semantic intent. */
+export type ParagraphsSetStyleInput = { target: ParagraphTarget } & (
+  | { styleId: string; role?: never }
+  | { styleId?: never; role: ParagraphSemanticStyleRole }
+);
+
+/** paragraphs.setStyleRef — changes only the pStyle reference, without clearing run formatting */
+export interface ParagraphsSetStyleRefInput {
   target: ParagraphTarget;
   styleId: string;
 }
@@ -184,6 +201,17 @@ export interface ParagraphsClearBorderInput {
   side: ClearBorderSide;
 }
 
+/** paragraphs.setMarkRunProps */
+export interface ParagraphsSetMarkRunPropsInput {
+  target: ParagraphTarget;
+  /**
+   * Paragraph-mark run properties (`w:pPr/w:rPr`). Stored through the same
+   * internal shape used by structured paragraph materialization, so values
+   * round-trip through `paragraph.props.markRunProps`.
+   */
+  markRunProps: SDRunProps;
+}
+
 /** paragraphs.setShading */
 export interface ParagraphsSetShadingInput {
   target: ParagraphTarget;
@@ -237,8 +265,8 @@ export interface ParagraphsClearDirectionInput {
 export interface ParagraphsSetNumberingInput {
   target: ParagraphTarget;
   /**
-   * Numbering definition instance id (`w:numId`), 1 or greater. Must reference an
-   * existing definition. numId 0 is the OOXML no-numbering sentinel and is rejected.
+   * Positive numbering instance id (`w:numId`). numId 0 is the OOXML
+   * no-numbering sentinel and is rejected.
    */
   numId: number;
   /** Numbering level (`w:ilvl`), 0-8. Defaults to 0 when omitted. */

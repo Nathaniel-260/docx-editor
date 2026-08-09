@@ -1,5 +1,6 @@
 import type {
   BorderSpec,
+  ColumnBreakBlock,
   DrawingBlock,
   FieldAnnotationRun,
   FlowBlock,
@@ -8,15 +9,32 @@ import type {
   Measure,
   ParagraphBlock,
   ParagraphMeasure,
+  PageBreakBlock,
   Run,
+  SectionBreakBlock,
   TableBlock,
   TableCell,
 } from '@superdoc/contracts';
+import { getRenderedTableBorderWidthPx } from '@superdoc/contracts';
 import { DEFAULT_FONT_MEASURE_CONTEXT, type FontMeasureContext } from '@superdoc/font-system';
 import type { AutoFitRowInput } from './autofit-columns.js';
 import type { WorkingTableCellInput, WorkingTableGridInput } from './autofit-normalize.js';
+import {
+  codePointAt,
+  hasCjkBreakOpportunity,
+  isCjkBreakOpportunityChar,
+  nextCodePointBoundary,
+  resolveKinsokuBoundary,
+} from './cjk-line-break.js';
 import type { FixedLayoutResult } from './fixed-table-columns.js';
 import { getMeasuredTextWidth } from './measurementCache.js';
+import {
+  ensureSurfaceMeasurementCanvas,
+  getSurfaceMeasurementRuntime,
+  getSurfaceMeasurementRuntimeForCanvas,
+  surfaceMeasurementCheckpointIfDue,
+} from './measurement-runtime-context.js';
+import { serializeMeasurementInput } from './measurement-input-key.js';
 
 const DEFAULT_CELL_PADDING = { top: 0, right: 4, bottom: 0, left: 4 };
 const DEFAULT_FIELD_ANNOTATION_FONT_SIZE = 16;
@@ -68,12 +86,6 @@ export type TableCellContentMetrics = {
    * This is the no-wrap authored line width, plus horizontal cell chrome.
    */
   maxWidthPx: number;
-  /**
-   * Horizontal cell chrome (padding + cell-border widths) baked into the outer
-   * widths, in pixels. Lets the AutoFit solver recover the text-only demand for
-   * the content-size band floor. (SD-3308)
-   */
-  horizontalInsetsPx?: number;
 };
 
 /**
@@ -107,11 +119,22 @@ export type TableCellContentMetricsOptions = {
    * a layout epoch or similar version, callers can fold it into the cache key.
    */
   layoutEpoch?: number | string;
+  /** Ignore object IDs in geometry-only keys for explicitly gated large passes. */
+  identityNeutralCache?: boolean;
 };
 
 type NormalizedTableCellContentMetricsOptions = TableCellContentMetricsOptions & {
   fontContext: FontMeasureContext;
 };
+
+type TableCellContentBlock =
+  | ParagraphBlock
+  | ImageBlock
+  | DrawingBlock
+  | TableBlock
+  | SectionBreakBlock
+  | PageBreakBlock
+  | ColumnBreakBlock;
 
 /**
  * Cacheable table-level AutoFit result skeleton.
@@ -143,6 +166,7 @@ export type AutoFitTableResultKeyOptions = {
   layoutEpoch?: number | string;
   workingInput: WorkingTableGridInput;
   fixedLayout: FixedLayoutResult;
+  identityNeutralCache?: boolean;
 };
 
 /**
@@ -200,6 +224,7 @@ type TokenFragment = {
   text: string;
   font: string;
   letterSpacing: number;
+  horizontalScale: number;
 };
 
 /**
@@ -289,14 +314,17 @@ export function buildTableCellContentMetricsCacheKey(
   options: Omit<TableCellContentMetricsOptions, 'measureBlock'>,
 ): string {
   const fontContext = options.fontContext ?? DEFAULT_FONT_MEASURE_CONTEXT;
-  return stableSerialize({
-    maxWidth: Math.max(1, Math.round(options.maxWidth)),
-    fontSignature: fontContext.fontSignature ?? '',
-    layoutEpoch: options.layoutEpoch ?? null,
-    attrs: cell.attrs ?? null,
-    paragraph: cell.paragraph ?? null,
-    blocks: cell.blocks ?? null,
-  });
+  return serializeMeasurementInput(
+    {
+      maxWidth: Math.max(1, Math.round(options.maxWidth)),
+      fontSignature: fontContext.fontSignature ?? '',
+      layoutEpoch: options.layoutEpoch ?? null,
+      attrs: cell.attrs ?? null,
+      paragraph: cell.paragraph ?? null,
+      blocks: cell.blocks ?? null,
+    },
+    { omitObjectIds: options.identityNeutralCache === true },
+  );
 }
 
 /**
@@ -308,7 +336,7 @@ export function buildTableCellContentMetricsCacheKey(
  */
 export function buildAutoFitTableResultCacheKey(table: TableBlock, options: AutoFitTableResultKeyOptions): string {
   return stableSerialize({
-    id: table.id,
+    ...(options.identityNeutralCache === true ? {} : { id: table.id }),
     attrs: table.attrs ?? null,
     columnWidths: table.columnWidths ?? null,
     rowCount: table.rows.length,
@@ -321,6 +349,7 @@ export function buildAutoFitTableResultCacheKey(table: TableBlock, options: Auto
       gridColumnCount: options.workingInput.gridColumnCount,
       preserveAuthoredGrid: options.workingInput.preserveAuthoredGrid === true,
       preserveAutoGrid: options.workingInput.preserveAutoGrid === true,
+      stableAutoGrid: options.workingInput.stableAutoGrid === true,
       preserveExplicitAutoGrid: options.workingInput.preserveExplicitAutoGrid === true,
       autoGridWidthBudget: options.workingInput.autoGridWidthBudget ?? null,
       preferredTableWidth: options.workingInput.preferredTableWidth ?? null,
@@ -375,10 +404,21 @@ export async function measureTableCellContentMetrics(
   const fontContext = options.fontContext ?? DEFAULT_FONT_MEASURE_CONTEXT;
   const normalizedOptions: NormalizedTableCellContentMetricsOptions = { ...options, fontContext };
   const cacheKey = buildTableCellContentMetricsCacheKey(cell, normalizedOptions);
+  return measureTableCellContentMetricsWithKey(cell, normalizedOptions, cacheKey);
+}
+
+async function measureTableCellContentMetricsWithKey(
+  cell: TableCell,
+  options: NormalizedTableCellContentMetricsOptions,
+  cacheKey: string,
+  observeCacheOutcome?: (outcome: 'hit' | 'miss') => void,
+): Promise<TableCellContentMetrics> {
   const cached = tableCellMetricsCache.get(cacheKey);
   if (cached) {
+    observeCacheOutcome?.('hit');
     return cached;
   }
+  observeCacheOutcome?.('miss');
 
   const horizontalInsets = getHorizontalCellInsets(cell);
   const contentBlocks = cell.blocks ?? (cell.paragraph ? [cell.paragraph] : []);
@@ -387,7 +427,6 @@ export async function measureTableCellContentMetrics(
     const emptyMetrics = {
       minWidthPx: horizontalInsets,
       maxWidthPx: horizontalInsets,
-      horizontalInsetsPx: horizontalInsets,
     };
     tableCellMetricsCache.set(cacheKey, emptyMetrics);
     return emptyMetrics;
@@ -397,7 +436,7 @@ export async function measureTableCellContentMetrics(
   let maxContentWidthPx = 0;
 
   for (const block of contentBlocks) {
-    const metrics = await measureIntrinsicBlockWidthMetrics(block, normalizedOptions);
+    const metrics = await measureIntrinsicBlockWidthMetrics(block, options);
     minContentWidthPx = Math.max(minContentWidthPx, metrics.minWidthPx);
     maxContentWidthPx = Math.max(maxContentWidthPx, metrics.maxWidthPx);
   }
@@ -405,7 +444,6 @@ export async function measureTableCellContentMetrics(
   const result = {
     minWidthPx: minContentWidthPx + horizontalInsets,
     maxWidthPx: maxContentWidthPx + horizontalInsets,
-    horizontalInsetsPx: horizontalInsets,
   };
 
   tableCellMetricsCache.set(cacheKey, result);
@@ -435,6 +473,8 @@ export async function measureTableAutoFitContentMetrics(
   fixedLayout: FixedLayoutResult,
   measureBlock: AutoFitMeasureBlock,
   fontContext: FontMeasureContext = DEFAULT_FONT_MEASURE_CONTEXT,
+  observeCellMetricCacheOutcome?: (outcome: 'hit' | 'miss') => void,
+  identityNeutralCache = false,
 ): Promise<TableAutoFitContentMetricsResult> {
   const tableMeasurementBasis = Math.max(1, fixedLayout.totalWidth);
   const cellMetricKeys: string[] = [];
@@ -455,18 +495,24 @@ export async function measureTableAutoFitContentMetrics(
             workingInput.gridColumnCount,
           );
 
-          cellMetricKeys.push(
-            buildTableCellContentMetricsCacheKey(cell, {
-              maxWidth: measurementMaxWidth,
-              fontContext,
-            }),
-          );
-
-          const metrics = await measureTableCellContentMetrics(cell, {
+          const cellMetricKey = buildTableCellContentMetricsCacheKey(cell, {
             maxWidth: measurementMaxWidth,
-            measureBlock,
             fontContext,
+            identityNeutralCache,
           });
+          cellMetricKeys.push(cellMetricKey);
+
+          const metrics = await measureTableCellContentMetricsWithKey(
+            cell,
+            {
+              maxWidth: measurementMaxWidth,
+              measureBlock,
+              fontContext,
+              identityNeutralCache,
+            },
+            cellMetricKey,
+            observeCellMetricCacheOutcome,
+          );
 
           return {
             cellIndex,
@@ -474,7 +520,6 @@ export async function measureTableAutoFitContentMetrics(
             preferredWidth: normalizedCell?.preferredWidth,
             minContentWidth: metrics.minWidthPx,
             maxContentWidth: metrics.maxWidthPx,
-            horizontalInsets: metrics.horizontalInsetsPx,
           };
         }),
       );
@@ -497,7 +542,6 @@ export async function measureTableAutoFitContentMetrics(
           preferredWidth: cellMetrics.preferredWidth,
           minContentWidth: cellMetrics.minContentWidth,
           maxContentWidth: cellMetrics.maxContentWidth,
-          horizontalInsets: cellMetrics.horizontalInsets,
         })),
         skippedAfter: normalizedRow.skippedAfter ?? [],
       };
@@ -510,7 +554,7 @@ export async function measureTableAutoFitContentMetrics(
  * Resolves intrinsic width metrics for a single flow block inside a table cell.
  */
 async function measureIntrinsicBlockWidthMetrics(
-  block: ParagraphBlock | ImageBlock | DrawingBlock | TableBlock,
+  block: TableCellContentBlock,
   options: NormalizedTableCellContentMetricsOptions,
 ): Promise<TableCellContentMetrics> {
   if (block.kind === 'paragraph') {
@@ -521,11 +565,24 @@ async function measureIntrinsicBlockWidthMetrics(
     return measureNestedTableIntrinsicWidthMetrics(block, options);
   }
 
+  if (isControlBlock(block)) {
+    return {
+      minWidthPx: 0,
+      maxWidthPx: 0,
+    };
+  }
+
   const intrinsicWidth = getIntrinsicAtomicBlockWidth(block);
   return {
     minWidthPx: intrinsicWidth,
     maxWidthPx: intrinsicWidth,
   };
+}
+
+function isControlBlock(
+  block: TableCellContentBlock,
+): block is Extract<TableCellContentBlock, { kind: 'sectionBreak' | 'pageBreak' | 'columnBreak' }> {
+  return block.kind === 'sectionBreak' || block.kind === 'pageBreak' || block.kind === 'columnBreak';
 }
 
 /**
@@ -546,7 +603,7 @@ async function measureParagraphIntrinsicWidthMetrics(
   })) as ParagraphMeasure;
 
   const maxLineWidth = maxMeasure.lines.reduce((widest, line) => Math.max(widest, line.width), 0);
-  const minTokenWidth = measureParagraphMinTokenWidth(paragraph, fontContext);
+  const minTokenWidth = await measureParagraphMinTokenWidth(paragraph, fontContext);
 
   return {
     minWidthPx: minTokenWidth,
@@ -583,78 +640,120 @@ async function measureNestedTableIntrinsicWidthMetrics(
 /**
  * Computes the widest unbreakable token across all authored paragraph lines.
  */
-function measureParagraphMinTokenWidth(paragraph: ParagraphBlock, fontContext: FontMeasureContext): number {
+async function measureParagraphMinTokenWidth(
+  paragraph: ParagraphBlock,
+  fontContext: FontMeasureContext,
+): Promise<number> {
   let widestToken = 0;
   let currentTokenFragments: TokenFragment[] = [];
+  let currentTokenStart: number | undefined;
+  let currentTokenEnd: number | undefined;
+  let paragraphOffset = 0;
 
-  const flushToken = (): void => {
-    widestToken = Math.max(widestToken, measureTokenFragments(currentTokenFragments));
+  const flushToken = async (): Promise<void> => {
+    const checkpoint = surfaceMeasurementCheckpointIfDue(fontContext);
+    if (checkpoint) await checkpoint;
+    const inlineAdvance =
+      currentTokenStart === undefined || currentTokenEnd === undefined
+        ? 0
+        : inlineBoxAdvanceForRange(paragraph, currentTokenStart, currentTokenEnd);
+    widestToken = Math.max(
+      widestToken,
+      (await measureTokenFragments(currentTokenFragments, fontContext)) + inlineAdvance,
+    );
     currentTokenFragments = [];
+    currentTokenStart = undefined;
+    currentTokenEnd = undefined;
   };
 
   for (const run of paragraph.runs) {
     if (isExplicitLineBreakRun(run)) {
-      flushToken();
+      await flushToken();
+      paragraphOffset += 1;
       continue;
     }
 
     if (isTextLikeRun(run)) {
-      accumulateTextRunMinTokenWidth(
+      if ('vanish' in run && run.vanish === true) {
+        paragraphOffset += run.text.length;
+        continue;
+      }
+
+      await accumulateTextRunMinTokenWidth(
         run,
-        (fragment) => {
+        (fragment, from, to) => {
           currentTokenFragments.push(fragment);
+          currentTokenStart ??= paragraphOffset + from;
+          currentTokenEnd = paragraphOffset + to;
         },
         flushToken,
         fontContext,
       );
+      paragraphOffset += run.text.length;
       continue;
     }
 
-    flushToken();
+    await flushToken();
 
+    const inlineAdvance = inlineBoxAdvanceForRange(paragraph, paragraphOffset, paragraphOffset + 1);
     if (run.kind === 'image') {
-      widestToken = Math.max(widestToken, run.width ?? 0);
+      widestToken = Math.max(widestToken, (run.width ?? 0) + inlineAdvance);
+      paragraphOffset += 1;
       continue;
     }
 
     if (run.kind === 'fieldAnnotation') {
-      widestToken = Math.max(widestToken, measureFieldAnnotationWidth(run, fontContext));
+      widestToken = Math.max(widestToken, measureFieldAnnotationWidth(run, fontContext) + inlineAdvance);
+      paragraphOffset += 1;
       continue;
     }
 
     if (run.kind === 'math') {
-      widestToken = Math.max(widestToken, (run as MathRun).width ?? 0);
+      widestToken = Math.max(widestToken, ((run as MathRun).width ?? 0) + inlineAdvance);
     }
+    paragraphOffset += 1;
   }
 
-  flushToken();
-
+  await flushToken();
   return widestToken;
 }
+
+const inlineBoxAdvanceForRange = (paragraph: ParagraphBlock, from: number, to: number): number =>
+  (paragraph.inlineBoxes ?? []).reduce((advance, box) => {
+    if (box.from >= to || box.to <= from) return advance;
+    return (
+      advance +
+      box.layout.paddingInlineStart +
+      box.layout.paddingInlineEnd +
+      box.layout.borderWidth * 2 +
+      (box.from >= from ? box.layout.gapBefore : 0) +
+      (box.to <= to ? box.layout.gapAfter : 0)
+    );
+  }, 0);
 
 /**
  * Measures the widest unbreakable token contributed by a text-bearing run.
  */
-function accumulateTextRunMinTokenWidth(
+async function accumulateTextRunMinTokenWidth(
   run: Extract<Run, { text: string }>,
-  appendTokenPiece: (fragment: TokenFragment) => void,
-  flushToken: () => void,
+  appendTokenPiece: (fragment: TokenFragment, from: number, to: number) => void,
+  flushToken: () => Promise<void>,
   fontContext: FontMeasureContext,
-): void {
+): Promise<void> {
   const font = buildFontString(run, fontContext);
   let cursor = 0;
 
   for (const boundary of run.text.matchAll(TOKEN_BOUNDARY_PATTERN)) {
     const boundaryStart = boundary.index ?? cursor;
     if (boundaryStart > cursor) {
-      appendTokenPiece(buildTextRunTokenFragment(run, cursor, boundaryStart, font));
+      appendTokenPiece(buildTextRunTokenFragment(run, cursor, boundaryStart, font), cursor, boundaryStart);
     }
-    flushToken();
+    await flushToken();
     cursor = boundaryStart + boundary[0].length;
   }
 
   if (cursor < run.text.length) {
-    appendTokenPiece(buildTextRunTokenFragment(run, cursor, run.text.length, font));
+    appendTokenPiece(buildTextRunTokenFragment(run, cursor, run.text.length, font), cursor, run.text.length);
   }
 }
 
@@ -669,10 +768,11 @@ function buildTextRunTokenFragment(
     text: applyTextTransform(token, run, start),
     font,
     letterSpacing: getLetterSpacing(run),
+    horizontalScale: getHorizontalScale(run),
   };
 }
 
-function measureTokenFragments(fragments: TokenFragment[]): number {
+async function measureTokenFragments(fragments: TokenFragment[], fontContext: FontMeasureContext): Promise<number> {
   if (fragments.length === 0) {
     return 0;
   }
@@ -681,7 +781,12 @@ function measureTokenFragments(fragments: TokenFragment[]): number {
 
   for (const fragment of fragments) {
     const previous = mergedFragments[mergedFragments.length - 1];
-    if (previous && previous.font === fragment.font && previous.letterSpacing === fragment.letterSpacing) {
+    if (
+      previous &&
+      previous.font === fragment.font &&
+      previous.letterSpacing === fragment.letterSpacing &&
+      previous.horizontalScale === fragment.horizontalScale
+    ) {
       previous.text += fragment.text;
       continue;
     }
@@ -689,12 +794,79 @@ function measureTokenFragments(fragments: TokenFragment[]): number {
     mergedFragments.push({ ...fragment });
   }
 
-  const ctx = getCanvasContext();
-  let totalWidth = 0;
-  for (const fragment of mergedFragments) {
-    totalWidth += getMeasuredTextWidth(fragment.text, fragment.font, fragment.letterSpacing, ctx);
+  const ctx = getCanvasContext(fontContext);
+  const containsCjk = mergedFragments.some(
+    (fragment) => hasCjkBreakOpportunity(fragment.text) || isCjkBreakOpportunityChar(fragment.text),
+  );
+  if (!containsCjk) {
+    let width = 0;
+    for (const fragment of mergedFragments) {
+      width +=
+        measureCachedTextWidth(fragment.text, fragment.font, fragment.letterSpacing, ctx) * fragment.horizontalScale;
+    }
+    return width;
   }
-  return totalWidth;
+
+  const text = mergedFragments.map((fragment) => fragment.text).join('');
+  let widestBreakUnit = 0;
+  let rangeStart = 0;
+  let fragmentIndex = 0;
+  let fragmentStart = 0;
+
+  while (rangeStart < text.length) {
+    const checkpoint = surfaceMeasurementCheckpointIfDue(fontContext);
+    if (checkpoint) await checkpoint;
+    let greedyEnd = nextCodePointBoundary(text, rangeStart);
+    if (!isCjkBreakOpportunityChar(codePointAt(text, rangeStart))) {
+      while (greedyEnd < text.length && !isCjkBreakOpportunityChar(codePointAt(text, greedyEnd))) {
+        greedyEnd = nextCodePointBoundary(text, greedyEnd);
+      }
+    }
+
+    const rangeEnd = resolveKinsokuBoundary(text, rangeStart, greedyEnd);
+    while (
+      fragmentIndex < mergedFragments.length &&
+      fragmentStart + mergedFragments[fragmentIndex].text.length <= rangeStart
+    ) {
+      fragmentStart += mergedFragments[fragmentIndex].text.length;
+      fragmentIndex += 1;
+    }
+    widestBreakUnit = Math.max(
+      widestBreakUnit,
+      measureTokenFragmentRange(mergedFragments, rangeStart, rangeEnd, ctx, fragmentIndex, fragmentStart),
+    );
+    rangeStart = rangeEnd;
+  }
+
+  return widestBreakUnit;
+}
+
+function measureTokenFragmentRange(
+  fragments: TokenFragment[],
+  rangeStart: number,
+  rangeEnd: number,
+  ctx: CanvasRenderingContext2D,
+  initialFragmentIndex = 0,
+  initialFragmentStart = 0,
+): number {
+  let width = 0;
+  let fragmentIndex = initialFragmentIndex;
+  let fragmentStart = initialFragmentStart;
+
+  while (fragmentIndex < fragments.length && fragmentStart < rangeEnd) {
+    const fragment = fragments[fragmentIndex];
+    const fragmentEnd = fragmentStart + fragment.text.length;
+    const overlapStart = Math.max(rangeStart, fragmentStart);
+    const overlapEnd = Math.min(rangeEnd, fragmentEnd);
+    if (overlapEnd > overlapStart) {
+      const text = fragment.text.slice(overlapStart - fragmentStart, overlapEnd - fragmentStart);
+      width += measureCachedTextWidth(text, fragment.font, fragment.letterSpacing, ctx) * fragment.horizontalScale;
+    }
+    fragmentStart = fragmentEnd;
+    fragmentIndex += 1;
+  }
+
+  return width;
 }
 
 /**
@@ -806,17 +978,15 @@ function getCellBorderWidthPx(border: BorderSpec | undefined): number {
     return 0;
   }
 
-  const width = typeof border.width === 'number' ? border.width : 0;
-  if (border.style === 'thick') {
-    return Math.max(width * 2, 3);
-  }
-  return Math.max(0, width);
+  return getRenderedTableBorderWidthPx(border);
 }
 
 /**
  * Creates the canvas context used by token-level text measurement.
  */
-function getCanvasContext(): CanvasRenderingContext2D {
+function getCanvasContext(fontContext?: FontMeasureContext): CanvasRenderingContext2D {
+  const runtime = getSurfaceMeasurementRuntime(fontContext);
+  if (runtime) return ensureSurfaceMeasurementCanvas(runtime);
   if (!canvasContext) {
     const canvas = document.createElement('canvas');
     canvasContext = canvas.getContext('2d');
@@ -826,6 +996,18 @@ function getCanvasContext(): CanvasRenderingContext2D {
   }
 
   return canvasContext;
+}
+
+function measureCachedTextWidth(
+  text: string,
+  font: string,
+  letterSpacing: number,
+  context: CanvasRenderingContext2D,
+): number {
+  const runtime = getSurfaceMeasurementRuntimeForCanvas(context);
+  return runtime
+    ? runtime.textWidths.measure(text, font, letterSpacing, context)
+    : getMeasuredTextWidth(text, font, letterSpacing, context);
 }
 
 /**
@@ -909,7 +1091,8 @@ function measureFieldAnnotationWidth(run: FieldAnnotationRun, fontContext: FontM
   const displayText = applyTextTransform(run.displayLabel || '', {
     text: run.displayLabel || '',
   });
-  const textWidth = getMeasuredTextWidth(displayText, font, 0, getCanvasContext());
+  const context = getCanvasContext(fontContext);
+  const textWidth = measureCachedTextWidth(displayText, font, 0, context);
   const horizontalPadding = run.highlighted === false ? 0 : FIELD_ANNOTATION_PILL_PADDING;
   return textWidth + horizontalPadding;
 }
@@ -933,6 +1116,13 @@ function isTextLikeRun(run: Run): run is Extract<Run, { text: string }> {
  */
 function getLetterSpacing(run: Extract<Run, { text: string }>): number {
   return 'letterSpacing' in run && typeof run.letterSpacing === 'number' ? run.letterSpacing : 0;
+}
+
+/** Returns the run's effective OOXML character-width multiplier. */
+function getHorizontalScale(run: Extract<Run, { text: string }>): number {
+  if (!('horizontalScale' in run)) return 1;
+  const value = run.horizontalScale;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 1;
 }
 
 /**

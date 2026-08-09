@@ -1,16 +1,25 @@
 import type {
   ParagraphBlock,
   ParagraphMeasure,
+  ParagraphSpacing,
   Line,
+  LineInlineImageAlignment,
   LineSegment,
   Run,
+  ImageRun,
   TextRun,
   TabRun,
   TabStop,
   ParagraphIndent,
   LeaderDecoration,
+  ParagraphLineRegion,
 } from '@superdoc/contracts';
-import { EMPTY_SDT_PLACEHOLDER_TEXT, Engines, isEmptySdtPlaceholderRun } from '@superdoc/contracts';
+import {
+  EMPTY_SDT_PLACEHOLDER_TEXT,
+  Engines,
+  getParagraphInlineDirection,
+  isEmptySdtPlaceholderRun,
+} from '@superdoc/contracts';
 import type { WordParagraphLayoutOutput } from '@superdoc/word-layout';
 import {
   LIST_MARKER_GAP as _LIST_MARKER_GAP,
@@ -19,21 +28,23 @@ import {
 } from '@superdoc/common/layout-constants';
 import { resolveListTextStartPx } from '@superdoc/common/list-marker-utils';
 import {
-  isAtomicLayoutRun,
-  getAtomicRunLayoutSize,
-  type MeasureAtomicText,
-  type MinimalAtomicRun,
-} from '@superdoc/common/atomic-run-size';
+  getCalibratedNaturalSingleLine,
+  isCjkBreakOpportunityChar,
+  nextCodePointBoundary,
+  resolveKinsokuBoundary,
+} from '@superdoc/measuring-dom';
 
 /**
  * Type definition for paragraph block attributes that include indentation and tab stops.
  * Extracted for cleaner type safety when accessing block.attrs.
  */
 type ParagraphBlockAttrs = {
+  alignment?: 'left' | 'center' | 'right' | 'justify';
   indent?: { left?: number; right?: number; firstLine?: number; hanging?: number };
   tabs?: TabStop[];
   tabIntervalTwips?: number;
   decimalSeparator?: string;
+  spacing?: ParagraphSpacing;
   wordLayout?: WordParagraphLayoutOutput;
   numberingProperties?: unknown;
   /** Word quirk: justified paragraphs ignore first-line indent. Set by pm-adapter. */
@@ -59,6 +70,78 @@ function getCtx(): CanvasRenderingContext2D | null {
   canvas = document.createElement('canvas');
   ctx = canvas.getContext('2d');
   return ctx;
+}
+
+// ---------------------------------------------------------------------------
+// Text-width caches (plans/layout-improvements.md idea 2).
+//
+// remeasureParagraph historically issued one `ctx.font = ...` assignment plus
+// one `ctx.measureText(singleChar)` call PER CHARACTER of every remeasured
+// paragraph, with no caching — the dominant cost of a legitimate remeasure
+// (multi-column sections, float-narrowed regions, textboxes). Both caches are
+// exact under the existing width model:
+// - the greedy line breaker sums independent single-character measurements, so
+//   a per-(font, char) advance cache reproduces identical arithmetic;
+// - slice measurement (tab groups / line segments / SDT placeholders) measures
+//   a whole slice in one measureText call, so results are memoized verbatim by
+//   (font, text) with letter-spacing applied arithmetically outside the cache.
+// Word-chunked measurement was deliberately NOT adopted: measuring whole words
+// in one call would let intra-word kerning/ligatures change computed widths
+// versus the per-character summing model, shifting line breaks.
+//
+// Staleness: entries key off the resolved canvas font string, so a late-
+// loading font face (same font string, new face) would invalidate them. The
+// incrementalLayout pipeline clears these caches whenever the document font
+// signature changes; standalone callers can clear via
+// clearRemeasureTextCaches(). This matches the exposure of measuring-dom's
+// module-level measurement cache.
+// ---------------------------------------------------------------------------
+
+const MAX_GLYPH_FONT_ENTRIES = 64;
+const MAX_GLYPH_ADVANCES_PER_FONT = 2048;
+const MAX_SLICE_CACHE_ENTRIES = 4096;
+
+/** Per-font single-character advance cache: font string -> (char -> width px). */
+const glyphAdvancesByFont = new Map<string, Map<string, number>>();
+/** Whole-slice base width cache (no letter-spacing): "font\0text" -> width px. */
+const sliceWidthCache = new Map<string, number>();
+
+/** Drop cached text widths and the canvas context. Call when registered font faces may have changed. */
+export function clearRemeasureTextCaches(): void {
+  glyphAdvancesByFont.clear();
+  sliceWidthCache.clear();
+  ctx = null;
+  canvas = null;
+}
+
+/** Measure a single character's advance for a font, through the glyph cache. */
+function measureGlyphAdvance(context: CanvasRenderingContext2D, font: string, char: string): number {
+  let advances = glyphAdvancesByFont.get(font);
+  if (!advances) {
+    if (glyphAdvancesByFont.size >= MAX_GLYPH_FONT_ENTRIES) glyphAdvancesByFont.clear();
+    advances = new Map();
+    glyphAdvancesByFont.set(font, advances);
+  }
+  const cached = advances.get(char);
+  if (cached !== undefined) return cached;
+  context.font = font;
+  const width = context.measureText(char).width;
+  if (advances.size >= MAX_GLYPH_ADVANCES_PER_FONT) advances.clear();
+  advances.set(char, width);
+  return width;
+}
+
+/** Measure a multi-character slice's base width (no letter-spacing), memoized. */
+function measureSliceBaseWidth(context: CanvasRenderingContext2D, font: string, text: string): number {
+  // "\0" cannot appear in a canvas font string, so the first NUL delimits unambiguously.
+  const key = font + '\u0000' + text;
+  const cached = sliceWidthCache.get(key);
+  if (cached !== undefined) return cached;
+  context.font = font;
+  const width = context.measureText(text).width;
+  if (sliceWidthCache.size >= MAX_SLICE_CACHE_ENTRIES) sliceWidthCache.clear();
+  sliceWidthCache.set(key, width);
+  return width;
 }
 
 /**
@@ -91,6 +174,20 @@ function isTextRun(run: Run): run is TextRun {
   }
   // All other runs are text runs
   return true;
+}
+
+const isVanishedRun = (run: Run | undefined): boolean => (run as { vanish?: boolean } | undefined)?.vanish === true;
+
+function visibleTextFontSize(run: Run | undefined): number | undefined {
+  if (!run || isVanishedRun(run) || !isTextRun(run)) return undefined;
+  return typeof run.fontSize === 'number' ? run.fontSize : undefined;
+}
+
+function visibleLineHeightFontSize(run: Run | undefined): number | undefined {
+  if (!run || isVanishedRun(run)) return undefined;
+  if (!isTextRun(run) && run.kind !== 'tab') return undefined;
+  const fontSize = (run as TextRun | TabRun).fontSize;
+  return typeof fontSize === 'number' ? fontSize : undefined;
 }
 
 /**
@@ -144,6 +241,11 @@ function runText(run: Run): string {
     ? ''
     : (run.text ?? '');
 }
+
+const runAddressableLength = (run: Run): number => {
+  const textLength = runText(run).length;
+  return textLength > 0 ? textLength : run.kind === 'tab' ? 1 : 0;
+};
 
 /**
  * Determines if a character is considered a "word character" for capitalization.
@@ -270,6 +372,27 @@ const applyTextTransform = (
   return text;
 };
 
+/**
+ * Single-character variant of applyTextTransform for the line-breaking hot
+ * loop. Equivalent to `applyTextTransform(text[index], transform, text, index)`
+ * without the per-character slice/branch overhead.
+ */
+const transformChar = (
+  text: string,
+  index: number,
+  transform: 'uppercase' | 'lowercase' | 'capitalize' | 'none' | undefined,
+  /** Exclusive end of the code point at `index`; two units for astral characters. */
+  end?: number,
+): string => {
+  const char = typeof end === 'number' ? text.slice(index, end) : text[index];
+  if (!transform || transform === 'none') return char;
+  if (transform === 'uppercase') return char.toUpperCase();
+  if (transform === 'lowercase') return char.toLowerCase();
+  // capitalize: uppercase a word character that follows a non-word character.
+  const prevChar = index > 0 ? text[index - 1] : '';
+  return isWordChar(char) && !isWordChar(prevChar) ? char.toUpperCase() : char;
+};
+
 // --- Tab helpers (aligned with measuring/dom defaults) ---
 const DEFAULT_TAB_INTERVAL_TWIPS = 720; // 0.5in
 const TWIPS_PER_INCH = 1440;
@@ -356,49 +479,6 @@ const getRunWidth = (run: Run): number => {
 };
 
 /**
- * Measures field annotation label text on the shared canvas. Mirrors the run's
- * font properties so the pill width tracks the painted glyphs. Falls back to a
- * proportional estimate when no canvas context is available (SSR), matching how
- * {@link measureRunSliceWidth} approximates ordinary text.
- */
-const measureAtomicText: MeasureAtomicText = (text, run, fontSize) => {
-  const family = (run.fontFamily as string | undefined) || 'Arial';
-  const context = getCtx();
-  if (!context) {
-    return Math.max(0, text.length * (fontSize * 0.6));
-  }
-  const italic = run.italic ? 'italic ' : '';
-  const bold = run.bold ? 'bold ' : '';
-  context.font = `${italic}${bold}${fontSize}px ${family}`.trim();
-  return context.measureText(text).width;
-};
-
-const getAtomicRunLayoutWidth = (run: Run): number =>
-  getAtomicRunLayoutSize(run as MinimalAtomicRun, measureAtomicText).width;
-
-const getAtomicRunLayoutHeight = (run: Run): number =>
-  getAtomicRunLayoutSize(run as MinimalAtomicRun, measureAtomicText).height;
-
-/** Max atomic (image/math/field) height for runs actually included on [fromRun, toRun]. */
-const getLineMaxAtomicHeight = (
-  runs: Run[],
-  fromRun: number,
-  fromChar: number,
-  toRun: number,
-  toChar: number,
-): number => {
-  let max = 0;
-  for (let r = fromRun; r <= toRun; r += 1) {
-    const run = runs[r];
-    if (!isAtomicLayoutRun(run)) continue;
-    if (r === toRun && toChar === 0) continue;
-    if (r === fromRun && r === toRun && toChar <= fromChar) continue;
-    max = Math.max(max, getAtomicRunLayoutHeight(run));
-  }
-  return max;
-};
-
-/**
  * Checks if a break run is a line break (as opposed to page/column break).
  *
  * @param run - The run to check
@@ -406,6 +486,67 @@ const getLineMaxAtomicHeight = (
  */
 const isLineBreakRun = (run: Run): boolean =>
   run.kind === 'lineBreak' || (run.kind === 'break' && (run as { breakType?: string }).breakType === 'line');
+
+/** True when a run is an inline image run. */
+const isImageRun = (run: Run): run is ImageRun => run.kind === 'image';
+
+/**
+ * Tolerance (px) for the "image fits inside the text line box" decision.
+ *
+ * MIRRORS `INLINE_IMAGE_BASELINE_TOLERANCE_PX` in `measuring/dom/src/index.ts`.
+ * The two live in separate packages, so the tiny predicate is duplicated rather
+ * than shared across a package boundary; the values MUST stay in sync (covered
+ * by the small-image remeasure test asserting `baseline`).
+ */
+const INLINE_IMAGE_BASELINE_TOLERANCE_PX = 0.5;
+
+/** One inline-image candidate tracked on the current remeasured line. */
+type RemeasureImageCandidate = {
+  runIndex: number;
+  imageWidth: number;
+  imageHeight: number;
+  hasExplicitVerticalAlign: boolean;
+  hasVerticalMargins: boolean;
+};
+
+const makeRemeasureImageCandidate = (
+  runIndex: number,
+  run: ImageRun,
+  imageWidth: number,
+  imageHeight: number,
+): RemeasureImageCandidate => ({
+  runIndex,
+  imageWidth,
+  imageHeight,
+  hasExplicitVerticalAlign: run.verticalAlign != null,
+  hasVerticalMargins: (run.distTop ?? 0) !== 0 || (run.distBottom ?? 0) !== 0,
+});
+
+/**
+ * Resolve measured per-image baseline alignment for one remeasured line.
+ *
+ * MIRRORS `resolveInlineImageAlignments` in `measuring/dom/src/index.ts` so a
+ * narrower-region reflow produces the same glyph-vs-line-expanding decision as
+ * the initial measurement and the fix is not lost on reflowed lines.
+ */
+const resolveRemeasureImageAlignments = (
+  candidates: RemeasureImageCandidate[],
+  hasVisibleText: boolean,
+  textLineHeight: number,
+): LineInlineImageAlignment[] | undefined => {
+  if (candidates.length === 0) return undefined;
+  const alignments: LineInlineImageAlignment[] = [];
+  for (const candidate of candidates) {
+    if (candidate.hasExplicitVerticalAlign) continue;
+    if (candidate.imageWidth <= 0) continue;
+    if (candidate.imageHeight <= 0) continue;
+    if (!hasVisibleText) continue;
+    if (candidate.hasVerticalMargins) continue;
+    if (candidate.imageHeight > textLineHeight + INLINE_IMAGE_BASELINE_TOLERANCE_PX) continue;
+    alignments.push({ runIndex: candidate.runIndex, verticalAlign: 'baseline' });
+  }
+  return alignments.length > 0 ? alignments : undefined;
+};
 
 /**
  * Tab stop position and alignment info in pixels.
@@ -627,11 +768,15 @@ const getNextTabStopPx = (
  * @returns Width of the text slice in pixels (floating-point precision for sub-pixel accuracy).
  */
 function measureRunSliceWidth(run: Run, fromChar: number, toChar: number): number {
+  if (isVanishedRun(run)) return 0;
   const context = getCtx();
   const fullText = runText(run);
   // Only TextRun and TabRun have textTransform property (via RunMarks)
   const transform = isTextRun(run) ? run.textTransform : undefined;
   const text = applyTextTransform(fullText.slice(fromChar, toChar), transform, fullText, fromChar);
+  const textRun = isTextRun(run) ? run : null;
+  const letterSpacing = textRun?.letterSpacing ?? 0;
+  const horizontalScale = runHorizontalScale(run);
   if (!context) {
     // Fallback: simple proportional width (approximate)
     // When canvas context is unavailable (e.g., server-side rendering),
@@ -640,14 +785,25 @@ function measureRunSliceWidth(run: Run, fromChar: number, toChar: number): numbe
     // - Average character width is ~0.5-0.7x the font size
     // - 0.6 is a middle ground that works reasonably for most Latin text
     // - For 16px font: estimated ~9.6px per character
-    const textRun = isTextRun(run) ? run : null;
     const size = textRun?.fontSize ?? 16;
-    return Math.max(1, text.length * (size * 0.6));
+    return Math.max(1, text.length * (size * 0.6) + Math.max(0, text.length - 1) * letterSpacing) * horizontalScale;
   }
-  context.font = fontString(run);
-  const metrics = context.measureText(text);
-  return metrics.width;
+  const font = fontString(run);
+  const letterSpacingTotal = Math.max(0, text.length - 1) * letterSpacing;
+  if (text.length === 1) {
+    return (measureGlyphAdvance(context, font, text) + letterSpacingTotal) * horizontalScale;
+  }
+  return (measureSliceBaseWidth(context, font, text) + letterSpacingTotal) * horizontalScale;
 }
+
+const runHorizontalScale = (run: Run | undefined): number => {
+  if (!run || !('horizontalScale' in run)) return 1;
+  const value = run.horizontalScale;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 1;
+};
+
+const runLetterSpacing = (run: Run | undefined): number =>
+  run && isTextRun(run) ? (run.letterSpacing ?? 0) * runHorizontalScale(run) : 0;
 
 /**
  * Measurement summary for an aligned tab group contained within a single line.
@@ -712,6 +868,7 @@ const scanTabAlignmentGroup = (
   for (let r = startRunIndex; r < runs.length; r += 1) {
     const run = runs[r];
     if (!run) continue;
+    if (isVanishedRun(run)) continue;
     if (run.kind === 'tab') {
       return { totalWidth, beforeDecimalWidth, endRun, endChar, resumeRun: r, resumeChar: 0 };
     }
@@ -721,10 +878,7 @@ const scanTabAlignmentGroup = (
 
     const text = runText(run);
     if (!text) {
-      // Atomic runs (image/math/field annotation) carry their box in the shared sizer,
-      // not in `run.width` — field annotations in particular are 0 via getRunWidth, which
-      // would zero out the group and skip center/right/decimal alignment.
-      const runWidth = isAtomicLayoutRun(run) ? getAtomicRunLayoutWidth(run) : getRunWidth(run);
+      const runWidth = getRunWidth(run);
       if (runWidth > 0) {
         totalWidth += runWidth;
         endRun = r;
@@ -789,12 +943,13 @@ const measureTabAlignmentGroupInLine = (
   for (let r = startRunIndex; r <= line.toRun; r += 1) {
     const run = runs[r];
     if (!run) continue;
+    if (isVanishedRun(run)) continue;
     if (run.kind === 'tab') break;
     if (isLineBreakRun(run)) break;
 
     const text = runText(run);
     if (!text) {
-      totalWidth += isAtomicLayoutRun(run) ? getAtomicRunLayoutWidth(run) : getRunWidth(run);
+      totalWidth += getRunWidth(run);
       continue;
     }
 
@@ -856,7 +1011,7 @@ const applyTabLayoutToLines = (
   indentLeft: number,
   rawFirstLineOffset: number,
 ): void => {
-  const totalTabRuns = runs.reduce((count, run) => (run.kind === 'tab' ? count + 1 : count), 0);
+  const totalTabRuns = runs.reduce((count, run) => (run.kind === 'tab' && !isVanishedRun(run) ? count + 1 : count), 0);
   const alignmentTabStopsPx = tabStops
     .map((stop, index) => ({ stop, index }))
     .filter(({ stop }) => stop.val === 'end' || stop.val === 'center' || stop.val === 'decimal');
@@ -879,7 +1034,7 @@ const applyTabLayoutToLines = (
       const r = runs[i];
       if (r.kind === 'lineBreak' || (r.kind === 'break' && (r as { breakType?: string }).breakType === 'line')) {
         closeSegment();
-      } else if (r.kind === 'tab') {
+      } else if (r.kind === 'tab' && !isVanishedRun(r)) {
         segmentTabRunIndices.push(i);
       }
     }
@@ -1045,6 +1200,10 @@ const applyTabLayoutToLines = (
       const run = runs[runIndex];
       if (!run) continue;
       if (run.kind === 'tab') {
+        if (isVanishedRun(run)) {
+          (run as { width?: number }).width = 0;
+          continue;
+        }
         const tabRun = run as TabRun;
         const ordinal = consumeTabOrdinal(tabRun.tabIndex);
         applyTab(runIndex + 1, 0, run, ordinal, runIndex);
@@ -1053,27 +1212,7 @@ const applyTabLayoutToLines = (
 
       const text = runText(run);
       if (!text) {
-        const atomicWidth = isAtomicLayoutRun(run) ? getAtomicRunLayoutWidth(run) : getRunWidth(run);
-        // Position atomic runs (image/math/field annotation) that follow an
-        // end/center/decimal tab so the pill aligns to the stop, matching the DOM
-        // measurer. Without this the pending alignment would leak to a later text run.
-        const pendingTabAlign = consumePendingTabAlignStart();
-        if (pendingTabAlign != null) {
-          const segment: LineSegment = {
-            runIndex,
-            fromChar: 0,
-            toChar: 1,
-            width: atomicWidth,
-            x: pendingTabAlign.paintX,
-            ...(pendingTabAlign.precedingTabEndX !== undefined
-              ? { precedingTabEndX: pendingTabAlign.precedingTabEndX }
-              : {}),
-          };
-          cursorX = pendingTabAlign.layoutX + atomicWidth;
-          segments.push(segment);
-        } else {
-          cursorX += atomicWidth;
-        }
+        cursorX += getRunWidth(run);
         lineWidth = Math.max(lineWidth, cursorX);
         continue;
       }
@@ -1147,53 +1286,279 @@ const applyTabLayoutToLines = (
 };
 
 /**
- * Calculates the line height for a range of runs based on maximum font size.
- *
- * Line height must accommodate the tallest text in the line to prevent visual overlap
- * between lines. This function scans all runs in the specified range to find the
- * maximum font size, then applies a 1.2x multiplier to provide adequate spacing for
- * ascenders and descenders.
- *
- * Why 1.2x multiplier:
- * - Provides 20% extra space above and below the font size
- * - Accommodates ascenders (h, k, l) and descenders (g, y, p) without crowding
- * - Standard CSS line-height values range from 1.2 to 1.5
- * - 1.2 is the minimum recommended for readable body text
- *
- * Limitations:
- * - This is a simplified calculation suitable for fast remeasurement
- * - Does NOT use actual font metrics (ascent, descent, lineGap)
- * - Full typography measurement (in measuring/dom) uses precise font metrics
- * - Mixed font sizes on one line: uses maximum size, may be slightly generous
- *
- * @param runs - Array of all runs in the paragraph.
- * @param fromRun - Starting run index (inclusive) for the line.
- * @param toRun - Ending run index (inclusive) for the line.
- * @returns Line height in pixels (fontSize * 1.2 of the largest font in the range).
- *   For example: 16px font returns 19.2px line height, 24px font returns 28.8px.
+ * Calculates the line height for a range of runs based on maximum font size and
+ * paragraph spacing. This fast remeasurement path must match measuring/dom for
+ * explicit OOXML spacing because column pagination depends on these line sums.
  */
-function lineHeightForRuns(runs: Run[], fromRun: number, toRun: number, fallbackFontSize: number = 16): number {
+const DEFAULT_AUTO_LINE_HEIGHT_MULTIPLIER = 1.15;
+
+function resolveLineHeight(spacing: ParagraphSpacing | undefined, fontSize: number, fontFamily?: string): number {
+  const defaultLineHeight = Math.max(
+    fontSize * DEFAULT_AUTO_LINE_HEIGHT_MULTIPLIER,
+    fontFamily ? (getCalibratedNaturalSingleLine(fontFamily, fontSize) ?? 0) : 0,
+  );
+  if (!spacing || spacing.line == null) {
+    return defaultLineHeight;
+  }
+
+  let computedHeight = spacing.line;
+  if (spacing.lineUnit === 'multiplier') {
+    computedHeight *= defaultLineHeight;
+  }
+
+  const lineRule = spacing.lineRule ?? 'auto';
+  if (lineRule === 'exact') {
+    return computedHeight;
+  }
+  if (lineRule === 'atLeast') {
+    return Math.max(computedHeight, defaultLineHeight);
+  }
+  if (spacing.lineUnit === 'multiplier') {
+    return computedHeight;
+  }
+  return Math.max(computedHeight, defaultLineHeight);
+}
+
+function lineHeightForRuns(
+  runs: Run[],
+  fromRun: number,
+  toRun: number,
+  fallbackFontSize: number = 16,
+  spacing?: ParagraphSpacing,
+): number {
   let maxSize = 0;
+  let maxFamily: string | undefined;
   for (let i = fromRun; i <= toRun; i += 1) {
     const run = runs[i];
-    const textRun = run && isTextRun(run) ? run : null;
-    const size = textRun?.fontSize ?? 0;
-    if (size > maxSize) maxSize = size;
+    const size = visibleLineHeightFontSize(run) ?? 0;
+    if (size >= maxSize) {
+      maxSize = size;
+      maxFamily =
+        typeof (run as TextRun | undefined)?.fontFamily === 'string' ? (run as TextRun).fontFamily : undefined;
+    }
   }
-  // Calculate line height as 120% of the maximum font size (maxSize * 1.2).
-  // This multiplier provides reasonable line spacing for most text:
-  // - The extra 20% accommodates descenders (g, y, p) and ascenders (h, k, l)
-  //   without lines appearing cramped
-  // - Standard CSS line-height values typically range from 1.2 to 1.5
-  // - 1.2 is the minimum recommended for readable body text
-  // - For 16px font: 16 * 1.2 = 19.2px line height
-  // - For 24px heading: 24 * 1.2 = 28.8px line height
-  //
-  // Note: This is a simplified calculation. Full typography measurement
-  // (in measuring/dom) uses actual font metrics (ascent, descent, lineGap)
-  // for more accurate line heights.
   const resolvedSize = maxSize > 0 ? maxSize : fallbackFontSize;
-  return resolvedSize * 1.2;
+  return resolveLineHeight(spacing, resolvedSize, maxFamily);
+}
+
+type RegionCursor = { runIndex: number; charIndex: number };
+
+type RegionRunMap = {
+  sourceRunIndex: number;
+  sourceCharOffset: number;
+};
+
+const normalizeRegionCursor = (runs: Run[], cursor: RegionCursor): RegionCursor => {
+  let { runIndex, charIndex } = cursor;
+  while (runIndex < runs.length) {
+    const text = runText(runs[runIndex]);
+    if (charIndex < text.length) break;
+    runIndex += 1;
+    charIndex = 0;
+  }
+  return { runIndex, charIndex };
+};
+
+/**
+ * Compose a physical line from multiple disjoint horizontal regions.
+ *
+ * The fast measurer's normal loop owns one contiguous width. Centered
+ * `wrapText="bothSides"` floats need two independent word-wrapping widths on
+ * the same baseline, so this deliberately reuses that loop once per region and
+ * maps each first-line result back onto the original runs. The supported path
+ * is intentionally narrow: plain left-aligned text with no tabs, lists,
+ * indents, inline boxes, or non-text runs. Unsupported paragraphs fall back to
+ * the single largest safe region in the caller rather than painting through a
+ * float.
+ */
+function remeasurePlainTextAcrossRegions(
+  block: ParagraphBlock,
+  maxWidth: number,
+  firstLineIndent: number,
+  lineRegions: readonly (readonly ParagraphLineRegion[])[],
+): ParagraphMeasure | null {
+  const attrs = block.attrs;
+  const internalAttrs = attrs as ParagraphBlockAttrs | undefined;
+  const indent = internalAttrs?.indent;
+  const hasUnsupportedIndent = [indent?.left, indent?.right, indent?.hanging].some(
+    (value) => typeof value === 'number' && Math.abs(value) > 0.01,
+  );
+  const hasMultipleRegions = lineRegions.some((regions) => regions.length > 1);
+  const unsupported =
+    !hasMultipleRegions ||
+    Math.abs(firstLineIndent) > 0.01 ||
+    hasUnsupportedIndent ||
+    Boolean(internalAttrs?.wordLayout) ||
+    Boolean(internalAttrs?.numberingProperties) ||
+    Boolean(internalAttrs?.tabs?.length) ||
+    Boolean(block.inlineBoxes?.length) ||
+    (attrs?.alignment != null && attrs.alignment !== 'left') ||
+    getParagraphInlineDirection(attrs) === 'rtl' ||
+    block.runs.some(
+      (run) =>
+        !isTextRun(run) ||
+        isEmptySdtPlaceholderRun(run) ||
+        run.bidi != null ||
+        run.textTransform === 'capitalize' ||
+        (typeof run.text === 'string' && run.text.includes('\t')),
+    );
+  if (unsupported) return null;
+
+  const makeRemainingBlock = (cursor: RegionCursor): { block: ParagraphBlock; maps: RegionRunMap[] } | null => {
+    const slicedRuns: TextRun[] = [];
+    const maps: RegionRunMap[] = [];
+    for (let sourceRunIndex = cursor.runIndex; sourceRunIndex < block.runs.length; sourceRunIndex += 1) {
+      const sourceRun = block.runs[sourceRunIndex];
+      if (!isTextRun(sourceRun)) return null;
+      const sourceCharOffset = sourceRunIndex === cursor.runIndex ? cursor.charIndex : 0;
+      if (sourceCharOffset >= sourceRun.text.length) continue;
+      slicedRuns.push({
+        ...sourceRun,
+        text: sourceRun.text.slice(sourceCharOffset),
+        pmStart: sourceRun.pmStart == null ? undefined : sourceRun.pmStart + sourceCharOffset,
+      });
+      maps.push({ sourceRunIndex, sourceCharOffset });
+    }
+    if (slicedRuns.length === 0) return null;
+    return {
+      block: {
+        ...block,
+        id: `${block.id}:float-regions`,
+        runs: slicedRuns,
+        attrs: block.attrs ? { ...block.attrs, indent: undefined } : undefined,
+        inlineBoxes: undefined,
+      },
+      maps,
+    };
+  };
+
+  const lines: Line[] = [];
+  let cursor = normalizeRegionCursor(block.runs, { runIndex: 0, charIndex: 0 });
+  const runOffsets: number[] = [];
+  let plainText = '';
+  for (const run of block.runs) {
+    runOffsets.push(plainText.length);
+    plainText += runText(run);
+  }
+  const cursorOffset = (value: RegionCursor): number =>
+    (runOffsets[value.runIndex] ?? plainText.length) + value.charIndex;
+  const totalAddressableChars = block.runs.reduce((sum, run) => sum + runText(run).length, 0);
+  const maxPhysicalLines = Math.max(1, totalAddressableChars + 1);
+
+  for (let physicalLineIndex = 0; cursor.runIndex < block.runs.length; physicalLineIndex += 1) {
+    if (physicalLineIndex >= maxPhysicalLines) return null;
+    const authoredRegions = lineRegions[physicalLineIndex];
+    const regions = (authoredRegions?.length ? authoredRegions : [{ offsetX: 0, width: maxWidth }]).filter(
+      (region) => Number.isFinite(region.offsetX) && Number.isFinite(region.width) && region.width > 0,
+    );
+    if (regions.length === 0) return null;
+
+    const lineStart = { ...cursor };
+    const segments: LineSegment[] = [];
+    let lineWidth = 0;
+    let lineHeight = 0;
+    let lineAscent = 0;
+    let lineDescent = 0;
+    let consumedRegion = false;
+
+    const firstLineOffset =
+      physicalLineIndex === 0 ? Math.max(0, (indent?.firstLine ?? 0) - (indent?.hanging ?? 0)) : 0;
+
+    for (const [regionIndex, region] of regions.entries()) {
+      const remaining = makeRemainingBlock(cursor);
+      if (!remaining) break;
+      const regionOriginAdjustment = regionIndex === 0 ? 0 : firstLineOffset;
+      const regionMeasureWidth = Math.max(1, region.width - (regionIndex === 0 ? firstLineOffset : 0));
+      const regionMeasure = remeasureParagraph(remaining.block, regionMeasureWidth);
+      const regionLine = regionMeasure.lines[0];
+      if (!regionLine) break;
+
+      const fromMap = remaining.maps[regionLine.fromRun];
+      const toMap = remaining.maps[regionLine.toRun];
+      if (!fromMap || !toMap) return null;
+      const regionFirstSegmentIndex = segments.length;
+
+      for (let slicedRunIndex = regionLine.fromRun; slicedRunIndex <= regionLine.toRun; slicedRunIndex += 1) {
+        const map = remaining.maps[slicedRunIndex];
+        const slicedRun = remaining.block.runs[slicedRunIndex];
+        if (!map || !slicedRun) return null;
+        const localFrom = slicedRunIndex === regionLine.fromRun ? regionLine.fromChar : 0;
+        const localTo = slicedRunIndex === regionLine.toRun ? regionLine.toChar : runText(slicedRun).length;
+        if (localTo <= localFrom) continue;
+        segments.push({
+          runIndex: map.sourceRunIndex,
+          fromChar: map.sourceCharOffset + localFrom,
+          toChar: map.sourceCharOffset + localTo,
+          width: measureRunSliceWidth(slicedRun, localFrom, localTo),
+          ...(segments.length === regionFirstSegmentIndex ? { x: region.offsetX - regionOriginAdjustment } : {}),
+        });
+      }
+
+      const nextCursor = normalizeRegionCursor(block.runs, {
+        runIndex: toMap.sourceRunIndex,
+        charIndex: toMap.sourceCharOffset + regionLine.toChar,
+      });
+      if (nextCursor.runIndex === cursor.runIndex && nextCursor.charIndex === cursor.charIndex) return null;
+
+      // Word does not strand the leading characters of a word in a tiny
+      // wrap-both-sides sliver when a wider region remains on the same
+      // baseline. The normal single-width measurer must force-break a word
+      // when even its first token cannot fit, so detect that narrow case and
+      // leave the cursor untouched for the later region. Regions that fit a
+      // whole token, or that are already the largest remaining option, retain
+      // the existing multi-region composition behavior.
+      const startOffset = cursorOffset(cursor);
+      const endOffset = cursorOffset(nextCursor);
+      const firstTokenStart = plainText.slice(startOffset).search(/\S/);
+      const firstTokenEnd =
+        firstTokenStart < 0
+          ? startOffset
+          : (() => {
+              const tokenTail = plainText.slice(startOffset + firstTokenStart);
+              const whitespaceOffset = tokenTail.search(/\s/);
+              return whitespaceOffset < 0 ? plainText.length : startOffset + firstTokenStart + whitespaceOffset;
+            })();
+      const forceBreaksLeadingToken =
+        firstTokenStart >= 0 && endOffset > startOffset + firstTokenStart && endOffset < firstTokenEnd;
+      const hasLargerRemainingRegion = regions
+        .slice(regionIndex + 1)
+        .some((candidate) => candidate.width > region.width + 0.5);
+      if (forceBreaksLeadingToken && hasLargerRemainingRegion) {
+        segments.splice(regionFirstSegmentIndex);
+        continue;
+      }
+
+      cursor = nextCursor;
+      consumedRegion = true;
+      lineWidth = Math.max(lineWidth, region.offsetX - regionOriginAdjustment + regionLine.width);
+      lineHeight = Math.max(lineHeight, regionLine.lineHeight);
+      lineAscent = Math.max(lineAscent, regionLine.ascent);
+      lineDescent = Math.max(lineDescent, regionLine.descent);
+      if (cursor.runIndex >= block.runs.length) break;
+    }
+
+    if (!consumedRegion || segments.length === 0) return null;
+    const lineEnd = segments[segments.length - 1]!;
+    lines.push({
+      fromRun: lineStart.runIndex,
+      fromChar: lineStart.charIndex,
+      toRun: lineEnd.runIndex,
+      toChar: lineEnd.toChar,
+      width: lineWidth,
+      ascent: lineAscent,
+      descent: lineDescent,
+      lineHeight,
+      maxWidth: Math.max(...regions.map((region) => region.offsetX + region.width)) - firstLineOffset,
+      segments,
+    });
+  }
+
+  return {
+    kind: 'paragraph',
+    lines,
+    totalHeight: lines.reduce((sum, line) => sum + line.lineHeight, 0),
+    measuredAtMaxWidth: maxWidth,
+  };
 }
 
 /**
@@ -1220,7 +1585,7 @@ function lineHeightForRuns(runs: Run[], fromRun: number, toRun: number, fallback
  *
  * Limitations:
  * - Does NOT perform full typography measurement (ascent, descent, font metrics)
- * - Line height is estimated based on max font size (fontSize * 1.2)
+ * - Line height is estimated from paragraph spacing and max font size.
  * - Does NOT handle complex features like drop caps, justified alignment compression, or bidirectional text
  * - Intended as a fast path for width-constrained remeasurement, not full initial measurement
  *
@@ -1271,6 +1636,7 @@ export function remeasureParagraph(
   block: ParagraphBlock,
   maxWidth: number,
   firstLineIndent: number = 0,
+  lineRegions?: readonly (readonly ParagraphLineRegion[])[],
 ): ParagraphMeasure {
   // Input validation: maxWidth must be positive
   if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
@@ -1292,11 +1658,35 @@ export function remeasureParagraph(
     throw new Error(`remeasureParagraph: block.runs must be an array, got ${typeof block.runs}`);
   }
 
+  if (lineRegions?.some((regions) => regions.length > 1)) {
+    const composedMeasure = remeasurePlainTextAcrossRegions(block, maxWidth, firstLineIndent, lineRegions);
+    if (composedMeasure) return composedMeasure;
+  }
+
+  // Complex paragraphs that cannot safely compose disjoint regions must stay
+  // wholly on one side of the float. Pick the largest region and preserve its
+  // offset; painting through the excluded band is never an acceptable fallback.
+  const resolvedLineRegions = lineRegions?.map((regions) => {
+    const valid = regions.filter(
+      (region) => Number.isFinite(region.offsetX) && Number.isFinite(region.width) && region.width > 0,
+    );
+    if (valid.length <= 1) return valid;
+    return [valid.reduce((largest, region) => (region.width > largest.width ? region : largest))];
+  });
+
+  if (block.inlineBoxes?.length) {
+    console.warn(
+      `layout.inline-box-remeasure-unsupported: dropped ${block.inlineBoxes.length} inline box(es) from paragraph ${block.id}`,
+    );
+    block = { ...block, inlineBoxes: undefined };
+  }
+
   const runs = block.runs ?? [];
   const lines: Line[] = [];
   const attrs = block.attrs as ParagraphBlockAttrs | undefined;
   const indent = attrs?.indent;
   const wordLayout = attrs?.wordLayout;
+  const spacing = attrs?.spacing;
   // Preserve finite negative indents for paragraph width geometry. This mirrors
   // measuring/dom: negative indents expand the usable line width into the margin
   // area, so tab cursor math and tab clamp bounds stay in the same coordinate space.
@@ -1360,15 +1750,35 @@ export function remeasureParagraph(
 
   let currentRun = 0;
   let currentChar = 0;
-  // Match measuring/dom behavior: explicit line breaks without text should use
-  // the most recent text font size (or first text run size for leading breaks).
-  const firstTextRunWithSize = runs.find((run): run is TextRun => isTextRun(run) && typeof run.fontSize === 'number');
-  let lastMeasuredFontSize = firstTextRunWithSize?.fontSize ?? 16;
+  // Match measuring/dom behavior: prefer the first visible text run for leading
+  // break fallback, but allow a visible tab run when the paragraph has no visible
+  // sized text.
+  let firstTextFontSize: number | undefined;
+  for (const run of runs) {
+    firstTextFontSize = visibleTextFontSize(run);
+    if (firstTextFontSize !== undefined) break;
+  }
+  let firstRunFontSize = firstTextFontSize;
+  if (firstRunFontSize === undefined) {
+    for (const run of runs) {
+      firstRunFontSize = visibleLineHeightFontSize(run);
+      if (firstRunFontSize !== undefined) break;
+    }
+  }
+  let lastMeasuredFontSize = firstRunFontSize ?? 16;
 
   while (currentRun < runs.length) {
     const isFirstLine = lines.length === 0;
     // For first line, reduce available width by textStart/first-line offset (e.g., for in-flow list markers)
-    const effectiveMaxWidth = Math.max(1, isFirstLine ? firstLineWidth : contentWidth);
+    const ordinaryLineWidth = Math.max(1, isFirstLine ? firstLineWidth : contentWidth);
+    const regionsForLine = resolvedLineRegions?.[lines.length]?.filter(
+      (region) => Number.isFinite(region.offsetX) && Number.isFinite(region.width) && region.width > 0,
+    );
+    const regionWidth = regionsForLine?.reduce((sum, region) => sum + region.width, 0);
+    const effectiveMaxWidth = Math.max(
+      1,
+      regionWidth != null && regionWidth > 0 ? Math.min(ordinaryLineWidth, regionWidth) : ordinaryLineWidth,
+    );
     const effectiveIndent = isFirstLine ? indentLeft + baseFirstLineOffset : indentLeft;
     const startRun = currentRun;
     const startChar = currentChar;
@@ -1379,14 +1789,23 @@ export function remeasureParagraph(
     let widthAtLastBreak = -1;
     let lastBreakRun = -1;
     let lastBreakChar = -1;
+    // Latest inter-ideograph break opportunity passed on this line, tracked
+    // separately from the space-delimited one so CJK can break where CJK breaks.
+    let widthAtLastCjkBreak = -1;
+    let lastCjkBreakRun = -1;
+    let lastCjkBreakChar = -1;
     let endRun = currentRun;
     let endChar = currentChar;
     let tabStopCursor = 0;
+    let hasAuthoredTabStop = false;
     let didBreakInThisLine = false;
     let explicitLineBreakRun = -1;
     let resumeRun = -1;
     let resumeChar = 0;
     let lineMaxTextFontSize = 0;
+    let lineMaxImageHeight = 0;
+    let previousRunLetterSpacing = 0;
+    const lineImageCandidates: RemeasureImageCandidate[] = [];
 
     for (let r = currentRun; r < runs.length; r += 1) {
       const run = runs[r];
@@ -1400,9 +1819,16 @@ export function remeasureParagraph(
         didBreakInThisLine = true;
         break;
       }
+      if (isVanishedRun(run)) {
+        endRun = r;
+        endChar = runAddressableLength(run);
+        previousRunLetterSpacing = 0;
+        continue;
+      }
       if (run.kind === 'tab') {
         const absCurrentX = width + effectiveIndent;
         const { target, nextIndex, stop } = getNextTabStopPx(absCurrentX, tabStops, tabStopCursor);
+        if (stop?.source === 'explicit') hasAuthoredTabStop = true;
         const maxAbsWidth = effectiveMaxWidth + effectiveIndent;
         const clampedTarget = Math.min(target, maxAbsWidth);
         const tabAdvance = Math.max(0, clampedTarget - absCurrentX);
@@ -1446,6 +1872,7 @@ export function remeasureParagraph(
         lastBreakRun = r;
         lastBreakChar = 1;
         widthAtLastBreak = width;
+        previousRunLetterSpacing = 0;
         continue;
       }
       const text = runText(run);
@@ -1465,31 +1892,70 @@ export function remeasureParagraph(
         width += placeholderWidth;
         endRun = r;
         endChar = text.length > 0 ? text.length : start + 1;
+        previousRunLetterSpacing = runLetterSpacing(run);
         continue;
       }
-      if (text.length === 0 && isAtomicLayoutRun(run)) {
-        const atomicWidth = getAtomicRunLayoutWidth(run);
-        if (width > 0 && width + atomicWidth > effectiveMaxWidth - WIDTH_FUDGE_PX) {
+      if (isImageRun(run)) {
+        // Inline images are atomic. Preserve their width in reflow (they were
+        // previously dropped because runText() is empty) and record a candidate
+        // so reflowed lines keep the same baseline-vs-top decision as initial
+        // measurement.
+        const imageWidth = run.width + (run.distLeft ?? 0) + (run.distRight ?? 0);
+        if (width > 0 && width + imageWidth > effectiveMaxWidth - WIDTH_FUDGE_PX) {
           didBreakInThisLine = true;
           break;
         }
-        width += atomicWidth;
+        width += imageWidth;
         endRun = r;
         endChar = 1;
+        const imageHeight = run.height + (run.distTop ?? 0) + (run.distBottom ?? 0);
+        lineMaxImageHeight = Math.max(lineMaxImageHeight, imageHeight);
+        lineImageCandidates.push(makeRemeasureImageCandidate(r, run, imageWidth, imageHeight));
+        previousRunLetterSpacing = 0;
         continue;
       }
-      for (let c = start; c < text.length; c += 1) {
-        const ch = text[c];
+      // Hot line-breaking loop: hoist per-run invariants so each character costs
+      // one glyph-cache lookup instead of a font-string rebuild + ctx.font
+      // assignment + measureText call (see the text-width cache block above).
+      const charMeasureContext = getCtx();
+      const runFont = fontString(run);
+      const runTransform = isTextRun(run) ? run.textTransform : undefined;
+      const runScale = runHorizontalScale(run);
+      const runLetterSpacingPx = runLetterSpacing(run);
+      // Mirrors the no-canvas fallback in measureRunSliceWidth for a single char.
+      const runFallbackCharWidth = Math.max(1, ((isTextRun(run) ? run.fontSize : undefined) ?? 16) * 0.6) * runScale;
+      /** Width of `text[from, to)` under this run, for kinsoku boundary adjustments. */
+      const measureCharRange = (from: number, to: number): number => {
+        let total = 0;
+        for (let i = from; i < to; i = nextCodePointBoundary(text, i)) {
+          const advance = charMeasureContext
+            ? measureGlyphAdvance(
+                charMeasureContext,
+                runFont,
+                transformChar(text, i, runTransform, nextCodePointBoundary(text, i)),
+              ) * runScale
+            : runFallbackCharWidth;
+          total += advance + runLetterSpacingPx;
+        }
+        return total;
+      };
+      // Astral characters (CJK extension planes) are two UTF-16 units, so the
+      // cursor advances by code point: measuring or breaking on half a surrogate
+      // pair both mis-measures the glyph and emits invalid ranges.
+      for (let c = start, chEnd = nextCodePointBoundary(text, start); c < text.length; c = chEnd) {
+        chEnd = nextCodePointBoundary(text, c);
+        const ch = text.slice(c, chEnd);
         if (ch === '\t') {
           const absCurrentX = width + effectiveIndent;
           const { target, nextIndex, stop } = getNextTabStopPx(absCurrentX, tabStops, tabStopCursor);
+          if (stop?.source === 'explicit') hasAuthoredTabStop = true;
           const maxAbsWidth = effectiveMaxWidth + effectiveIndent;
           const clampedTarget = Math.min(target, maxAbsWidth);
           const tabAdvance = Math.max(0, clampedTarget - absCurrentX);
           width += tabAdvance;
           tabStopCursor = nextIndex;
           if (stop && (stop.val === 'end' || stop.val === 'center' || stop.val === 'decimal')) {
-            const group = scanTabAlignmentGroup(runs, r, c + 1, decimalSeparator);
+            const group = scanTabAlignmentGroup(runs, r, chEnd, decimalSeparator);
             if (group.totalWidth > 0) {
               const relativeTarget = clampedTarget - effectiveIndent;
               let groupStartX: number;
@@ -1520,49 +1986,117 @@ export function remeasureParagraph(
                 break;
               }
               if (group.resumeRun === r) {
-                c = group.resumeChar - 1;
+                chEnd = group.resumeChar;
                 continue;
               }
             }
           }
           endRun = r;
-          endChar = c + 1;
+          endChar = chEnd;
           lastBreakRun = r;
-          lastBreakChar = c + 1;
+          lastBreakChar = chEnd;
           widthAtLastBreak = width;
+          previousRunLetterSpacing = 0;
           continue;
         }
-        const w = measureRunSliceWidth(run, c, c + 1);
-        if (width + w > effectiveMaxWidth - WIDTH_FUDGE_PX && width > 0) {
+        const spacingBeforeChar = width > 0 ? (c === start ? previousRunLetterSpacing : runLetterSpacingPx) : 0;
+        const glyphWidth = charMeasureContext
+          ? measureGlyphAdvance(charMeasureContext, runFont, transformChar(text, c, runTransform, chEnd)) * runScale
+          : runFallbackCharWidth;
+        const w = spacingBeforeChar + glyphWidth;
+        // Word accepts a trailing glyph that lands within the reciprocal
+        // subpixel tolerance after an authored tab stop. The explicit stop is
+        // part of the paragraph's layout contract, so reserving another 0.5px
+        // after it falsely wraps narrow form labels during column remeasure.
+        // Justified lines keep the conservative threshold because their fit is
+        // governed by the separate space-compression model below.
+        const fitThreshold =
+          hasAuthoredTabStop && attrs?.alignment !== 'justify'
+            ? effectiveMaxWidth + WIDTH_FUDGE_PX
+            : effectiveMaxWidth - WIDTH_FUDGE_PX;
+        if (width + w > fitThreshold && width > 0) {
+          if (ch === ' ') {
+            // The space is only a wrap delimiter. Consume it so the next line
+            // starts at the following word, but do not charge its width to the
+            // completed line.
+            endRun = r;
+            endChar = chEnd;
+            didBreakInThisLine = true;
+            break;
+          }
           const canKeepBorderlineUnbreakableText = lastBreakRun < 0 && width + w <= effectiveMaxWidth + WIDTH_FUDGE_PX;
           if (canKeepBorderlineUnbreakableText) {
             width += w;
             endRun = r;
-            endChar = c + 1;
+            endChar = chEnd;
             continue;
           }
-          // Break line
-          if (lastBreakRun >= 0) {
+          // CJK offers a break opportunity at every ideograph, so rewinding to
+          // the last space is wrong there: it strands whatever preceded the
+          // clause on a short line. Prefer, in order: this character when it is
+          // itself a CJK break opportunity, the latest ideograph boundary passed
+          // on this line, then the last space. The glyph that overflows need not
+          // be CJK for a CJK boundary to be the right one — in `甲方 本合同ABC`
+          // it is `A`, yet breaking after `同` is what the primary measurer in
+          // `measuring/dom` does. Whichever wins goes through kinsoku.
+          const cjkBreakIsLaterThanSpace =
+            lastCjkBreakRun > lastBreakRun || (lastCjkBreakRun === lastBreakRun && lastCjkBreakChar > lastBreakChar);
+          // Kinsoku is resolved against this run's text, so a recorded boundary
+          // is only usable here when it lies in the run being scanned.
+          const usableCjkBreak = lastCjkBreakRun === r && cjkBreakIsLaterThanSpace;
+          if (isCjkBreakOpportunityChar(ch) || lastBreakRun < 0) {
+            const boundary = resolveKinsokuBoundary(text, start, c);
+            if (boundary > c) {
+              // Closers hang past the line end.
+              width += measureCharRange(c, boundary);
+            } else if (boundary < c) {
+              // An opener carries down to the next line.
+              width -= measureCharRange(boundary, c);
+            }
+            endRun = r;
+            endChar = boundary;
+          } else if (usableCjkBreak) {
+            const boundary = resolveKinsokuBoundary(text, start, lastCjkBreakChar);
+            width = widthAtLastCjkBreak;
+            if (boundary > lastCjkBreakChar) {
+              width += measureCharRange(lastCjkBreakChar, boundary);
+            } else if (boundary < lastCjkBreakChar) {
+              width -= measureCharRange(boundary, lastCjkBreakChar);
+            }
+            endRun = r;
+            endChar = boundary;
+          } else {
             endRun = lastBreakRun;
             endChar = lastBreakChar;
             width = widthAtLastBreak >= 0 ? widthAtLastBreak : width;
-          } else {
-            endRun = r;
-            endChar = c;
           }
           didBreakInThisLine = true;
           break;
         }
         width += w;
         endRun = r;
-        endChar = c + 1;
-        if (ch === ' ' || ch === '\t' || ch === '-') {
+        endChar = chEnd;
+        if (ch === ' ') {
           lastBreakRun = r;
-          lastBreakChar = c + 1;
+          lastBreakChar = chEnd;
+          widthAtLastBreak = width - w;
+        } else if (ch === '\t' || ch === '-') {
+          lastBreakRun = r;
+          lastBreakChar = chEnd;
           widthAtLastBreak = width;
+        } else if (isCjkBreakOpportunityChar(ch)) {
+          // Every ideograph is a break opportunity. Record it so an overflow
+          // later in the line breaks between ideographs instead of rewinding to
+          // a space that may be far to the left.
+          lastCjkBreakRun = r;
+          lastCjkBreakChar = chEnd;
+          widthAtLastCjkBreak = width;
         }
       }
       if (didBreakInThisLine) break;
+      if (text.length > start) {
+        previousRunLetterSpacing = runLetterSpacing(run);
+      }
     }
 
     // If we didn't consume any chars (e.g., very long single char), force one char
@@ -1571,8 +2105,11 @@ export function remeasureParagraph(
       endChar = startChar + 1;
     }
 
-    const lineMaxAtomicHeight = getLineMaxAtomicHeight(runs, startRun, startChar, endRun, endChar);
-
+    // Text-derived line height is the threshold for the baseline decision.
+    // Reflowed lines still preserve line-expanding image height, matching
+    // measuring/dom's `max(textLineHeight, maxImageHeight)` behavior.
+    const textLineHeight = lineHeightForRuns(runs, startRun, endRun, lastMeasuredFontSize, spacing);
+    const lineHeight = Math.max(textLineHeight, lineMaxImageHeight);
     const line: Line = {
       fromRun: startRun,
       fromChar: startChar,
@@ -1581,10 +2118,17 @@ export function remeasureParagraph(
       width,
       ascent: 0,
       descent: 0,
-      lineHeight: Math.max(lineHeightForRuns(runs, startRun, endRun, lastMeasuredFontSize), lineMaxAtomicHeight),
+      lineHeight,
       maxWidth: effectiveMaxWidth,
-      ...(lineMaxAtomicHeight > 0 ? { maxImageHeight: lineMaxAtomicHeight } : {}),
     };
+    const inlineImageAlignments = resolveRemeasureImageAlignments(
+      lineImageCandidates,
+      lineMaxTextFontSize > 0,
+      textLineHeight,
+    );
+    if (inlineImageAlignments) {
+      line.inlineImageAlignments = inlineImageAlignments;
+    }
     lines.push(line);
     if (lineMaxTextFontSize > 0) {
       lastMeasuredFontSize = lineMaxTextFontSize;
@@ -1624,12 +2168,43 @@ export function remeasureParagraph(
     }
   }
 
-  const hasTabRun = runs.some((run) => run?.kind === 'tab');
+  const hasTabRun = runs.some((run) => run?.kind === 'tab' && !isVanishedRun(run));
   const hasTextTab = runs.some(
-    (run) => run?.kind === 'text' && typeof (run as TextRun).text === 'string' && (run as TextRun).text.includes('\t'),
+    (run) =>
+      run?.kind === 'text' &&
+      !isVanishedRun(run) &&
+      typeof (run as TextRun).text === 'string' &&
+      (run as TextRun).text.includes('\t'),
   );
-  if (hasTabRun || hasTextTab) {
+  const hasLineRegionOffsets = resolvedLineRegions?.some((regions) =>
+    regions.some((region) => Number.isFinite(region.offsetX) && Math.abs(region.offsetX) > 0.01),
+  );
+  if (hasTabRun || hasTextTab || hasLineRegionOffsets) {
     applyTabLayoutToLines(lines, runs, tabStops, decimalSeparator, indentLeft, baseFirstLineOffset);
+  }
+
+  if (hasLineRegionOffsets) {
+    lines.forEach((line, lineIndex) => {
+      const regions = resolvedLineRegions?.[lineIndex];
+      if (!regions || regions.length !== 1 || !line.segments?.length) return;
+      const offsetX = regions[0]?.offsetX ?? 0;
+      if (!Number.isFinite(offsetX) || Math.abs(offsetX) <= 0.01) return;
+
+      const firstSegment = line.segments[0];
+      firstSegment.x = (firstSegment.x ?? 0) + offsetX;
+      for (let index = 1; index < line.segments.length; index += 1) {
+        const segment = line.segments[index];
+        if (segment.x != null) segment.x += offsetX;
+        if (segment.precedingTabEndX != null) segment.precedingTabEndX += offsetX;
+      }
+      line.leaders?.forEach((leader) => {
+        leader.from += offsetX;
+        leader.to += offsetX;
+      });
+      line.bars?.forEach((bar) => {
+        bar.x += offsetX;
+      });
+    });
   }
 
   const totalHeight = lines.reduce((s, l) => s + l.lineHeight, 0);
@@ -1642,12 +2217,17 @@ export function remeasureParagraph(
       : (measuredMarkerTextWidth ?? 0);
   const markerInfo = marker
     ? {
-        markerWidth: indentHanging ?? 0,
+        // Keep remeasure output consistent with the primary DOM measurer. A
+        // paragraph can override w:ind without repeating the numbering level's
+        // hanging indent, while wordLayout still supplies a valid marker. Using
+        // only attrs.indent.hanging here collapses that marker to zero after a
+        // column/float remeasure and makes the painter suppress it entirely.
+        markerWidth: Math.max(0, markerTextWidth + _LIST_MARKER_GAP),
         markerTextWidth,
         indentLeft,
         gutterWidth: marker.gutterWidthPx,
       }
     : undefined;
 
-  return { kind: 'paragraph', lines, totalHeight, marker: markerInfo };
+  return { kind: 'paragraph', lines, totalHeight, measuredAtMaxWidth: maxWidth, marker: markerInfo };
 }

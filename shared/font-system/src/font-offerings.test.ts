@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { BASELINE_BUNDLED, FULLY_ACTIVE_BUNDLED, createBundledActivation } from './activation';
 import {
   FONT_OFFERINGS,

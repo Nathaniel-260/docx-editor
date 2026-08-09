@@ -78,6 +78,35 @@ function validateTargetOnlyCreateLocation(
  * when `before`/`after` is used.
  */
 function validateTargetOrNodeIdCreateLocation(at: TableCreateLocation, operationName: string): void {
+  if (at.kind === 'inParagraph') {
+    const loc = at as { target?: unknown; offset?: unknown; coordinateSpace?: unknown };
+    if (loc.target === undefined) {
+      throw new DocumentApiValidationError(
+        'INVALID_TARGET',
+        `${operationName} with at.kind="inParagraph" requires at.target.`,
+        { field: 'at.target' },
+      );
+    }
+    if (typeof loc.offset !== 'number' || !Number.isInteger(loc.offset) || loc.offset < 0) {
+      throw new DocumentApiValidationError(
+        'INVALID_INPUT',
+        `${operationName} with at.kind="inParagraph" requires a non-negative integer at.offset.`,
+        { field: 'at.offset', value: loc.offset },
+      );
+    }
+    if (loc.coordinateSpace !== undefined && loc.coordinateSpace !== 'visible' && loc.coordinateSpace !== 'tracked') {
+      throw new DocumentApiValidationError(
+        'INVALID_INPUT',
+        `${operationName} with at.kind="inParagraph" requires at.coordinateSpace to be "visible" or "tracked".`,
+        { field: 'at.coordinateSpace', value: loc.coordinateSpace },
+      );
+    }
+    if (isRecord(loc.target) && 'story' in loc.target) {
+      validateStoryLocator((loc.target as { story?: unknown }).story, 'at.target.story');
+    }
+    return;
+  }
+
   if (at.kind !== 'before' && at.kind !== 'after') return;
 
   const loc = at as { kind: string; target?: unknown; nodeId?: unknown };

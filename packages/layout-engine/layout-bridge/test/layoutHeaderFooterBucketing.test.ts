@@ -10,7 +10,7 @@
  * - Backward compatibility with legacy API
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure, ParagraphBlock, TextRun } from '@superdoc/contracts';
 import {
   layoutHeaderFooterWithCache,
@@ -309,6 +309,37 @@ describe('layoutHeaderFooterWithCache - Per-Page Resolution (Small Docs)', () =>
     expect(pages[0].number).toBe(1);
     expect(pages[4].number).toBe(5);
     expect(pages[9].number).toBe(10);
+  });
+
+  it('preserves each page measurement when PAGE fields change footer height', async () => {
+    const sections = {
+      default: [makePageTokenBlock('footer-page-height')],
+    };
+    const pageResolver: PageResolver = (pageNum) => ({
+      displayText: String(pageNum),
+      totalPages: 12,
+    });
+    const measureBlock = vi.fn(async (block: FlowBlock) => {
+      const text = block.kind === 'paragraph' ? block.runs.map((run) => ('text' in run ? run.text : '')).join('') : '';
+      return makeMeasure(text.includes('Page 10') || text.includes('Page 11') || text.includes('Page 12') ? 32 : 20);
+    });
+
+    const result = await layoutHeaderFooterWithCache(
+      sections,
+      { width: 400, height: 80 },
+      measureBlock,
+      undefined,
+      undefined,
+      pageResolver,
+      'footer',
+    );
+
+    const layout = result.default?.layout;
+    expect(layout?.height).toBe(32);
+    expect(layout?.pages[0].measurementHeight).toBe(20);
+    expect(layout?.pages[8].measurementHeight).toBe(20);
+    expect(layout?.pages[9].measurementHeight).toBe(32);
+    expect(layout?.pages[11].measurementHeight).toBe(32);
   });
 });
 

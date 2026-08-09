@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vite-plus/test';
 import { BASELINE_BUNDLED, FULLY_ACTIVE_BUNDLED, createBundledActivation, deriveBundledActivation } from './activation';
 import { __resetBundledPackPresent, isBundledPackPresent, markBundledPackPresent } from './bundled';
 

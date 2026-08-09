@@ -1,5 +1,6 @@
 import type { ImageHyperlink, ParagraphBlock, Run, SdtMetadata, TrackedChangesMode } from '@superdoc/contracts';
 import type { FragmentRenderContext } from '../renderer.js';
+import type { PositionValidationCollector } from '../pm-position-validation.js';
 
 export type RenderedLineInfo = {
   el: HTMLElement;
@@ -46,6 +47,12 @@ export type RunRenderContext = {
   createInlineSdtWrapper: (sdt: SdtMetadata) => HTMLElement;
   syncInlineSdtWrapperTypography: (wrapper: HTMLElement, runForSizing?: Run) => void;
   expandSdtWrapperPmRange: (wrapper: HTMLElement, pmStart?: number | null, pmEnd?: number | null) => void;
+  /**
+   * Painter-scoped position-coverage collector (dark by default). The run
+   * dispatcher (`renderRun`) records one content-free structural observation
+   * per rendered run through this sink; absent on ad-hoc/test contexts.
+   */
+  positionValidation?: PositionValidationCollector;
 };
 
 export type RenderLineParams = {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { DomPainter } from './renderer.js';
 
 function makeFragment(blockId: string, pmStart: number, pmEnd: number) {

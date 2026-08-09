@@ -12,8 +12,8 @@ const LINK_DATASET_KEYS = {
 
 const MAX_HREF_LENGTH = 2048;
 const SAFE_ANCHOR_PATTERN = /^[A-Za-z0-9._-]+$/;
-const LINK_TARGET_SET = new Set(['_blank', '_self', '_parent', '_top']);
 const AMBIGUOUS_LINK_PATTERNS = /^(click here|read more|more|link|here|this|download|view)$/i;
+const INVALID_TARGET_CHARS = /[\u0000-\u001F\u007F]/;
 
 /**
  * Hyperlink rendering metrics for observability.
@@ -180,8 +180,9 @@ const resolveLinkTarget = (
   link: FlowRunLink,
   sanitized?: ReturnType<typeof sanitizeHref> | null,
 ): string | undefined => {
-  if (link.target && LINK_TARGET_SET.has(link.target)) {
-    return link.target;
+  if (typeof link.target === 'string') {
+    const target = link.target.trim();
+    if (target && !INVALID_TARGET_CHARS.test(target)) return target;
   }
   if (sanitized && (sanitized.protocol === 'http' || sanitized.protocol === 'https')) {
     return '_blank';

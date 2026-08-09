@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { FlowBlock, Fragment, Measure } from '@superdoc/contracts';
 import { normalizeFragmentsForRegion } from './normalize-header-footer-fragments.js';
 
@@ -23,6 +23,8 @@ const MARGIN_BOTTOM = 72;
 const FOOTER_DISTANCE = 36;
 
 const fullConstraints = {
+  width: 672,
+  pageWidth: 816,
   pageHeight: PAGE_HEIGHT,
   margins: { left: 72, right: 72, top: 72, bottom: MARGIN_BOTTOM, header: 36, footer: FOOTER_DISTANCE },
 };
@@ -33,8 +35,158 @@ const FOOTER_BAND_ORIGIN = PAGE_HEIGHT - FOOTER_DISTANCE; // 1020
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('normalizeFragmentsForRegion (footer page-relative only)', () => {
+describe('normalizeFragmentsForRegion', () => {
+  describe('margin-relative anchors in header', () => {
+    it('normalizes visible margin-relative header content to header-local y', () => {
+      const block: FlowBlock = {
+        kind: 'image',
+        id: 'header-logo',
+        src: 'logo.png',
+        anchor: { isAnchored: true, vRelativeFrom: 'margin', alignV: 'bottom', offsetV: 0 },
+        wrap: { type: 'Square' },
+      };
+      const fragment = makeAnchoredImageFragment('header-logo', 826.2, 68);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'header', fullConstraints);
+
+      expect(fragment.y).toBe(0);
+    });
+
+    it('does not normalize behind-doc header overlays', () => {
+      const block: FlowBlock = {
+        kind: 'image',
+        id: 'header-watermark',
+        src: 'watermark.png',
+        anchor: { isAnchored: true, vRelativeFrom: 'margin', alignV: 'center', offsetV: 0, behindDoc: true },
+        wrap: { type: 'None' },
+      };
+      const fragment = makeAnchoredImageFragment('header-watermark', 400, 120);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'header', fullConstraints);
+
+      expect(fragment.y).toBe(400);
+    });
+  });
+
+  describe('page-relative anchors in header', () => {
+    it('normalizes page-relative header content to page-top-local y', () => {
+      const block: FlowBlock = {
+        kind: 'drawing',
+        id: 'header-textbox',
+        drawingKind: 'vectorShape',
+        geometry: { width: 816, height: 27 },
+        anchor: { isAnchored: true, vRelativeFrom: 'page', alignV: 'top', offsetV: 20 },
+        wrap: { type: 'None' },
+      };
+      const fragment = {
+        kind: 'drawing',
+        blockId: 'header-textbox',
+        x: 0,
+        y: -988,
+        height: 27,
+        isAnchored: true,
+      } as unknown as Fragment;
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'header', fullConstraints);
+
+      expect(fragment.y).toBe(20);
+    });
+  });
+
   describe('page-relative anchors in footer', () => {
+    it.each([
+      ['right', 602, 746],
+      ['center', 301, 373],
+    ] as const)(
+      'resolves page-anchored paragraph frame %s alignment against the physical page',
+      (xAlign, x, expectedX) => {
+        const block: FlowBlock = {
+          kind: 'paragraph',
+          id: 'footer-frame',
+          runs: [],
+          attrs: { frame: { wrap: 'around', hAnchor: 'page', vAnchor: 'page', xAlign, y: 988.8667 } },
+        };
+        const fragment = makeParaFragment('footer-frame', 988.8667);
+        fragment.x = x;
+        const pages = [{ number: 1, fragments: [fragment] }];
+
+        normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'footer', fullConstraints);
+
+        expect(fragment.x).toBe(expectedX);
+      },
+    );
+
+    it('normalizes a page-anchored paragraph frame from physical to footer-local coordinates', () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'footer-frame',
+        runs: [],
+        attrs: { frame: { wrap: 'around', vAnchor: 'page', y: 988.8667 } },
+      };
+      const fragment = makeParaFragment('footer-frame', 988.8667);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'footer', fullConstraints);
+
+      expect(fragment.y).toBeCloseTo(988.8667 - (PAGE_HEIGHT - MARGIN_BOTTOM));
+    });
+
+    it.each([undefined, 'auto'])('keeps wrap=%s page-anchored paragraphs in ordinary flow', (wrap) => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'ordinary-footer-paragraph',
+        runs: [],
+        attrs: { frame: { wrap, vAnchor: 'page', y: 988.8667 } },
+      };
+      const fragments = [makeParaFragment(block.id, 12), makeParaFragment(block.id, 26)];
+      const pages = [{ number: 1, fragments }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'footer', fullConstraints);
+
+      expect(fragments.map((fragment) => fragment.y)).toEqual([12, 26]);
+    });
+
+    it.each([Number.NaN, Number.POSITIVE_INFINITY])('does not normalize a page-anchored frame with y=%s', (y) => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'non-finite-footer-frame',
+        runs: [],
+        attrs: { frame: { wrap: 'around', vAnchor: 'page', y } },
+      };
+      const fragment = makeParaFragment(block.id, 12);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'footer', fullConstraints);
+
+      expect(fragment.y).toBe(12);
+    });
+
+    it.each([
+      ['negative', -24],
+      ['non-finite', Number.NaN],
+      ['missing', undefined],
+    ])('uses the page bottom as the paragraph-frame origin for a %s bottom margin', (_label, bottom) => {
+      const physicalY = 988.8667;
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'footer-frame-invalid-margin',
+        runs: [],
+        attrs: { frame: { wrap: 'around', vAnchor: 'page', y: physicalY } },
+      };
+      const fragment = makeParaFragment(block.id, physicalY);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'footer', {
+        pageHeight: PAGE_HEIGHT,
+        margins: { left: 72, right: 72, bottom },
+      });
+
+      expect(fragment.y + PAGE_HEIGHT).toBeCloseTo(physicalY);
+    });
+
     it('normalizes a top-aligned anchor', () => {
       const block: FlowBlock = {
         kind: 'image',
@@ -149,6 +301,36 @@ describe('normalizeFragmentsForRegion (footer page-relative only)', () => {
   });
 
   describe('passthrough cases — fragments that must NOT be modified', () => {
+    it('keeps page-anchored paragraph frames page-top-local in headers', () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'header-frame',
+        runs: [],
+        attrs: { frame: { wrap: 'around', vAnchor: 'page', y: 24 } },
+      };
+      const fragment = makeParaFragment('header-frame', 99);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'header', fullConstraints);
+
+      expect(fragment.y).toBe(24);
+    });
+
+    it.each(['text', 'margin'])('does not modify %s-anchored paragraph frames', (vAnchor) => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'local-frame',
+        runs: [],
+        attrs: { frame: { wrap: 'around', vAnchor, y: 24 } },
+      };
+      const fragment = makeParaFragment('local-frame', 37);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'footer', fullConstraints);
+
+      expect(fragment.y).toBe(37);
+    });
+
     it('does not modify non-anchored paragraph fragments', () => {
       const block: FlowBlock = {
         kind: 'paragraph',

@@ -114,6 +114,22 @@ describe('resolveExistingTableEffectiveStyleId', () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe('resolvePreferredNewTableStyleId', () => {
+  it('skips localized Normal Table and selects localized Table Grid from semantic hints', () => {
+    const localized = {
+      docDefaults: {},
+      latentStyles: {},
+      styles: {
+        BaseLoc: { type: 'table', default: true },
+        GridLoc: { type: 'table' },
+      },
+    };
+    expect(
+      resolvePreferredNewTableStyleId(null, localized, {
+        normalTableStyleId: 'BaseLoc',
+        tableGridStyleId: 'GridLoc',
+      }),
+    ).toEqual({ styleId: 'GridLoc', source: 'builtin-fallback' });
+  });
   it('uses settings default when valid', () => {
     const styles = withStyles({ MyTableStyle: { type: 'table' } });
     const result = resolvePreferredNewTableStyleId('MyTableStyle', styles);

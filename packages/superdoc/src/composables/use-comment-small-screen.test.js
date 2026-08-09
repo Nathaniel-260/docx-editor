@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { defineComponent, h, ref } from 'vue';
 import { mount } from '@vue/test-utils';
 import {
@@ -40,7 +40,7 @@ describe('useCommentSmallScreen', () => {
   const createMockResizeObserver = () => {
     const instances = [];
     const Original = window.ResizeObserver;
-    window.ResizeObserver = vi.fn((cb) => {
+    window.ResizeObserver = vi.fn(function ResizeObserverStub(cb) {
       const instance = {
         observe: vi.fn(),
         disconnect: vi.fn(),
@@ -261,7 +261,9 @@ describe('useCommentSmallScreen', () => {
     const disconnect = vi.fn();
     const observe = vi.fn();
     const originalResizeObserver = window.ResizeObserver;
-    window.ResizeObserver = vi.fn(() => ({ observe, disconnect }));
+    window.ResizeObserver = vi.fn(function ResizeObserverStub() {
+      return { observe, disconnect };
+    });
 
     const { api, wrapper } = mountComposable();
     api.ensureCompactMeasurementObserver();

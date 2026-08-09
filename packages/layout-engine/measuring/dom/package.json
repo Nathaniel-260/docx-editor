@@ -20,7 +20,7 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vp test run"
   },
   "dependencies": {
     "@superdoc/contracts": "workspace:*",
@@ -29,5 +29,8 @@
     "@superdoc/font-utils": "workspace:*",
     "@superdoc/geometry-utils": "workspace:*",
     "@superdoc/word-layout": "workspace:*"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
   }
 }

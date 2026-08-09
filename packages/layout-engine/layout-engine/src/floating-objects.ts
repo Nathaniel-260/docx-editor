@@ -20,9 +20,9 @@ import type {
   DrawingMeasure,
   TableBlock,
   TableMeasure,
-  TableAnchor,
   TableWrap,
   ColumnLayoutForAnchor,
+  ResolveAnchoredGraphicXContext,
 } from '@superdoc/contracts';
 import { resolveAnchoredGraphicX, getColumnGeometry, getColumnX } from '@superdoc/contracts';
 
@@ -79,6 +79,24 @@ export type FloatingObjectManager = {
   ): { width: number; offsetX: number };
 
   /**
+   * Compute every contiguous horizontal region available to a line.
+   * Unlike computeAvailableWidth, this preserves both sides of a centered
+   * `wrapText="bothSides"` object instead of collapsing them to one side.
+   */
+  computeAvailableRegions(
+    lineY: number,
+    lineHeight: number,
+    baseWidth: number,
+    columnIndex: number,
+    pageNumber: number,
+  ): Array<{ offsetX: number; width: number }>;
+
+  /**
+   * Return the first Y coordinate below every overlapping TopAndBottom float.
+   */
+  computeVerticalClearance(lineY: number, lineHeight: number, columnIndex: number, pageNumber: number): number | null;
+
+  /**
    * Get all floating images for a page (for debugging/painting).
    */
   getAllFloatsForPage(pageNumber: number): ExclusionZone[];
@@ -126,7 +144,9 @@ export function createFloatingObjectManager(
       const objectWidth = measure.width ?? 0;
       const objectHeight = measure.height ?? 0;
 
-      const x = computeAnchorX(anchor, columnIndex, currentColumns, objectWidth, currentMargins, currentPageWidth);
+      const x = computeAnchorX(anchor, columnIndex, currentColumns, objectWidth, currentMargins, currentPageWidth, {
+        pageNumber,
+      });
 
       const zone: ExclusionZone = {
         imageBlockId: drawingBlock.id,
@@ -156,6 +176,11 @@ export function createFloatingObjectManager(
         return; // Not anchored, no exclusion
       }
 
+      // Re-registration follows an anchor paragraph that moved during pagination.
+      for (let index = zones.length - 1; index >= 0; index -= 1) {
+        if (zones[index].imageBlockId === tableBlock.id) zones.splice(index, 1);
+      }
+
       const { wrap, anchor } = tableBlock;
       const wrapType = wrap?.type ?? 'None';
 
@@ -170,7 +195,15 @@ export function createFloatingObjectManager(
       const tableHeight = measure.totalHeight ?? 0;
 
       // Compute table X position based on anchor alignment
-      const x = computeTableAnchorX(anchor, columnIndex, currentColumns, tableWidth, currentMargins, currentPageWidth);
+      const x = resolveAnchoredGraphicX(
+        anchor,
+        columnIndex,
+        currentColumns,
+        tableWidth,
+        currentMargins,
+        currentPageWidth,
+        { pageNumber },
+      );
 
       const zone: ExclusionZone = {
         imageBlockId: tableBlock.id, // Reusing imageBlockId field for table id
@@ -293,6 +326,78 @@ export function createFloatingObjectManager(
       return { width: availableWidth, offsetX };
     },
 
+    computeAvailableRegions(lineY, lineHeight, baseWidth, columnIndex, pageNumber) {
+      const exclusions = this.getExclusionsForLine(lineY, lineHeight, columnIndex, pageNumber).filter(
+        (zone) => zone.wrapMode !== 'none' && zone.wrapMode !== 'topBottom',
+      );
+      if (exclusions.length === 0) return [{ offsetX: 0, width: baseWidth }];
+
+      const columnOrigin = getColumnX(getColumnGeometry(currentColumns), columnIndex, marginLeft);
+      const columnRight = columnOrigin + baseWidth;
+      let regions = [{ left: columnOrigin, right: columnRight }];
+
+      const subtractInterval = (left: number, right: number) => {
+        if (right <= left) return;
+        regions = regions.flatMap((region) => {
+          if (right <= region.left || left >= region.right) return [region];
+          const next: Array<{ left: number; right: number }> = [];
+          if (left > region.left) next.push({ left: region.left, right: Math.min(left, region.right) });
+          if (right < region.right) next.push({ left: Math.max(right, region.left), right: region.right });
+          return next;
+        });
+      };
+
+      for (const zone of exclusions) {
+        const occupiedLeft = Math.max(columnOrigin, zone.bounds.x - zone.distances.left);
+        const occupiedRight = Math.min(columnRight, zone.bounds.x + zone.bounds.width + zone.distances.right);
+
+        if (zone.wrapMode === 'left') {
+          subtractInterval(columnOrigin, occupiedRight);
+        } else if (zone.wrapMode === 'right') {
+          subtractInterval(occupiedLeft, columnRight);
+        } else if (zone.wrapMode === 'largest') {
+          const leftWidth = Math.max(0, occupiedLeft - columnOrigin);
+          const rightWidth = Math.max(0, columnRight - occupiedRight);
+          if (leftWidth >= rightWidth) subtractInterval(occupiedLeft, columnRight);
+          else subtractInterval(columnOrigin, occupiedRight);
+        } else {
+          subtractInterval(occupiedLeft, occupiedRight);
+        }
+      }
+
+      const availableRegions = regions
+        .map((region) => ({ offsetX: region.left - columnOrigin, width: region.right - region.left }))
+        .filter((region) => region.width > 0);
+
+      // Keep the remeasure path constrained when a float consumes the entire
+      // column. An empty result means "no constraint" to legacy callers and
+      // would incorrectly restore full-width text through the exclusion.
+      return availableRegions.length > 0 ? availableRegions : [{ offsetX: 0, width: 1 }];
+    },
+
+    computeVerticalClearance(lineY, lineHeight, columnIndex, pageNumber) {
+      const exclusions = this.getExclusionsForLine(lineY, lineHeight, columnIndex, pageNumber);
+      const blockers = exclusions.filter((zone) => zone.wrapMode === 'topBottom');
+      const horizontalWrapExclusions = exclusions.filter(
+        (zone) => zone.wrapMode !== 'none' && zone.wrapMode !== 'topBottom',
+      );
+
+      if (horizontalWrapExclusions.length > 0) {
+        const availableRegions = this.computeAvailableRegions(
+          lineY,
+          lineHeight,
+          currentColumns.width,
+          columnIndex,
+          pageNumber,
+        );
+        const hasUsableSideRegion = availableRegions.some((region) => region.width > 1);
+        if (!hasUsableSideRegion) blockers.push(...horizontalWrapExclusions);
+      }
+
+      if (blockers.length === 0) return null;
+      return Math.max(...blockers.map((zone) => zone.bounds.y + zone.bounds.height + zone.distances.bottom));
+    },
+
     getAllFloatsForPage(pageNumber) {
       return zones.filter((z) => z.pageNumber === pageNumber);
     },
@@ -327,8 +432,9 @@ export function computeAnchorX(
   imageWidth: number,
   margins?: { left?: number; right?: number },
   pageWidth?: number,
+  context?: ResolveAnchoredGraphicXContext,
 ): number {
-  return resolveAnchoredGraphicX(anchor, columnIndex, columns, imageWidth, margins, pageWidth);
+  return resolveAnchoredGraphicX(anchor, columnIndex, columns, imageWidth, margins, pageWidth, context);
 }
 
 /**
@@ -342,7 +448,7 @@ function computeWrapMode(wrap: ImageBlock['wrap'], _anchor: ImageBlock['anchor']
 
   // TopAndBottom wrap: no horizontal wrapping
   if (wrap.type === 'TopAndBottom') {
-    return 'none';
+    return 'topBottom';
   }
 
   // Map wrapText direction to exclusion side
@@ -353,71 +459,6 @@ function computeWrapMode(wrap: ImageBlock['wrap'], _anchor: ImageBlock['anchor']
 
   // Default: both sides
   return 'both';
-}
-
-/**
- * Compute horizontal position of anchored table based on alignment and offsets.
- * Similar to computeAnchorX but uses TableAnchor type.
- */
-function computeTableAnchorX(
-  anchor: TableAnchor,
-  columnIndex: number,
-  columns: ColumnLayout,
-  tableWidth: number,
-  margins?: { left?: number; right?: number },
-  pageWidth?: number,
-): number {
-  const alignH = anchor.alignH ?? 'left';
-  const offsetH = anchor.offsetH ?? 0;
-
-  const marginLeft = Math.max(0, margins?.left ?? 0);
-  const marginRight = Math.max(0, margins?.right ?? 0);
-  const contentWidth = pageWidth != null ? Math.max(1, pageWidth - (marginLeft + marginRight)) : columns.width;
-
-  const contentLeft = marginLeft;
-  const geometry = getColumnGeometry(columns);
-  const columnLeft = getColumnX(geometry, columnIndex, contentLeft);
-
-  const relativeFrom = anchor.hRelativeFrom ?? 'column';
-
-  // Base origin and available width based on relativeFrom
-  let baseX: number;
-  let availableWidth: number;
-  if (relativeFrom === 'page') {
-    if (columns.count === 1) {
-      baseX = contentLeft;
-      availableWidth = contentWidth;
-    } else {
-      baseX = 0;
-      availableWidth = pageWidth != null ? pageWidth : contentWidth;
-    }
-  } else if (relativeFrom === 'margin') {
-    baseX = contentLeft;
-    availableWidth = contentWidth;
-  } else {
-    // 'column' (default)
-    baseX = columnLeft;
-    // Scalar (max) column width, matching anchored-object measurement (clamped to columns.width).
-    // Per-column origin above is honored; per-column available width waits on per-column measurement
-    // so a max-sized object is not centered/right-aligned into the margin or gap. (SD-2629)
-    availableWidth = columns.width;
-  }
-
-  // Handle table-specific alignment values (inside/outside map to left/right for now)
-  let effectiveAlignH = alignH;
-  if (alignH === 'inside') effectiveAlignH = 'left';
-  if (alignH === 'outside') effectiveAlignH = 'right';
-
-  const result =
-    effectiveAlignH === 'left'
-      ? baseX + offsetH
-      : effectiveAlignH === 'right'
-        ? baseX + availableWidth - tableWidth - offsetH
-        : effectiveAlignH === 'center'
-          ? baseX + (availableWidth - tableWidth) / 2 + offsetH
-          : baseX;
-
-  return result;
 }
 
 /**

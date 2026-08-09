@@ -3,7 +3,7 @@
  * from explicit document anchors.
  *
  * This is a read-only composition layer that resolves two anchor endpoints
- * into a contiguous `SelectionTarget` + mutation-ready `ref`.
+ * into a contiguous `SelectionTarget` plus an optional mutation-ready `ref`.
  */
 
 import type { SelectionTarget, SelectionPoint, TextAddress, TextTarget, EntityAddress } from '../types/address.js';
@@ -77,27 +77,27 @@ export interface RangePreview {
 export interface ResolveRangeOutput {
   /** The document revision at which the range was evaluated. */
   evaluatedRevision: string;
-  /** Mutation-ready handle for the resolved range. */
+  /** Handle metadata for the resolved range. */
   handle: {
     /**
-     * Text ref encoding the resolved range, usable as a target for mutations
-     * (delete, replace, format).
+     * Text ref encoding the resolved range when current mutation consumers can
+     * use it as a target for delete, replace, or format operations.
      *
-     * `null` when the range covers only structural blocks with no text content
-     * (e.g. an image-only document). Check `coversFullTarget` and this field
-     * before passing to mutation operations.
+     * `null` when the resolved range is not mutation-ready as a ref. Callers
+     * must check `handle.ref !== null` and/or `coversFullTarget` before passing
+     * the handle to mutation operations.
      */
     ref: string | null;
     refStability: 'ephemeral';
     /**
-     * Whether the ref faithfully covers the exact same range as the target.
+     * Whether `handle.ref` faithfully covers the exact same range as `target`.
      *
      * `true`: the ref encodes the full range; using it for delete/replace/format
      * produces the same result as operating directly on the target.
      *
-     * `false`: the range spans structural block boundaries (e.g. table, image)
-     * that the text-based ref format cannot capture. The ref covers only the text
-     * content within the range, or is `null` if no text content exists.
+     * `false`: the resolved range is not currently exposed as a mutation-ready
+     * ref. `handle.ref` may be `null`; callers that need to mutate the range
+     * should use another supported target form or re-resolve a narrower range.
      */
     coversFullTarget: boolean;
   };
@@ -112,7 +112,7 @@ export interface ResolveRangeOutput {
 // ---------------------------------------------------------------------------
 
 /**
- * Adapter that the super-editor implements for `ranges.resolve`.
+ * Adapter that the document engine implements for `ranges.resolve`.
  *
  * The document-api layer handles validation; the adapter performs the
  * actual ProseMirror-level resolution and ref encoding.

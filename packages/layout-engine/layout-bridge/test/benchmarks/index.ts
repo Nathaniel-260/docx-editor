@@ -89,7 +89,8 @@ export async function runBenchmarkScenario(config: BenchmarkConfig): Promise<Ben
   const initialDuration = performance.now() - startFull;
 
   const mount = ensureBenchmarkMount();
-  const painter = createDomPainter({});
+  // Benchmark the same persistent paginated reconcile used by the product.
+  const painter = createDomPainter({ flowMode: 'paginated' });
   let painterBlocks = doc.blocks;
   let painterMeasures = initial.measures;
   const paintLayout = (layout: Layout) => {
@@ -99,7 +100,37 @@ export async function runBenchmarkScenario(config: BenchmarkConfig): Promise<Ben
       blocks: painterBlocks,
       measures: painterMeasures,
     });
-    painter.paint({ resolvedLayout }, mount);
+    const gapPx = resolvedLayout.pageGap ?? 24;
+    let topPx = 0;
+    const pages = resolvedLayout.pages.map((page, index) => {
+      const band = {
+        index,
+        topPx,
+        widthPx: page.width,
+        heightPx: page.height,
+        pageNumber: page.number,
+      };
+      topPx += page.height + gapPx;
+      return band;
+    });
+    const last = pages.at(-1);
+    painter.paintPersistentPages(
+      {
+        scaffold: {
+          generation: resolvedLayout.layoutEpoch ?? 0,
+          pageCount: pages.length,
+          gapPx,
+          totalHeightPx: last ? last.topPx + last.heightPx : 0,
+          pages,
+        },
+        desiredContentPageIndices: pages.map((page) => page.index),
+        packetsByPageIndex: new Map(resolvedLayout.pages.map((page, index) => [index, page])),
+        sectionPageCounts: resolvedLayout.sectionPageCounts,
+        documentBackground: resolvedLayout.documentBackground,
+        captureSnapshot: false,
+      },
+      mount,
+    );
   };
   paintLayout(initial.layout);
 

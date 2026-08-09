@@ -1,5 +1,6 @@
 import type { InlineAnchor } from '../types/base.js';
 import type { TextTarget } from '../types/address.js';
+import type { StoryLocator } from '../types/story.types.js';
 import type { AdapterMutationFailure } from '../types/adapter-result.js';
 import type { DiscoveryOutput } from '../types/discovery.js';
 import type { TocCreateLocation } from '../toc/toc.types.js';
@@ -12,6 +13,14 @@ export interface CitationAddress {
   kind: 'inline';
   nodeType: 'citation';
   anchor: InlineAnchor;
+  /** Story containing this citation. Omit for body (backward compatible). */
+  story?: StoryLocator;
+  /** Session-stable story identity used by the v2 runtime with `fieldId`. */
+  storyId?: string;
+  /** Session-stable identity of the citation's backing OOXML field. */
+  fieldId?: string;
+  /** Field occurrence fallback for collocated citations with identical anchors. */
+  occurrenceIndex?: number;
 }
 
 export interface CitationSourceAddress {

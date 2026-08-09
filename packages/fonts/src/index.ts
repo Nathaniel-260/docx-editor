@@ -1,5 +1,5 @@
 /**
- * `@superdoc-dev/fonts` - the reviewed metric-compatible font substitutes SuperDoc renders for
+ * `@superdoc/fonts` - the reviewed metric-compatible font substitutes SuperDoc renders for
  * proprietary Word fonts (Carlito for Calibri, Liberation Serif for Times New Roman, etc.).
  *
  * Optional: install it to make the bundled fallbacks load automatically in any bundler app, with
@@ -48,7 +48,7 @@ export type { BundledFontFamilyName } from './bundled-families.js';
  *     import { resolveBundledFontAssetUrl } from '@superdoc-dev/fonts';
  *     new SuperDoc({ selector: '#editor', document, fonts: { resolveAssetUrl: resolveBundledFontAssetUrl } });
  *
- * Throws on an unknown file, which signals a version mismatch between `@superdoc-dev/fonts` and
+ * Throws on an unknown file, which signals a version mismatch between `@superdoc/fonts` and
  * the `superdoc` core manifest rather than silently degrading to the logical font name.
  *
  * @beta
@@ -57,9 +57,9 @@ export function resolveBundledFontAssetUrl(context: BundledFontAssetContext): st
   const url = BUNDLED_FONT_ASSET_URLS[context.file];
   if (!url) {
     throw new Error(
-      `[@superdoc-dev/fonts] no bundled asset for "${context.file}". This pack ships ` +
+      `[@superdoc/fonts] no bundled asset for "${context.file}". This pack ships ` +
         `${Object.keys(BUNDLED_FONT_ASSET_URLS).length} faces; the file is unknown, so ` +
-        `@superdoc-dev/fonts and superdoc are likely version-mismatched. Align their versions.`,
+        `@superdoc/fonts and superdoc are likely version-mismatched. Align their versions.`,
     );
   }
   return url;

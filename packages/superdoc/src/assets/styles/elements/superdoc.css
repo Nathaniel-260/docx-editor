@@ -5,6 +5,18 @@
   fill: currentColor;
 }
 
+.superdoc-toolbar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+  pointer-events: none;
+}
+
+.superdoc-toolbar svg path {
+  stroke: currentColor;
+}
+
 /* Web Layout Mode (OOXML ST_View 'web') - content reflows to container width */
 .superdoc--web-layout,
 .superdoc--web-layout .superdoc__layers,
@@ -44,12 +56,66 @@
  * find-match colour must override any source-doc highlight. The class is only
  * present during a search; clearing the session removes it and the original
  * highlight is restored. */
-.superdoc .ProseMirror-search-match {
+.superdoc .ProseMirror-search-match:not([data-sd-search-exact-highlight]) {
   background: var(--sd-ui-search-match-bg) !important;
 }
 
-.superdoc .ProseMirror-active-search-match {
+.superdoc .ProseMirror-active-search-match:not([data-sd-search-exact-highlight]) {
   background: var(--sd-ui-search-match-active-bg) !important;
+}
+
+::highlight(superdoc-search-match) {
+  background: var(--sd-ui-search-match-bg);
+}
+
+::highlight(superdoc-search-active-match) {
+  background: var(--sd-ui-search-match-active-bg);
+}
+
+/* Proofing underlines are render-only v1/v2 UI state. They must not alter DOCX
+ * bytes or layout identity; the runtime owns adding/removing these classes. */
+.superdoc .sd-proofing-spelling,
+.superdoc .sd-proofing-grammar,
+.superdoc .sd-proofing-style {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: var(--sd-proofing-underline-thickness, 1.5px);
+  text-underline-offset: var(--sd-proofing-underline-offset, 2px);
+}
+
+.superdoc .sd-proofing-spelling {
+  text-decoration-color: var(--sd-proofing-spelling-color, #e53e3e);
+}
+
+.superdoc .sd-proofing-grammar {
+  text-decoration-color: var(--sd-proofing-grammar-color, #3182ce);
+}
+
+.superdoc .sd-proofing-style {
+  text-decoration-color: var(--sd-proofing-style-color, #805ad5);
+}
+
+/* CSS Custom Highlight variant: the v2 runtime paints per-word squiggles over
+ * exact text ranges (no DOM mutation). Highlight names match the class names. */
+::highlight(sd-proofing-spelling),
+::highlight(sd-proofing-grammar),
+::highlight(sd-proofing-style) {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: var(--sd-proofing-underline-thickness, 1.5px);
+  text-underline-offset: var(--sd-proofing-underline-offset, 2px);
+}
+
+::highlight(sd-proofing-spelling) {
+  text-decoration-color: var(--sd-proofing-spelling-color, #e53e3e);
+}
+
+::highlight(sd-proofing-grammar) {
+  text-decoration-color: var(--sd-proofing-grammar-color, #3182ce);
+}
+
+::highlight(sd-proofing-style) {
+  text-decoration-color: var(--sd-proofing-style-color, #805ad5);
 }
 
 /* Contained Mode - fixed-height container embedding with internal scrolling */
@@ -60,9 +126,9 @@
   height: 100%;
 }
 
-/* Sub-document scroll fallback for non-SuperEditor content (PDF, HTML).
- * SuperEditor manages its own scroll container via .super-editor-container.contained,
- * but PDF/HTML viewers don't — they need the sub-document to scroll. */
+/* Sub-document scroll fallback for non-document-editor content (PDF, HTML).
+ * The document editor manages its own scroll container, but PDF/HTML viewers
+ * don't, so they need the sub-document to scroll. */
 .superdoc--contained .superdoc__sub-document {
   overflow: auto;
 }

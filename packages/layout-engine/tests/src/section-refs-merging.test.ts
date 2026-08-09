@@ -11,7 +11,7 @@
  * @module section-refs-merging.test
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import type { PMNode, FlowBlock, SectionBreakBlock } from '@superdoc/contracts';
 import { toFlowBlocks } from './test-helpers/to-flow-blocks.js';
 import { layoutDocument } from '@superdoc/layout-engine';

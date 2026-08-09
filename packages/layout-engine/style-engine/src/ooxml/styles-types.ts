@@ -34,8 +34,8 @@ export interface DocDefaults {
 export interface LatentStyles {
   /** Default locked state for latent styles. */
   defLockedState?: boolean;
-  /** Default UI priority flag for latent styles. */
-  defUIPriority?: boolean;
+  /** Default UI priority value for latent styles (ST_DecimalNumber). */
+  defUIPriority?: number;
   /** Default semi-hidden flag for latent styles. */
   defSemiHidden?: boolean;
   /** Default unhide-when-used flag for latent styles. */
@@ -302,6 +302,8 @@ export interface TableRowProperties {
   hidden: boolean;
   /** Row justification value. */
   justification?: string;
+  /** Table property-exception borders from `w:tblPrEx/w:tblBorders`. */
+  tblPrExBorders?: TableBorders;
   /** Table cell spacing properties. */
   tableCellSpacing?: MeasurementProperties;
   /** Repeat header row flag. */

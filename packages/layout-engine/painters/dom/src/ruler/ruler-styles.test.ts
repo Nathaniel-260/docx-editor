@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JSDOM } from 'jsdom';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
+// Fresh isolated documents from the happy-dom test environment (see
+// vitest.config.mjs) - the painter package deliberately has no jsdom
+// dependency, so a direct `import "jsdom"` fails vite's transform here
+// (persistent-page rendering preflight plan, workstream 8).
+const createTestDocument = (): Document => document.implementation.createHTMLDocument('painter-test');
+
 import { ensureRulerStyles, _resetRulerStylesInjection } from './ruler-styles.js';
 
 describe('ensureRulerStyles', () => {
-  let dom: JSDOM;
   let doc: Document;
 
   beforeEach(() => {
@@ -11,8 +15,7 @@ describe('ensureRulerStyles', () => {
     _resetRulerStylesInjection();
 
     // Create a fresh DOM for each test
-    dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
-    doc = dom.window.document;
+    doc = createTestDocument();
   });
 
   afterEach(() => {
@@ -127,8 +130,9 @@ describe('ensureRulerStyles', () => {
 
   it('handles document without head gracefully', () => {
     // Create a document without a head element
-    const minimalDom = new JSDOM('<!DOCTYPE html><html></html>');
-    const minimalDoc = minimalDom.window.document;
+    const minimalDoc = createTestDocument();
+    // ACTUALLY headless: the old jsdom HTML parser auto-inserted <head> here.
+    minimalDoc.head.remove();
 
     // Should not throw even if head is missing
     expect(() => {
@@ -138,11 +142,9 @@ describe('ensureRulerStyles', () => {
 
   describe('multiple document instances', () => {
     it('injects styles separately for different documents', () => {
-      const dom1 = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
-      const doc1 = dom1.window.document;
+      const doc1 = createTestDocument();
 
-      const dom2 = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
-      const doc2 = dom2.window.document;
+      const doc2 = createTestDocument();
 
       ensureRulerStyles(doc1);
 
@@ -205,12 +207,10 @@ describe('ensureRulerStyles', () => {
 });
 
 describe('_resetRulerStylesInjection', () => {
-  let dom: JSDOM;
   let doc: Document;
 
   beforeEach(() => {
-    dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
-    doc = dom.window.document;
+    doc = createTestDocument();
   });
 
   afterEach(() => {
@@ -228,8 +228,7 @@ describe('_resetRulerStylesInjection', () => {
     _resetRulerStylesInjection();
 
     // Create a new document
-    const dom2 = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
-    const doc2 = dom2.window.document;
+    const doc2 = createTestDocument();
 
     // Second injection should work
     ensureRulerStyles(doc2);
@@ -255,8 +254,7 @@ describe('_resetRulerStylesInjection', () => {
     ensureRulerStyles(doc);
 
     // Try to inject again (should be skipped due to flag)
-    const dom2 = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
-    const doc2 = dom2.window.document;
+    const doc2 = createTestDocument();
     ensureRulerStyles(doc2);
 
     const styleInDoc2 = doc2.querySelector('style[data-superdoc-ruler-styles]');
@@ -265,8 +263,7 @@ describe('_resetRulerStylesInjection', () => {
     // Reset and try again
     _resetRulerStylesInjection();
 
-    const dom3 = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
-    const doc3 = dom3.window.document;
+    const doc3 = createTestDocument();
     ensureRulerStyles(doc3);
 
     const styleInDoc3 = doc3.querySelector('style[data-superdoc-ruler-styles]');
@@ -275,13 +272,11 @@ describe('_resetRulerStylesInjection', () => {
 });
 
 describe('integration: styles and DOM elements', () => {
-  let dom: JSDOM;
   let doc: Document;
 
   beforeEach(() => {
     _resetRulerStylesInjection();
-    dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
-    doc = dom.window.document;
+    doc = createTestDocument();
   });
 
   afterEach(() => {

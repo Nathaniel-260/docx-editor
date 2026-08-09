@@ -1,20 +1,20 @@
 // Editor runtime registry + active routing unit tests.
 //
-// Uses fake v1 runtimes from the editor runtime boundary conformance fixtures so
+// Uses fake v2 runtimes from the editor runtime boundary conformance fixtures so
 // the registry is exercised against real contract shapes WITHOUT importing any
 // concrete editor implementation. Real adapter wiring is owned by the editor
 // runtime boundary.
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { EditorRuntimeRegistry } from './editor-runtime-registry.js';
 import type { EditorRuntimeRegistryActiveChange } from './editor-runtime-registry.js';
 import { markRuntimeRoot } from './root-marker.js';
-import { createFakeV1Runtime } from './conformance/fake-v1-runtime.js';
+import { createFakeV2Runtime } from './conformance/fake-v2-runtime.js';
 
 describe('EditorRuntimeRegistry  -  register / unregister', () => {
   it('registers and retrieves a runtime by id', () => {
     const registry = new EditorRuntimeRegistry();
-    const rt = createFakeV1Runtime({ id: 'r1' });
+    const rt = createFakeV2Runtime({ id: 'r1' });
     registry.register(rt);
     expect(registry.get('r1')).toBe(rt);
     expect(registry.getAll()).toEqual([rt]);
@@ -22,8 +22,8 @@ describe('EditorRuntimeRegistry  -  register / unregister', () => {
 
   it('tracks more than one mounted runtime at the same time', () => {
     const registry = new EditorRuntimeRegistry();
-    const a = createFakeV1Runtime({ id: 'a', root: document.createElement('div') });
-    const b = createFakeV1Runtime({ id: 'b', root: document.createElement('div') });
+    const a = createFakeV2Runtime({ id: 'a', root: document.createElement('div') });
+    const b = createFakeV2Runtime({ id: 'b', root: document.createElement('div') });
     registry.register(a);
     registry.register(b);
     expect(registry.getAll()).toEqual([a, b]);
@@ -31,8 +31,8 @@ describe('EditorRuntimeRegistry  -  register / unregister', () => {
 
   it('rejects a duplicate runtime id', () => {
     const registry = new EditorRuntimeRegistry();
-    registry.register(createFakeV1Runtime({ id: 'dup', root: document.createElement('div') }));
-    expect(() => registry.register(createFakeV1Runtime({ id: 'dup', root: document.createElement('div') }))).toThrow(
+    registry.register(createFakeV2Runtime({ id: 'dup', root: document.createElement('div') }));
+    expect(() => registry.register(createFakeV2Runtime({ id: 'dup', root: document.createElement('div') }))).toThrow(
       /duplicate runtime id "dup"/,
     );
   });
@@ -40,8 +40,8 @@ describe('EditorRuntimeRegistry  -  register / unregister', () => {
   it('rejects two runtimes sharing the same root element', () => {
     const registry = new EditorRuntimeRegistry();
     const root = document.createElement('div');
-    registry.register(createFakeV1Runtime({ id: 'a', root }));
-    expect(() => registry.register(createFakeV1Runtime({ id: 'b', root }))).toThrow(/root element already registered/);
+    registry.register(createFakeV2Runtime({ id: 'a', root }));
+    expect(() => registry.register(createFakeV2Runtime({ id: 'b', root }))).toThrow(/root element already registered/);
   });
 
   it('unregister returns false for an unknown runtime', () => {
@@ -52,20 +52,20 @@ describe('EditorRuntimeRegistry  -  register / unregister', () => {
   it('unregister frees the id and root so they can be reused', () => {
     const registry = new EditorRuntimeRegistry();
     const root = document.createElement('div');
-    registry.register(createFakeV1Runtime({ id: 'a', root }));
+    registry.register(createFakeV2Runtime({ id: 'a', root }));
     expect(registry.unregister('a')).toBe(true);
     expect(registry.get('a')).toBeNull();
     // id + root are free again
-    expect(() => registry.register(createFakeV1Runtime({ id: 'a', root }))).not.toThrow();
+    expect(() => registry.register(createFakeV2Runtime({ id: 'a', root }))).not.toThrow();
   });
 });
 
 describe('EditorRuntimeRegistry  -  document id lookup', () => {
   it('returns ALL runtimes for a document id, not just the first', () => {
     const registry = new EditorRuntimeRegistry();
-    const a = createFakeV1Runtime({ id: 'a', documentId: 'doc-1', root: document.createElement('div') });
-    const b = createFakeV1Runtime({ id: 'b', documentId: 'doc-1', root: document.createElement('div') });
-    const c = createFakeV1Runtime({ id: 'c', documentId: 'doc-2', root: document.createElement('div') });
+    const a = createFakeV2Runtime({ id: 'a', documentId: 'doc-1', root: document.createElement('div') });
+    const b = createFakeV2Runtime({ id: 'b', documentId: 'doc-1', root: document.createElement('div') });
+    const c = createFakeV2Runtime({ id: 'c', documentId: 'doc-2', root: document.createElement('div') });
     registry.register(a);
     registry.register(b);
     registry.register(c);
@@ -78,7 +78,7 @@ describe('EditorRuntimeRegistry  -  document id lookup', () => {
 describe('EditorRuntimeRegistry  -  active routing', () => {
   it('starts with no active runtime', () => {
     const registry = new EditorRuntimeRegistry();
-    registry.register(createFakeV1Runtime({ id: 'a' }));
+    registry.register(createFakeV2Runtime({ id: 'a' }));
     expect(registry.getActive()).toBeNull();
     expect(registry.getActiveId()).toBeNull();
   });
@@ -87,15 +87,15 @@ describe('EditorRuntimeRegistry  -  active routing', () => {
     const registry = new EditorRuntimeRegistry();
     const changes: EditorRuntimeRegistryActiveChange[] = [];
     registry.subscribe((c) => changes.push(c));
-    registry.register(createFakeV1Runtime({ id: 'a' }));
+    registry.register(createFakeV2Runtime({ id: 'a' }));
     expect(changes).toEqual([]);
     expect(registry.getActive()).toBeNull();
   });
 
   it('setActive selects a runtime and emits a change with prev/next/reason', () => {
     const registry = new EditorRuntimeRegistry();
-    const a = createFakeV1Runtime({ id: 'a' });
-    const b = createFakeV1Runtime({ id: 'b' });
+    const a = createFakeV2Runtime({ id: 'a' });
+    const b = createFakeV2Runtime({ id: 'b' });
     registry.register(a);
     registry.register(b);
     const changes: EditorRuntimeRegistryActiveChange[] = [];
@@ -119,8 +119,8 @@ describe('EditorRuntimeRegistry  -  active routing', () => {
     document.body.append(rootA, rootB);
     markRuntimeRoot(rootA, 'a');
     markRuntimeRoot(rootB, 'b');
-    const a = createFakeV1Runtime({ id: 'a', root: rootA });
-    const b = createFakeV1Runtime({ id: 'b', root: rootB });
+    const a = createFakeV2Runtime({ id: 'a', root: rootA });
+    const b = createFakeV2Runtime({ id: 'b', root: rootB });
     registry.register(a);
     registry.register(b);
 
@@ -138,7 +138,7 @@ describe('EditorRuntimeRegistry  -  active routing', () => {
 
   it('setActive is idempotent  -  re-selecting the active runtime emits nothing', () => {
     const registry = new EditorRuntimeRegistry();
-    registry.register(createFakeV1Runtime({ id: 'a' }));
+    registry.register(createFakeV2Runtime({ id: 'a' }));
     const listener = vi.fn();
     registry.subscribe(listener);
     registry.setActive('a', 'focus');
@@ -153,8 +153,8 @@ describe('EditorRuntimeRegistry  -  active routing', () => {
 
   it('unregistering the active runtime clears active state, emits, and does NOT auto-promote', () => {
     const registry = new EditorRuntimeRegistry();
-    const a = createFakeV1Runtime({ id: 'a' });
-    const b = createFakeV1Runtime({ id: 'b' });
+    const a = createFakeV2Runtime({ id: 'a' });
+    const b = createFakeV2Runtime({ id: 'b' });
     registry.register(a);
     registry.register(b);
     registry.setActive('a', 'focus');
@@ -179,8 +179,8 @@ describe('EditorRuntimeRegistry  -  active routing', () => {
 
   it('unregistering a non-active runtime leaves active state untouched and emits nothing', () => {
     const registry = new EditorRuntimeRegistry();
-    registry.register(createFakeV1Runtime({ id: 'a' }));
-    registry.register(createFakeV1Runtime({ id: 'b' }));
+    registry.register(createFakeV2Runtime({ id: 'a' }));
+    registry.register(createFakeV2Runtime({ id: 'b' }));
     registry.setActive('a', 'focus');
     const listener = vi.fn();
     registry.subscribe(listener);
@@ -191,7 +191,7 @@ describe('EditorRuntimeRegistry  -  active routing', () => {
 
   it('setActive(null) explicitly clears active state and emits', () => {
     const registry = new EditorRuntimeRegistry();
-    registry.register(createFakeV1Runtime({ id: 'a' }));
+    registry.register(createFakeV2Runtime({ id: 'a' }));
     registry.setActive('a', 'focus');
     const changes: EditorRuntimeRegistryActiveChange[] = [];
     registry.subscribe((c) => changes.push(c));
@@ -203,16 +203,16 @@ describe('EditorRuntimeRegistry  -  active routing', () => {
   });
 });
 
-describe('EditorRuntimeRegistry  -  legacy editor projection on active change', () => {
-  it('surfaces the v1-like runtime legacy editor projection on the change event', () => {
+describe('EditorRuntimeRegistry  -  compatibility projection on active change', () => {
+  it('surfaces the v2 runtime compatibility projection on the change event', () => {
     const registry = new EditorRuntimeRegistry();
-    const a = createFakeV1Runtime({ id: 'a' });
+    const a = createFakeV2Runtime({ id: 'a' });
     registry.register(a);
     let change: EditorRuntimeRegistryActiveChange | null = null;
     registry.subscribe((c) => (change = c));
     registry.setActive('a', 'focus');
     expect(change).not.toBeNull();
-    // The fake v1 runtime returns an inert legacy projection marker.
+    // The fake v2 runtime returns an inert facade marker.
     expect(change!.legacyEditorProjection).toEqual(a.getLegacyEditorProjection!());
     expect(change!.legacyEditorProjection).not.toBeNull();
   });
@@ -223,7 +223,7 @@ describe('EditorRuntimeRegistry  -  event-target resolution', () => {
     const registry = new EditorRuntimeRegistry();
     const root = document.createElement('div');
     markRuntimeRoot(root, 'a');
-    const a = createFakeV1Runtime({ id: 'a', root });
+    const a = createFakeV2Runtime({ id: 'a', root });
     registry.register(a);
     const deep = document.createElement('em');
     const mid = document.createElement('p');
@@ -236,7 +236,7 @@ describe('EditorRuntimeRegistry  -  event-target resolution', () => {
     const registry = new EditorRuntimeRegistry();
     const root = document.createElement('div');
     markRuntimeRoot(root, 'a');
-    const a = createFakeV1Runtime({ id: 'a', root });
+    const a = createFakeV2Runtime({ id: 'a', root });
     registry.register(a);
     const text = document.createTextNode('inside editor');
     root.appendChild(text);
@@ -247,7 +247,7 @@ describe('EditorRuntimeRegistry  -  event-target resolution', () => {
     const registry = new EditorRuntimeRegistry();
     const root = document.createElement('div');
     markRuntimeRoot(root, 'a');
-    registry.register(createFakeV1Runtime({ id: 'a', root }));
+    registry.register(createFakeV2Runtime({ id: 'a', root }));
     const orphan = document.createElement('div');
     expect(registry.resolveFromEventTarget(orphan)).toBeNull();
   });
@@ -261,7 +261,7 @@ describe('EditorRuntimeRegistry  -  event-target resolution', () => {
 
   it('returns null for a marker id collision on another registry root', () => {
     const registry = new EditorRuntimeRegistry();
-    const runtimeId = 'v1:shared-doc:1';
+    const runtimeId = 'v2:shared-doc:1';
     const rootA = document.createElement('div');
     const rootB = document.createElement('div');
     const childInsideB = document.createElement('span');
@@ -269,7 +269,7 @@ describe('EditorRuntimeRegistry  -  event-target resolution', () => {
 
     markRuntimeRoot(rootA, runtimeId);
     markRuntimeRoot(rootB, runtimeId);
-    const runtimeA = createFakeV1Runtime({ id: runtimeId, root: rootA });
+    const runtimeA = createFakeV2Runtime({ id: runtimeId, root: rootA });
     registry.register(runtimeA);
 
     expect(registry.resolveFromEventTarget(rootA)).toBe(runtimeA);
@@ -285,8 +285,8 @@ describe('EditorRuntimeRegistry  -  event-target resolution', () => {
 describe('EditorRuntimeRegistry  -  subscription lifecycle', () => {
   it('unsubscribe stops further notifications', () => {
     const registry = new EditorRuntimeRegistry();
-    registry.register(createFakeV1Runtime({ id: 'a' }));
-    registry.register(createFakeV1Runtime({ id: 'b' }));
+    registry.register(createFakeV2Runtime({ id: 'a' }));
+    registry.register(createFakeV2Runtime({ id: 'b' }));
     const listener = vi.fn();
     const unsubscribe = registry.subscribe(listener);
     registry.setActive('a', 'focus');
@@ -297,7 +297,7 @@ describe('EditorRuntimeRegistry  -  subscription lifecycle', () => {
 
   it('a throwing subscriber does not break active routing or other subscribers', () => {
     const registry = new EditorRuntimeRegistry();
-    registry.register(createFakeV1Runtime({ id: 'a' }));
+    registry.register(createFakeV2Runtime({ id: 'a' }));
     const good = vi.fn();
     registry.subscribe(() => {
       throw new Error('boom');
@@ -310,7 +310,7 @@ describe('EditorRuntimeRegistry  -  subscription lifecycle', () => {
 
   it('clear() drops runtimes, active state, and subscriptions', () => {
     const registry = new EditorRuntimeRegistry();
-    registry.register(createFakeV1Runtime({ id: 'a' }));
+    registry.register(createFakeV2Runtime({ id: 'a' }));
     registry.setActive('a', 'focus');
     const listener = vi.fn();
     registry.subscribe(listener);
@@ -318,7 +318,7 @@ describe('EditorRuntimeRegistry  -  subscription lifecycle', () => {
     expect(registry.getAll()).toEqual([]);
     expect(registry.getActive()).toBeNull();
     // After clear, the old subscriber receives nothing because the set was cleared.
-    registry.register(createFakeV1Runtime({ id: 'b' }));
+    registry.register(createFakeV2Runtime({ id: 'b' }));
     registry.setActive('b', 'focus');
     expect(listener).not.toHaveBeenCalled();
   });

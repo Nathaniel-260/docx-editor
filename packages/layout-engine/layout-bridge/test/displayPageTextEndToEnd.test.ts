@@ -6,7 +6,7 @@
  * the system.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import type { Page, HeaderFooterPage, HeaderFooterLayout } from '@superdoc/contracts';
 import { getBucketForPageNumber, getBucketRepresentative } from '../src/layoutHeaderFooter';
 
@@ -118,10 +118,7 @@ describe('End-to-End DisplayPageText Flow', () => {
   });
 
   describe('Decoration provider bucket selection', () => {
-    /**
-     * Simulates the decoration provider's page selection logic
-     * (same as PresentationEditor#findHeaderFooterPageForPageNumber)
-     */
+    /** Simulates the decoration provider's page selection logic. */
     function findPageForDecorationProvider(
       pages: HeaderFooterPage[],
       requestedPageNumber: number,

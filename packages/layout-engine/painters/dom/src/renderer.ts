@@ -1,10 +1,12 @@
 import type {
   ChartDrawing,
+  CellBorders,
   ColumnLayout,
   CustomGeometryData,
   DrawingBlock,
   DrawingFragment,
   DrawingGeometry,
+  DrawingMeasure,
   FlowBlock,
   FlowMode,
   Fragment,
@@ -13,7 +15,6 @@ import type {
   ImageFragment,
   ImageHyperlink,
   Line,
-  LineSegment,
   PageMargins,
   PageNumberChapterSeparator,
   PageNumberFormat,
@@ -23,8 +24,6 @@ import type {
   Run,
   ShapeGroupChild,
   ShapeGroupDrawing,
-  ShapeEffects,
-  ShapeOuterShadowEffect,
   ShapeTextContent,
   SolidFillWithAlpha,
   SourceAnchor,
@@ -34,6 +33,7 @@ import type {
   TextboxDrawing,
   VectorShapeDrawing,
   VectorShapeStyle,
+  DocumentBackground,
   ResolvedLayout,
   ResolvedFragmentItem,
   ResolvedPage,
@@ -43,53 +43,64 @@ import type {
   ResolvedDrawingItem,
   LayoutSourceIdentity,
   LayoutStoryLocator,
-  ListBlock,
 } from '@superdoc/contracts';
 import {
   computeLinePmRange,
   LAYOUT_BOUNDARY_SCHEMA,
+  buildLayoutSourceIdentity,
   buildLayoutSourceIdentityForFragment,
   expandRunsForInlineNewlines,
   formatPageNumber,
   formatSectionPageNumberText,
-  getCellSpacingPx,
   getColumnGeometry,
   getColumnSeparatorPositions as getColumnSeparatorPositionsFromGeometry,
-  getOuterShadowPaintExtent as getSharedOuterShadowPaintExtent,
-  getOuterShadowStdDeviation,
+  isPositionedParagraphFrame,
   normalizeColumnLayout,
-  normalizeZIndex,
   resolveColumnMode,
-  resolveOuterShadowOffset,
+  resolveFooterPageFrameOriginY,
+  rescaleColumnWidths,
+  getCellSpacingPx,
+  isPagePositionedParagraphFrame,
 } from '@superdoc/contracts';
-import { DATASET_KEYS, decodeLayoutStoryDataset, encodeLayoutStoryDataset } from '@superdoc/dom-contract';
+import { DATASET_KEYS, decodeLayoutStoryDataset } from '@superdoc/dom-contract';
+import { resolvePhysicalFamily } from '@superdoc/font-system';
 import { getPresetShapeSvg } from '@superdoc/preset-geometry';
 import { DOM_CLASS_NAMES } from './constants.js';
+import {
+  createEmptyPaintWorkSummary,
+  isNonBodyStoryBlockId,
+  patchPage as patchPageContent,
+  renderPage as renderPageContent,
+  type PageContentContext,
+  type PageDomState,
+  type PaintWorkSummary,
+  type PatchPageWork,
+} from './page-content.js';
+import {
+  clonePersistentPageSurfaceState,
+  disposePersistentPageSurfaceState,
+  isPersistentPageSurfaceIntact,
+  reconcilePersistentPageSurface,
+  resolveDesiredContentPageIndices,
+  type DomPainterPersistentPageInput,
+  type PersistentPageSurfaceState,
+  type PersistentPageWorkKind,
+} from './persistent-page-surface.js';
 import { createChartElement as renderChartToElement } from './chart-renderer.js';
-import { createRulerElement, ensureRulerStyles, generateRulerDefinitionFromPx } from './ruler/index.js';
 import {
   CLASS_NAMES,
   containerStyles,
-  containerStylesHorizontal,
-  ensureDocumentSurfaceStyles,
-  ensureFieldAnnotationStyles,
-  ensureFootnoteStyles,
-  ensureFormattingMarksStyles,
-  ensureImageSelectionStyles,
-  ensureLinkStyles,
-  ensureMathMencloseStyles,
-  ensurePrintStyles,
-  ensureSdtContainerStyles,
-  ensureTrackChangeStyles,
+  ensureSurfaceStylePreflight,
   fragmentStyles,
-  pageStyles,
-  spreadStyles,
   type PageStyles,
 } from './styles.js';
 import { applyAlphaToSVG, applyGradientToSVG, validateHexColor } from './svg-utils.js';
-import { renderTableFragment as renderTableFragmentElement } from './table/renderTableFragment.js';
-import { computeSdtBoundaries } from './sdt/boundaries.js';
-import { shouldRebuildForSdtBoundary, type SdtBoundaryOptions } from './sdt/container.js';
+import {
+  renderTableFragment as renderTableFragmentElement,
+  type TableRenderDependencies,
+} from './table/renderTableFragment.js';
+import { applyCellBorders } from './table/border-utils.js';
+import type { SdtBoundaryOptions } from './sdt/container.js';
 import { applyContainerSdtDataset, applySdtDataset } from './sdt/dataset.js';
 import {
   createInlineSdtWrapper,
@@ -108,6 +119,12 @@ import { renderParagraphFragment as renderParagraphFragmentElement } from './par
 import { renderLine as renderRunLine } from './runs/render-line.js';
 import type { RunRenderContext } from './runs/types.js';
 import {
+  createPositionValidationCollector,
+  type PositionValidationCollector,
+  type PositionValidationOptions,
+  type PositionValidationSummary,
+} from './pm-position-validation.js';
+import {
   createDrawingImageElement,
   createShapeGroupImageElement,
   createShapeTextImageElement,
@@ -116,12 +133,15 @@ import { renderImageFragment as renderImageFragmentElement } from './images/imag
 import { buildImageHyperlinkAnchor as buildSharedImageHyperlinkAnchor } from './images/hyperlink.js';
 import { applyStyles } from './utils/apply-styles.js';
 import { applyTrackedChangeDecorations, resolveTrackedChangesConfig } from './runs/tracked-changes.js';
+import { applyTextEffects } from './runs/text-effects.js';
+import { applyLayoutIdentityDataset } from './utils/layout-identity.js';
 import { applySourceAnchorDataset } from './utils/source-anchor.js';
 
 export type {
   PaintSnapshotStructuredContentBlockEntity,
   PaintSnapshotStructuredContentInlineEntity,
 } from './sdt/snapshot.js';
+export { applyLayoutIdentityDataset } from './utils/layout-identity.js';
 
 const ACTIVE_HEADER_FOOTER_WATERMARK_PREVIEW_OPACITY = '1';
 const INACTIVE_HEADER_FOOTER_WATERMARK_PREVIEW_OPACITY = '0.5';
@@ -144,8 +164,6 @@ type EffectExtent = {
   bottom: number;
 };
 
-const normalizeRotationDegrees = (rotation: number): number => ((rotation % 360) + 360) % 360;
-
 type ShapeTextDrawingWithEffects = (VectorShapeDrawing | TextboxDrawing) & {
   lineEnds?: LineEnds;
   effectExtent?: EffectExtent;
@@ -153,12 +171,13 @@ type ShapeTextDrawingWithEffects = (VectorShapeDrawing | TextboxDrawing) & {
 
 /**
  * Layout mode for document rendering.
- * @typedef {('vertical'|'horizontal'|'book')} LayoutMode
- * - 'vertical': Standard page-by-page vertical layout (default)
- * - 'horizontal': Pages arranged horizontally side-by-side
- * - 'book': Book-style layout with facing pages
+ *
+ * `'vertical'` (page-by-page vertical layout) is the only paginated
+ * arrangement — horizontal and book modes were deleted at painter plan P7
+ * (product decision 2026-07-05). The real presentation axis is `FlowMode`
+ * (`'paginated' | 'semantic'`); this type remains for API-shape compatibility.
  */
-export type LayoutMode = 'vertical' | 'horizontal' | 'book';
+export type LayoutMode = 'vertical';
 // FlowMode is re-exported from @superdoc/contracts
 export type { FlowMode } from '@superdoc/contracts';
 
@@ -208,6 +227,14 @@ export type PageDecorationPayload = {
   sectionType?: string;
   /** True while this rendered header/footer story is the active editing surface. */
   isActiveHeaderFooter?: boolean;
+  /**
+   * When `false`, total-page-count fields (`NUMPAGES` / `SECTIONPAGES`) in this
+   * decoration render their pre-resolved provisional text (source-cached DOCX
+   * result, em dash when absent) instead of the current page totals — used
+   * while pagination is still partial. Absent/`true` = exact totals (existing
+   * caller behavior).
+   */
+  pageCountFieldsExact?: boolean;
   box?: { x: number; y: number; width: number; height: number };
   hitRegion?: { x: number; y: number; width: number; height: number };
 };
@@ -227,36 +254,14 @@ export type PageDecorationProvider = (
   page?: ResolvedPage,
 ) => PageDecorationPayload | null;
 
-/**
- * Ruler configuration options for per-page rulers.
- */
-export type RulerOptions = {
-  /** Whether to show rulers on pages (default: false) */
-  enabled?: boolean;
-  /** Whether rulers are interactive with drag handles (default: false for per-page) */
-  interactive?: boolean;
-  /** Callback when margin handle drag ends (only used if interactive) */
-  onMarginChange?: (side: 'left' | 'right', marginInches: number) => void;
-};
-
 type PainterOptions = {
   pageStyles?: PageStyles;
   layoutMode?: LayoutMode;
   flowMode?: FlowMode;
-  /** Gap between pages in pixels (default: 24px for vertical, 20px for horizontal) */
+  /** Gap between pages in pixels (default: 24px) */
   pageGap?: number;
   headerProvider?: PageDecorationProvider;
   footerProvider?: PageDecorationProvider;
-  virtualization?: {
-    enabled?: boolean;
-    window?: number;
-    overscan?: number;
-    /** Virtualization gap override (defaults to 72px; independent of pageGap). */
-    gap?: number;
-    paddingTop?: number;
-  };
-  /** Per-page ruler options */
-  ruler?: RulerOptions;
   /** Called with the paint snapshot after each paint cycle completes. */
   onPaintSnapshot?: (snapshot: PaintSnapshot) => void;
   /** Render nonprinting formatting marks such as spaces, tabs, and paragraph marks. */
@@ -265,109 +270,11 @@ type PainterOptions = {
   contentControlsChrome?: 'default' | 'none';
   /** Per-document logical->physical font resolver (face-aware); see DomPainterOptions.resolvePhysical. */
   resolvePhysical?: (cssFontFamily: string, face: { weight: '400' | '700'; style: 'normal' | 'italic' }) => string;
+  /** Populate PaintWorkSummary's per-page index arrays (P5 §4.6). Dark by default; see DomPainterOptions.paintWorkAttribution. */
+  paintWorkAttribution?: boolean;
+  /** Story-aware position-coverage validation. Dark by default; see DomPainterOptions.positionValidation. */
+  positionValidation?: PositionValidationOptions;
 };
-
-type FragmentDomState = {
-  key: string;
-  signature: string;
-  fragment: Fragment;
-  element: HTMLElement;
-  context: FragmentRenderContext;
-};
-
-type PageDomState = {
-  element: HTMLElement;
-  fragments: FragmentDomState[];
-};
-
-function pageContextSignature(context: FragmentRenderContext): string {
-  return [
-    context.pageNumber,
-    context.totalPages,
-    context.sectionPageCount ?? '',
-    context.pageNumberText ?? '',
-    context.displayPageNumber ?? '',
-    context.pageNumberFormat ?? '',
-    context.pageNumberChapterText ?? '',
-    context.pageNumberChapterSeparator ?? '',
-  ].join('|');
-}
-
-function hasPageContextTokenInShapeText(textContent: ShapeTextContent | undefined): boolean {
-  return (
-    Array.isArray(textContent?.parts) &&
-    textContent.parts.some(
-      (part) => part.fieldType === 'PAGE' || part.fieldType === 'NUMPAGES' || part.fieldType === 'SECTIONPAGES',
-    )
-  );
-}
-
-function hasPageContextTokenInShapeGroup(shapes: readonly ShapeGroupChild[] | undefined): boolean {
-  return (
-    Array.isArray(shapes) &&
-    shapes.some((shape) => {
-      if (shape.shapeType !== 'vectorShape') {
-        return false;
-      }
-      return hasPageContextTokenInShapeText(shape.attrs.textContent);
-    })
-  );
-}
-
-function hasPageContextTokenInBlock(block: FlowBlock | undefined): boolean {
-  if (!block) return false;
-  if (block.kind === 'paragraph') {
-    for (const run of (block as ParagraphBlock).runs) {
-      if (
-        'token' in run &&
-        (run.token === 'pageNumber' || run.token === 'totalPageCount' || run.token === 'sectionPageCount')
-      ) {
-        return true;
-      }
-    }
-  } else if (block.kind === 'list') {
-    const list = block as ListBlock;
-    for (const item of list.items ?? []) {
-      if (hasPageContextTokenInBlock(item.paragraph)) {
-        return true;
-      }
-    }
-  } else if (block.kind === 'table') {
-    const table = block as TableBlock;
-    for (const row of table.rows ?? []) {
-      for (const cell of row.cells ?? []) {
-        const cellBlocks: FlowBlock[] = cell.blocks
-          ? (cell.blocks as FlowBlock[])
-          : cell.paragraph
-            ? [cell.paragraph]
-            : [];
-        if (cellBlocks.some(hasPageContextTokenInBlock)) {
-          return true;
-        }
-      }
-    }
-  } else if (block.kind === 'drawing') {
-    const drawing = block as DrawingBlock;
-    if (drawing.drawingKind === 'vectorShape' || drawing.drawingKind === 'textboxShape') {
-      return hasPageContextTokenInShapeText(drawing.textContent);
-    }
-    if (drawing.drawingKind === 'shapeGroup') {
-      return hasPageContextTokenInShapeGroup(drawing.shapes);
-    }
-  }
-  return false;
-}
-
-function needsRebuildForPageContext(
-  currentContext: FragmentRenderContext,
-  nextContext: FragmentRenderContext,
-  resolvedItem: ResolvedPaintItem | undefined,
-): boolean {
-  const block = resolvedItem?.kind === 'fragment' && 'block' in resolvedItem ? resolvedItem.block : undefined;
-  return (
-    pageContextSignature(currentContext) !== pageContextSignature(nextContext) && hasPageContextTokenInBlock(block)
-  );
-}
 
 /**
  * Rendering context passed to fragment renderers containing page metadata.
@@ -393,7 +300,16 @@ export type FragmentRenderContext = {
   pageNumberChapterSeparator?: PageNumberChapterSeparator;
   sectionPageCount?: number;
   pageIndex?: number;
+  /**
+   * When `false`, total-page-count tokens render their pre-resolved
+   * provisional run text (source-cached DOCX result / em dash) instead of
+   * `totalPages` / `sectionPageCount`. Absent/`true` = exact (default).
+   */
+  pageCountFieldsExact?: boolean;
 };
+
+const provisionalPageCountText = (cachedText: string | undefined): string =>
+  cachedText && cachedText.trim().length > 0 ? cachedText : '—';
 
 function buildSectionPageCounts(pages: ResolvedPage[]): Map<number, number> {
   const counts = new Map<number, number>();
@@ -402,6 +318,18 @@ function buildSectionPageCounts(pages: ResolvedPage[]): Map<number, number> {
     counts.set(sectionIndex, (counts.get(sectionIndex) ?? 0) + 1);
   }
   return counts;
+}
+
+function readSectionPageCounts(counts: Readonly<Record<string, number>>): Map<number, number> {
+  const result = new Map<number, number>();
+  for (const [sectionKey, pageCount] of Object.entries(counts)) {
+    const sectionIndex = Number(sectionKey);
+    if (!Number.isInteger(sectionIndex) || sectionIndex < 0 || !Number.isInteger(pageCount) || pageCount <= 0) {
+      continue;
+    }
+    result.set(sectionIndex, pageCount);
+  }
+  return result;
 }
 
 export type PaintSnapshotLineStyle = {
@@ -513,6 +441,88 @@ type PaintSnapshotBuilder = {
   pages: PaintSnapshotPageBuilder[];
 };
 
+type PersistentPagePainterStateSnapshot = {
+  mount: HTMLElement | null;
+  doc: Document | null;
+  pageStates: PageDomState[];
+  currentLayout: ResolvedLayout | null;
+  changedBlocks: Set<string>;
+  headerProvider?: PageDecorationProvider;
+  footerProvider?: PageDecorationProvider;
+  totalPages: number;
+  sectionPageCounts: Map<number, number>;
+  linkIdCounter: number;
+  sdtLabelsRendered: Set<string>;
+  pendingTooltips: WeakMap<HTMLElement, string>;
+  pageGap: number;
+  layoutVersion: number;
+  layoutEpoch: number;
+  processedLayoutVersion: number;
+  currentMapping: PositionMapping | null;
+  persistentDecorationsDirty: boolean;
+  persistentDocumentBackground: DocumentBackground | null;
+  persistentSurface: PersistentPageSurfaceState | null;
+  paintWork: PaintWorkSummary;
+  paintSnapshotBuilder: PaintSnapshotBuilder | null;
+  lastPaintSnapshot: PaintSnapshot | null;
+  persistentPageIndices: number[];
+  resolvedLayout: ResolvedLayout | null;
+  showFormattingMarks: boolean;
+  contentControlsChrome: 'default' | 'none';
+};
+
+type ActivePersistentPagePainterTransaction = {
+  snapshot: PersistentPagePainterStateSnapshot;
+  pendingPaintSnapshot: PaintSnapshot | null;
+  hasPendingPaintSnapshot: boolean;
+};
+
+type PersistentPagePainterTransaction = {
+  commit(): void;
+  rollback(): void;
+};
+
+function clonePageDomStateMetadata(state: PageDomState): PageDomState {
+  return {
+    element: state.element,
+    fragments: state.fragments.map((fragment) => ({
+      ...fragment,
+      context: { ...fragment.context },
+    })),
+  };
+}
+
+function clonePaintWorkSummary(summary: PaintWorkSummary): PaintWorkSummary {
+  return {
+    ...summary,
+    createdPersistentPageIndices: [...summary.createdPersistentPageIndices],
+    removedPersistentPageIndices: [...summary.removedPersistentPageIndices],
+    patchedContentPageIndices: [...summary.patchedContentPageIndices],
+    untouchedContentPageIndices: [...summary.untouchedContentPageIndices],
+    decorationRefreshedContentPageIndices: [...summary.decorationRefreshedContentPageIndices],
+    remappedContentPageIndices: [...summary.remappedContentPageIndices],
+    pmDemotedContentPageIndices: [...summary.pmDemotedContentPageIndices],
+    hydratedContentPageIndices: [...summary.hydratedContentPageIndices],
+    dehydratedContentPageIndices: [...summary.dehydratedContentPageIndices],
+  };
+}
+
+function clonePaintSnapshotBuilder(builder: PaintSnapshotBuilder | null): PaintSnapshotBuilder | null {
+  if (!builder) return null;
+  return {
+    ...builder,
+    pages: builder.pages.map((page) => ({
+      ...page,
+      lines: page.lines.map((line) => ({
+        ...line,
+        style: { ...line.style },
+        ...(line.markers ? { markers: line.markers.map((marker) => ({ ...marker })) } : {}),
+        ...(line.tabs ? { tabs: line.tabs.map((tab) => ({ ...tab })) } : {}),
+      })),
+    })),
+  };
+}
+
 type PaintSnapshotCaptureOptions = {
   inTableFragment?: boolean;
   inTableParagraph?: boolean;
@@ -567,27 +577,6 @@ function compactSnapshotObject<T extends Record<string, unknown>>(input: T): T {
   return out;
 }
 
-/**
- * Stamp the editor-neutral layout-identity dataset (prep-001).
- *
- * Additive only — runs alongside the legacy `data-pm-*` / `data-block-id`
- * writes in `applyFragmentFrame` and `applyResolvedFragmentFrame`. v1
- * consumers still read PM-shaped datasets; future editor-neutral consumers
- * read `data-layout-fragment-id` / `data-layout-story` / `data-layout-block-ref`
- * here.
- */
-export function applyLayoutIdentityDataset(element: HTMLElement, identity: LayoutSourceIdentity | undefined): void {
-  if (!identity) {
-    delete element.dataset[DATASET_KEYS.LAYOUT_FRAGMENT_ID];
-    delete element.dataset[DATASET_KEYS.LAYOUT_BLOCK_REF];
-    delete element.dataset[DATASET_KEYS.LAYOUT_STORY];
-    return;
-  }
-  element.dataset[DATASET_KEYS.LAYOUT_FRAGMENT_ID] = identity.fragmentId;
-  element.dataset[DATASET_KEYS.LAYOUT_BLOCK_REF] = identity.blockRef;
-  element.dataset[DATASET_KEYS.LAYOUT_STORY] = encodeLayoutStoryDataset(identity.story);
-}
-
 const resolveOrBuildFragmentIdentity = (
   fragment: Fragment,
   story?: LayoutStoryLocator,
@@ -607,6 +596,59 @@ const resolveOrBuildFragmentIdentity = (
 const resolveSectionStory = (section?: 'body' | 'header' | 'footer'): LayoutStoryLocator | undefined => {
   if (!section || section === 'body') return undefined;
   return { kind: section };
+};
+
+// Footnote/endnote body fragments are laid out inside the body page's note
+// band, so they would otherwise inherit the body story. Give them their own
+// note story (`footnote:<id>` / `endnote:<id>`) so a click resolves a caret in
+// the note, not the body. Separators carry no note id and stay body.
+const resolveNoteStory = (fragment: Fragment): LayoutStoryLocator | undefined => {
+  if (typeof fragment.blockId !== 'string') return undefined;
+  const match = /^(footnote|endnote)-(.+)$/.exec(fragment.blockId);
+  if (!match) return undefined;
+  const noteId = match[2].split(/[/-]/)[0];
+  if (!noteId || noteId === 'separator' || noteId === 'continuation') return undefined;
+  return { kind: match[1] as 'footnote' | 'endnote', id: noteId };
+};
+
+// Note band fragments carry `data-sd-note-*` so render-conformance proofs can
+// read the painted note band and match it to the layout-product geometry
+// snapshot. The matching key is `bandId` (`${kind}-p${pageIndex}-c${columnIndex}`),
+// derived identically to buildV2NoteGeometrySnapshot so DOM and product agree.
+const noteFragmentColumnIndex = (fragment: Fragment): number | undefined =>
+  'columnIndex' in fragment && typeof (fragment as { columnIndex?: unknown }).columnIndex === 'number'
+    ? (fragment as { columnIndex: number }).columnIndex
+    : undefined;
+
+interface NoteFragmentDataset {
+  role: 'body' | 'separator';
+  kind: 'footnote' | 'endnote';
+  id?: string;
+  columnIndex: number;
+}
+const resolveNoteFragmentDataset = (fragment: Fragment): NoteFragmentDataset | undefined => {
+  if (typeof fragment.blockId !== 'string') return undefined;
+  const match = /^(footnote|endnote)-(.+)$/.exec(fragment.blockId);
+  if (!match) return undefined;
+  const kind = match[1] as 'footnote' | 'endnote';
+  const separator = /^(?:continuation-)?separator-page-\d+-col-(\d+)$/.exec(match[2]);
+  if (separator) {
+    return { role: 'separator', kind, columnIndex: noteFragmentColumnIndex(fragment) ?? Number(separator[1]) };
+  }
+  const id = match[2].split(/[/-]/)[0];
+  if (!id || id === 'separator' || id === 'continuation') return undefined;
+  return { role: 'body', kind, id, columnIndex: noteFragmentColumnIndex(fragment) ?? 0 };
+};
+
+const applyNoteFragmentDataset = (el: HTMLElement, fragment: Fragment, pageIndex: number): void => {
+  const note = resolveNoteFragmentDataset(fragment);
+  if (!note) return;
+  el.dataset.sdNoteRole = note.role;
+  el.dataset.sdNoteKind = note.kind;
+  if (note.id) el.dataset.sdNoteId = note.id;
+  el.dataset.sdNoteBandId = `${note.kind}-p${pageIndex}-c${note.columnIndex}`;
+  el.dataset.sdNotePageIndex = String(pageIndex);
+  el.dataset.sdNoteColumnIndex = String(note.columnIndex);
 };
 
 const resolveDecorationStory = (kind: 'header' | 'footer', data: PageDecorationPayload): LayoutStoryLocator => {
@@ -668,15 +710,6 @@ function shouldIncludeInlineImageSnapshotElement(element: HTMLElement): boolean 
   }
 
   return !element.closest(`.${DOM_CLASS_NAMES.INLINE_IMAGE_CLIP_WRAPPER}`);
-}
-
-function resolvedPaintCacheSignature(resolvedItem: ResolvedPaintItem | undefined): string {
-  if (!resolvedItem) return '';
-  return (
-    (resolvedItem as { paintCacheVersion?: string }).paintCacheVersion ??
-    (resolvedItem as { version?: string }).version ??
-    ''
-  );
 }
 
 function collectPaintSnapshotEntitiesFromDomRoot(rootEl: HTMLElement): PaintSnapshotEntities {
@@ -854,23 +887,14 @@ function collectLineTabsForSnapshot(lineEl: HTMLElement): PaintSnapshotTabStyle[
   return tabs;
 }
 
-/**
- * Default page height in pixels (11 inches at 96 DPI).
- * Used as a fallback when page size information is not available for ruler rendering.
- */
-const DEFAULT_PAGE_HEIGHT_PX = 1056;
-/** Default gap used when virtualization is enabled (kept in sync with PresentationEditor layout defaults). */
-const DEFAULT_VIRTUALIZED_PAGE_GAP = 72;
-// Keeps non-behindDoc header/footer wrapNone decorations above the behindDoc
-// background tier while the whole page-background story still uses CSS z-index 0.
-const PAGE_BACKGROUND_OVERLAY_Z_ORDER_OFFSET = 1_000_000;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const WORDART_LINE_FILL_RATIO = 0.9;
-// Comment highlight color tokens moved to CommentHighlightDecorator (super-editor).
+// Comment highlight color tokens moved to CommentHighlightDecorator.
 
 /**
  * DOM-based document painter that renders layout fragments to HTML elements.
- * Manages page rendering, virtualization, headers/footers, and incremental updates.
+ * One paint entry per mode (painter plan P7): the persistent shell/content
+ * reconcile owns paginated flow, while `paint()` owns semantic flow.
  *
  * @class DomPainter
  *
@@ -878,20 +902,9 @@ const WORDART_LINE_FILL_RATIO = 0.9;
  * The DomPainter is responsible for:
  * - Rendering layout fragments (paragraphs, lists, images, tables, drawings) to DOM elements
  * - Managing page-level DOM structure and styling
- * - Providing virtualization for large documents (vertical mode only)
  * - Handling headers and footers via PageDecorationProvider
  * - Incremental re-rendering when only specific blocks change
  * - Hyperlink rendering with security sanitization and accessibility
- *
- * @example
- * ```typescript
- * const painter = new DomPainter(blocks, measures, {
- *   layoutMode: 'vertical',
- *   pageStyles: { width: '8.5in', height: '11in' }
- * });
- * painter.mount(document.getElementById('editor-container'));
- * painter.render(layout);
- * ```
  */
 export class DomPainter {
   private readonly options: PainterOptions;
@@ -900,13 +913,13 @@ export class DomPainter {
   private pageStates: PageDomState[] = [];
   private currentLayout: ResolvedLayout | null = null;
   private changedBlocks = new Set<string>();
-  private readonly layoutMode: LayoutMode;
   private readonly isSemanticFlow: boolean;
   private headerProvider?: PageDecorationProvider;
   private footerProvider?: PageDecorationProvider;
   private totalPages = 0;
   private sectionPageCounts = new Map<number, number>();
   private linkIdCounter = 0; // Counter for generating unique link IDs
+  private shapeImageFillCounter = 0;
   private sdtLabelsRendered = new Set<string>(); // Tracks SDT labels rendered across pages
 
   /**
@@ -916,53 +929,61 @@ export class DomPainter {
    * @private
    */
   private pendingTooltips = new WeakMap<HTMLElement, string>();
-  // Page gap for normal (non-virtualized) rendering
-  private pageGap = 24; // px, default for vertical mode
-  // Virtualization state (vertical mode only)
-  private virtualEnabled = false;
-  private virtualWindow = 5;
-  private virtualOverscan = 0;
-  private virtualGap = DEFAULT_VIRTUALIZED_PAGE_GAP; // px, default for virtualized mode
-  private virtualPaddingTop: number | null = null; // px; computed from mount if not provided
-  private topSpacerEl: HTMLElement | null = null;
-  private bottomSpacerEl: HTMLElement | null = null;
-  private virtualPagesEl: HTMLElement | null = null;
-  private virtualGapSpacers: HTMLElement[] = [];
-  private virtualPinnedPages: number[] = [];
-  private virtualMountedKey = '';
-  private pageIndexToState: Map<number, PageDomState> = new Map();
-  private virtualHeights: number[] = [];
-  private virtualOffsets: number[] = [];
-  private virtualStart = 0;
-  private virtualEnd = -1;
+  // Gap between pages in px
+  private pageGap = 24;
   private layoutVersion = 0;
   private layoutEpoch = 0;
   private processedLayoutVersion = -1;
   /** Current transaction mapping for position updates (null if no mapping or complex transaction) */
   private currentMapping: PositionMapping | null = null;
-  private onScrollHandler: ((e: Event) => void) | null = null;
-  private onWindowScrollHandler: ((e: Event) => void) | null = null;
-  private onResizeHandler: ((e: Event) => void) | null = null;
-  /** CSS zoom/scale factor applied to the mount element via transform: scale(). Defaults to 1 (no zoom). */
-  private zoomFactor = 1;
   /**
-   * External scroll container (an ancestor element with overflow-y: auto/scroll).
-   * When set, updateVirtualWindow() uses this element's position to compute scrollY
-   * relative to the scroll container instead of relative to the browser viewport.
-   * This fixes the scroll offset calculation when SuperDoc is mounted inside a
-   * wrapper div that owns scrolling rather than the window.
+   * Persistent paginated page surface (default persistent page geometry
+   * plan, Unit 1): the generation-owned shell registry plus the bounded
+   * content plane, retained across paints. Snapshot/restored by the private
+   * persistent-page transaction like every other retained plane.
    */
-  private scrollContainer: HTMLElement | null = null;
+  private persistentSurface: PersistentPageSurfaceState | null = null;
+  private persistentSurfaceInvalidationHandler: () => void = () => undefined;
   /**
-   * Cached offset (in px) from the scroll container's content top to the mount's top.
-   * Used for stable scrollY calculation that avoids feedback loops from spacer DOM mutations.
-   * Invalidated when the mount, scroll container, or zoom changes.
+   * Provider identity may advance every render generation even when the body
+   * page remains reusable. Refresh header/footer DOM on the next content reconcile
+   * without discarding the retained page element or its body fragments.
    */
-  private scrollContainerMountOffset: number | null = null;
+  private persistentDecorationsDirty = false;
+  /**
+   * Page-window analog of `currentLayout.documentBackground`: the window path
+   * deliberately runs with `currentLayout = null`, so the document background
+   * scalar from `DomPainterPersistentPageInput` is retained here for
+   * `getEffectivePageStyles()`. Reset by dense `paint()`/`resetState()`/
+   * `dispose()` so a stale window value can never leak across modes/mounts.
+   */
+  private persistentDocumentBackground: DocumentBackground | null = null;
+  // Painter plan P3a/§4.6: dark work counters for the persistent-page path,
+  // accumulated across paints until consumed.
+  private paintWork: PaintWorkSummary = createEmptyPaintWorkSummary();
+  /**
+   * P5 §4.6 (review fix): per-page attribution arrays are opt-in. Counters
+   * are O(1) when never consumed; the arrays grow per paint, and product
+   * code never drains the summary — only the perf harness (which needs WHICH
+   * pages for its repaint oracle) turns this on.
+   */
+  private readonly paintWorkAttribution: boolean;
+  /**
+   * Story-aware position-coverage collector, owned per painter instance so the
+   * live persistent surface and fresh-state oracle never mix counts.
+   * Dark unless enabled via options; when dark, `record()` is a single branch.
+   */
+  private readonly positionValidation: PositionValidationCollector;
   private paintSnapshotBuilder: PaintSnapshotBuilder | null = null;
   private lastPaintSnapshot: PaintSnapshot | null = null;
   private onPaintSnapshotCallback: ((snapshot: PaintSnapshot) => void) | null = null;
-  private mountedPageIndices: number[] = [];
+  /**
+   * Private persistent-page transaction state. The package handle exposes this
+   * only through a non-enumerable Symbol.for seam; it is deliberately absent
+   * from the public DomPainterHandle contract.
+   */
+  private activePersistentPageTransaction: ActivePersistentPagePainterTransaction | null = null;
+  private persistentPageIndices: number[] = [];
   /** Resolved layout for the next-gen paint pipeline. */
   private resolvedLayout: ResolvedLayout | null = null;
   private showFormattingMarks = false;
@@ -970,37 +991,17 @@ export class DomPainter {
 
   constructor(options: PainterOptions = {}) {
     this.options = options;
-    this.layoutMode = options.layoutMode ?? 'vertical';
     this.isSemanticFlow = (options.flowMode ?? 'paginated') === 'semantic';
     this.headerProvider = options.headerProvider;
     this.footerProvider = options.footerProvider;
     this.showFormattingMarks = options.showFormattingMarks === true;
     this.contentControlsChrome = options.contentControlsChrome ?? 'default';
+    this.paintWorkAttribution = options.paintWorkAttribution === true;
+    this.positionValidation = createPositionValidationCollector(options.positionValidation);
 
-    // Initialize page gap (defaults: 24px vertical, 20px horizontal)
-    const defaultGap = this.layoutMode === 'horizontal' ? 20 : 24;
+    // Initialize page gap (default: 24px between vertical pages)
     this.pageGap =
-      typeof options.pageGap === 'number' && Number.isFinite(options.pageGap)
-        ? Math.max(0, options.pageGap)
-        : defaultGap;
-
-    // Initialize virtualization config (feature-flagged)
-    if (!this.isSemanticFlow && this.layoutMode === 'vertical' && options.virtualization?.enabled) {
-      this.virtualEnabled = true;
-      this.virtualWindow = Math.max(1, options.virtualization.window ?? 5);
-      this.virtualOverscan = Math.max(0, options.virtualization.overscan ?? 0);
-      // Virtualization gap: use explicit virtualization.gap if provided,
-      // otherwise default to legacy virtualized gap (72px).
-      const maybeGap = options.virtualization.gap;
-      if (typeof maybeGap === 'number' && Number.isFinite(maybeGap)) {
-        this.virtualGap = Math.max(0, maybeGap);
-      } else {
-        this.virtualGap = DEFAULT_VIRTUALIZED_PAGE_GAP;
-      }
-      if (typeof options.virtualization.paddingTop === 'number' && Number.isFinite(options.virtualization.paddingTop)) {
-        this.virtualPaddingTop = Math.max(0, options.virtualization.paddingTop);
-      }
-    }
+      typeof options.pageGap === 'number' && Number.isFinite(options.pageGap) ? Math.max(0, options.pageGap) : 24;
 
     this.onPaintSnapshotCallback = options.onPaintSnapshot ?? null;
   }
@@ -1014,8 +1015,16 @@ export class DomPainter {
   }
 
   public setProviders(header?: PageDecorationProvider, footer?: PageDecorationProvider): void {
+    if (this.headerProvider === header && this.footerProvider === footer) return;
     this.headerProvider = header;
     this.footerProvider = footer;
+    // Provider output is rendered into page DOM but is NOT a term in
+    // Mark decorations dirty so the next persistent content reconcile
+    // refreshes them from the new providers. Do not discard the retained page
+    // element/body-fragment state: generation-scoped provider closures may
+    // legitimately change identity on every edit, and a decoration refresh
+    // does not require freshly mounting the body page.
+    this.persistentDecorationsDirty = true;
   }
 
   private applyFormattingMarksClass(mount: HTMLElement | null = this.mount): void {
@@ -1026,73 +1035,25 @@ export class DomPainter {
   private invalidateRenderedContent(): void {
     this.pageStates = [];
     this.currentLayout = null;
-    this.pageIndexToState.clear();
-    this.virtualMountedKey = '';
-    this.clearGapSpacers();
-    this.topSpacerEl = null;
-    this.bottomSpacerEl = null;
-    this.virtualPagesEl = null;
     this.processedLayoutVersion = -1;
     this.layoutVersion += 1;
+    // Rendered content is invalid everywhere: the persistent-page reuse cache
+    // must not serve pages rendered under the old settings (e.g. formatting
+    // marks are real spans baked in at render time, not CSS-only).
+    this.invalidateWindowSurface();
   }
 
   /**
-   * Pins specific page indices so they remain mounted when virtualization is enabled.
-   *
-   * Used by selection/drag logic to ensure endpoints can be resolved via DOM
-   * even when they fall outside the current scroll window.
+   * Forget the persistent surface so its next reconcile rebuilds content
+   * under the current render settings. Provider swaps use a
+   * decoration-only refresh.
    */
-  public setVirtualizationPins(pageIndices: number[] | null | undefined): void {
-    const next = Array.from(new Set((pageIndices ?? []).filter((n) => Number.isInteger(n)))).sort((a, b) => a - b);
-    this.virtualPinnedPages = next;
-    if (this.virtualEnabled && this.mount) {
-      this.updateVirtualWindow();
-    }
-  }
-
-  /**
-   * Sets the CSS zoom/scale factor applied to the mount element.
-   *
-   * When the mount element has `transform: scale(zoom)`, getBoundingClientRect()
-   * returns screen-space coordinates (scaled), but internal layout offsets are in
-   * unscaled layout space. This factor is used to convert between the two spaces
-   * during virtualization window calculations.
-   *
-   * @param zoom - The zoom/scale factor (e.g., 0.75 for 75% zoom). Defaults to 1.
-   */
-  public setZoom(zoom: number): void {
-    const next = typeof zoom === 'number' && Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
-    if (next !== this.zoomFactor) {
-      this.zoomFactor = next;
-      this.scrollContainerMountOffset = null; // Invalidate on zoom change
-      if (this.virtualEnabled && this.mount) {
-        this.updateVirtualWindow();
-      }
-    }
-  }
-
-  /**
-   * Sets the external scroll container element.
-   *
-   * When the scroll container is an ancestor element (e.g., a wrapper div with
-   * overflow-y: auto), the default scrollY calculation using mount.getBoundingClientRect()
-   * relative to the viewport produces an offset equal to the scroll container's distance
-   * from the viewport top. This causes the virtualization window to be misaligned with the
-   * actual visible area.
-   *
-   * Setting the scroll container allows updateVirtualWindow() to compute scrollY relative
-   * to the scroll container instead, eliminating this offset.
-   *
-   * @param el - The scroll container element, or null to clear.
-   */
-  public setScrollContainer(el: HTMLElement | null): void {
-    if (el !== this.scrollContainer) {
-      this.scrollContainer = el;
-      this.scrollContainerMountOffset = null; // Invalidate cached offset
-      if (this.virtualEnabled && this.mount) {
-        this.updateVirtualWindow();
-      }
-    }
+  private invalidateWindowSurface(): void {
+    // The persistent surface's content was rendered under the old settings
+    // too; forgetting it makes the next persistent paint rebuild shells and
+    // rehydrate the desired content window from scratch.
+    disposePersistentPageSurfaceState(this.persistentSurface);
+    this.persistentSurface = null;
   }
 
   /** Returns the resolved page for a given index, or null if resolved data is unavailable. */
@@ -1108,25 +1069,153 @@ export class DomPainter {
   }
 
   /**
-   * Returns the page indices that are currently mounted in the DOM.
-   *
-   * Unlike paint snapshots, this reflects virtualization remounts that happen
-   * during scroll without waiting for a full paint cycle.
+   * Returns the stable page-root indices owned by the current surface.
    */
-  public getMountedPageIndices(): number[] {
-    return [...this.mountedPageIndices];
+  public getPersistentPageIndices(): number[] {
+    return [...this.persistentPageIndices];
+  }
+
+  /**
+   * Begin a rollbackable transaction around a content paint. Named for the
+   * paginated persistent-page path it was minted for; the captured snapshot is
+   * the painter's COMPLETE retained/index state, so the same journal serves
+   * the semantic flow's dense `paint()` entry (the v2 host's canonical
+   * atomic visible commit wraps both paint kinds in one transaction).
+   *
+   * This method is not part of DomPainterHandle. The package factory installs
+   * a non-enumerable Symbol.for hook that the v2 routed wrapper alone reads.
+   * The caller owns the matching DOM mutation journal; rollback here restores
+   * every painter-owned retained/index plane to references for those restored
+   * last-good nodes.
+   */
+  public beginPersistentPageTransaction(): PersistentPagePainterTransaction {
+    if (this.activePersistentPageTransaction) {
+      throw new Error('persistent-page painter transaction already active');
+    }
+
+    const active: ActivePersistentPagePainterTransaction = {
+      snapshot: this.capturePersistentPagePainterState(),
+      pendingPaintSnapshot: null,
+      hasPendingPaintSnapshot: false,
+    };
+    // Tooltip staging is ephemeral but mutable during fragment rendering.
+    // Isolate candidate keys so a mid-render throw cannot leave any candidate
+    // metadata in the last-good plane restored on rollback.
+    this.pendingTooltips = new WeakMap<HTMLElement, string>();
+    this.activePersistentPageTransaction = active;
+    let settled = false;
+
+    const claim = (): boolean => {
+      if (settled) return false;
+      if (this.activePersistentPageTransaction !== active) {
+        throw new Error('persistent-page painter transaction is no longer active');
+      }
+      settled = true;
+      return true;
+    };
+
+    return {
+      commit: () => {
+        if (!claim()) return;
+        try {
+          if (active.hasPendingPaintSnapshot && active.pendingPaintSnapshot) {
+            this.onPaintSnapshotCallback?.(active.pendingPaintSnapshot);
+          }
+          this.activePersistentPageTransaction = null;
+        } catch (error) {
+          // The routed wrapper still owns a live DOM journal at this point.
+          // Restore painter state before propagating so it can roll the DOM
+          // back too and leave the whole visible commit at last-good.
+          this.restorePersistentPagePainterState(active.snapshot);
+          this.activePersistentPageTransaction = null;
+          throw error;
+        }
+      },
+      rollback: () => {
+        if (!claim()) return;
+        this.restorePersistentPagePainterState(active.snapshot);
+        this.activePersistentPageTransaction = null;
+      },
+    };
+  }
+
+  private capturePersistentPagePainterState(): PersistentPagePainterStateSnapshot {
+    return {
+      mount: this.mount,
+      doc: this.doc,
+      pageStates: this.pageStates.map(clonePageDomStateMetadata),
+      currentLayout: this.currentLayout,
+      changedBlocks: new Set(this.changedBlocks),
+      headerProvider: this.headerProvider,
+      footerProvider: this.footerProvider,
+      totalPages: this.totalPages,
+      sectionPageCounts: new Map(this.sectionPageCounts),
+      linkIdCounter: this.linkIdCounter,
+      sdtLabelsRendered: new Set(this.sdtLabelsRendered),
+      pendingTooltips: this.pendingTooltips,
+      pageGap: this.pageGap,
+      layoutVersion: this.layoutVersion,
+      layoutEpoch: this.layoutEpoch,
+      processedLayoutVersion: this.processedLayoutVersion,
+      currentMapping: this.currentMapping,
+      persistentDecorationsDirty: this.persistentDecorationsDirty,
+      persistentDocumentBackground: this.persistentDocumentBackground,
+      persistentSurface: clonePersistentPageSurfaceState(this.persistentSurface, clonePageDomStateMetadata),
+      paintWork: clonePaintWorkSummary(this.paintWork),
+      paintSnapshotBuilder: clonePaintSnapshotBuilder(this.paintSnapshotBuilder),
+      lastPaintSnapshot: this.lastPaintSnapshot,
+      persistentPageIndices: [...this.persistentPageIndices],
+      resolvedLayout: this.resolvedLayout,
+      showFormattingMarks: this.showFormattingMarks,
+      contentControlsChrome: this.contentControlsChrome,
+    };
+  }
+
+  private restorePersistentPagePainterState(snapshot: PersistentPagePainterStateSnapshot): void {
+    this.mount = snapshot.mount;
+    this.doc = snapshot.doc;
+    this.pageStates = snapshot.pageStates;
+    this.currentLayout = snapshot.currentLayout;
+    this.changedBlocks = snapshot.changedBlocks;
+    this.headerProvider = snapshot.headerProvider;
+    this.footerProvider = snapshot.footerProvider;
+    this.totalPages = snapshot.totalPages;
+    this.sectionPageCounts = snapshot.sectionPageCounts;
+    this.linkIdCounter = snapshot.linkIdCounter;
+    this.sdtLabelsRendered = snapshot.sdtLabelsRendered;
+    this.pendingTooltips = snapshot.pendingTooltips;
+    this.pageGap = snapshot.pageGap;
+    this.layoutVersion = snapshot.layoutVersion;
+    this.layoutEpoch = snapshot.layoutEpoch;
+    this.processedLayoutVersion = snapshot.processedLayoutVersion;
+    this.currentMapping = snapshot.currentMapping;
+    this.persistentDecorationsDirty = snapshot.persistentDecorationsDirty;
+    this.persistentDocumentBackground = snapshot.persistentDocumentBackground;
+    this.persistentSurface = snapshot.persistentSurface;
+    this.paintWork = snapshot.paintWork;
+    this.paintSnapshotBuilder = snapshot.paintSnapshotBuilder;
+    this.lastPaintSnapshot = snapshot.lastPaintSnapshot;
+    this.persistentPageIndices = snapshot.persistentPageIndices;
+    this.resolvedLayout = snapshot.resolvedLayout;
+    this.showFormattingMarks = snapshot.showFormattingMarks;
+    this.contentControlsChrome = snapshot.contentControlsChrome;
   }
 
   private createAllPageIndices(pageCount: number): number[] {
     return Array.from({ length: pageCount }, (_, pageIndex) => pageIndex);
   }
 
-  private setMountedPageIndices(pageIndices: number[]): void {
-    this.mountedPageIndices = [...pageIndices];
+  private setPersistentPageIndices(pageIndices: number[]): void {
+    this.persistentPageIndices = [...pageIndices];
   }
 
   private emitPaintSnapshot(snapshot: PaintSnapshot): void {
     this.lastPaintSnapshot = snapshot;
+    if (this.activePersistentPageTransaction) {
+      this.activePersistentPageTransaction.pendingPaintSnapshot = snapshot;
+      this.activePersistentPageTransaction.hasPendingPaintSnapshot = true;
+      return;
+    }
     this.onPaintSnapshotCallback?.(snapshot);
   }
 
@@ -1276,8 +1365,15 @@ export class DomPainter {
     };
   }
 
+  /** Semantic continuous paint. Paginated flow has only `paintPersistentPages()`. */
   public paint(input: DomPainterInput, mount: HTMLElement, mapping?: PositionMapping): void {
+    if (!this.isSemanticFlow) {
+      throw new Error('DomPainter.paint() rejects paginated flow; use paintPersistentPages()');
+    }
     const resolvedLayout = input.resolvedLayout;
+    if (resolvedLayout.flowMode !== 'semantic') {
+      throw new Error('DomPainter.paint() rejects paginated layout input; use paintPersistentPages()');
+    }
     this.resolvedLayout = resolvedLayout;
     this.changedBlocks.clear();
 
@@ -1307,19 +1403,12 @@ export class DomPainter {
       this.currentMapping = mapping ?? null;
     }
 
-    ensurePrintStyles(doc);
-    ensureDocumentSurfaceStyles(doc);
-    ensureLinkStyles(doc);
-    ensureTrackChangeStyles(doc);
-    ensureFormattingMarksStyles(doc);
-    ensureFieldAnnotationStyles(doc);
-    ensureSdtContainerStyles(doc);
-    ensureImageSelectionStyles(doc);
-    ensureMathMencloseStyles(doc);
-    ensureFootnoteStyles(doc);
-    if (!this.isSemanticFlow && this.options.ruler?.enabled) {
-      ensureRulerStyles(doc);
-    }
+    // Document-scoped style preflight: ONE shared manifest across dense and
+    // persistent painting so tracked-change decoration cannot silently diverge.
+    ensureSurfaceStylePreflight(doc);
+    // Mode switch: dense ownership means page styles derive from
+    // currentLayout, never from a stale persistent-page input.
+    this.persistentDocumentBackground = null;
     mount.classList.add(CLASS_NAMES.container);
     this.applyFormattingMarksClass(mount);
 
@@ -1337,640 +1426,161 @@ export class DomPainter {
     this.sectionPageCounts = buildSectionPageCounts(resolvedLayout.pages);
     const previousLayout = this.currentLayout;
     this.currentLayout = resolvedLayout;
-    if (this.isSemanticFlow) {
-      // Semantic mode always renders as a single continuous surface.
-      applyStyles(mount, containerStyles);
-      mount.style.gap = '0px';
-      mount.style.alignItems = 'stretch';
-      if (!previousLayout || this.pageStates.length === 0) {
-        this.fullRender(resolvedLayout);
-      } else {
-        this.patchLayout(resolvedLayout);
-      }
-      this.setMountedPageIndices(this.createAllPageIndices(resolvedLayout.pages.length));
-      this.changedBlocks.clear();
-      this.currentMapping = null;
-      return;
-    }
-
-    let useDomSnapshotFallback = false;
-    const mode = this.layoutMode;
-    if (mode === 'horizontal') {
-      applyStyles(mount, containerStylesHorizontal);
-      // Use configured page gap for horizontal rendering
-      mount.style.gap = `${this.pageGap}px`;
-      this.renderHorizontal(resolvedLayout, mount);
-      this.finalizePaintSnapshotFromBuilder(mount);
-      this.setMountedPageIndices(this.createAllPageIndices(resolvedLayout.pages.length));
-      this.currentLayout = resolvedLayout;
-      this.pageStates = [];
-      this.changedBlocks.clear();
-      this.currentMapping = null;
-      return;
-    }
-    if (mode === 'book') {
-      applyStyles(mount, containerStyles);
-      this.renderBookMode(resolvedLayout, mount);
-      this.finalizePaintSnapshotFromBuilder(mount);
-      this.setMountedPageIndices(this.createAllPageIndices(resolvedLayout.pages.length));
-      this.currentLayout = resolvedLayout;
-      this.pageStates = [];
-      this.changedBlocks.clear();
-      this.currentMapping = null;
-      return;
-    }
-
-    // Vertical mode
     applyStyles(mount, containerStyles);
-
-    if (this.virtualEnabled) {
-      // Keep container gap at 0 so spacer elements don't introduce extra offsets.
-      mount.style.gap = '0px';
-      this.renderVirtualized(resolvedLayout, mount);
-      useDomSnapshotFallback = true;
-      this.currentLayout = resolvedLayout;
-      this.changedBlocks.clear();
-      this.currentMapping = null;
+    mount.style.gap = '0px';
+    mount.style.alignItems = 'stretch';
+    if (!previousLayout || this.pageStates.length === 0) {
+      this.fullRender(resolvedLayout);
     } else {
-      // Use configured page gap for normal vertical rendering
-      mount.style.gap = `${this.pageGap}px`;
-      if (!previousLayout || this.pageStates.length === 0) {
-        this.fullRender(resolvedLayout);
-      } else {
-        this.patchLayout(resolvedLayout);
-        useDomSnapshotFallback = true;
-      }
-      this.setMountedPageIndices(this.createAllPageIndices(resolvedLayout.pages.length));
+      this.patchLayout(resolvedLayout);
     }
-
-    if (useDomSnapshotFallback) {
-      this.emitPaintSnapshot(this.collectPaintSnapshotFromDomRoot(mount));
-      this.paintSnapshotBuilder = null;
-    } else {
-      this.finalizePaintSnapshotFromBuilder(mount);
-    }
-
-    this.currentLayout = resolvedLayout;
+    this.setPersistentPageIndices(this.createAllPageIndices(resolvedLayout.pages.length));
     this.changedBlocks.clear();
     this.currentMapping = null;
   }
 
-  // ----------------
-  // Virtualized path
-  // ----------------
-  private renderVirtualized(layout: ResolvedLayout, mount: HTMLElement): void {
-    if (!this.doc) return;
-    // Always keep the latest layout reference for handlers
-    this.currentLayout = layout;
-
-    // First-time init, mount changed, or spacers were detached (e.g., by innerHTML='' on zero-page layout)
-    const needsInit =
-      !this.topSpacerEl ||
-      !this.bottomSpacerEl ||
-      !this.virtualPagesEl ||
-      this.mount !== mount ||
-      this.topSpacerEl.parentElement !== mount;
-    if (needsInit) {
-      this.ensureVirtualizationSetup(mount);
-    }
-
-    this.computeVirtualMetrics();
-    this.updateVirtualWindow();
-  }
-
-  private ensureVirtualizationSetup(mount: HTMLElement): void {
-    if (!this.doc) return;
-
-    // Reset any prior non-virtual state
-    mount.innerHTML = '';
-    this.pageStates = [];
-    this.pageIndexToState.clear();
-    this.virtualGapSpacers = [];
-    this.virtualMountedKey = '';
-
-    // Create and configure spacer elements
-    this.topSpacerEl = this.doc.createElement('div');
-    this.bottomSpacerEl = this.doc.createElement('div');
-    this.configureSpacerElement(this.topSpacerEl, 'top');
-    this.configureSpacerElement(this.bottomSpacerEl, 'bottom');
-
-    // Create and configure pages container (handles the inter-page gap).
-    // Virtualized rendering uses its own gap setting independent from normal pageGap.
-    this.virtualPagesEl = this.doc.createElement('div');
-    this.virtualPagesEl.style.display = 'flex';
-    this.virtualPagesEl.style.flexDirection = 'column';
-    this.virtualPagesEl.style.alignItems = 'center';
-    this.virtualPagesEl.style.width = '100%';
-    this.virtualPagesEl.style.gap = `${this.virtualGap}px`;
-    // Prevent the browser from using this container as a scroll anchor.
-    // When the top spacer grows during virtual window shifts, this element
-    // moves down. If the browser anchors on it, scroll anchoring adjusts
-    // scrollTop to compensate, which fires a new scroll event with a higher
-    // scrollY, triggering another window shift — a positive feedback loop.
-    // With this set, the browser anchors on page elements (children) instead,
-    // which stay at stable positions regardless of spacer changes.
-    this.virtualPagesEl.style.overflowAnchor = 'none';
-
-    mount.appendChild(this.topSpacerEl);
-    mount.appendChild(this.virtualPagesEl);
-    mount.appendChild(this.bottomSpacerEl);
-
-    // Bind scroll and resize handlers
-    this.bindVirtualizationHandlers(mount);
-  }
-
-  private configureSpacerElement(element: HTMLElement, type: 'top' | 'bottom' | 'gap'): void {
-    element.style.width = '1px';
-    element.style.height = '0px';
-    element.style.flex = '0 0 auto';
-    // Prevent Chrome's scroll anchoring from using spacers as anchor nodes.
-    // When spacer heights change during virtual window shifts, scroll anchoring
-    // could adjust scrollTop and trigger cascading scroll events.
-    element.style.overflowAnchor = 'none';
-    element.setAttribute('data-virtual-spacer', type);
-  }
-
-  private bindVirtualizationHandlers(mount: HTMLElement): void {
-    // Bind scroll handler for container
-    if (this.onScrollHandler) {
-      mount.removeEventListener('scroll', this.onScrollHandler);
-    }
-    this.onScrollHandler = () => {
-      this.updateVirtualWindow();
-    };
-    mount.addEventListener('scroll', this.onScrollHandler);
-
-    // Bind window scroll/resize for cases where the page scrolls the window
-    const win = this.doc?.defaultView;
-    if (win) {
-      if (this.onWindowScrollHandler) {
-        win.removeEventListener('scroll', this.onWindowScrollHandler);
-      }
-      this.onWindowScrollHandler = () => {
-        this.updateVirtualWindow();
-      };
-      // passive to avoid blocking scrolling
-      win.addEventListener('scroll', this.onWindowScrollHandler, { passive: true });
-
-      if (this.onResizeHandler) {
-        win.removeEventListener('resize', this.onResizeHandler);
-      }
-      this.onResizeHandler = () => {
-        this.scrollContainerMountOffset = null; // Recompute on resize
-        this.updateVirtualWindow();
-      };
-      win.addEventListener('resize', this.onResizeHandler);
-    }
-  }
-
-  private releaseVirtualizationHandlers(): void {
-    if (this.mount && this.onScrollHandler) {
-      try {
-        this.mount.removeEventListener('scroll', this.onScrollHandler);
-      } catch {}
-    }
-    const win = this.doc?.defaultView;
-    if (win && this.onWindowScrollHandler) {
-      try {
-        win.removeEventListener('scroll', this.onWindowScrollHandler);
-      } catch {}
-    }
-    if (win && this.onResizeHandler) {
-      try {
-        win.removeEventListener('resize', this.onResizeHandler);
-      } catch {}
-    }
-    this.onScrollHandler = null;
-    this.onWindowScrollHandler = null;
-    this.onResizeHandler = null;
-  }
-
-  private computeVirtualMetrics(): void {
-    if (!this.currentLayout) return;
-    const N = this.currentLayout.pages.length;
-    if (N !== this.virtualHeights.length) {
-      this.virtualHeights = this.currentLayout.pages.map((p) => p.height);
-    }
-    // Build offsets where offsets[i] = sum_{k < i} (height[k] + gap).
-    // Use virtualGap to match CSS gap on virtualPagesEl.
-    const offsets: number[] = new Array(this.virtualHeights.length + 1);
-    offsets[0] = 0;
-    for (let i = 0; i < this.virtualHeights.length; i += 1) {
-      offsets[i + 1] = offsets[i] + this.virtualHeights[i] + this.virtualGap;
-    }
-    this.virtualOffsets = offsets;
-  }
-
-  private topOfIndex(i: number): number {
-    // Offset to the top of page i (0 for first). Includes gaps before page i.
-    if (i <= 0) return 0;
-    return this.virtualOffsets[i];
-  }
-
-  private contentTotalHeight(): number {
-    // Total content height without trailing gap after last page
-    const n = this.virtualHeights.length;
-    if (n <= 0) return 0;
-    return this.virtualOffsets[n] - this.virtualGap;
-  }
-
-  private getMountPaddingTopPx(): number {
-    if (this.virtualPaddingTop != null) return this.virtualPaddingTop;
-    if (!this.mount || !this.doc) return 0;
-    const win = this.doc.defaultView;
-    if (!win) return 0;
-    const style = win.getComputedStyle(this.mount);
-    const pt = style?.paddingTop ?? '0';
-    const val = Number.parseFloat(pt.replace('px', ''));
-    if (Number.isFinite(val)) return Math.max(0, val);
-    return 0;
-  }
-
   /**
-   * Public method to trigger virtualization window update on scroll.
-   * Call this from external scroll handlers when the scroll container
-   * is different from the painter's mount element.
+   * The persistent paginated reconcile (default persistent page geometry
+   * plan, Unit 1): one generation-scoped scaffold owns every page root for
+   * the whole layout generation, and only content descendants are
+   * virtualized. Same-scaffold calls skip shell work in O(1); a new scaffold
+   * identity reconciles page roots by index. There is no viewport-owned shell
+   * set and no spacer node — the scroll extent derives
+   * from the persistent shells plus the container gap alone.
    */
-  public onScroll(): void {
-    if (this.virtualEnabled) {
-      this.updateVirtualWindow();
-    }
-  }
-
-  private updateVirtualWindow(): void {
-    if (!this.mount || !this.topSpacerEl || !this.bottomSpacerEl || !this.virtualPagesEl || !this.currentLayout) return;
-    const layout = this.currentLayout;
-    const N = layout.pages.length;
-
-    if (N === 0) {
-      this.mount.innerHTML = '';
-      this.setMountedPageIndices([]);
-      this.processedLayoutVersion = this.layoutVersion;
-      return;
-    }
-
-    // Map scrollTop -> anchor page index via prefix sums.
-    // virtualOffsets are in layout (unscaled) space, so scrollY must also be in layout space.
-    // When the mount has transform: scale(zoom), getBoundingClientRect() returns
-    // screen-space values that must be divided by zoom to get layout-space coordinates.
-    const paddingTop = this.getMountPaddingTopPx();
-    const zoom = this.zoomFactor;
-    let scrollY: number;
-    const isContainerScrollable = this.mount.scrollHeight > this.mount.clientHeight + 1;
-    // Check if the external scroll container is actually scrollable (content overflows its
-    // visible area). An element can have overflow:auto but still not scroll if it's in an
-    // unconstrained flex layout where the parent has only min-height (no height). In that
-    // case the element grows to fit content and scrollTop stays 0 — fall through to the
-    // viewport-based calculation instead.
-    const scrollCont = this.scrollContainer;
-    const isScrollContainerActive = scrollCont != null && scrollCont.scrollHeight > scrollCont.clientHeight + 1;
-    if (isContainerScrollable) {
-      scrollY = Math.max(0, this.mount.scrollTop - paddingTop);
-    } else if (isScrollContainerActive) {
-      // Intermediate scroll ancestor (e.g., a wrapper div with overflow-y: auto).
-      // Use scrollContainer.scrollTop with a cached mount offset instead of
-      // getBoundingClientRect(). Rects are affected by spacer DOM mutations
-      // which can cause cascading scroll events and runaway scrolling.
-      //
-      // mountOffset = distance from scroll container's content top to mount's top.
-      // Computed once and cached; invalidated on mount/container/zoom change.
-      if (this.scrollContainerMountOffset == null) {
-        const mountRect = this.mount.getBoundingClientRect();
-        const containerRect = scrollCont.getBoundingClientRect();
-        this.scrollContainerMountOffset = mountRect.top - containerRect.top + scrollCont.scrollTop;
-      }
-      scrollY = Math.max(0, (scrollCont.scrollTop - this.scrollContainerMountOffset) / zoom - paddingTop);
-    } else {
-      const rect = this.mount.getBoundingClientRect();
-      // rect.top is in screen space (affected by CSS transform: scale).
-      // Divide by zoom to convert to layout space for comparison with virtualOffsets.
-      scrollY = Math.max(0, -rect.top / zoom - paddingTop);
-    }
-
-    // Binary search for anchor index such that topOfIndex(i) <= scrollY < topOfIndex(i+1)
-    let lo = 0;
-    let hi = N; // exclusive
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (this.topOfIndex(mid) <= scrollY) lo = mid + 1;
-      else hi = mid;
-    }
-    const anchor = Math.max(0, lo - 1);
-
-    // Compute window centered around anchor (approximately), with overscan
-    const baseWindow = this.virtualWindow;
-    const overscan = this.virtualOverscan;
-    let start = anchor - Math.floor(baseWindow / 2) - overscan;
-    start = Math.max(0, Math.min(start, Math.max(0, N - baseWindow)));
-    const end = Math.min(N - 1, start + baseWindow - 1 + overscan * 2);
-    // Adjust start if we overshot end due to trailing clamp
-    start = Math.max(0, Math.min(start, end - baseWindow + 1));
-
-    const needed = new Set<number>();
-    for (let i = start; i <= end; i += 1) needed.add(i);
-    for (const pageIndex of this.virtualPinnedPages) {
-      const idx = Math.max(0, Math.min(pageIndex, N - 1));
-      needed.add(idx);
-    }
-
-    const mounted = Array.from(needed).sort((a, b) => a - b);
-    const mountedKey = mounted.join(',');
-
-    // No-op if mounted pages unchanged and nothing changed
-    const alreadyProcessedLayout = this.processedLayoutVersion === this.layoutVersion;
-    if (mountedKey === this.virtualMountedKey && this.changedBlocks.size === 0 && alreadyProcessedLayout) {
-      this.virtualStart = start;
-      this.virtualEnd = end;
-      this.updateSpacersForMountedPages(mounted);
-      return;
-    }
-
-    this.virtualMountedKey = mountedKey;
-    this.virtualStart = start;
-    this.virtualEnd = end;
-    this.setMountedPageIndices(mounted);
-
-    // Update spacers + rebuild gap spacers
-    this.updateSpacersForMountedPages(mounted);
-    this.clearGapSpacers();
-
-    // Reset SDT label tracking so remounted start fragments get their labels back.
-    this.sdtLabelsRendered.clear();
-
-    // Remove pages that are no longer needed
-    for (const [idx, state] of this.pageIndexToState.entries()) {
-      if (!needed.has(idx)) {
-        state.element.remove();
-        this.pageIndexToState.delete(idx);
-      }
-    }
-
-    // Insert or patch needed pages
-    for (const i of mounted) {
-      const page = layout.pages[i];
-      const existing = this.pageIndexToState.get(i);
-      if (!existing) {
-        const newState = this.createPageState(page, i);
-        newState.element.dataset.pageNumber = String(page.number);
-        newState.element.dataset.pageIndex = String(i);
-        // Ensure virtualization uses page margin 0
-        applyStyles(newState.element, pageStyles(page.width, page.height, this.getEffectivePageStyles()));
-        this.virtualPagesEl.appendChild(newState.element);
-        this.pageIndexToState.set(i, newState);
-      } else {
-        // Patch in place
-        this.patchPage(existing, page, i);
-      }
-    }
-
-    // Ensure top spacer is first, pages container is in the middle, and bottom spacer is last.
-    if (this.mount.firstChild !== this.topSpacerEl) {
-      this.mount.insertBefore(this.topSpacerEl, this.mount.firstChild);
-    }
-    if (this.virtualPagesEl.parentElement !== this.mount) {
-      this.mount.insertBefore(this.virtualPagesEl, this.bottomSpacerEl);
-    }
-    this.mount.appendChild(this.bottomSpacerEl);
-
-    // Ensure mounted pages are ordered (with gap spacers).
-    // Use cursor-based reconciliation to skip DOM moves for elements already in
-    // the correct position. Moving an element via appendChild/insertBefore triggers
-    // a browser blur event on any focused descendant, which breaks header/footer
-    // in-place editing where a PM editor lives inside a page element (SD-1993).
-    let prevIndex: number | null = null;
-    let cursor: ChildNode | null = this.virtualPagesEl.firstChild;
-    for (const idx of mounted) {
-      if (prevIndex != null && idx > prevIndex + 1) {
-        const gap = this.doc!.createElement('div');
-        this.configureSpacerElement(gap, 'gap');
-        gap.dataset.gapFrom = String(prevIndex);
-        gap.dataset.gapTo = String(idx);
-        const gapHeight =
-          this.topOfIndex(idx) - this.topOfIndex(prevIndex) - this.virtualHeights[prevIndex] - this.virtualGap * 2;
-        gap.style.height = `${Math.max(0, Math.floor(gapHeight))}px`;
-        this.virtualGapSpacers.push(gap);
-        // Insert gap before cursor. cursor is NOT advanced because it still
-        // points at the next page element that needs to be reconciled.
-        this.virtualPagesEl.insertBefore(gap, cursor);
-      }
-      const state = this.pageIndexToState.get(idx)!;
-      if (state.element === cursor) {
-        // Already in the correct position. Skip the DOM mutation.
-        cursor = state.element.nextSibling;
-      } else {
-        // Out of order. Move to the correct position.
-        this.virtualPagesEl.insertBefore(state.element, cursor);
-      }
-      prevIndex = idx;
-    }
-
-    // Clear changed blocks now that current visible pages are patched
-    this.changedBlocks.clear();
-    this.processedLayoutVersion = this.layoutVersion;
-  }
-
-  private updateSpacers(start: number, end: number): void {
-    if (!this.topSpacerEl || !this.bottomSpacerEl) return;
-    const top = this.topOfIndex(start);
-    const bottom = this.contentTotalHeight() - this.topOfIndex(end + 1);
-    this.topSpacerEl.style.height = `${Math.max(0, Math.floor(top))}px`;
-    this.bottomSpacerEl.style.height = `${Math.max(0, Math.floor(bottom))}px`;
-  }
-
-  private updateSpacersForMountedPages(mountedPageIndices: number[]): void {
-    if (!this.topSpacerEl || !this.bottomSpacerEl) return;
-    if (mountedPageIndices.length === 0) {
-      this.topSpacerEl.style.height = '0px';
-      this.bottomSpacerEl.style.height = '0px';
-      return;
-    }
-
-    const first = mountedPageIndices[0];
-    const last = mountedPageIndices[mountedPageIndices.length - 1];
-    const n = this.virtualHeights.length;
-    const clampedFirst = Math.max(0, Math.min(first, Math.max(0, n - 1)));
-    const clampedLast = Math.max(0, Math.min(last, Math.max(0, n - 1)));
-
-    const top = this.topOfIndex(clampedFirst);
-    const bottom = this.topOfIndex(n) - this.topOfIndex(clampedLast + 1) - this.virtualGap;
-    this.topSpacerEl.style.height = `${Math.max(0, Math.floor(top))}px`;
-    this.bottomSpacerEl.style.height = `${Math.max(0, Math.floor(bottom))}px`;
-  }
-
-  private clearGapSpacers(): void {
-    for (const el of this.virtualGapSpacers) {
-      el.remove();
-    }
-    this.virtualGapSpacers = [];
-  }
-
-  private renderHorizontal(layout: ResolvedLayout, mount: HTMLElement): void {
-    if (!this.doc) return;
-    mount.innerHTML = '';
-    layout.pages.forEach((page, pageIndex) => {
-      const pageEl = this.renderPage(page.width, page.height, page, pageIndex);
-      mount.appendChild(pageEl);
-    });
-  }
-
-  private renderBookMode(layout: ResolvedLayout, mount: HTMLElement): void {
-    if (!this.doc) return;
-    mount.innerHTML = '';
-    const pages = layout.pages;
-    if (pages.length === 0) return;
-
-    const firstPage = pages[0];
-    const firstPageEl = this.renderPage(firstPage.width, firstPage.height, firstPage, 0);
-    mount.appendChild(firstPageEl);
-
-    for (let i = 1; i < pages.length; i += 2) {
-      const spreadEl = this.doc!.createElement('div');
-      spreadEl.classList.add(CLASS_NAMES.spread);
-      applyStyles(spreadEl, spreadStyles);
-
-      const leftPage = pages[i];
-      const leftPageEl = this.renderPage(leftPage.width, leftPage.height, leftPage, i);
-      spreadEl.appendChild(leftPageEl);
-
-      if (i + 1 < pages.length) {
-        const rightPage = pages[i + 1];
-        const rightPageEl = this.renderPage(rightPage.width, rightPage.height, rightPage, i + 1);
-        spreadEl.appendChild(rightPageEl);
-      }
-
-      mount.appendChild(spreadEl);
-    }
-  }
-
-  private renderPage(width: number, height: number, page: ResolvedPage, pageIndex: number): HTMLElement {
-    if (!this.doc) {
-      throw new Error('DomPainter: document is not available');
-    }
-    const el = this.doc.createElement('div');
-    el.classList.add(CLASS_NAMES.page);
-    applyStyles(el, pageStyles(width, height, this.getEffectivePageStyles()));
-    this.applySemanticPageOverrides(el);
-    el.dataset.layoutEpoch = String(this.layoutEpoch);
-    el.dataset.pageNumber = String(page.number);
-    el.dataset.pageIndex = String(pageIndex);
-    // Editor-neutral layout boundary stamp (prep-001). Lets DOM observers
-    // negotiate the additive identity contract version without reading
-    // package metadata.
-    el.dataset[DATASET_KEYS.LAYOUT_BOUNDARY_SCHEMA] = LAYOUT_BOUNDARY_SCHEMA;
-
-    // Render per-page ruler if enabled (suppressed in semantic flow mode)
-    if (!this.isSemanticFlow && this.options.ruler?.enabled) {
-      const rulerEl = this.renderPageRuler(width, page);
-      if (rulerEl) {
-        el.appendChild(rulerEl);
-      }
-    }
-
-    const contextBase: FragmentRenderContext = {
-      pageNumber: page.number,
-      totalPages: this.totalPages,
-      section: 'body',
-      pageNumberText: page.numberText,
-      displayPageNumber: page.displayNumber,
-      pageNumberFormat: page.pageNumberFormat,
-      pageNumberChapterText: page.pageNumberChapterText,
-      pageNumberChapterSeparator: page.pageNumberChapterSeparator,
-      sectionPageCount: this.getSectionPageCount(page),
-      pageIndex,
-    };
-
-    const resolvedItems = page.items;
-    const sdtBoundaries = computeSdtBoundaries(resolvedItems, this.sdtLabelsRendered);
-    const betweenBorderFlags = computeBetweenBorderFlags(resolvedItems);
-
-    resolvedItems.forEach((resolvedItem, index) => {
-      if (resolvedItem.kind !== 'fragment') return;
-      const fragment = resolvedItem.fragment;
-      const sdtBoundary = sdtBoundaries.get(index);
-      el.appendChild(
-        this.renderFragment(fragment, contextBase, sdtBoundary, betweenBorderFlags.get(index), resolvedItem),
+  public paintPersistentPages(input: DomPainterPersistentPageInput, mount: HTMLElement): void {
+    if (this.isSemanticFlow) {
+      throw new Error(
+        'DomPainter.paintPersistentPages() rejects semantic flow (painter plan P7). ' +
+          'Semantic documents paint through paint(); persistent page scaffolds exist only in paginated flow.',
       );
-    });
-    this.renderDecorationsForPage(el, page, pageIndex);
-    this.renderColumnSeparators(el, page, width, height);
-    return el;
+    }
+    if (!(mount instanceof HTMLElement)) {
+      throw new Error('DomPainter.paintPersistentPages requires a valid HTMLElement mount');
+    }
+    const doc = mount.ownerDocument ?? (typeof document !== 'undefined' ? document : null);
+    if (!doc) {
+      throw new Error('DomPainter.paintPersistentPages requires a DOM-like document');
+    }
+    this.doc = doc;
+    this.mount = mount;
+    this.currentLayout = null;
+    this.currentMapping = null;
+    this.changedBlocks.clear();
+    this.pageStates = [];
+    // The persistent surface owns no ResolvedLayout; the document background
+    // scalar rides the input exactly like the persistent-page path.
+    this.persistentDocumentBackground = input.documentBackground ?? null;
+    this.totalPages = input.scaffold.pageCount;
+    this.layoutEpoch = input.scaffold.generation;
+    // Window-scoped fallback (mounted parity): only the desired content
+    // pages' packets inform section counts when the caller supplies none —
+    // the persistent surface never materializes the whole resolved layout.
+    this.sectionPageCounts = input.sectionPageCounts
+      ? readSectionPageCounts(input.sectionPageCounts)
+      : buildSectionPageCounts(
+          resolveDesiredContentPageIndices(input)
+            .map((pageIndex) => input.packetsByPageIndex.get(pageIndex))
+            .filter((packet): packet is ResolvedPage => packet != null),
+        );
+
+    ensureSurfaceStylePreflight(doc);
+    mount.classList.add(CLASS_NAMES.container);
+    this.applyFormattingMarksClass(mount);
+    applyStyles(mount, containerStyles);
+
+    // A fresh surface (or a surface invalidated by a render-settings change)
+    // starts from an empty mount; the retained reconcile path never wipes.
+    if (this.persistentSurface == null || this.persistentSurface.mount !== mount) {
+      disposePersistentPageSurfaceState(this.persistentSurface);
+      this.persistentSurface = null;
+      mount.innerHTML = '';
+    }
+
+    this.persistentSurface = reconcilePersistentPageSurface(
+      {
+        contentContext: this.pageContentContext(),
+        work: this.paintWork,
+        recordPageWork: (kind, pageIndex) => this.recordPageWork(kind, pageIndex),
+        consumeDecorationsDirty: () => {
+          const dirty = this.persistentDecorationsDirty;
+          this.persistentDecorationsDirty = false;
+          return dirty;
+        },
+        // The only per-document dynamic input to shell styles is the
+        // document background; instance-static pageStyles need no signature.
+        shellStyleSignature: `bg:${this.persistentDocumentBackground?.color ?? ''}`,
+        onIntegrityInvalidated: this.persistentSurfaceInvalidationHandler,
+      },
+      this.persistentSurface,
+      input,
+      mount,
+    );
+
+    this.setPersistentPageIndices(this.createAllPageIndices(input.scaffold.pageCount));
+    if (input.captureSnapshot !== false) {
+      this.emitPaintSnapshot(this.collectPaintSnapshotFromDomRoot(mount));
+    }
+  }
+
+  /** True only while the retained document-wide page-shell plane matches the live DOM. */
+  public isPersistentPageSurfaceIntact(): boolean {
+    return isPersistentPageSurfaceIntact(this.persistentSurface);
+  }
+
+  /** Register the host wake-up used when foreign DOM work removes/replaces page shells. */
+  public setPersistentSurfaceInvalidationHandler(handler?: () => void): void {
+    const effectiveHandler = handler ?? (() => undefined);
+    this.persistentSurfaceInvalidationHandler = effectiveHandler;
+    // A host may attach its canonical scheduler after the first scaffold was
+    // painted. The integrity observer reads the handler retained by that live
+    // surface, so update it as well as the factory default; otherwise the
+    // observer marks the surface dirty but calls the original no-op and the
+    // shell is repaired only after an unrelated scroll or repaint.
+    if (this.persistentSurface) {
+      this.persistentSurface.integrity.onInvalidated = effectiveHandler;
+    }
   }
 
   /**
-   * Render a ruler element for a page.
-   *
-   * Creates a horizontal ruler with tick marks and optional interactive margin handles.
-   * The ruler is positioned at the top of the page and displays inch measurements.
-   *
-   * @param pageWidthPx - Page width in pixels
-   * @param page - Page data containing margins and optional size information
-   * @returns Ruler element, or null if this.doc is unavailable or page margins are missing
-   *
-   * Side effects:
-   * - Creates DOM elements and applies inline styles
-   * - May invoke the onMarginChange callback if interactive mode is enabled
-   *
-   * Fallback behavior:
-   * - Uses DEFAULT_PAGE_HEIGHT_PX (1056px = 11 inches) if page.size.h is not available
-   * - Defaults margins to 0 if not explicitly provided
+   * Hydrated content page indices of the persistent surface, ascending.
+   * Page roots cover the whole scaffold; this is the bounded content set.
    */
-  private renderPageRuler(pageWidthPx: number, page: ResolvedPage): HTMLElement | null {
-    if (!this.doc) {
-      console.warn('[renderPageRuler] Cannot render ruler: document is not available.');
-      return null;
-    }
+  public getHydratedContentPageIndices(): number[] {
+    if (!this.persistentSurface) return [];
+    return [...this.persistentSurface.content.keys()].sort((left, right) => left - right);
+  }
 
-    const margins = page.margins;
-    if (!margins) {
-      console.warn(`[renderPageRuler] Cannot render ruler for page ${page.number}: margins not available.`);
-      return null;
-    }
+  /**
+   * Painter plan §4.6 (dark observability): persistent-page paint work since the
+   * last consume. Never invents values — fields the path cannot attribute yet
+   * stay 0/null.
+   */
+  public consumePaintWorkSummary(): PaintWorkSummary {
+    const summary = this.paintWork;
+    this.paintWork = createEmptyPaintWorkSummary();
+    return summary;
+  }
 
-    const leftMargin = margins.left ?? 0;
-    const rightMargin = margins.right ?? 0;
+  /**
+   * Story-aware position-coverage since the last consume, drained and reset at
+   * this documented pass boundary. Content-free and bounded; safe to serialize
+   * into a performance report. When the collector is dark (the product
+   * default), the summary is empty (`checked: 0`).
+   */
+  public consumePositionValidationSummary(): PositionValidationSummary {
+    return this.positionValidation.consume();
+  }
 
-    try {
-      const rulerDefinition = generateRulerDefinitionFromPx({
-        pageWidthPx,
-        pageHeightPx: page.height ?? DEFAULT_PAGE_HEIGHT_PX,
-        leftMarginPx: leftMargin,
-        rightMarginPx: rightMargin,
-      });
-
-      const interactive = this.options.ruler?.interactive ?? false;
-      const onMarginChange = this.options.ruler?.onMarginChange;
-
-      const rulerEl = createRulerElement({
-        definition: rulerDefinition,
-        doc: this.doc,
-        interactive,
-        onDragEnd:
-          interactive && onMarginChange
-            ? (side, x) => {
-                // Convert pixel position to inches for callback
-                try {
-                  const ppi = 96;
-                  const marginInches = side === 'left' ? x / ppi : (pageWidthPx - x) / ppi;
-                  onMarginChange(side, marginInches);
-                } catch (error) {
-                  console.error('[renderPageRuler] Error in onMarginChange callback:', error);
-                }
-              }
-            : undefined,
-      });
-
-      // Position ruler at top of page (above content area)
-      rulerEl.style.position = 'absolute';
-      rulerEl.style.top = '0';
-      rulerEl.style.left = '0';
-      rulerEl.style.zIndex = '20';
-      rulerEl.dataset.pageNumber = String(page.number);
-
-      return rulerEl;
-    } catch (error) {
-      console.error(`[renderPageRuler] Failed to create ruler for page ${page.number}:`, error);
-      return null;
-    }
+  /**
+   * Per-page work attribution (P5 §4.6), opt-in via `paintWorkAttribution`:
+   * the arrays are only drained by `consumePaintWorkSummary()`, so an
+   * always-on push would grow unboundedly on the product path where nothing
+   * ever consumes the summary. Counters stay always-on and O(1).
+   */
+  private recordPageWork(kind: PersistentPageWorkKind, pageIndex: number): void {
+    if (!this.paintWorkAttribution) return;
+    this.paintWork[kind].push(pageIndex);
   }
 
   private renderColumnSeparators(pageEl: HTMLElement, page: ResolvedPage, pageWidth: number, pageHeight: number): void {
@@ -2066,109 +1676,43 @@ export class DomPainter {
   }
 
   /**
-   * Check if an anchored fragment has vRelativeFrom === 'page'.
-   * Used to determine special Y positioning for page-relative anchored media
+   * Check if a fragment is vertically anchored to the page.
+   * Used to determine special Y positioning for page-relative anchored content
    * in header/footer decoration sections.
    */
   private isPageRelativeAnchoredFragment(fragment: Fragment, resolvedItem: ResolvedPaintItem | undefined): boolean {
-    if (fragment.kind !== 'image' && fragment.kind !== 'drawing') {
-      return false;
-    }
+    if (this.isPageRelativeParagraphFrame(fragment, resolvedItem)) return true;
     const block = resolvedItem && 'block' in resolvedItem ? resolvedItem.block : undefined;
-    if (!block || (block.kind !== 'image' && block.kind !== 'drawing')) {
-      return false;
-    }
-    return block.anchor?.vRelativeFrom === 'page';
+    return (
+      (fragment.kind === 'image' || fragment.kind === 'drawing') &&
+      (block?.kind === 'image' || block?.kind === 'drawing') &&
+      block.anchor?.vRelativeFrom === 'page'
+    );
   }
 
-  /**
-   * Whether an anchored header/footer fragment is page-relative on the HORIZONTAL
-   * axis (`hRelativeFrom === 'page'`). Page-horizontal anchors already carry
-   * page-local x from the layout engine, so the renderer must not add the left
-   * margin again; margin/column-relative anchors carry content-local x and do.
-   * This is the horizontal counterpart to {@link isPageRelativeAnchoredFragment}:
-   * the two axes are independent, so the left offset must key off hRelativeFrom,
-   * not vRelativeFrom (which governs only the top offset).
-   */
-  private isHorizontallyPageRelativeAnchoredFragment(
+  private isPageRelativeParagraphFrame(fragment: Fragment, resolvedItem: ResolvedPaintItem | undefined): boolean {
+    if (fragment.kind !== 'para') return false;
+    const block = resolvedItem && 'block' in resolvedItem ? resolvedItem.block : undefined;
+    const frame = block?.kind === 'paragraph' ? block.attrs?.frame : undefined;
+    return isPagePositionedParagraphFrame(frame);
+  }
+
+  private isPageRelativeHorizontalAnchoredFragment(
     fragment: Fragment,
     resolvedItem: ResolvedPaintItem | undefined,
   ): boolean {
+    const block = resolvedItem && 'block' in resolvedItem ? resolvedItem.block : undefined;
+    if (fragment.kind === 'para' && block?.kind === 'paragraph') {
+      const frame = block.attrs?.frame;
+      return isPositionedParagraphFrame(frame) && frame.hAnchor === 'page';
+    }
     if (fragment.kind !== 'image' && fragment.kind !== 'drawing') {
       return false;
     }
-    const block = resolvedItem && 'block' in resolvedItem ? resolvedItem.block : undefined;
     if (!block || (block.kind !== 'image' && block.kind !== 'drawing')) {
       return false;
     }
     return block.anchor?.hRelativeFrom === 'page';
-  }
-
-  private isHeaderFooterAbsoluteOverlayFragment(
-    fragment: Fragment,
-    kind: 'header' | 'footer',
-    resolvedItem: ResolvedPaintItem | undefined,
-  ): boolean {
-    if (kind !== 'header' && kind !== 'footer') return false;
-    if (fragment.kind !== 'image' && fragment.kind !== 'drawing') return false;
-    if (fragment.isAnchored !== true) return false;
-    const block = resolvedItem && 'block' in resolvedItem ? resolvedItem.block : undefined;
-    if (!block || (block.kind !== 'image' && block.kind !== 'drawing')) return false;
-    if (block.anchor?.isAnchored !== true) return false;
-    if (block.wrap?.type !== 'None') return false;
-    if (fragment.behindDoc === true || block.anchor?.behindDoc === true) return false;
-
-    return true;
-  }
-
-  private getPageBackgroundDecorationZOrder(fragment: Fragment, resolvedItem: ResolvedPaintItem | undefined): number {
-    const block = resolvedItem && 'block' in resolvedItem ? resolvedItem.block : undefined;
-    const isDrawingBlock = block?.kind === 'image' || block?.kind === 'drawing';
-    const originalAttributes = isDrawingBlock
-      ? (block.attrs as { originalAttributes?: unknown } | undefined)?.originalAttributes
-      : undefined;
-    const normalizedZIndex = normalizeZIndex(originalAttributes);
-    const isBehindDoc =
-      ((fragment.kind === 'image' || fragment.kind === 'drawing') && fragment.behindDoc === true) ||
-      (isDrawingBlock && block.anchor?.behindDoc === true);
-
-    if (isBehindDoc && normalizedZIndex != null) {
-      return normalizedZIndex;
-    }
-
-    if ((fragment.kind === 'image' || fragment.kind === 'drawing') && typeof fragment.zIndex === 'number') {
-      return isBehindDoc ? fragment.zIndex : PAGE_BACKGROUND_OVERLAY_Z_ORDER_OFFSET + Math.max(1, fragment.zIndex);
-    }
-
-    if (normalizedZIndex != null) {
-      return PAGE_BACKGROUND_OVERLAY_Z_ORDER_OFFSET + Math.max(1, normalizedZIndex);
-    }
-
-    return 0;
-  }
-
-  private insertPageBackgroundDecoration(pageEl: HTMLElement, fragEl: HTMLElement, zOrder: number): void {
-    fragEl.dataset.pageBackgroundZIndex = String(zOrder);
-    let lastBackgroundDecoration: Element | null = null;
-    let insertBefore: Element | null = null;
-    // Patch renders can temporarily leave stale decoration nodes after body
-    // fragments. Only the leading decoration run is the page background layer.
-    for (const child of Array.from(pageEl.children)) {
-      const el = child as HTMLElement;
-      if (el.dataset.behindDocSection != null || el.dataset.headerFooterOverlaySection != null) {
-        const existingZOrder = Number(el.dataset.pageBackgroundZIndex ?? 0);
-        if (existingZOrder > zOrder) {
-          insertBefore = el;
-          break;
-        }
-        lastBackgroundDecoration = el;
-        continue;
-      }
-
-      break;
-    }
-
-    pageEl.insertBefore(fragEl, insertBefore ?? lastBackgroundDecoration?.nextSibling ?? pageEl.firstChild);
   }
 
   /**
@@ -2215,6 +1759,18 @@ export class DomPainter {
     return Math.max(0, pageHeight - adjustedBottomMargin);
   }
 
+  private getFooterFragmentAnchorPageOriginY(
+    page: ResolvedPage,
+    effectiveOffset: number,
+    fragment: Fragment,
+    resolvedItem: ResolvedPaintItem | undefined,
+  ): number {
+    const mediaOrigin = this.getDecorationAnchorPageOriginY(page, 'footer', effectiveOffset);
+    if (!this.isPageRelativeParagraphFrame(fragment, resolvedItem)) return mediaOrigin;
+
+    return resolveFooterPageFrameOriginY(page.height, page.baseMargins?.bottom ?? page.margins?.bottom);
+  }
+
   private renderDecorationSection(
     pageEl: HTMLElement,
     page: ResolvedPage,
@@ -2226,13 +1782,15 @@ export class DomPainter {
     const className = kind === 'header' ? CLASS_NAMES.pageHeader : CLASS_NAMES.pageFooter;
     const existing = pageEl.querySelector(`.${className}`);
     const data = provider ? provider(page.number, page.margins, page) : null;
+    // Behind-document decoration fragments are direct page children, not
+    // descendants of the normal header/footer container. Clear them before
+    // the empty-provider return so removing or emptying a provider cannot
+    // leave a stale watermark on an otherwise retained page.
     const behindDocSelector = `[data-behind-doc-section="${kind}"]`;
-    const overlaySelector = `[data-header-footer-overlay-section="${kind}"]`;
+    pageEl.querySelectorAll(behindDocSelector).forEach((el) => el.remove());
 
     if (!data || data.fragments.length === 0) {
       existing?.remove();
-      pageEl.querySelectorAll(behindDocSelector).forEach((el) => el.remove());
-      pageEl.querySelectorAll(overlaySelector).forEach((el) => el.remove());
       return;
     }
 
@@ -2283,23 +1841,18 @@ export class DomPainter {
     } else {
       container.style.width = `calc(100% - ${marginLeft + marginRight}px)`;
     }
-    container.style.pointerEvents = 'none';
+    // Header/footer stories are directly hit-tested by the v2 editable bridge.
+    // Keep the container targetable so `elementsFromPoint()` can reach the
+    // stamped fragment node instead of falling through to the page background.
+    container.style.pointerEvents = 'auto';
     container.style.height = `${effectiveHeight}px`;
     container.style.top = `${Math.max(0, effectiveOffset)}px`;
-    container.style.zIndex = '1';
+    // Body fragments must win where normal header/footer stories overflow into the main story.
+    container.style.zIndex = '0';
     // Allow header/footer content to overflow its container bounds.
     // In OOXML, headers and footers can extend past their allocated margin space
     // into the body region, similar to how body content can have negative indents.
     container.style.overflow = 'visible';
-
-    // Footer page-relative anchors carry normalized Y coordinates (band-local,
-    // computed from real page geometry). Compute the page-space origin so the
-    // painter can convert them back to absolute page / container-local positions.
-    // Header page-relative anchors use raw inner-layout Y and are handled with
-    // the simpler effectiveOffset subtraction (unchanged from the baseline).
-    const footerAnchorPageOriginY =
-      kind === 'footer' ? this.getDecorationAnchorPageOriginY(page, kind, effectiveOffset) : 0;
-    const footerAnchorContainerOffsetY = kind === 'footer' ? footerAnchorPageOriginY - effectiveOffset : 0;
 
     // For footers, calculate offset to push content to bottom of container
     // Fragments are absolutely positioned, so we need to adjust their y values
@@ -2332,48 +1885,48 @@ export class DomPainter {
       pageNumberChapterSeparator: page.pageNumberChapterSeparator,
       sectionPageCount: this.getSectionPageCount(page),
       pageIndex,
+      ...(data.pageCountFieldsExact === false ? { pageCountFieldsExact: false } : {}),
     };
 
     // Compute between-border flags for header/footer paragraph fragments
     const decorationItems = data.items ?? [];
     const betweenBorderFlags = computeBetweenBorderFlags(decorationItems);
 
-    // Separate page-level behindDoc and foreground wrapNone overlay fragments
-    // from normal header/footer container content.
+    // Separate behindDoc fragments from normal fragments.
     // Prefer explicit fragment.behindDoc when present. Keep zIndex===0 as a
     // compatibility fallback for older layouts that predate explicit metadata.
     // Track original index for between-border flag lookup.
     const behindDocFragments: { fragment: (typeof data.fragments)[number]; originalIndex: number }[] = [];
-    const absoluteOverlayFragments: { fragment: (typeof data.fragments)[number]; originalIndex: number }[] = [];
     const normalFragments: { fragment: (typeof data.fragments)[number]; originalIndex: number }[] = [];
 
     for (let fi = 0; fi < data.fragments.length; fi += 1) {
       const fragment = data.fragments[fi];
-      const resolvedItem = decorationItems[fi];
       let isBehindDoc = false;
       if (fragment.kind === 'image' || fragment.kind === 'drawing') {
-        const resolvedMediaItem = resolvedItem as ResolvedImageItem | ResolvedDrawingItem | undefined;
+        const resolvedItem = decorationItems[fi] as ResolvedDrawingItem | undefined;
+        const isTextboxShape =
+          fragment.kind === 'drawing' &&
+          (fragment.drawingKind === 'textboxShape' ||
+            (resolvedItem?.kind === 'fragment' &&
+              'block' in resolvedItem &&
+              resolvedItem.block.kind === 'drawing' &&
+              resolvedItem.block.drawingKind === 'textboxShape'));
         isBehindDoc =
-          fragment.behindDoc === true ||
-          (fragment.behindDoc == null && 'zIndex' in fragment && fragment.zIndex === 0) ||
-          this.shouldRenderBehindPageContent(fragment, kind, resolvedMediaItem);
+          !isTextboxShape &&
+          (fragment.behindDoc === true ||
+            (fragment.behindDoc == null && 'zIndex' in fragment && fragment.zIndex === 0) ||
+            this.shouldRenderBehindPageContent(fragment, kind, resolvedItem));
       }
       if (isBehindDoc) {
         behindDocFragments.push({ fragment, originalIndex: fi });
-      } else if (this.isHeaderFooterAbsoluteOverlayFragment(fragment, kind, resolvedItem)) {
-        absoluteOverlayFragments.push({ fragment, originalIndex: fi });
       } else {
         normalFragments.push({ fragment, originalIndex: fi });
       }
     }
 
-    // Remove any previously rendered page-level decoration fragments for this
-    // section before re-rendering. Unlike the header/footer container (which
-    // uses innerHTML = '' to clear), these fragments are placed directly on
-    // the page element and must be explicitly removed.
-    pageEl.querySelectorAll(behindDocSelector).forEach((el) => el.remove());
-    pageEl.querySelectorAll(overlaySelector).forEach((el) => el.remove());
-
+    // Remove any previously rendered behindDoc fragments for this section before re-rendering.
+    // Unlike the header/footer container (which uses innerHTML = '' to clear), behindDoc
+    // fragments are placed directly on the page element and must be explicitly removed.
     // Render behindDoc fragments directly on the page with z-index: 0
     // and insert them at the beginning of the page so they render behind body content.
     // We can't use z-index: -1 because that goes behind the page's white background.
@@ -2394,7 +1947,7 @@ export class DomPainter {
       let pageY: number;
       if (isPageRelative && kind === 'footer') {
         // Footer page-relative: fragment.y is normalized to band-local coords
-        pageY = footerAnchorPageOriginY + fragment.y;
+        pageY = this.getFooterFragmentAnchorPageOriginY(page, effectiveOffset, fragment, resolvedItem) + fragment.y;
       } else if (isPageRelative) {
         // Header page-relative: fragment.y is raw inner-layout absolute Y
         pageY = fragment.y;
@@ -2402,16 +1955,12 @@ export class DomPainter {
         pageY = effectiveOffset + fragment.y + (kind === 'footer' ? footerYOffset : 0);
       }
 
-      const isHorizontallyPageRelative = this.isHorizontallyPageRelativeAnchoredFragment(fragment, resolvedItem);
       fragEl.style.top = `${pageY}px`;
-      fragEl.style.left = `${isHorizontallyPageRelative ? fragment.x : marginLeft + fragment.x}px`;
+      fragEl.style.left = `${isPageRelative ? fragment.x : marginLeft + fragment.x}px`;
       fragEl.style.zIndex = '0'; // Same level as page, but inserted first so renders behind
       fragEl.dataset.behindDocSection = kind; // Track for cleanup on re-render
-      this.insertPageBackgroundDecoration(
-        pageEl,
-        fragEl,
-        this.getPageBackgroundDecorationZOrder(fragment, resolvedItem),
-      );
+      // Insert at beginning of page so it renders behind body content due to DOM order
+      pageEl.insertBefore(fragEl, pageEl.firstChild);
     });
 
     // Render normal fragments in the header/footer container
@@ -2426,10 +1975,17 @@ export class DomPainter {
       );
       this.applyHeaderFooterTextWatermarkPreviewOpacity(fragEl, data.isActiveHeaderFooter === true);
       const isPageRelative = this.isPageRelativeAnchoredFragment(fragment, resolvedItem);
+      const isPageRelativeX = this.isPageRelativeHorizontalAnchoredFragment(fragment, resolvedItem);
 
       if (isPageRelative && kind === 'footer') {
         // Footer page-relative: fragment.y is normalized to band-local coords
-        fragEl.style.top = `${fragment.y + footerAnchorContainerOffsetY}px`;
+        const anchorPageOriginY = this.getFooterFragmentAnchorPageOriginY(
+          page,
+          effectiveOffset,
+          fragment,
+          resolvedItem,
+        );
+        fragEl.style.top = `${fragment.y + anchorPageOriginY - effectiveOffset}px`;
       } else if (isPageRelative) {
         // Header page-relative: convert raw inner-layout Y to container-local
         fragEl.style.top = `${fragment.y - effectiveOffset}px`;
@@ -2438,105 +1994,56 @@ export class DomPainter {
         const currentTop = parseFloat(fragEl.style.top) || fragment.y;
         fragEl.style.top = `${currentTop + footerYOffset}px`;
       }
+      if (isPageRelativeX) {
+        fragEl.style.left = `${fragment.x - marginLeft}px`;
+      }
 
       container.appendChild(fragEl);
     });
 
-    if (!existing) {
-      pageEl.appendChild(container);
-    }
-
-    absoluteOverlayFragments.forEach(({ fragment, originalIndex }) => {
-      const resolvedItem = data.items?.[originalIndex];
-      const fragEl = this.renderFragment(
-        fragment,
-        context,
-        undefined,
-        betweenBorderFlags.get(originalIndex),
-        resolvedItem,
-      );
-      const isPageRelative = this.isPageRelativeAnchoredFragment(fragment, resolvedItem);
-      this.applyHeaderFooterTextWatermarkPreviewOpacity(fragEl, data.isActiveHeaderFooter === true);
-
-      let pageY: number;
-      if (isPageRelative && kind === 'footer') {
-        pageY = footerAnchorPageOriginY + fragment.y;
-      } else if (isPageRelative) {
-        pageY = fragment.y;
-      } else {
-        pageY = effectiveOffset + fragment.y + (kind === 'footer' ? footerYOffset : 0);
-      }
-
-      const isHorizontallyPageRelative = this.isHorizontallyPageRelativeAnchoredFragment(fragment, resolvedItem);
-      fragEl.style.top = `${pageY}px`;
-      fragEl.style.left = `${isHorizontallyPageRelative ? fragment.x : marginLeft + fragment.x}px`;
-      // Header/footer wrapNone shapes still belong to the page background story:
-      // keep their authored z-order within that story, but do not let their high
-      // OOXML z-index lift them above body content.
-      fragEl.style.zIndex = '0';
-      // Word parity: header/footer overlay content is inert while editing the
-      // body, but becomes clickable once its header/footer session is active.
-      if (data.isActiveHeaderFooter !== true) {
-        fragEl.style.pointerEvents = 'none';
-      }
-      fragEl.dataset.headerFooterOverlaySection = kind;
-      this.insertPageBackgroundDecoration(
-        pageEl,
-        fragEl,
-        this.getPageBackgroundDecorationZOrder(fragment, resolvedItem),
-      );
-    });
+    const firstBodyFragment = Array.from(pageEl.children).find(
+      (child) => child.classList.contains(CLASS_NAMES.fragment) && !child.hasAttribute('data-behind-doc-section'),
+    );
+    pageEl.insertBefore(container, firstBodyFragment ?? null);
   }
 
   private resetState(): void {
+    disposePersistentPageSurfaceState(this.persistentSurface);
+    this.persistentSurface = null;
     if (this.mount) {
-      this.releaseVirtualizationHandlers();
       this.mount.innerHTML = '';
     }
     this.pageStates = [];
     this.currentLayout = null;
-    this.pageIndexToState.clear();
-    this.topSpacerEl = null;
-    this.bottomSpacerEl = null;
-    this.virtualPagesEl = null;
-    this.scrollContainerMountOffset = null;
+    this.persistentDocumentBackground = null;
     this.layoutVersion = 0;
     this.processedLayoutVersion = -1;
     this.paintSnapshotBuilder = null;
     this.lastPaintSnapshot = null;
-    this.mountedPageIndices = [];
+    this.persistentPageIndices = [];
   }
 
   public dispose(): void {
-    this.releaseVirtualizationHandlers();
+    disposePersistentPageSurfaceState(this.persistentSurface);
     if (this.mount) {
       this.mount.innerHTML = '';
     }
     this.pageStates = [];
     this.currentLayout = null;
+    this.persistentDocumentBackground = null;
     this.changedBlocks.clear();
     this.sectionPageCounts.clear();
     this.sdtLabelsRendered.clear();
-    this.clearGapSpacers();
-    this.topSpacerEl = null;
-    this.bottomSpacerEl = null;
-    this.virtualPagesEl = null;
-    this.virtualPinnedPages = [];
-    this.virtualMountedKey = '';
-    this.pageIndexToState.clear();
-    this.virtualHeights = [];
-    this.virtualOffsets = [];
-    this.virtualStart = 0;
-    this.virtualEnd = -1;
-    this.scrollContainer = null;
-    this.scrollContainerMountOffset = null;
+    this.persistentDecorationsDirty = false;
+    this.persistentSurface = null;
+    this.paintWork = createEmptyPaintWorkSummary();
     this.layoutVersion = 0;
     this.layoutEpoch = 0;
     this.processedLayoutVersion = -1;
     this.currentMapping = null;
     this.paintSnapshotBuilder = null;
     this.lastPaintSnapshot = null;
-    this.mountedPageIndices = [];
+    this.persistentPageIndices = [];
     this.resolvedLayout = null;
     this.totalPages = 0;
     this.mount = null;
@@ -2589,123 +2096,8 @@ export class DomPainter {
     this.pageStates = nextStates;
   }
 
-  private patchPage(state: PageDomState, page: ResolvedPage, pageIndex: number): void {
-    const pageEl = state.element;
-    applyStyles(pageEl, pageStyles(page.width, page.height, this.getEffectivePageStyles()));
-    this.applySemanticPageOverrides(pageEl);
-    pageEl.dataset.pageNumber = String(page.number);
-    pageEl.dataset.layoutEpoch = String(this.layoutEpoch);
-    // pageIndex is already set during creation and doesn't change during patch
-
-    const existing = new Map(state.fragments.map((frag) => [frag.key, frag]));
-    const nextFragments: FragmentDomState[] = [];
-    const resolvedItems = page.items;
-    const sdtBoundaries = computeSdtBoundaries(resolvedItems, this.sdtLabelsRendered);
-    const betweenBorderFlags = computeBetweenBorderFlags(resolvedItems);
-
-    const contextBase: FragmentRenderContext = {
-      pageNumber: page.number,
-      totalPages: this.totalPages,
-      section: 'body',
-      pageNumberText: page.numberText,
-      displayPageNumber: page.displayNumber,
-      pageNumberFormat: page.pageNumberFormat,
-      pageNumberChapterText: page.pageNumberChapterText,
-      pageNumberChapterSeparator: page.pageNumberChapterSeparator,
-      sectionPageCount: this.getSectionPageCount(page),
-      pageIndex,
-    };
-
-    resolvedItems.forEach((resolvedItem, index) => {
-      if (resolvedItem.kind !== 'fragment') return;
-      const fragment = resolvedItem.fragment;
-      const key = fragmentKey(fragment);
-      const current = existing.get(key);
-      const sdtBoundary = sdtBoundaries.get(index);
-      const betweenInfo = betweenBorderFlags.get(index);
-      const resolvedSig = resolvedPaintCacheSignature(resolvedItem);
-
-      if (current) {
-        existing.delete(key);
-        const geometryChanged = hasFragmentGeometryChanged(current.fragment, fragment);
-        const sdtBoundaryMismatch = shouldRebuildForSdtBoundary(current.element, sdtBoundary);
-        // Detect mismatch in any between-border property
-        const betweenBorderMismatch =
-          (current.element.dataset.betweenBorder === 'true') !== (betweenInfo?.showBetweenBorder ?? false) ||
-          (current.element.dataset.suppressTopBorder === 'true') !== (betweenInfo?.suppressTopBorder ?? false) ||
-          (current.element.dataset.gapBelow ?? '') !== (betweenInfo?.gapBelow ? String(betweenInfo.gapBelow) : '');
-        const pageContextChanged = needsRebuildForPageContext(current.context, contextBase, resolvedItem);
-        // Verify the position mapping is reliable: if mapping the old pmStart doesn't produce
-        // the expected new pmStart, the mapping is degenerate (e.g. full-document paste) and
-        // we must rebuild to get correct span position attributes.
-        const newPmStart = (fragment as { pmStart?: number }).pmStart;
-        const mappingUnreliable =
-          this.currentMapping != null &&
-          newPmStart != null &&
-          current.element.dataset.pmStart != null &&
-          this.currentMapping.map(Number(current.element.dataset.pmStart)) !== newPmStart;
-        const needsRebuild =
-          geometryChanged ||
-          this.changedBlocks.has(fragment.blockId) ||
-          current.signature !== resolvedSig ||
-          sdtBoundaryMismatch ||
-          betweenBorderMismatch ||
-          pageContextChanged ||
-          mappingUnreliable;
-
-        if (needsRebuild) {
-          const replacement = this.renderFragment(fragment, contextBase, sdtBoundary, betweenInfo, resolvedItem);
-          pageEl.replaceChild(replacement, current.element);
-          current.element = replacement;
-          current.signature = resolvedSig;
-        } else if (isNonBodyStoryBlockId(fragment.blockId)) {
-          // Story fragments (notes, headers/footers) use story-local positions:
-          // the body transaction mapping does not apply, but the resolved item
-          // carries FRESH story positions every paint. Shift the painted
-          // attributes by the fresh-vs-painted delta so reused fragments never
-          // serve stale positions (SD-3400: stale note ranges broke caret,
-          // selection, and arrow navigation downstream).
-          this.updateStoryPositionAttributes(current.element, resolvedItem);
-        } else if (this.currentMapping) {
-          // Fragment NOT rebuilt - update position attributes to reflect document changes
-          this.updatePositionAttributes(current.element, this.currentMapping);
-        }
-
-        this.updateFragmentElement(current.element, fragment, contextBase.section, resolvedItem);
-        if (sdtBoundary?.widthOverride != null) {
-          current.element.style.width = `${sdtBoundary.widthOverride}px`;
-        }
-        current.fragment = fragment;
-        current.key = key;
-        current.context = contextBase;
-        nextFragments.push(current);
-
-        return;
-      }
-
-      const fresh = this.renderFragment(fragment, contextBase, sdtBoundary, betweenInfo, resolvedItem);
-      pageEl.insertBefore(fresh, pageEl.children[index] ?? null);
-      nextFragments.push({
-        key,
-        fragment,
-        element: fresh,
-        signature: resolvedSig,
-        context: contextBase,
-      });
-    });
-
-    existing.forEach((state) => state.element.remove());
-
-    nextFragments.forEach((fragmentState, index) => {
-      const desiredChild = pageEl.children[index];
-      if (fragmentState.element !== desiredChild) {
-        pageEl.insertBefore(fragmentState.element, desiredChild ?? null);
-      }
-    });
-
-    state.fragments = nextFragments;
-    this.renderDecorationsForPage(pageEl, page, pageIndex);
-    this.renderColumnSeparators(pageEl, page, page.width, page.height);
+  private patchPage(state: PageDomState, page: ResolvedPage, pageIndex: number): PatchPageWork {
+    return patchPageContent(this.pageContentContext(), state, page, pageIndex);
   }
 
   /**
@@ -2830,58 +2222,41 @@ export class DomPainter {
     if (!this.doc) {
       throw new Error('DomPainter.createPageState requires a document');
     }
-    const el = this.doc.createElement('div');
-    el.classList.add(CLASS_NAMES.page);
-    applyStyles(el, pageStyles(page.width, page.height, this.getEffectivePageStyles()));
-    this.applySemanticPageOverrides(el);
-    el.dataset.layoutEpoch = String(this.layoutEpoch);
-    // Editor-neutral layout boundary stamp (prep-001). See `renderPage` for
-    // the spread/horizontal flow that stamps the same attribute.
-    el.dataset[DATASET_KEYS.LAYOUT_BOUNDARY_SCHEMA] = LAYOUT_BOUNDARY_SCHEMA;
+    return renderPageContent(this.pageContentContext(), page, pageIndex);
+  }
 
-    const contextBase: FragmentRenderContext = {
-      pageNumber: page.number,
+  /**
+   * Explicit page-content context (painter plan P3a, §4.2): the class state
+   * `renderPage`/`patchPage` consume, rebuilt per call because totalPages,
+   * layoutEpoch, and the transaction mapping change between paints. The deep
+   * fragment-rendering call graph stays on the class, reached through these
+   * bound members.
+   */
+  private pageContentContext(): PageContentContext {
+    if (!this.doc) {
+      throw new Error('DomPainter.pageContentContext requires a document');
+    }
+    return {
+      doc: this.doc,
+      layoutEpoch: this.layoutEpoch,
       totalPages: this.totalPages,
-      section: 'body',
-      pageNumberText: page.numberText,
-      displayPageNumber: page.displayNumber,
-      pageNumberFormat: page.pageNumberFormat,
-      pageNumberChapterText: page.pageNumberChapterText,
-      pageNumberChapterSeparator: page.pageNumberChapterSeparator,
-      sectionPageCount: this.getSectionPageCount(page),
-      pageIndex,
+      currentMapping: this.currentMapping,
+      changedBlocks: this.changedBlocks,
+      sdtLabelsRendered: this.sdtLabelsRendered,
+      getEffectivePageStyles: () => this.getEffectivePageStyles(),
+      applySemanticPageOverrides: (el) => this.applySemanticPageOverrides(el),
+      getSectionPageCount: (page) => this.getSectionPageCount(page),
+      renderFragment: (fragment, context, sdtBoundary, betweenInfo, resolvedItem) =>
+        this.renderFragment(fragment, context, sdtBoundary, betweenInfo, resolvedItem),
+      renderDecorationsForPage: (pageEl, page, pageIndex) => this.renderDecorationsForPage(pageEl, page, pageIndex),
+      renderColumnSeparators: (pageEl, page, pageWidth, pageHeight) =>
+        this.renderColumnSeparators(pageEl, page, pageWidth, pageHeight),
+      updateStoryPositionAttributes: (fragmentEl, resolvedItem) =>
+        this.updateStoryPositionAttributes(fragmentEl, resolvedItem),
+      updatePositionAttributes: (fragmentEl, mapping) => this.updatePositionAttributes(fragmentEl, mapping),
+      updateFragmentElement: (el, fragment, section, resolvedItem) =>
+        this.updateFragmentElement(el, fragment, section, resolvedItem),
     };
-
-    const resolvedItems = page.items;
-    const sdtBoundaries = computeSdtBoundaries(resolvedItems, this.sdtLabelsRendered);
-    const betweenBorderFlags = computeBetweenBorderFlags(resolvedItems);
-    const fragmentStates: FragmentDomState[] = resolvedItems.flatMap((resolvedItem, index) => {
-      if (resolvedItem.kind !== 'fragment') return [];
-      const fragment = resolvedItem.fragment;
-      const sdtBoundary = sdtBoundaries.get(index);
-      const fragmentEl = this.renderFragment(
-        fragment,
-        contextBase,
-        sdtBoundary,
-        betweenBorderFlags.get(index),
-        resolvedItem,
-      );
-      el.appendChild(fragmentEl);
-      const initSig = resolvedPaintCacheSignature(resolvedItem);
-      return [
-        {
-          key: fragmentKey(fragment),
-          signature: initSig,
-          fragment,
-          element: fragmentEl,
-          context: contextBase,
-        },
-      ];
-    });
-
-    this.renderDecorationsForPage(el, page, pageIndex);
-    this.renderColumnSeparators(el, page, page.width, page.height);
-    return { element: el, fragments: fragmentStates };
   }
 
   private applySemanticPageOverrides(el: HTMLElement): void {
@@ -2893,7 +2268,14 @@ export class DomPainter {
   }
 
   private getEffectivePageStyles(): PageStyles | undefined {
-    const documentBackgroundColor = this.currentLayout?.documentBackground?.color;
+    // Dense/semantic paints own a ResolvedLayout; persistent-page paints run with
+    // currentLayout = null and carry the same scalar via their input
+    // (persistentDocumentBackground). One mode's source is never consulted in the
+    // other mode.
+    const documentBackground = this.currentLayout
+      ? this.currentLayout.documentBackground
+      : this.persistentDocumentBackground;
+    const documentBackgroundColor = documentBackground?.color;
     const base = this.options.pageStyles ?? {};
     const baseWithDocumentBackground = documentBackgroundColor
       ? { ...base, background: documentBackgroundColor }
@@ -2908,10 +2290,6 @@ export class DomPainter {
         margin: '0',
       };
     }
-    if (this.virtualEnabled && this.layoutMode === 'vertical') {
-      // Remove top/bottom margins to avoid double-counting with container gap during virtualization
-      return { ...baseWithDocumentBackground, margin: '0 auto' };
-    }
     return documentBackgroundColor ? baseWithDocumentBackground : this.options.pageStyles;
   }
 
@@ -2922,25 +2300,42 @@ export class DomPainter {
     betweenInfo?: BetweenBorderInfo,
     resolvedItem?: ResolvedPaintItem,
   ): HTMLElement {
+    // Note fragments share the body page's geometry but not its editor story.
+    // Use the same canonical block-id-derived story that wrapper identity uses
+    // so run rendering (including nested table content) validates and resolves
+    // coordinates in the note rather than in the body.
+    const noteStory = resolveNoteStory(fragment);
+    const effectiveContext = noteStory ? { ...context, story: noteStory } : context;
+    let el: HTMLElement;
     if (fragment.kind === 'para') {
-      return this.renderParagraphFragment(
+      el = this.renderParagraphFragment(
         fragment,
-        context,
+        effectiveContext,
         sdtBoundary,
         betweenInfo,
         resolvedItem as ResolvedFragmentItem | undefined,
       );
+    } else if (fragment.kind === 'image') {
+      el = this.renderImageFragment(fragment, effectiveContext, resolvedItem as ResolvedImageItem | undefined);
+    } else if (fragment.kind === 'drawing') {
+      el = this.renderDrawingFragment(fragment, effectiveContext, resolvedItem as ResolvedDrawingItem | undefined);
+    } else if (fragment.kind === 'table') {
+      el = this.renderTableFragment(
+        fragment,
+        effectiveContext,
+        sdtBoundary,
+        resolvedItem as ResolvedTableItem | undefined,
+      );
+    } else {
+      throw new Error(`DomPainter: unsupported fragment kind ${(fragment as Fragment).kind}`);
     }
-    if (fragment.kind === 'image') {
-      return this.renderImageFragment(fragment, context, resolvedItem as ResolvedImageItem | undefined);
+    // Stamp note-band identity here (single dispatch with the page index in
+    // scope); a no-op for non-note fragments. Note fragments always carry a
+    // page index (set by renderPage); guard satisfies the optional type.
+    if (typeof effectiveContext.pageIndex === 'number') {
+      applyNoteFragmentDataset(el, fragment, effectiveContext.pageIndex);
     }
-    if (fragment.kind === 'drawing') {
-      return this.renderDrawingFragment(fragment, context, resolvedItem as ResolvedDrawingItem | undefined);
-    }
-    if (fragment.kind === 'table') {
-      return this.renderTableFragment(fragment, context, sdtBoundary, resolvedItem as ResolvedTableItem | undefined);
-    }
-    throw new Error(`DomPainter: unsupported fragment kind ${(fragment as Fragment).kind}`);
+    return el;
   }
 
   /**
@@ -3058,6 +2453,9 @@ export class DomPainter {
       applyContainerSdtDataset,
       buildImageHyperlinkAnchor: this.buildImageHyperlinkAnchor.bind(this),
       createErrorPlaceholder: this.createErrorPlaceholder.bind(this),
+      trackedConfig: resolvedItem?.block
+        ? resolveTrackedChangesConfig(resolvedItem.block)
+        : { mode: 'review', enabled: true },
     });
 
     if (this.isVmlTextWatermarkImage(resolvedItem?.block)) {
@@ -3092,6 +2490,60 @@ export class DomPainter {
     return buildSharedImageHyperlinkAnchor(this.doc, imageEl, hyperlink, display);
   }
 
+  /**
+   * SD-3521 — stamp canonical textbox interaction metadata (`data-sd-textbox-*`)
+   * onto a painted drawing fragment. The host reads these to drive object
+   * selection + move/resize gestures from canonical geometry (intrinsic
+   * unrotated extent, rotation, flips, per-axis layout scale) plus kernel
+   * capability + OCC revision, never from the rotated outer AABB. Repeated
+   * header/footer instances share the textbox id but get a distinct
+   * instance key (page-scoped). No-ops for non-textbox drawings.
+   */
+  private applyTextboxInteractionDataset(
+    interactionHost: HTMLElement,
+    block: DrawingBlock,
+    geometry: DrawingGeometry,
+    scale: number,
+    blockId: string,
+    textboxIdFromFragment: string | undefined,
+    context: FragmentRenderContext,
+  ): void {
+    const attrs = block.attrs as Record<string, unknown> | undefined;
+    if (typeof attrs?.textboxStaticReason === 'string') {
+      interactionHost.dataset.sdTextboxStaticReason = attrs.textboxStaticReason;
+    }
+    const textboxId =
+      typeof textboxIdFromFragment === 'string'
+        ? textboxIdFromFragment
+        : typeof attrs?.textboxId === 'string'
+          ? (attrs.textboxId as string)
+          : undefined;
+    const binding = attrs?.textboxBinding;
+    if (!textboxId || !binding || typeof binding !== 'object') return;
+    const b = binding as Record<string, unknown>;
+    const ds = interactionHost.dataset;
+    ds.sdTextboxId = textboxId;
+    if (typeof b.geometryRevision === 'string') ds.sdTextboxRevision = b.geometryRevision;
+    if (typeof b.ownerBlockId === 'string') ds.sdTextboxOwnerBlock = b.ownerBlockId;
+    ds.sdTextboxCanMove = b.canMove === true ? 'true' : 'false';
+    ds.sdTextboxCanResize = b.canResize === true ? 'true' : 'false';
+    const unsupportedReason =
+      (b.canMove !== true && typeof b.moveReason === 'string' ? (b.moveReason as string) : null) ??
+      (b.canResize !== true && typeof b.resizeReason === 'string' ? (b.resizeReason as string) : null);
+    if (unsupportedReason) ds.sdTextboxUnsupportedReason = unsupportedReason;
+    // Intrinsic (unrotated) geometry — distinct from the outer rotated paint
+    // bounds (fragment.width/height). Layout scale is distinct from host zoom.
+    ds.sdTextboxWidth = String(geometry.width);
+    ds.sdTextboxHeight = String(geometry.height);
+    ds.sdTextboxRotation = String(geometry.rotation ?? 0);
+    ds.sdTextboxFlipH = geometry.flipH ? 'true' : 'false';
+    ds.sdTextboxFlipV = geometry.flipV ? 'true' : 'false';
+    ds.sdTextboxScaleX = String(scale);
+    ds.sdTextboxScaleY = String(scale);
+    const pageKey = context.pageIndex ?? context.pageNumber;
+    ds.sdTextboxInstanceKey = `${context.section}:p${pageKey}:${blockId}:${textboxId}`;
+  }
+
   private renderDrawingFragment(
     fragment: DrawingFragment,
     context: FragmentRenderContext,
@@ -3117,7 +2569,26 @@ export class DomPainter {
         this.applyFragmentWrapperZIndex(fragmentEl, fragment);
       }
       fragmentEl.style.position = 'absolute';
-      fragmentEl.style.overflow = 'hidden';
+      fragmentEl.style.overflow = this.shapeTextAllowsOverflow(block) ? 'visible' : 'hidden';
+      const inlineBackgroundColor = block.attrs?.inlineBackgroundColor;
+      if (typeof inlineBackgroundColor === 'string' && inlineBackgroundColor.length > 0) {
+        fragmentEl.style.backgroundColor = inlineBackgroundColor;
+      }
+
+      // SD-3521: project canonical textbox interaction metadata onto the
+      // painted fragment so the host object-interaction controller can bind by
+      // stable identity + capability WITHOUT measuring the rotated AABB. Only
+      // reads resolved data (block attrs + fragment geometry/scale + context),
+      // never paint-time DOM measurement.
+      this.applyTextboxInteractionDataset(
+        fragmentEl,
+        block,
+        fragment.geometry,
+        fragment.scale ?? 1,
+        fragment.blockId,
+        fragment.textboxId,
+        context,
+      );
 
       const innerWrapper = this.doc.createElement('div');
       innerWrapper.classList.add('superdoc-drawing-inner');
@@ -3127,16 +2598,6 @@ export class DomPainter {
       innerWrapper.style.width = `${fragment.geometry.width}px`;
       innerWrapper.style.height = `${fragment.geometry.height}px`;
       innerWrapper.style.transformOrigin = 'center';
-      if (block.drawingKind === 'shapeGroup' && block.groupTransform) {
-        const effectExtent = block.effectExtent ?? { left: 0, top: 0, right: 0, bottom: 0 };
-        const groupWidth =
-          block.groupTransform.width ?? Math.max(0, block.geometry.width - effectExtent.left - effectExtent.right);
-        const groupHeight =
-          block.groupTransform.height ?? Math.max(0, block.geometry.height - effectExtent.top - effectExtent.bottom);
-        const originX = effectExtent.left + groupWidth / 2;
-        const originY = effectExtent.top + groupHeight / 2;
-        innerWrapper.style.transformOrigin = `${originX}px ${originY}px`;
-      }
 
       const scale = fragment.scale ?? 1;
       const transforms: string[] = ['translate(-50%, -50%)'];
@@ -3171,7 +2632,7 @@ export class DomPainter {
       return this.createVectorShapeElement(block, fragment.geometry, false, 1, 1, context, fragment);
     }
     if (block.drawingKind === 'shapeGroup') {
-      return this.createShapeGroupElement(block, context, fragment.geometry);
+      return this.createShapeGroupElement(block, context);
     }
     if (block.drawingKind === 'chart') {
       return this.createChartElement(block);
@@ -3196,9 +2657,19 @@ export class DomPainter {
     container.style.width = '100%';
     container.style.height = '100%';
     container.style.position = 'relative';
-    container.style.overflow = 'hidden';
+    container.style.overflow = this.shapeTextAllowsOverflow(block) ? 'visible' : 'hidden';
 
-    const { offsetX, offsetY, innerWidth, innerHeight } = this.getEffectExtentMetrics(block, geometry);
+    const metrics = this.getEffectExtentMetrics(block, geometry);
+    const isLineShape = block.shapeKind === 'line' || block.shapeKind === 'straightConnector1';
+    // ECMA-376 Part 4 §19.1.2.12 models a VML line by its two endpoints.
+    // A horizontal line therefore has zero authored height and a vertical line
+    // has zero authored width. SVG cannot paint through a zero-sized viewport,
+    // so reserve one physical paint pixel on the degenerate axis while keeping
+    // the authored endpoints and wrapper position unchanged.
+    const offsetX = metrics.offsetX;
+    const offsetY = metrics.offsetY;
+    const innerWidth = isLineShape ? Math.max(1, metrics.innerWidth) : metrics.innerWidth;
+    const innerHeight = isLineShape ? Math.max(1, metrics.innerHeight) : metrics.innerHeight;
     const contentContainer = this.doc!.createElement('div');
     contentContainer.style.position = 'absolute';
     contentContainer.style.left = `${offsetX}px`;
@@ -3215,14 +2686,28 @@ export class DomPainter {
     const svgMarkup =
       !customGeomSvg && block.shapeKind ? this.tryCreatePresetSvg(block, innerWidth, innerHeight) : null;
     const resolvedSvgMarkup = customGeomSvg || svgMarkup;
-
     if (resolvedSvgMarkup) {
       const svgElement = this.parseSafeSvg(resolvedSvgMarkup);
       if (svgElement) {
+        this.applyPhysicalStrokeSemantics(svgElement, block);
         svgElement.setAttribute('width', '100%');
         svgElement.setAttribute('height', '100%');
+        svgElement.style.position = 'absolute';
+        svgElement.style.left = '0';
+        svgElement.style.top = '0';
+        svgElement.style.zIndex = '0';
+        svgElement.style.pointerEvents = 'none';
         svgElement.style.display = 'block';
-        svgElement.style.overflow = 'visible';
+        // A centered DrawingML stroke paints outside a zero-height/zero-width
+        // connector's authored box. Its wp:effectExtent provides the outer
+        // clipping budget, so let the SVG stroke reach that budget instead of
+        // clipping it to the coerced 1px content box.
+        const hasEffectExtent =
+          (block.effectExtent?.left ?? 0) > 0 ||
+          (block.effectExtent?.top ?? 0) > 0 ||
+          (block.effectExtent?.right ?? 0) > 0 ||
+          (block.effectExtent?.bottom ?? 0) > 0;
+        if (isLineShape || hasEffectExtent) svgElement.style.overflow = 'visible';
 
         // Apply gradient fill if present
         if (block.fillColor && typeof block.fillColor === 'object') {
@@ -3233,9 +2718,10 @@ export class DomPainter {
           }
         }
 
-        // Shadows paint inside the docx-provided effectExtent box. Do not derive extra visual room here;
-        // files with missing or undersized effectExtent can still clip large outer shadows.
-        this.applyShapeEffects(svgElement, block);
+        if (block.imageFill) {
+          this.applyShapeImageFill(svgElement, block);
+        }
+
         this.applyLineEnds(svgElement, block);
         contentContainer.appendChild(svgElement);
 
@@ -3271,28 +2757,35 @@ export class DomPainter {
    * Apply fill and stroke styles to a fallback shape container
    */
   private applyFallbackShapeStyle(container: HTMLElement, block: ShapeTextDrawingWithEffects): void {
-    // Handle fill color
-    if (block.fillColor === null) {
-      container.style.background = 'none';
-    } else if (typeof block.fillColor === 'string') {
-      container.style.background = block.fillColor;
-    } else if (typeof block.fillColor === 'object' && 'type' in block.fillColor) {
-      if (block.fillColor.type === 'solidWithAlpha') {
-        const alpha = (block.fillColor as SolidFillWithAlpha).alpha;
-        const color = (block.fillColor as SolidFillWithAlpha).color;
-        container.style.background = color;
-        container.style.opacity = alpha.toString();
-      } else if (block.fillColor.type === 'gradient') {
-        // For CSS gradients in fallback, we'd need to convert
-        // For now, use a placeholder color
+    const isTextboxShape = block.drawingKind === 'textboxShape';
+    if (block.imageFill?.mode === 'stretch') {
+      container.style.backgroundImage = `url("${block.imageFill.src.replace(/"/g, '%22')}")`;
+      container.style.backgroundRepeat = 'no-repeat';
+      container.style.backgroundSize = '100% 100%';
+    } else {
+      // Handle fill color
+      if (block.fillColor === null || (isTextboxShape && block.fillColor === undefined)) {
+        container.style.background = 'none';
+      } else if (typeof block.fillColor === 'string') {
+        container.style.background = block.fillColor;
+      } else if (typeof block.fillColor === 'object' && 'type' in block.fillColor) {
+        if (block.fillColor.type === 'solidWithAlpha') {
+          const alpha = (block.fillColor as SolidFillWithAlpha).alpha;
+          const color = (block.fillColor as SolidFillWithAlpha).color;
+          container.style.background = color;
+          container.style.opacity = alpha.toString();
+        } else if (block.fillColor.type === 'gradient') {
+          // For CSS gradients in fallback, we'd need to convert
+          // For now, use a placeholder color
+          container.style.background = 'rgba(15, 23, 42, 0.1)';
+        }
+      } else {
         container.style.background = 'rgba(15, 23, 42, 0.1)';
       }
-    } else {
-      container.style.background = 'rgba(15, 23, 42, 0.1)';
     }
 
     // Handle stroke color
-    if (block.strokeColor === null) {
+    if (block.strokeColor === null || (isTextboxShape && block.strokeColor === undefined)) {
       container.style.border = 'none';
     } else if (typeof block.strokeColor === 'string') {
       const strokeWidth = block.strokeWidth ?? 1;
@@ -3300,6 +2793,142 @@ export class DomPainter {
     } else {
       container.style.border = '1px solid rgba(15, 23, 42, 0.3)';
     }
+  }
+
+  /**
+   * Shape stroke widths reach the painter in physical CSS pixels. Preset SVGs
+   * use a normalized 100 × 100 viewBox while VML custom geometry often uses a
+   * coordsize in the thousands. In both cases allowing the viewBox transform to
+   * scale the stroke changes the authored line weight, sometimes by orders of
+   * magnitude. Keep geometry scalable and paint the resolved width verbatim.
+   */
+  private applyPhysicalStrokeSemantics(svgElement: SVGElement, block: ShapeTextDrawingWithEffects): void {
+    if (typeof block.strokeColor !== 'string' || !(Number(block.strokeWidth) > 0)) return;
+    const dashArray = block.strokeDashArray?.filter((value) => Number.isFinite(value) && value > 0);
+    svgElement.querySelectorAll<SVGElement>('[stroke]:not([stroke="none"])').forEach((element) => {
+      element.setAttribute('vector-effect', 'non-scaling-stroke');
+      if (dashArray?.length) element.setAttribute('stroke-dasharray', dashArray.join(' '));
+      if (block.strokeLineJoin) element.setAttribute('stroke-linejoin', block.strokeLineJoin);
+      if (block.strokeLineCap) element.setAttribute('stroke-linecap', block.strokeLineCap);
+    });
+  }
+
+  /** Paint a DrawingML picture fill through the existing SVG geometry. */
+  private applyShapeImageFill(svgElement: SVGElement, block: ShapeTextDrawingWithEffects): void {
+    const fill = block.imageFill;
+    if (!fill) return;
+
+    const rect = fill.sourceRect ?? { left: 0, top: 0, right: 0, bottom: 0 };
+    const visibleWidth = 1 - (rect.left + rect.right) / 100000;
+    const visibleHeight = 1 - (rect.top + rect.bottom) / 100000;
+    if (!(visibleWidth > 0) || !(visibleHeight > 0)) return;
+
+    const defs = this.ensureSvgDefs(svgElement);
+    const id = this.sanitizeSvgId(`superdoc-shape-image-fill-${block.id}-${this.shapeImageFillCounter++}`);
+    const pattern = this.doc!.createElementNS(SVG_NS, 'pattern');
+    pattern.setAttribute('id', id);
+    pattern.setAttribute('patternUnits', 'objectBoundingBox');
+    pattern.setAttribute('patternContentUnits', 'objectBoundingBox');
+
+    if (fill.mode === 'stretch') {
+      pattern.setAttribute('x', '0');
+      pattern.setAttribute('y', '0');
+      pattern.setAttribute('width', '1');
+      pattern.setAttribute('height', '1');
+      this.appendShapeFillImage(pattern, fill.src, 0, 0, 1, 1, rect, visibleWidth, visibleHeight);
+    } else {
+      const tile = fill.tile ?? {};
+      const tileWidth = (tile.scaleX ?? 100000) / 100000;
+      const tileHeight = (tile.scaleY ?? 100000) / 100000;
+      if (!(tileWidth > 0) || !(tileHeight > 0)) return;
+
+      const alignment = this.resolveShapeTileOrigin(tile.alignment, tileWidth, tileHeight);
+      const offsetX = (tile.offsetX ?? 0) / 9525 / Math.max(1, block.geometry.width);
+      const offsetY = (tile.offsetY ?? 0) / 9525 / Math.max(1, block.geometry.height);
+      const originX = alignment.x + offsetX;
+      const originY = alignment.y + offsetY;
+      const flipX = tile.flip === 'x' || tile.flip === 'xy';
+      const flipY = tile.flip === 'y' || tile.flip === 'xy';
+      pattern.setAttribute('x', String(originX));
+      pattern.setAttribute('y', String(originY));
+      pattern.setAttribute('width', String(tileWidth * (flipX ? 2 : 1)));
+      pattern.setAttribute('height', String(tileHeight * (flipY ? 2 : 1)));
+
+      for (let row = 0; row < (flipY ? 2 : 1); row += 1) {
+        for (let column = 0; column < (flipX ? 2 : 1); column += 1) {
+          this.appendShapeFillImage(
+            pattern,
+            fill.src,
+            column * tileWidth,
+            row * tileHeight,
+            tileWidth,
+            tileHeight,
+            rect,
+            visibleWidth,
+            visibleHeight,
+            column === 1,
+            row === 1,
+          );
+        }
+      }
+    }
+    defs.appendChild(pattern);
+
+    svgElement.querySelectorAll<SVGElement>('path, rect, ellipse, circle, polygon').forEach((element) => {
+      if (element.closest('defs') || element.getAttribute('fill') === 'none') return;
+      element.setAttribute('fill', `url(#${id})`);
+    });
+  }
+
+  private appendShapeFillImage(
+    pattern: SVGPatternElement,
+    src: string,
+    tileX: number,
+    tileY: number,
+    tileWidth: number,
+    tileHeight: number,
+    sourceRect: { left: number; top: number; right: number; bottom: number },
+    visibleWidth: number,
+    visibleHeight: number,
+    flipX = false,
+    flipY = false,
+  ): void {
+    const image = this.doc!.createElementNS(SVG_NS, 'image');
+    image.setAttribute('href', src);
+    image.setAttribute('x', String(tileX - (sourceRect.left / 100000 / visibleWidth) * tileWidth));
+    image.setAttribute('y', String(tileY - (sourceRect.top / 100000 / visibleHeight) * tileHeight));
+    image.setAttribute('width', String(tileWidth / visibleWidth));
+    image.setAttribute('height', String(tileHeight / visibleHeight));
+    image.setAttribute('preserveAspectRatio', 'none');
+    if (flipX || flipY) {
+      const centerX = tileX + tileWidth / 2;
+      const centerY = tileY + tileHeight / 2;
+      image.setAttribute(
+        'transform',
+        `translate(${centerX} ${centerY}) scale(${flipX ? -1 : 1} ${flipY ? -1 : 1}) translate(${-centerX} ${-centerY})`,
+      );
+    }
+    pattern.appendChild(image);
+  }
+
+  private resolveShapeTileOrigin(
+    alignment: string | undefined,
+    tileWidth: number,
+    tileHeight: number,
+  ): { x: number; y: number } {
+    const horizontal =
+      alignment === 't' || alignment === 'ctr' || alignment === 'b'
+        ? (1 - tileWidth) / 2
+        : alignment === 'tr' || alignment === 'r' || alignment === 'br'
+          ? 1 - tileWidth
+          : 0;
+    const vertical =
+      alignment === 'l' || alignment === 'ctr' || alignment === 'r'
+        ? (1 - tileHeight) / 2
+        : alignment === 'bl' || alignment === 'b' || alignment === 'br'
+          ? 1 - tileHeight
+          : 0;
+    return { x: horizontal, y: vertical };
   }
 
   private hasShapeTextContent(textContent?: ShapeTextContent): textContent is ShapeTextContent {
@@ -3334,6 +2963,8 @@ export class DomPainter {
       textContent,
       block.textAlign ?? 'center',
       block.textVerticalAlign,
+      block.textFlow,
+      block.textLayout,
       block.textInsets,
       groupScaleX,
       groupScaleY,
@@ -3364,7 +2995,10 @@ export class DomPainter {
     contentRoot.style.display = 'flex';
     contentRoot.style.flexDirection = 'column';
     contentRoot.style.boxSizing = 'border-box';
-    contentRoot.style.overflow = 'hidden';
+    contentRoot.style.overflow = this.shapeTextAllowsOverflow(block) ? 'visible' : 'hidden';
+    contentRoot.style.zIndex = '1';
+    contentRoot.style.pointerEvents = 'auto';
+    this.applyShapeTextFlow(contentRoot, block.textFlow);
 
     const insets = block.textInsets ?? { top: 0, right: 0, bottom: 0, left: 0 };
     contentRoot.style.padding = `${insets.top}px ${insets.right}px ${insets.bottom}px ${insets.left}px`;
@@ -3378,16 +3012,100 @@ export class DomPainter {
     linesHost.style.flexDirection = 'column';
     linesHost.style.minWidth = '0';
     linesHost.style.width = '100%';
+    if (block.textLayout?.wrap === 'none') linesHost.style.whiteSpace = 'nowrap';
 
     const renderContext = context ?? this.defaultFragmentRenderContext();
     const availableWidth = Math.max(1, width - insets.left - insets.right);
+    const fragmentTextboxId = typeof fragment?.textboxId === 'string' ? fragment.textboxId : undefined;
+    const textboxId =
+      fragmentTextboxId ?? (typeof block.attrs?.textboxId === 'string' ? block.attrs.textboxId : undefined);
 
-    block.contentBlocks.forEach((paragraphBlock, paragraphIndex) => {
-      const measure = contentMeasures[paragraphIndex];
-      if (!measure?.lines) return;
-      measure.lines.forEach((line, lineIndex) => {
-        linesHost.appendChild(this.renderLine(paragraphBlock, line, renderContext, availableWidth, lineIndex));
+    const tableLineRenderer = this.createTableCellLineRenderer();
+    block.contentBlocks.forEach((contentBlock, blockIndex) => {
+      const measure = contentMeasures[blockIndex];
+      if (contentBlock.kind === 'paragraph' && measure?.kind === 'paragraph') {
+        const paragraphTextboxId =
+          typeof contentBlock.attrs?.textboxId === 'string' ? contentBlock.attrs.textboxId : textboxId;
+        const paragraphContext: FragmentRenderContext = {
+          ...renderContext,
+          story: {
+            kind: 'textbox',
+            ...(paragraphTextboxId ? { id: paragraphTextboxId } : {}),
+          },
+        };
+        measure.lines.forEach((line, lineIndex) => {
+          const lineEl = this.renderLine(contentBlock, line, paragraphContext, availableWidth, lineIndex);
+          if (paragraphTextboxId) {
+            applyLayoutIdentityDataset(
+              lineEl,
+              buildLayoutSourceIdentity({
+                blockId: contentBlock.id,
+                story: { kind: 'textbox', id: paragraphTextboxId },
+                kind: 'para',
+                fromLine: lineIndex,
+                toLine: lineIndex + 1,
+                sourceAnchor: contentBlock.sourceAnchor,
+              }),
+            );
+          }
+          applySourceAnchorDataset(lineEl, contentBlock.sourceAnchor);
+          linesHost.appendChild(lineEl);
+        });
+        return;
+      }
+
+      if (contentBlock.kind !== 'table' || measure?.kind !== 'table') return;
+      const columnWidths = rescaleColumnWidths(measure.columnWidths, measure.totalWidth, availableWidth);
+      const fragmentWidth = columnWidths ? availableWidth : measure.totalWidth;
+      const tableFragment: TableFragment = {
+        kind: 'table',
+        blockId: contentBlock.id,
+        fromRow: 0,
+        toRow: contentBlock.rows.length,
+        x: 0,
+        y: 0,
+        width: fragmentWidth,
+        height: measure.totalHeight,
+        ...(columnWidths ? { columnWidths } : {}),
+        sourceAnchor: contentBlock.sourceAnchor,
+      };
+      const tableContext: FragmentRenderContext = {
+        ...renderContext,
+        story: { kind: 'textbox', ...(textboxId ? { id: textboxId } : {}) },
+      };
+      const tableHost = this.doc!.createElement('div');
+      tableHost.style.position = 'relative';
+      tableHost.style.flex = '0 0 auto';
+      tableHost.style.width = '100%';
+      tableHost.style.height = `${measure.totalHeight}px`;
+      const tableEl = renderTableFragmentElement({
+        doc: this.doc!,
+        fragment: tableFragment,
+        context: tableContext,
+        block: contentBlock,
+        measure,
+        cellSpacingPx: measure.cellSpacingPx ?? getCellSpacingPx(contentBlock.attrs?.cellSpacing),
+        effectiveColumnWidths: columnWidths ?? measure.columnWidths,
+        chrome: this.contentControlsChrome,
+        renderLine: tableLineRenderer,
+        captureLineSnapshot: (lineEl, lineContext, options) => {
+          this.capturePaintSnapshotLine(lineEl, lineContext, {
+            inTableFragment: true,
+            inTableParagraph: options?.inTableParagraph ?? false,
+            wrapperEl: options?.wrapperEl,
+          });
+        },
+        renderDrawingContent: (drawingBlock, interactionHost, drawingMeasure) =>
+          this.renderDrawingContentForTable(drawingBlock, interactionHost, drawingMeasure, tableContext),
+        applyFragmentFrame: (element, childFragment) =>
+          this.applyFragmentFrame(element, childFragment, tableContext.section, tableContext.story),
+        applySdtDataset,
+        applyContainerSdtDataset,
+        applyStyles,
+        resolvePhysical: this.options.resolvePhysical,
       });
+      tableHost.appendChild(tableEl);
+      linesHost.appendChild(tableHost);
     });
 
     contentRoot.appendChild(linesHost);
@@ -3498,10 +3216,12 @@ export class DomPainter {
       return context?.pageNumberText ?? String(context?.pageNumber ?? 1);
     }
     if (part.fieldType === 'NUMPAGES') {
+      if (context?.pageCountFieldsExact === false) return provisionalPageCountText(part.text);
       const totalPages = context?.totalPages ?? 1;
       return part.pageNumberFormat ? formatPageNumber(totalPages, part.pageNumberFormat) : String(totalPages);
     }
     if (part.fieldType === 'SECTIONPAGES') {
+      if (context?.pageCountFieldsExact === false) return provisionalPageCountText(part.text);
       if (context?.sectionPageCount == null) return part.text ?? '1';
       const sectionPageCount = context.sectionPageCount;
       return part.pageNumberFormat
@@ -3564,16 +3284,18 @@ export class DomPainter {
    * @param textAlign - Horizontal text alignment
    * @param textVerticalAlign - Vertical text alignment (top, center, bottom)
    * @param textInsets - Text insets in pixels (top, right, bottom, left)
-   * @param groupScaleX - Scale factor applied by parent group (for counter-scaling)
-   * @param groupScaleY - Scale factor applied by parent group (for counter-scaling)
+   * @param _groupScaleX - Reserved parent-group scale factor
+   * @param _groupScaleY - Reserved parent-group scale factor
    */
   private createFallbackTextElement(
     textContent: ShapeTextContent,
     textAlign: string,
     textVerticalAlign?: 'top' | 'center' | 'bottom',
+    textFlow?: VectorShapeStyle['textFlow'],
+    textLayout?: VectorShapeStyle['textLayout'],
     textInsets?: { top: number; right: number; bottom: number; left: number },
-    groupScaleX = 1,
-    groupScaleY = 1,
+    _groupScaleX = 1,
+    _groupScaleY = 1,
     context?: FragmentRenderContext,
   ): HTMLElement {
     const textDiv = this.doc!.createElement('div');
@@ -3584,6 +3306,7 @@ export class DomPainter {
     textDiv.style.height = '100%';
     textDiv.style.display = 'flex';
     textDiv.style.flexDirection = 'column';
+    this.applyShapeTextFlow(textDiv, textFlow);
 
     // Use extracted vertical alignment or default to top per OOXML spec
     // In flex-direction: column, justifyContent controls vertical (main axis)
@@ -3604,15 +3327,26 @@ export class DomPainter {
     }
 
     textDiv.style.boxSizing = 'border-box';
-    textDiv.style.wordWrap = 'break-word';
-    textDiv.style.overflowWrap = 'break-word';
-    textDiv.style.overflow = 'hidden';
+    textDiv.style.whiteSpace = textLayout?.wrap === 'none' ? 'nowrap' : 'normal';
+    textDiv.style.wordWrap = textLayout?.wrap === 'none' ? 'normal' : 'break-word';
+    textDiv.style.overflowWrap = textLayout?.wrap === 'none' ? 'normal' : 'break-word';
+    textDiv.style.overflow =
+      textLayout?.horizontalOverflow === 'overflow' || textLayout?.verticalOverflow === 'overflow'
+        ? 'visible'
+        : 'hidden';
     // min-width: 0 allows flex container to shrink below content size for text wrapping
     textDiv.style.minWidth = '0';
-    // Set explicit base font-size to prevent CSS inheritance issues
-    // Individual spans will override with their own sizes from textContent.parts
-    textDiv.style.fontSize = '12px';
-    textDiv.style.lineHeight = '1.2';
+    // Match the line-box strut to authored text. A fixed 12px strut can push
+    // smaller runs below short Word table cells even when the span itself fits.
+    const authoredBaseFontSize = textContent.parts.find((part) => part.formatting?.fontSize != null)?.formatting
+      ?.fontSize;
+    textDiv.style.fontSize = `${authoredBaseFontSize ?? 12}px`;
+    // An absent w:spacing/@w:line means single spacing, whose used height is
+    // derived from the active font metrics. A synthetic 1.2 multiplier makes
+    // small VML grid labels accumulate several extra pixels and overflow their
+    // authored coordinate boxes. Let the resolved physical font establish the
+    // default strut; explicit paragraph line spacing still overrides it below.
+    textDiv.style.lineHeight = 'normal';
 
     // Horizontal text alignment uses CSS text-align property
     // Note: justifyContent is already set above for vertical alignment
@@ -3624,57 +3358,61 @@ export class DomPainter {
       textDiv.style.textAlign = 'left';
     }
 
-    const paragraphSpacing = textContent.paragraphs;
-    const spacingBefore = (index: number) => paragraphSpacing?.[index]?.spacing?.before;
-    const spacingAfter = (index: number) => paragraphSpacing?.[index]?.spacing?.after;
-    const createParagraphElement = () => {
-      const paragraph = this.doc!.createElement('div');
-      // Set width to 100% to enable text wrapping within the shape bounds
-      paragraph.style.width = '100%';
-      // min-width: 0 prevents flex item from overflowing (flexbox default is min-width: auto)
-      paragraph.style.minWidth = '0';
-      // Override inherited white-space: pre from parent fragment to allow text wrapping
-      paragraph.style.whiteSpace = 'normal';
-      paragraph.style.marginLeft = '0';
-      paragraph.style.marginRight = '0';
-      return paragraph;
-    };
-
     // Create paragraphs by splitting on line breaks
-    let logicalParagraphIndex = 0;
-    let currentParagraph = createParagraphElement();
-    const firstParagraphBefore = spacingBefore(logicalParagraphIndex);
-    if (typeof firstParagraphBefore === 'number') {
-      currentParagraph.style.marginTop = `${firstParagraphBefore}px`;
-    }
+    let currentParagraph = this.doc!.createElement('div');
+    // Set width to 100% to enable text wrapping within the shape bounds
+    currentParagraph.style.width = '100%';
+    // min-width: 0 prevents flex item from overflowing (flexbox default is min-width: auto)
+    currentParagraph.style.minWidth = '0';
+    // Override inherited white-space: pre from parent fragment to allow text wrapping
+    currentParagraph.style.whiteSpace = textLayout?.wrap === 'none' ? 'nowrap' : 'normal';
+
+    const applyParagraphProperties = (
+      paragraph: HTMLElement,
+      properties: ShapeTextContent['parts'][number]['paragraphProperties'],
+    ): void => {
+      if (!properties) return;
+      if (properties.horizontalAlign) {
+        paragraph.style.textAlign = properties.horizontalAlign;
+      }
+      if (properties.spacingBefore != null) {
+        paragraph.style.marginTop = `${properties.spacingBefore}px`;
+      }
+      if (properties.spacingAfter != null) {
+        paragraph.style.marginBottom = `${properties.spacingAfter}px`;
+      }
+      if (properties.line != null) {
+        paragraph.style.lineHeight = properties.lineUnit === 'px' ? `${properties.line}px` : String(properties.line);
+      }
+      if (properties.leftIndent != null) {
+        paragraph.style.paddingLeft = `${properties.leftIndent}px`;
+      }
+      if (properties.rightIndent != null) {
+        paragraph.style.paddingRight = `${properties.rightIndent}px`;
+      }
+      if (properties.firstLineIndent != null) {
+        paragraph.style.textIndent = `${properties.firstLineIndent}px`;
+      }
+      paragraph.style.boxSizing = 'border-box';
+    };
 
     textContent.parts.forEach((part) => {
       if (part.isLineBreak) {
-        if (part.isParagraphBoundary) {
-          const currentParagraphAfter = spacingAfter(logicalParagraphIndex);
-          if (typeof currentParagraphAfter === 'number') {
-            currentParagraph.style.marginBottom = `${currentParagraphAfter}px`;
-          }
-        }
-
         // Finish current paragraph and start a new one
         textDiv.appendChild(currentParagraph);
-        currentParagraph = createParagraphElement();
+        currentParagraph = this.doc!.createElement('div');
+        currentParagraph.style.width = '100%';
+        currentParagraph.style.minWidth = '0';
+        currentParagraph.style.whiteSpace = textLayout?.wrap === 'none' ? 'nowrap' : 'normal';
         // Empty paragraphs create extra spacing (blank line)
         if (part.isEmptyParagraph) {
           currentParagraph.style.minHeight = '1em';
         }
-
-        if (part.isParagraphBoundary) {
-          logicalParagraphIndex += 1;
-          const nextParagraphBefore = spacingBefore(logicalParagraphIndex);
-          if (typeof nextParagraphBefore === 'number') {
-            currentParagraph.style.marginTop = `${nextParagraphBefore}px`;
-          }
-        }
       } else if (part.kind === 'image' && part.src) {
+        applyParagraphProperties(currentParagraph, part.paragraphProperties);
         currentParagraph.appendChild(createShapeTextImageElement(this.doc!, part));
       } else {
+        applyParagraphProperties(currentParagraph, part.paragraphProperties);
         const span = this.doc!.createElement('span');
         span.textContent = this.resolveShapeTextPartText(part, context);
         if (part.formatting) {
@@ -3685,7 +3423,13 @@ export class DomPainter {
             span.style.fontStyle = 'italic';
           }
           if (part.formatting.fontFamily) {
-            span.style.fontFamily = part.formatting.fontFamily;
+            const face = {
+              weight: part.formatting.bold ? ('700' as const) : ('400' as const),
+              style: part.formatting.italic ? ('italic' as const) : ('normal' as const),
+            };
+            span.style.fontFamily = this.options.resolvePhysical
+              ? this.options.resolvePhysical(part.formatting.fontFamily, face)
+              : resolvePhysicalFamily(part.formatting.fontFamily);
           }
           if (part.formatting.color) {
             // Validate and normalize color format (handles both with and without # prefix)
@@ -3700,19 +3444,35 @@ export class DomPainter {
           if (part.formatting.letterSpacing != null) {
             span.style.letterSpacing = `${part.formatting.letterSpacing}px`;
           }
+          applyTextEffects(span, part.formatting.textEffects);
         }
         currentParagraph.appendChild(span);
       }
     });
 
     // Add the final paragraph
-    const finalParagraphAfter = spacingAfter(logicalParagraphIndex);
-    if (typeof finalParagraphAfter === 'number') {
-      currentParagraph.style.marginBottom = `${finalParagraphAfter}px`;
-    }
     textDiv.appendChild(currentParagraph);
 
     return textDiv;
+  }
+
+  private shapeTextAllowsOverflow(block: DrawingBlock): boolean {
+    if (block.drawingKind === 'shapeGroup') {
+      return block.shapes.some((child) => {
+        if (child.shapeType !== 'vectorShape') return false;
+        const layout = (child.attrs as VectorShapeStyle).textLayout;
+        return layout?.horizontalOverflow === 'overflow' || layout?.verticalOverflow === 'overflow';
+      });
+    }
+    if (block.drawingKind !== 'vectorShape' && block.drawingKind !== 'textboxShape') return false;
+    return block.textLayout?.horizontalOverflow === 'overflow' || block.textLayout?.verticalOverflow === 'overflow';
+  }
+
+  private applyShapeTextFlow(element: HTMLElement, textFlow?: VectorShapeStyle['textFlow']): void {
+    if (!textFlow || textFlow === 'horizontal' || textFlow === 'horizontal-ideographic') return;
+    element.style.writingMode = 'vertical-rl';
+    element.style.textOrientation = textFlow === 'vertical-ideographic' ? 'upright' : 'mixed';
+    if (textFlow === 'bottom-to-top') element.style.direction = 'rtl';
   }
 
   private tryCreatePresetSvg(
@@ -3723,26 +3483,42 @@ export class DomPainter {
     try {
       // For preset shapes, we need to pass string colors only
       // Gradients and alpha will be applied after SVG is created
-      // null means explicitly "no fill" (from <a:noFill/> or fillRef idx="0"), so use 'none'
-      // undefined means no explicit fill, so we let the preset library use its default
+      // null means explicitly "no fill" (from <a:noFill/> or fillRef idx="0"), so use 'none'.
+      // For textboxShape, undefined also means no visible fill/stroke; the preset library defaults
+      // to black paths, which turns missing VML/DrawingML presentation into a filled rectangle.
       let fillColor: string | undefined;
-      if (block.fillColor === null) {
+      const isTextboxShape = block.drawingKind === 'textboxShape';
+      if (block.fillColor === null || (isTextboxShape && block.fillColor === undefined)) {
         fillColor = 'none';
       } else if (typeof block.fillColor === 'string') {
         fillColor = block.fillColor;
       }
       const strokeColor =
-        block.strokeColor === null ? 'none' : typeof block.strokeColor === 'string' ? block.strokeColor : undefined;
+        block.strokeColor === null || (isTextboxShape && block.strokeColor === undefined)
+          ? 'none'
+          : typeof block.strokeColor === 'string'
+            ? block.strokeColor
+            : undefined;
 
       // Special case: handle line-like shapes directly since getPresetShapeSvg doesn't support them well
       if (block.shapeKind === 'line' || block.shapeKind === 'straightConnector1') {
         const width = widthOverride ?? block.geometry.width;
         const height = heightOverride ?? block.geometry.height;
         const stroke = strokeColor ?? '#000000';
-        const strokeWidth = block.strokeWidth ?? 1;
+        const isHorizontal = height <= 1 && width > 1;
+        const isVertical = width <= 1 && height > 1;
+        // Word promotes axis-aligned vector hairlines to one physical screen
+        // pixel. Preserve authored weights above that threshold and leave
+        // diagonal connectors untouched.
+        const strokeWidth = isHorizontal || isVertical ? Math.max(block.strokeWidth ?? 1, 1) : (block.strokeWidth ?? 1);
+        const x1 = isVertical ? width / 2 : 0;
+        const y1 = isHorizontal ? height / 2 : 0;
+        const x2 = isVertical ? width / 2 : width;
+        const y2 = isHorizontal ? height / 2 : height;
+        const axisPaint = isHorizontal || isVertical ? ' shape-rendering="crispEdges"' : '';
 
         return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-  <line x1="0" y1="0" x2="${width}" y2="${height}" stroke="${stroke}" stroke-width="${strokeWidth}" />
+  <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${strokeWidth}"${axisPaint} />
 </svg>`;
       }
 
@@ -3776,6 +3552,8 @@ export class DomPainter {
       fillColor = 'none';
     } else if (typeof block.fillColor === 'string') {
       fillColor = block.fillColor;
+    } else if (block.drawingKind === 'textboxShape') {
+      fillColor = 'none';
     } else {
       // Gradient / solidWithAlpha: use a placeholder fill so that downstream
       // applyGradientToSVG / applyAlphaToSVG (which skip fill="none") can
@@ -3783,8 +3561,12 @@ export class DomPainter {
       fillColor = '#000000';
     }
     const strokeColor =
-      block.strokeColor === null ? 'none' : typeof block.strokeColor === 'string' ? block.strokeColor : 'none';
-    const strokeWidth = block.strokeColor === null ? 0 : (block.strokeWidth ?? 0);
+      block.strokeColor === null || (block.drawingKind === 'textboxShape' && block.strokeColor === undefined)
+        ? 'none'
+        : typeof block.strokeColor === 'string'
+          ? block.strokeColor
+          : 'none';
+    const strokeWidth = strokeColor === 'none' ? 0 : (block.strokeWidth ?? 0);
 
     // Build SVG paths. Each path has its own coordinate space (w × h).
     // Use the first path's coordinate space for the viewBox, and scale subsequent paths if needed.
@@ -3795,13 +3577,11 @@ export class DomPainter {
     // Degenerate: zero-dimension viewBox is invalid SVG — skip rendering.
     if (viewW === 0 || viewH === 0) return null;
 
-    const hasLargeCoordinateScale = viewW / width > 10 || viewH / height > 10;
-    const explicitStrokeEffect = hasLargeCoordinateScale ? ' vector-effect="non-scaling-stroke"' : '';
-
     // When the SVG viewBox maps to a non-uniform aspect ratio (common with group transforms),
-    // thin fill borders can become sub-pixel on one axis. Add a hairline stroke matching the
-    // fill color with vector-effect="non-scaling-stroke" so edges remain at least 0.5px visible.
-    const needsEdgeStroke = fillColor !== 'none' && strokeColor === 'none';
+    // thin opaque fill borders can become sub-pixel on one axis. Add a hairline stroke only when
+    // it can exactly match that fill. Object fills use a temporary black placeholder that is
+    // replaced after parsing, so stroking it would fabricate a persistent black outline.
+    const needsEdgeStroke = typeof block.fillColor === 'string' && fillColor !== 'none' && strokeColor === 'none';
     const edgeStroke = needsEdgeStroke
       ? ` stroke="${fillColor}" stroke-width="0.5" vector-effect="non-scaling-stroke"`
       : '';
@@ -3815,9 +3595,15 @@ export class DomPainter {
         const scaleX = viewW / pathW;
         const scaleY = viewH / pathH;
         const transform = needsTransform ? ` transform="scale(${scaleX}, ${scaleY})"` : '';
+        // `strokeWidth` is already resolved to physical CSS pixels by the
+        // adapter. Custom VML paths commonly retain a large coordsize-backed
+        // viewBox (for example 7200 × 3600). Without a non-scaling stroke the
+        // browser scales the physical width through that viewBox a second
+        // time, turning a valid Word hairline into a near-transparent 0.03px
+        // mark. Geometry scales with the viewBox; line weight does not.
         const strokeAttr =
           strokeColor !== 'none'
-            ? ` stroke="${strokeColor}" stroke-width="${strokeWidth}"${explicitStrokeEffect}`
+            ? ` stroke="${strokeColor}" stroke-width="${strokeWidth}" vector-effect="non-scaling-stroke"`
             : edgeStroke;
         return `<path d="${p.d}" fill="${fillColor}" fill-rule="evenodd"${strokeAttr}${transform} />`;
       })
@@ -3926,132 +3712,6 @@ export class DomPainter {
     }
   }
 
-  private applyShapeEffects(svgElement: SVGElement, block: ShapeTextDrawingWithEffects): void {
-    const outerShadow = block.effects?.outerShadow;
-    if (!outerShadow) return;
-    this.applyOuterShadowEffect(svgElement, block.id, outerShadow);
-  }
-
-  private applyOuterShadowEffect(svgElement: SVGElement, blockId: string, shadow: ShapeOuterShadowEffect): void {
-    const targets = this.findShapeEffectTargets(svgElement);
-    if (!targets.length) return;
-
-    const defs = this.ensureSvgDefs(svgElement);
-    const filterId = this.sanitizeSvgId(`sd-shadow-${blockId}`);
-    const outlineFilterId = this.sanitizeSvgId(`sd-shadow-outline-${blockId}`);
-    if (!defs.querySelector(`#${filterId}`)) {
-      const filter = this.doc!.createElementNS('http://www.w3.org/2000/svg', 'filter');
-      filter.setAttribute('id', filterId);
-      filter.setAttribute('x', '-50%');
-      filter.setAttribute('y', '-50%');
-      filter.setAttribute('width', '200%');
-      filter.setAttribute('height', '200%');
-
-      const { dx, dy } = resolveOuterShadowOffset(shadow);
-      const dropShadow = this.doc!.createElementNS('http://www.w3.org/2000/svg', 'feDropShadow');
-      dropShadow.setAttribute('dx', this.formatSvgNumber(dx));
-      dropShadow.setAttribute('dy', this.formatSvgNumber(dy));
-      dropShadow.setAttribute('stdDeviation', this.formatSvgNumber(getOuterShadowStdDeviation(shadow)));
-      dropShadow.setAttribute('flood-color', shadow.color);
-      dropShadow.setAttribute('flood-opacity', this.formatSvgNumber(shadow.opacity));
-
-      filter.appendChild(dropShadow);
-      defs.appendChild(filter);
-    }
-
-    targets.forEach((target) => {
-      if (this.shouldRenderFilledShadowClone(target)) {
-        this.appendFilledShadowClone(svgElement, defs, target, outlineFilterId, shadow);
-        return;
-      }
-      target.setAttribute('filter', `url(#${filterId})`);
-    });
-  }
-
-  private findShapeEffectTargets(svgElement: SVGElement): SVGElement[] {
-    return Array.from(svgElement.querySelectorAll('path, line, polyline, polygon, rect, ellipse, circle')).filter(
-      (target) => !target.closest('defs') && !target.hasAttribute('data-sd-shadow-clone'),
-    ) as SVGElement[];
-  }
-
-  private shouldRenderFilledShadowClone(target: SVGElement): boolean {
-    const fill = target.getAttribute('fill');
-    if (fill !== 'none') return false;
-    if (target.tagName.toLowerCase() === 'path') {
-      return /z\s*$/i.test(target.getAttribute('d') ?? '');
-    }
-    return ['polygon', 'rect', 'ellipse', 'circle'].includes(target.tagName.toLowerCase());
-  }
-
-  private appendFilledShadowClone(
-    svgElement: SVGElement,
-    defs: SVGDefsElement,
-    target: SVGElement,
-    filterId: string,
-    shadow: ShapeOuterShadowEffect,
-  ): void {
-    this.ensureOuterShadowOnlyFilter(defs, filterId, shadow);
-
-    const clone = target.cloneNode(false) as SVGElement;
-    clone.setAttribute('data-sd-shadow-clone', filterId);
-    clone.setAttribute('aria-hidden', 'true');
-    clone.setAttribute('fill', '#000000');
-    clone.setAttribute('stroke', 'none');
-    clone.setAttribute('filter', `url(#${filterId})`);
-    target.parentNode?.insertBefore(clone, target);
-  }
-
-  private ensureOuterShadowOnlyFilter(defs: SVGDefsElement, filterId: string, shadow: ShapeOuterShadowEffect): void {
-    if (defs.querySelector(`#${filterId}`)) return;
-
-    const filter = this.doc!.createElementNS('http://www.w3.org/2000/svg', 'filter');
-    filter.setAttribute('id', filterId);
-    filter.setAttribute('x', '-50%');
-    filter.setAttribute('y', '-50%');
-    filter.setAttribute('width', '200%');
-    filter.setAttribute('height', '200%');
-
-    const blur = this.doc!.createElementNS('http://www.w3.org/2000/svg', 'feGaussianBlur');
-    blur.setAttribute('in', 'SourceAlpha');
-    blur.setAttribute('stdDeviation', this.formatSvgNumber(getOuterShadowStdDeviation(shadow)));
-    blur.setAttribute('result', 'blur');
-
-    const { dx, dy } = resolveOuterShadowOffset(shadow);
-    const offset = this.doc!.createElementNS('http://www.w3.org/2000/svg', 'feOffset');
-    offset.setAttribute('in', 'blur');
-    offset.setAttribute('dx', this.formatSvgNumber(dx));
-    offset.setAttribute('dy', this.formatSvgNumber(dy));
-    offset.setAttribute('result', 'offsetBlur');
-
-    const flood = this.doc!.createElementNS('http://www.w3.org/2000/svg', 'feFlood');
-    flood.setAttribute('flood-color', shadow.color);
-    flood.setAttribute('flood-opacity', this.formatSvgNumber(shadow.opacity));
-    flood.setAttribute('result', 'shadowColor');
-
-    const composite = this.doc!.createElementNS('http://www.w3.org/2000/svg', 'feComposite');
-    composite.setAttribute('in', 'shadowColor');
-    composite.setAttribute('in2', 'offsetBlur');
-    composite.setAttribute('operator', 'in');
-    composite.setAttribute('result', 'shadow');
-
-    const outsideOnly = this.doc!.createElementNS('http://www.w3.org/2000/svg', 'feComposite');
-    outsideOnly.setAttribute('in', 'shadow');
-    outsideOnly.setAttribute('in2', 'SourceAlpha');
-    outsideOnly.setAttribute('operator', 'out');
-    outsideOnly.setAttribute('result', 'outerShadow');
-
-    filter.appendChild(blur);
-    filter.appendChild(offset);
-    filter.appendChild(flood);
-    filter.appendChild(composite);
-    filter.appendChild(outsideOnly);
-    defs.appendChild(filter);
-  }
-
-  private formatSvgNumber(value: number): string {
-    return Number.isFinite(value) ? Number(value.toFixed(4)).toString() : '0';
-  }
-
   private findLineEndTarget(svgElement: SVGElement): SVGElement | null {
     const line = svgElement.querySelector('line');
     if (line) return line as SVGElement;
@@ -4158,11 +3818,7 @@ export class DomPainter {
     }
   }
 
-  private createShapeGroupElement(
-    block: ShapeGroupDrawing,
-    context?: FragmentRenderContext,
-    fragmentGeometry?: DrawingGeometry,
-  ): HTMLElement {
+  private createShapeGroupElement(block: ShapeGroupDrawing, context?: FragmentRenderContext): HTMLElement {
     const groupEl = this.doc!.createElement('div');
     groupEl.classList.add('superdoc-shape-group');
     groupEl.style.position = 'relative';
@@ -4171,73 +3827,42 @@ export class DomPainter {
 
     const groupTransform = block.groupTransform;
     let contentContainer: HTMLElement = groupEl;
-    const groupEffectExtent = block.effectExtent ?? { left: 0, top: 0, right: 0, bottom: 0 };
-    const hasGroupEffectExtent =
-      groupEffectExtent.left > 0 ||
-      groupEffectExtent.top > 0 ||
-      groupEffectExtent.right > 0 ||
-      groupEffectExtent.bottom > 0;
 
-    const visibleWidth =
-      groupTransform?.width ??
-      Math.max(0, (block.geometry.width ?? 0) - groupEffectExtent.left - groupEffectExtent.right);
-    const visibleHeight =
-      groupTransform?.height ??
-      Math.max(0, (block.geometry.height ?? 0) - groupEffectExtent.top - groupEffectExtent.bottom);
+    const visibleWidth = groupTransform?.width ?? block.geometry.width ?? 0;
+    const visibleHeight = groupTransform?.height ?? block.geometry.height ?? 0;
 
-    if (groupTransform || hasGroupEffectExtent) {
+    if (groupTransform) {
       const inner = this.doc!.createElement('div');
       inner.style.position = 'absolute';
-      inner.style.left = `${groupEffectExtent.left}px`;
-      inner.style.top = `${groupEffectExtent.top}px`;
+      inner.style.left = '0';
+      inner.style.top = '0';
       // Container at visible dimensions. Children use pre-scaled positions/sizes.
       inner.style.width = `${Math.max(1, visibleWidth)}px`;
       inner.style.height = `${Math.max(1, visibleHeight)}px`;
-      const groupTransforms: string[] = [];
-      const normalizedGroupRotation =
-        typeof groupTransform?.rotation === 'number' ? normalizeRotationDegrees(groupTransform.rotation) : 0;
-      const normalizedFragmentRotation =
-        typeof fragmentGeometry?.rotation === 'number' ? normalizeRotationDegrees(fragmentGeometry.rotation) : 0;
-      const groupRotation =
-        normalizedGroupRotation && normalizedGroupRotation !== normalizedFragmentRotation
-          ? (groupTransform?.rotation ?? 0)
-          : 0;
-      const groupFlipH = groupTransform?.flipH && groupTransform.flipH !== fragmentGeometry?.flipH;
-      const groupFlipV = groupTransform?.flipV && groupTransform.flipV !== fragmentGeometry?.flipV;
-      if (groupRotation) {
-        groupTransforms.push(`rotate(${groupRotation}deg)`);
-      }
-      if (groupFlipH) {
-        groupTransforms.push('scaleX(-1)');
-      }
-      if (groupFlipV) {
-        groupTransforms.push('scaleY(-1)');
-      }
-      if (groupTransforms.length > 0) {
-        inner.style.transformOrigin = 'center';
-        inner.style.transform = groupTransforms.join(' ');
-      }
       groupEl.appendChild(inner);
       contentContainer = inner;
     }
 
-    block.shapes.forEach((child, childIndex) => {
-      const attrs = (child as ShapeGroupChild).attrs ?? {};
-      const paintExtent = this.getShapeGroupChildPaintExtent(child);
-      const childContent = this.createGroupChildContent(child, 1, 1, context, paintExtent, block.id, childIndex);
+    block.shapes.forEach((child) => {
+      const childContent = this.createGroupChildContent(child, 1, 1, context);
       if (!childContent) return;
+      const attrs = (child as ShapeGroupChild).attrs ?? {};
       const wrapper = this.doc!.createElement('div');
       wrapper.classList.add('superdoc-shape-group__child');
       wrapper.style.position = 'absolute';
+      wrapper.style.boxSizing = 'border-box';
 
       // Children use pre-scaled (visual-space) positions/sizes from import.
-      wrapper.style.left = `${Number(attrs.x ?? 0) - paintExtent.left}px`;
-      wrapper.style.top = `${Number(attrs.y ?? 0) - paintExtent.top}px`;
+      wrapper.style.left = `${Number(attrs.x ?? 0)}px`;
+      wrapper.style.top = `${Number(attrs.y ?? 0)}px`;
 
       const childW = typeof attrs.width === 'number' ? attrs.width : block.geometry.width;
       const childH = typeof attrs.height === 'number' ? attrs.height : block.geometry.height;
-      wrapper.style.width = `${Math.max(1, childW + paintExtent.left + paintExtent.right)}px`;
-      wrapper.style.height = `${Math.max(1, childH + paintExtent.top + paintExtent.bottom)}px`;
+      wrapper.style.width = `${Math.max(1, childW)}px`;
+      wrapper.style.height = `${Math.max(1, childH)}px`;
+      if ('borders' in attrs && attrs.borders) {
+        applyCellBorders(wrapper, attrs.borders as CellBorders);
+      }
 
       wrapper.style.transformOrigin = 'center';
       const transforms: string[] = [];
@@ -4262,50 +3887,11 @@ export class DomPainter {
     return groupEl;
   }
 
-  private getShapeGroupChildPaintExtent(child: ShapeGroupChild): EffectExtent {
-    if (child.shapeType !== 'vectorShape' || !('fillColor' in child.attrs)) {
-      return { left: 0, top: 0, right: 0, bottom: 0 };
-    }
-    const attrs = child.attrs as VectorShapeStyle;
-    // Producers must include equivalent group-level effectExtent for edge children so the fragment can grow.
-    // Line-end markers use effectExtent for marker sizing; do not overload it with stroke paint room.
-    const shadowExtent = attrs.effects?.outerShadow
-      ? getSharedOuterShadowPaintExtent(attrs.effects.outerShadow)
-      : { left: 0, top: 0, right: 0, bottom: 0 };
-    if (attrs.lineEnds) {
-      return { left: 0, top: 0, right: 0, bottom: 0 };
-    }
-    if (attrs.strokeColor === null) {
-      return shadowExtent;
-    }
-    const rawStrokeWidth = (child.attrs as { strokeWidth?: unknown }).strokeWidth;
-    const parsedStrokeWidth =
-      typeof rawStrokeWidth === 'number'
-        ? rawStrokeWidth
-        : typeof rawStrokeWidth === 'string' && rawStrokeWidth.trim() !== ''
-          ? Number(rawStrokeWidth)
-          : undefined;
-    const strokeWidth = parsedStrokeWidth != null && Number.isFinite(parsedStrokeWidth) ? parsedStrokeWidth : 1;
-    if (strokeWidth <= 0) {
-      return shadowExtent;
-    }
-    const extent = strokeWidth / 2;
-    return {
-      left: Math.max(extent, shadowExtent.left),
-      top: Math.max(extent, shadowExtent.top),
-      right: Math.max(extent, shadowExtent.right),
-      bottom: Math.max(extent, shadowExtent.bottom),
-    };
-  }
-
   private createGroupChildContent(
     child: ShapeGroupChild,
     groupScaleX: number = 1,
     groupScaleY: number = 1,
     context?: FragmentRenderContext,
-    paintExtent: EffectExtent = { left: 0, top: 0, right: 0, bottom: 0 },
-    groupId?: string,
-    childIndex?: number,
   ): HTMLElement | null {
     // Type narrowing with explicit checks to help TypeScript distinguish union members
     if (child.shapeType === 'vectorShape' && 'fillColor' in child.attrs) {
@@ -4319,24 +3905,18 @@ export class DomPainter {
           textContent?: ShapeTextContent;
           textAlign?: string;
           lineEnds?: LineEnds;
-          effects?: ShapeEffects;
         };
       const childGeometry = {
-        width: (attrs.width ?? 0) + paintExtent.left + paintExtent.right,
-        height: (attrs.height ?? 0) + paintExtent.top + paintExtent.bottom,
+        width: attrs.width ?? 0,
+        height: attrs.height ?? 0,
         rotation: attrs.rotation ?? 0,
         flipH: attrs.flipH ?? false,
         flipV: attrs.flipV ?? false,
       };
-      const hasPaintExtent =
-        paintExtent.left > 0 || paintExtent.top > 0 || paintExtent.right > 0 || paintExtent.bottom > 0;
       const vectorChild: ShapeTextDrawingWithEffects = {
         drawingKind: 'vectorShape',
         kind: 'drawing',
-        id:
-          groupId != null
-            ? `${groupId}-${childIndex ?? 0}-${attrs.shapeId ?? child.shapeType}`
-            : `${attrs.shapeId ?? child.shapeType}`,
+        id: `${attrs.shapeId ?? child.shapeType}`,
         geometry: childGeometry,
         padding: undefined,
         margin: undefined,
@@ -4348,15 +3928,19 @@ export class DomPainter {
         shapeKind: attrs.kind,
         customGeometry: attrs.customGeometry,
         fillColor: attrs.fillColor,
+        imageFill: attrs.imageFill,
         strokeColor: attrs.strokeColor,
         strokeWidth: attrs.strokeWidth,
+        strokeDashArray: attrs.strokeDashArray,
+        strokeLineJoin: attrs.strokeLineJoin,
+        strokeLineCap: attrs.strokeLineCap,
         lineEnds: attrs.lineEnds,
-        effects: attrs.effects,
         textContent: attrs.textContent,
         textAlign: attrs.textAlign,
         textVerticalAlign: attrs.textVerticalAlign,
+        textFlow: attrs.textFlow,
+        textLayout: attrs.textLayout,
         textInsets: attrs.textInsets,
-        effectExtent: hasPaintExtent ? paintExtent : undefined,
       };
       // Pass geometry and scale factors to ensure text overlay has correct dimensions
       return this.createVectorShapeElement(vectorChild, childGeometry, false, groupScaleX, groupScaleY, context);
@@ -4387,7 +3971,7 @@ export class DomPainter {
    * Delegates to the chart-renderer module for clean separation.
    */
   private createChartElement(block: ChartDrawing): HTMLElement {
-    return renderChartToElement(this.doc!, block.chartData, block.geometry);
+    return renderChartToElement(this.doc!, block.chartData, block.geometry, block.placeholder);
   }
 
   private resolveTableRenderData(
@@ -4410,6 +3994,71 @@ export class DomPainter {
     };
   }
 
+  private createTableCellLineRenderer(): TableRenderDependencies['renderLine'] {
+    const expandedRunsCache = new WeakMap<ParagraphBlock, Run[]>();
+    return (block, line, context, lineIndex, isLastLine, resolvedListTextStartPx?: number) => {
+      const lastRun = block.runs.length > 0 ? block.runs[block.runs.length - 1] : null;
+      const paragraphEndsWithLineBreak = lastRun?.kind === 'lineBreak';
+      const shouldSkipJustify = isLastLine && !paragraphEndsWithLineBreak;
+
+      let expandedRuns = expandedRunsCache.get(block);
+      if (!expandedRuns) {
+        expandedRuns = expandRunsForInlineNewlines(block.runs);
+        expandedRunsCache.set(block, expandedRuns);
+      }
+
+      return this.renderLine(
+        block,
+        line,
+        context,
+        undefined,
+        lineIndex,
+        shouldSkipJustify,
+        expandedRuns,
+        resolvedListTextStartPx,
+      );
+    };
+  }
+
+  /** Render drawing content nested in any canonical table, including a textbox-owned table. */
+  private renderDrawingContentForTable(
+    block: DrawingBlock,
+    interactionHost: HTMLElement,
+    measure: DrawingMeasure,
+    context: FragmentRenderContext,
+  ): HTMLElement {
+    this.applyTextboxInteractionDataset(
+      interactionHost,
+      block,
+      measure.geometry,
+      measure.scale ?? 1,
+      block.id,
+      typeof block.attrs?.textboxId === 'string' ? block.attrs.textboxId : undefined,
+      context,
+    );
+    if (block.drawingKind === 'image') {
+      return createDrawingImageElement(this.doc!, block, this.buildImageHyperlinkAnchor.bind(this));
+    }
+    if (block.drawingKind === 'shapeGroup') return this.createShapeGroupElement(block, context);
+    if (block.drawingKind === 'vectorShape' || block.drawingKind === 'textboxShape') {
+      const fragment: DrawingFragment = {
+        kind: 'drawing',
+        blockId: block.id,
+        drawingKind: block.drawingKind,
+        x: 0,
+        y: 0,
+        width: measure.width,
+        height: measure.height,
+        geometry: measure.geometry,
+        scale: measure.scale,
+        ...(Array.isArray(measure.contentMeasures) ? { contentMeasures: measure.contentMeasures } : {}),
+      };
+      return this.createVectorShapeElement(block, measure.geometry, false, 1, 1, context, fragment);
+    }
+    if (block.drawingKind === 'chart') return this.createChartElement(block);
+    return this.createDrawingPlaceholder();
+  }
+
   private renderTableFragment(
     fragment: TableFragment,
     context: FragmentRenderContext,
@@ -4427,58 +4076,12 @@ export class DomPainter {
         this.applyFragmentFrame(el, frag, context.section, context.story);
       };
 
-      // Word justifies text inside table cells, but not the final line unless the
-      // paragraph ends with an explicit line break.
-      const tableCellExpandedRunsCache = new WeakMap<ParagraphBlock, Run[]>();
-      const renderLineForTableCell = (
-        block: ParagraphBlock,
-        line: Line,
-        ctx: FragmentRenderContext,
-        lineIndex: number,
-        isLastLine: boolean,
-        resolvedListTextStartPx?: number,
-      ): HTMLElement => {
-        const lastRun = block.runs.length > 0 ? block.runs[block.runs.length - 1] : null;
-        const paragraphEndsWithLineBreak = lastRun?.kind === 'lineBreak';
-        const shouldSkipJustify = isLastLine && !paragraphEndsWithLineBreak;
-
-        let expandedRuns = tableCellExpandedRunsCache.get(block);
-        if (!expandedRuns) {
-          expandedRuns = expandRunsForInlineNewlines(block.runs);
-          tableCellExpandedRunsCache.set(block, expandedRuns);
-        }
-
-        return this.renderLine(
-          block,
-          line,
-          ctx,
-          undefined,
-          lineIndex,
-          shouldSkipJustify,
-          expandedRuns,
-          resolvedListTextStartPx,
-        );
-      };
-
-      /**
-       * Renders drawing content that lives inside a table cell.
-       * Table-cell vector shapes intentionally skip outer geometry transforms.
-       */
-      const renderDrawingContentForTableCell = (block: DrawingBlock): HTMLElement => {
-        if (block.drawingKind === 'image') {
-          return createDrawingImageElement(this.doc!, block, this.buildImageHyperlinkAnchor.bind(this));
-        }
-        if (block.drawingKind === 'shapeGroup') {
-          return this.createShapeGroupElement(block, context);
-        }
-        if (block.drawingKind === 'vectorShape' || block.drawingKind === 'textboxShape') {
-          return this.createVectorShapeElement(block, block.geometry, false, 1, 1, context);
-        }
-        if (block.drawingKind === 'chart') {
-          return this.createChartElement(block);
-        }
-        return this.createDrawingPlaceholder();
-      };
+      const renderLineForTableCell = this.createTableCellLineRenderer();
+      const renderDrawingContentForTableCell = (
+        block: DrawingBlock,
+        interactionHost: HTMLElement,
+        measure: DrawingMeasure,
+      ): HTMLElement => this.renderDrawingContentForTable(block, interactionHost, measure, context);
 
       const tableRenderData = this.resolveTableRenderData(fragment, resolvedItem);
 
@@ -4583,6 +4186,7 @@ export class DomPainter {
       createInlineSdtWrapper: (sdt) => createInlineSdtWrapper(sdt, runContext),
       syncInlineSdtWrapperTypography,
       expandSdtWrapperPmRange,
+      positionValidation: this.positionValidation,
     };
     return runContext;
   }
@@ -4602,8 +4206,7 @@ export class DomPainter {
    * @param el - The HTMLElement representing the fragment to update
    * @param fragment - The fragment data containing updated position and dimensions
    * @param section - The document section ('body', 'header', 'footer') containing this fragment.
-   *                  Affects PM position validation - only body sections validate PM positions.
-   *                  If undefined, defaults to 'body' section behavior.
+   *                  Selects the wrapper's section-scoped identity and legacy PM attributes.
    */
   private updateFragmentElement(
     el: HTMLElement,
@@ -4632,10 +4235,7 @@ export class DomPainter {
    * @param el - The HTMLElement to apply fragment properties to
    * @param fragment - The fragment data containing position, dimensions, and PM position information
    * @param section - The document section ('body', 'header', 'footer') containing this fragment.
-   *                  Controls PM position validation behavior:
-   *                  - 'body' or undefined: PM positions are validated and required for paragraph fragments
-   *                  - 'header' or 'footer': PM position validation is skipped (these sections have separate PM coordinate spaces)
-   *                  When undefined, defaults to 'body' section behavior (validation enabled).
+   *                  Selects the wrapper's section-scoped identity and legacy PM attributes.
    */
   private applyFragmentFrame(
     el: HTMLElement,
@@ -4649,7 +4249,11 @@ export class DomPainter {
     el.dataset.blockId = fragment.blockId;
     el.dataset.layoutEpoch = String(this.layoutEpoch);
     applySourceAnchorDataset(el, fragment.sourceAnchor);
-    applyLayoutIdentityDataset(el, resolveOrBuildFragmentIdentity(fragment, story ?? resolveSectionStory(section)));
+    applyLayoutIdentityDataset(
+      el,
+      resolveOrBuildFragmentIdentity(fragment, resolveNoteStory(fragment) ?? story ?? resolveSectionStory(section)),
+    );
+    this.applyFragmentFlowClass(el, fragment);
 
     // Footnote content is read-only: prevent cursor placement and typing (blockId prefix from FootnotesBuilder)
     if (typeof fragment.blockId === 'string' && fragment.blockId.startsWith('footnote-')) {
@@ -4688,6 +4292,28 @@ export class DomPainter {
    */
   private isAnchoredMediaFragment(fragment: Fragment): fragment is ImageFragment | DrawingFragment {
     return (fragment.kind === 'image' || fragment.kind === 'drawing') && fragment.isAnchored === true;
+  }
+
+  /**
+   * Marks fragments whose paint coordinates are independent from body flow.
+   * DOM consumers such as header/footer hit-testing must not infer page margins
+   * from floating objects that happen to paint above the first flow block.
+   */
+  private applyFragmentFlowClass(
+    el: HTMLElement,
+    fragment: Fragment,
+    item?: ResolvedFragmentItem | ResolvedTableItem | ResolvedImageItem | ResolvedDrawingItem,
+  ): void {
+    const block = item?.block;
+    const isFloatingMedia =
+      (fragment.kind === 'image' || fragment.kind === 'drawing') &&
+      (fragment.isAnchored === true ||
+        ((block?.kind === 'image' || block?.kind === 'drawing') && block.anchor?.isAnchored === true));
+    const isFloatingTable = fragment.kind === 'table' && block?.kind === 'table' && block.anchor?.isAnchored === true;
+    const isPositionedFrame =
+      fragment.kind === 'para' && block?.kind === 'paragraph' && isPositionedParagraphFrame(block.attrs?.frame);
+
+    el.classList.toggle(DOM_CLASS_NAMES.FLOATING_FRAGMENT, isFloatingMedia || isFloatingTable || isPositionedFrame);
   }
 
   private shouldRenderBehindPageContent(
@@ -4779,12 +4405,13 @@ export class DomPainter {
       el,
       resolveOrBuildFragmentIdentity(
         fragment,
-        story ?? resolveSectionStory(section),
+        resolveNoteStory(fragment) ?? story ?? resolveSectionStory(section),
         item.layoutSourceIdentity
           ? { ...item.layoutSourceIdentity, sourceAnchor: item.sourceAnchor ?? item.layoutSourceIdentity.sourceAnchor }
           : undefined,
       ),
     );
+    this.applyFragmentFlowClass(el, fragment, item);
     this.applyFragmentWrapperZIndex(el, fragment, item.zIndex);
 
     if (item.fragmentKind === 'image' || item.fragmentKind === 'drawing' || item.fragmentKind === 'table') {
@@ -4815,45 +4442,3 @@ export class DomPainter {
     return 0;
   }
 }
-
-const fragmentKey = (fragment: Fragment): string => {
-  switch (fragment.kind) {
-    case 'para':
-      return `para:${fragment.blockId}:${fragment.fromLine}:${fragment.toLine}`;
-    case 'list-item':
-      throw new Error(`DomPainter: unsupported fragment kind ${fragment.kind}`);
-    case 'image':
-      return `image:${fragment.blockId}:${fragment.x}:${fragment.y}`;
-    case 'drawing':
-      return `drawing:${fragment.blockId}:${fragment.x}:${fragment.y}`;
-    case 'table': {
-      // Include row range and partial row info to uniquely identify table fragments
-      // This is critical for mid-row splitting where multiple fragments can exist for the same table
-      const partialKey = fragment.partialRow
-        ? `:${fragment.partialRow.fromLineByCell.join(',')}-${fragment.partialRow.toLineByCell.join(',')}`
-        : '';
-      return `table:${fragment.blockId}:${fragment.fromRow}:${fragment.toRow}${partialKey}`;
-    }
-    default: {
-      const _exhaustiveCheck: never = fragment;
-      return _exhaustiveCheck;
-    }
-  }
-};
-
-const hasFragmentGeometryChanged = (previous: Fragment, next: Fragment): boolean =>
-  previous.x !== next.x ||
-  previous.y !== next.y ||
-  previous.width !== next.width ||
-  ('height' in previous &&
-    'height' in next &&
-    typeof previous.height === 'number' &&
-    typeof next.height === 'number' &&
-    previous.height !== next.height);
-
-const isNonBodyStoryBlockId = (blockId: string | undefined): boolean =>
-  typeof blockId === 'string' &&
-  (blockId.startsWith('footnote-') ||
-    blockId.startsWith('endnote-') ||
-    blockId.startsWith('__sd_semantic_footnote-') ||
-    blockId.startsWith('__sd_semantic_endnote-'));

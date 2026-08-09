@@ -1,26 +1,22 @@
 /**
- * SuperDoc public facade: ui-react entry.
+ * SuperDoc public facade: `superdoc/ui/react` entry.
  *
- * SD-3182 under SD-3178 (Phase 3 of SD-3175). First supported-surface
- * facade entry (after the legacy mirrors in SD-3179 / SD-3180). Mirrors
- * the named surface reachable via the `superdoc/ui/react` subpath.
+ * v2-native React bindings for the SuperDoc-owned UI controller
+ * (`superdoc.ui`): the provider, the bind hook, the generic slice hook, and
+ * the domain hooks. This layer consumes the controller; SuperDoc creates and
+ * destroys it.
  *
- * Classification per SD-3147 is enforced by the public-surface metadata.
- * `useSuperDocContentControls` is preserved for compatibility.
- *
- * Strategy: re-export through the narrow `@superdoc/super-editor/ui/react`
- * subpath rather than the broad `@superdoc/super-editor` root, matching the
- * SD-3179 / SD-3180 narrow-import pattern. Keeps emitted bundles narrow.
+ * v2 NOTE: this is NOT the v1 re-export. It routes through the local,
+ * self-contained v2 React layer under `./ui/react.ts`, which is built on the
+ * v2-native controller. No v1 React bindings and no private v2 runtime
+ * imports.
  *
  * Rules for this file:
- *   - AIDEV-NOTE: Named exports only. No `export *`. The supported-surface
- *     contract is the explicit list below plus the SD-3147 classification.
- *   - AIDEV-NOTE: The postbuild gate `verify-public-facade-emit.cjs` parses this file
- *     and verifies that the emitted declarations expose exactly these
- *     named exports. The verifier postbuild fails on drift.
- *   - This entry does not re-export `Editor` or `EditorCommands`, so the
- *     verifier skips the command-signature probe.
+ *   - AIDEV-NOTE: Named exports only. No `export *`.
+ *   - AIDEV-NOTE: `verify-public-facade-emit.cjs` parses this file and verifies
+ *     the emitted declarations expose exactly these named exports.
  */
+
 export {
   SuperDocUIProvider,
   useSuperDocUI,
@@ -37,6 +33,6 @@ export {
   useSuperDocFontOptions,
   useSuperDocFontSizeOptions,
   useSuperDocZoom,
-} from '@superdoc/super-editor/ui/react';
+} from './ui/react.js';
 
-export type { SuperDocHost } from '@superdoc/super-editor/ui/react';
+export type { SuperDocHost, SuperDocUIProviderProps } from './ui/react.js';

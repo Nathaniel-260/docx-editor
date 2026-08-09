@@ -2,12 +2,15 @@
   "extends": "./tsconfig.build.json",
   "compilerOptions": {
     "composite": true,
-    "outDir": "dist-types",
-    "rootDir": "../.."
+    "rootDir": "../..",
+    "outDir": "dist-types"
   },
   "references": [
-    { "path": "../super-editor/tsconfig.types.json" },
-    { "path": "../collaboration-yjs/tsconfig.json" },
-    { "path": "../../shared/common/tsconfig.json" }
+    {
+      "path": "../../shared/common/tsconfig.json"
+    },
+    {
+      "path": "../../shared/font-system/tsconfig.json"
+    }
   ]
 }

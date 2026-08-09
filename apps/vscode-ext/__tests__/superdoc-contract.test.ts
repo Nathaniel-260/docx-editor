@@ -8,7 +8,7 @@
  * If any of these fail after a SuperDoc update, the VS Code extension
  * would break in production.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 

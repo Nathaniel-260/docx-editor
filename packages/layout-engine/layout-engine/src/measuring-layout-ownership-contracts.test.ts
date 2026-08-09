@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type {
   ColumnBreakBlock,
   DrawingBlock,
@@ -106,6 +106,48 @@ describe('Measuring to Layout ownership contracts', () => {
       toLine: 4,
       continuesFromPrev: true,
     });
+  });
+
+  it('paginates using inline-box-expanded line heights without re-deriving geometry', () => {
+    const first = line(80);
+    first.inlineBoxes = [
+      {
+        id: 'citation',
+        from: 0,
+        to: 0,
+        x: 0,
+        width: 20,
+        top: 0,
+        height: 80,
+        startsRange: true,
+        endsRange: false,
+        style: {
+          paddingInlineStart: 4,
+          paddingInlineEnd: 4,
+          paddingBlockStart: 10,
+          paddingBlockEnd: 10,
+          gapBefore: 0,
+          gapAfter: 0,
+          borderWidth: 1,
+        },
+      },
+    ];
+    const measure: ParagraphMeasure = {
+      kind: 'paragraph',
+      lines: [first, line(80), line(80), line(80)],
+      totalHeight: 320,
+    };
+
+    const layout = layoutDocument([paragraphBlock('boxed-pagination')], [measure], {
+      pageSize: { w: 400, h: 200 },
+      margins: { top: 20, right: 20, bottom: 20, left: 20 },
+    });
+
+    expect(layout.pages).toHaveLength(2);
+    expect(layout.pages.map((page) => page.fragments[0])).toEqual([
+      expect.objectContaining({ fromLine: 0, toLine: 2 }),
+      expect.objectContaining({ fromLine: 2, toLine: 4 }),
+    ]);
   });
 
   it('uses image measures, not block dimensions, for image fragment size', () => {

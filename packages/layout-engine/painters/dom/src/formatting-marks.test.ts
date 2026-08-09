@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { createTestPainter as createDomPainter } from './_test-utils.js';
 import type { FlowBlock, Layout, Measure } from '@superdoc/contracts';
 
@@ -98,6 +98,77 @@ describe('DomPainter formatting marks', () => {
     expect(document.head.textContent).toContain(
       '[dir="rtl"] .superdoc-formatting-paragraph-mark {\n  transform: translateX(calc(-100% - var(--sd-formatting-paragraph-mark-gap, 0.2em)))',
     );
+  });
+
+  it('decorates visible paragraph marks from hidden deleted paragraph-mark anchors', () => {
+    const text = 'First paragraph';
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: 'paragraph-1',
+      runs: [
+        {
+          text,
+          fontFamily: 'Arial',
+          fontSize: 16,
+          pmStart: 0,
+          pmEnd: text.length,
+        },
+        {
+          text: '\u200B',
+          fontFamily: 'Arial',
+          fontSize: 16,
+          vanish: true,
+          dataAttrs: { 'data-paragraph-mark-deletion-anchor': 'true' },
+          trackedChange: {
+            id: 'tc-delete-mark',
+            kind: 'delete',
+            type: 'structural',
+            subtype: 'paragraph-mark-deletion',
+            targetKind: 'paragraph-mark',
+            author: 'Ada',
+          },
+        },
+      ],
+      attrs: {
+        trackedChangesEnabled: true,
+        trackedChangesMode: 'review',
+      },
+    };
+    const measure: Measure = {
+      kind: 'paragraph',
+      lines: [
+        {
+          fromRun: 0,
+          fromChar: 0,
+          toRun: 1,
+          toChar: 1,
+          width: 110,
+          ascent: 12,
+          descent: 4,
+          lineHeight: 20,
+          segments: [{ runIndex: 0, fromChar: 0, toChar: text.length, width: 110, x: 0 }],
+        },
+      ],
+      totalHeight: 20,
+    };
+
+    const painter = createDomPainter({
+      blocks: [block],
+      measures: [measure],
+      showFormattingMarks: true,
+    });
+
+    painter.paint(createParagraphLayout(), container);
+
+    const paragraphMark = container.querySelector<HTMLElement>('.superdoc-formatting-paragraph-mark');
+    expect(paragraphMark?.textContent).toBe('¶');
+    expect(paragraphMark?.dataset.trackChangeId).toBe('tc-delete-mark');
+    expect(paragraphMark?.dataset.trackChangeMarker).toBe('paragraph');
+    expect(paragraphMark?.dataset.trackChangeSubtype).toBe('paragraph-mark-deletion');
+    expect(paragraphMark?.dataset.trackChangeTargetKind).toBe('paragraph-mark');
+    expect(paragraphMark?.classList.contains('superdoc-tracked-paragraph-mark')).toBe(true);
+    expect(paragraphMark?.classList.contains('track-delete-dec')).toBe(true);
+    expect(paragraphMark?.style.textDecorationLine).toBe('line-through');
   });
 
   it('positions paragraph marks after inline-flow paragraph indents', () => {

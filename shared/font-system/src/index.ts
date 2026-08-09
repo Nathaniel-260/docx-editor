@@ -3,7 +3,7 @@
  * resolution shared across the SuperDoc rendering pipeline.
  *
  * Consumed by measurement (`@superdoc/measuring-dom`), paint (`painters/dom`),
- * and the editor core (`@superdoc/super-editor`) so all three agree on which
+ * and editor runtimes so all layers agree on which
  * physical face is used and whether it is ready. Separate from
  * `@superdoc/font-utils` (CSS fallback-string composition only).
  *
@@ -71,7 +71,7 @@ export {
   __resetBundledPackPresent,
 } from './bundled';
 
-export type { FontResolutionRecord, UsedFace } from './report';
+export type { FontResolutionRecord, ResolvedFontEvidence, UsedFace } from './report';
 export { buildFontReport, buildFaceReport } from './report';
 
 export type { EmbeddingPolicy } from './os2';
@@ -102,3 +102,10 @@ export {
 
 export type { DocumentFontOption, FontFamilyOption } from './document-font-options';
 export { buildDocumentFontOptions, buildFontFamilyOptions } from './document-font-options';
+
+export type {
+  FaceSlot as FontFaceSlot,
+  GlyphException,
+  SubstitutePolicyAction,
+  SubstituteVerdict,
+} from './substitution-evidence';

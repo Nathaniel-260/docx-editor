@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure } from '@superdoc/contracts';
-import { toFlowBlocks } from '@core/layout-adapter';
+import { toFlowBlocks } from '../../tests/src/test-helpers/to-flow-blocks';
 import { layoutHeaderFooterWithCache, HeaderFooterLayoutCache } from '../src/layoutHeaderFooter';
 
 const makeBlock = (id: string, text = 'Hello'): FlowBlock => ({
@@ -111,6 +111,105 @@ describe('layoutHeaderFooterWithCache', () => {
     expect(result.default?.layout.pages[1].blocks?.[0].runs[1]?.text).toBe('2');
     expect(result.default?.layout.pages[0].measures).toHaveLength(1);
     expect(result.default?.layout.pages[1].measures).toHaveLength(1);
+  });
+
+  it('checks the cooperative execution budget while preparing page-local furniture', async () => {
+    const sections = {
+      default: [
+        {
+          kind: 'paragraph',
+          id: 'cooperative-page-token-header',
+          runs: [
+            { text: 'Page ', fontFamily: 'Arial', fontSize: 16 },
+            { text: '0', token: 'pageNumber', fontFamily: 'Arial', fontSize: 16 },
+          ],
+        } satisfies FlowBlock,
+      ],
+    };
+    const measureBlock = vi.fn(async () => makeMeasure(12));
+    const checkpointIfDue = vi.fn<() => Promise<void> | null>(() => null);
+
+    const result = await layoutHeaderFooterWithCache(
+      sections,
+      { width: 300, height: 40 },
+      measureBlock,
+      new HeaderFooterLayoutCache(),
+      undefined,
+      (pageNumber) => ({ displayText: String(pageNumber), totalPages: 12 }),
+      'header',
+      '',
+      undefined,
+      undefined,
+      { checkpointIfDue },
+    );
+
+    expect(result.default?.layout.pages).toHaveLength(12);
+    expect(checkpointIfDue.mock.calls.length).toBeGreaterThanOrEqual(12);
+  });
+
+  it('lays out only the requested missing PAGE contexts', async () => {
+    const sections = {
+      default: [
+        {
+          kind: 'paragraph',
+          id: 'retained-page-token-footer',
+          runs: [
+            { text: 'Page ', fontFamily: 'Arial', fontSize: 16 },
+            { text: '0', token: 'pageNumber', fontFamily: 'Arial', fontSize: 16 },
+          ],
+        } satisfies FlowBlock,
+      ],
+    };
+    const measureBlock = vi.fn(async () => makeMeasure(12));
+
+    const result = await layoutHeaderFooterWithCache(
+      sections,
+      { width: 300, height: 40 },
+      measureBlock,
+      new HeaderFooterLayoutCache(),
+      undefined,
+      (pageNumber) => ({ displayText: String(pageNumber), totalPages: 5 }),
+      'footer',
+      '',
+      undefined,
+      undefined,
+      { pageNumbers: [3] },
+    );
+
+    expect(measureBlock).toHaveBeenCalledTimes(1);
+    expect(result.default?.layout.pages.map((page) => page.number)).toEqual([3]);
+    expect(result.default?.layout.pages[0].blocks?.[0].runs[1]?.text).toBe('3');
+  });
+
+  it.each([
+    ['duplicate', [2, 2]],
+    ['out-of-range', [0]],
+  ])('rejects a %s retained PAGE context set', async (_label, pageNumbers) => {
+    const sections = {
+      default: [
+        {
+          kind: 'paragraph',
+          id: 'invalid-retained-page-token-footer',
+          runs: [{ text: '0', token: 'pageNumber', fontFamily: 'Arial', fontSize: 16 }],
+        } satisfies FlowBlock,
+      ],
+    };
+
+    await expect(
+      layoutHeaderFooterWithCache(
+        sections,
+        { width: 300, height: 40 },
+        async () => makeMeasure(12),
+        new HeaderFooterLayoutCache(),
+        undefined,
+        (pageNumber) => ({ displayText: String(pageNumber), totalPages: 5 }),
+        'footer',
+        '',
+        undefined,
+        undefined,
+        { pageNumbers },
+      ),
+    ).rejects.toThrow('header/footer retained PAGE extension received an invalid physical-page set');
   });
 
   it('uses the largest page-specific metrics when section page counts change layout height', async () => {

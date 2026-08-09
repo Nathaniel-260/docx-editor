@@ -17,6 +17,7 @@ import type {
   ParagraphBorders,
   ParagraphMeasure,
   SectionVerticalAlign,
+  MarkerTrackedChange,
   SourceAnchor,
   TableBlock,
   TableMeasure,
@@ -35,6 +36,8 @@ export type ResolvedLayout = {
   blockVersions?: Record<string, string>;
   /** Resolved pages with normalized dimensions. */
   pages: ResolvedPage[];
+  /** Exact physical page count for each section, keyed by section index. */
+  sectionPageCounts?: Readonly<Record<string, number>>;
   /** Optional document-level page background from OOXML w:background. */
   documentBackground?: DocumentBackground;
   /** Document epoch identifier from the source layout. Used for change tracking in the painter. */
@@ -47,6 +50,12 @@ export type ResolvedPage = {
   id: string;
   /** 0-based page index. */
   index: number;
+  /**
+   * Layout generation this page was resolved from (mirrors the top-level
+   * `layoutEpoch`). Lets window-paint consumers prove a packet belongs to the
+   * same resolve pass as the extents it is painted against (painter plan P5x).
+   */
+  layoutEpoch?: number;
   /** 1-based page number (from Page.number). */
   number: number;
   /** Page width in pixels (resolved from page.size?.w ?? layout.pageSize.w). */
@@ -55,6 +64,12 @@ export type ResolvedPage = {
   height: number;
   /** Resolved paint items for this page. */
   items: ResolvedPaintItem[];
+  /**
+   * Whether total-page fields may use the resolved document totals while this
+   * page is painted. `false` keeps the source-cached field text because the
+   * surrounding document pagination is still provisional.
+   */
+  pageCountFieldsExact?: boolean;
   /** Page margins from the source page. Used for ruler rendering and header/footer positioning. */
   margins?: PageMargins;
   /** Extra bottom space reserved for footnotes (px). Used for footer space calculation. */
@@ -65,6 +80,8 @@ export type ResolvedPage = {
   numberText?: string;
   /** Numeric page number after section page numbering settings are applied. */
   effectivePageNumber?: number;
+  /** One-based physical position within the owning section. */
+  sectionPageNumber?: number;
   /** Section PAGE number format before any run-local PAGE switch is applied. */
   pageNumberFormat?: PageNumberFormat;
   /** MVP chapter prefix text derived from the nearest numbered Heading N marker. */
@@ -73,7 +90,7 @@ export type ResolvedPage = {
   pageNumberChapterSeparator?: PageNumberChapterSeparator;
   /** Vertical alignment of content within this page. */
   vAlign?: SectionVerticalAlign;
-  /** Base section margins before header/footer inflation. Used for vAlign centering calculations. */
+  /** Base section margins before header/footer inflation. Used for vAlign and decoration positioning. */
   baseMargins?: { top: number; bottom: number };
   /** 0-based index of the section this page belongs to. */
   sectionIndex?: number;
@@ -172,6 +189,15 @@ export type ResolvedFragmentItem = {
   evidenceVersion?: string;
   /** Combined paint reuse signature. DomPainter uses this to refresh source-linked DOM metadata. */
   paintCacheVersion?: string;
+  /**
+   * Interior-pm signature (painter plan P5): hash of the block's run pm
+   * offsets RELATIVE to the block's first pm position. Stamps are pm-free by
+   * design, so uniform pm drift keeps them equal — this key is how the
+   * painter's window remap tier proves the drift is UNIFORM (equal key +
+   * equal fragment span length) before shifting reused DOM in place; any
+   * interior redistribution changes it and forces a rebuild.
+   */
+  pmInteriorVersion?: string;
   /** Pre-extracted block for paragraph (ParagraphBlock) or list-item (ListBlock) fragments. */
   block?: ParagraphBlock | ListBlock;
   /** Pre-extracted measure for paragraph (ParagraphMeasure) or list-item (ListMeasure) fragments. */
@@ -315,6 +341,15 @@ export type ResolvedTableItem = {
   evidenceVersion?: string;
   /** Combined paint reuse signature. DomPainter uses this to refresh source-linked DOM metadata. */
   paintCacheVersion?: string;
+  /**
+   * Interior-pm signature (painter plan P5): hash of the block's run pm
+   * offsets RELATIVE to the block's first pm position. Stamps are pm-free by
+   * design, so uniform pm drift keeps them equal — this key is how the
+   * painter's window remap tier proves the drift is UNIFORM (equal key +
+   * equal fragment span length) before shifting reused DOM in place; any
+   * interior redistribution changes it and forces a rebuild.
+   */
+  pmInteriorVersion?: string;
   /** Optional DOCX source evidence preserved for intelligence adapters and paint snapshots. */
   sourceAnchor?: SourceAnchor;
   /**
@@ -376,6 +411,15 @@ export type ResolvedImageItem = {
   evidenceVersion?: string;
   /** Combined paint reuse signature. DomPainter uses this to refresh source-linked DOM metadata. */
   paintCacheVersion?: string;
+  /**
+   * Interior-pm signature (painter plan P5): hash of the block's run pm
+   * offsets RELATIVE to the block's first pm position. Stamps are pm-free by
+   * design, so uniform pm drift keeps them equal — this key is how the
+   * painter's window remap tier proves the drift is UNIFORM (equal key +
+   * equal fragment span length) before shifting reused DOM in place; any
+   * interior redistribution changes it and forces a rebuild.
+   */
+  pmInteriorVersion?: string;
   /** Optional DOCX source evidence preserved for intelligence adapters and paint snapshots. */
   sourceAnchor?: SourceAnchor;
   /**
@@ -435,6 +479,15 @@ export type ResolvedDrawingItem = {
   evidenceVersion?: string;
   /** Combined paint reuse signature. DomPainter uses this to refresh source-linked DOM metadata. */
   paintCacheVersion?: string;
+  /**
+   * Interior-pm signature (painter plan P5): hash of the block's run pm
+   * offsets RELATIVE to the block's first pm position. Stamps are pm-free by
+   * design, so uniform pm drift keeps them equal — this key is how the
+   * painter's window remap tier proves the drift is UNIFORM (equal key +
+   * equal fragment span length) before shifting reused DOM in place; any
+   * interior redistribution changes it and forces a rebuild.
+   */
+  pmInteriorVersion?: string;
   /** Optional DOCX source evidence preserved for intelligence adapters and paint snapshots. */
   sourceAnchor?: SourceAnchor;
   /**
@@ -463,6 +516,11 @@ export function isResolvedDrawingItem(item: ResolvedPaintItem): item is Resolved
 /** A resolved header/footer page — mirrors HeaderFooterPage but with resolved items. */
 export type ResolvedHeaderFooterPage = {
   number: number;
+  /** Page-local measurement height; see `HeaderFooterPage.measurementHeight`. */
+  measurementHeight?: number;
+  minY?: number;
+  maxY?: number;
+  renderHeight?: number;
   numberText?: string;
   /** Section-aware numeric page value before formatting. */
   displayNumber?: number;
@@ -521,4 +579,10 @@ export type ResolvedListMarkerItem = {
   };
   /** Optional DOCX source evidence for list-marker observations. */
   sourceAnchor?: SourceAnchor;
+  /**
+   * Optional tracked-change review metadata for the marker glyph (Plan 5).
+   * Present only when the marker is affected by a guide-relevant tracked change;
+   * absent for normal markers so existing rendering is unchanged.
+   */
+  trackedChange?: MarkerTrackedChange;
 };

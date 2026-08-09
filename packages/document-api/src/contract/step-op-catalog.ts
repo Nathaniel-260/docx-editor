@@ -88,6 +88,9 @@ const STEP_OP_CATALOG_UNFROZEN = [
   step('tables.deleteRow', 'tables', 'Delete a row from the target table.', {
     referenceOperationId: 'tables.deleteRow',
   }),
+  step('tables.moveRow', 'tables', 'Move a row to a new position within the same table.', {
+    referenceOperationId: 'tables.moveRow',
+  }),
   step('tables.setRowHeight', 'tables', 'Set row height in the target table.', {
     referenceOperationId: 'tables.setRowHeight',
   }),
@@ -133,7 +136,7 @@ const STEP_OP_CATALOG_UNFROZEN = [
   step('tables.setAltText', 'tables', 'Set table alt text properties.', {
     referenceOperationId: 'tables.setAltText',
   }),
-  step('tables.setStyle', 'tables', 'Set table style identifier.', {
+  step('tables.setStyle', 'tables', 'Set or clear table style identifier.', {
     referenceOperationId: 'tables.setStyle',
   }),
   step('tables.clearStyle', 'tables', 'Clear direct table style assignment.', {

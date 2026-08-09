@@ -12,6 +12,7 @@ import type {
   CallbackProps,
   DocumentMode,
   SuperDocEditorProps,
+  SuperDocConfig,
   SuperDocInstance,
   SuperDocRef,
   SuperDocReadyEvent,
@@ -59,6 +60,7 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
     user: userProp,
     users: usersProp,
     modules,
+    ui,
     // All other props passed through
     ...restProps
   } = props;
@@ -66,6 +68,34 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
   // Apply defaults
   const documentMode = props.documentMode ?? 'editing';
   const role = props.role ?? 'editor';
+
+  // Whether to render the built-in toolbar container.
+  //
+  // React has to answer this locally because it owns the DOM element the
+  // toolbar mounts into, but the answer comes from the core config rather
+  // than a React-only flag: `ui: false` and `ui.toolbar: false` both mean no
+  // toolbar, and honoring them here keeps React from holding a second,
+  // conflicting opinion. `hideToolbar` is the older spelling and still wins
+  // when set, so existing components behave exactly as before.
+  const uiToolbar = ui === false ? false : ui?.toolbar;
+  // A consumer who named their own container gets the toolbar there, so an
+  // internal host would sit empty in the layout — and its id would still be
+  // handed to core as a mount target below.
+  const consumerOwnsToolbarContainer =
+    typeof uiToolbar === 'object' && uiToolbar !== null && uiToolbar.container !== undefined;
+  const rendersToolbar = !hideToolbar && uiToolbar !== false && !consumerOwnsToolbarContainer;
+
+  // What actually reaches the core config. `hideToolbar` is the older, blunter
+  // spelling and wins outright, so a consumer's `ui.toolbar` has to be replaced
+  // rather than merely withheld from React's own container: an external
+  // `ui.toolbar.container` would otherwise still mount a toolbar the prop said
+  // to hide.
+  const resolvedUi: SuperDocEditorProps['ui'] = (() => {
+    if (ui === false || ui === undefined) return ui;
+    if (!hideToolbar) return ui;
+    const { toolbar: _hidden, ...rest } = ui;
+    return { ...rest, toolbar: false };
+  })();
 
   // `user` and `users` are memoized by value so inline literals don't
   // trigger a rebuild. `modules` stays on reference identity — it can
@@ -164,9 +194,8 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
     const initSuperDoc = async () => {
       try {
         // Dynamic import for SSR safety
-        const modulePath = 'superdoc';
-        const superdocModule = await import(/* @vite-ignore */ modulePath);
-        const SuperDoc = superdocModule.SuperDoc as new (config: Record<string, unknown>) => SuperDocInstance;
+        const superdocModule = await import('superdoc');
+        const SuperDoc = superdocModule.SuperDoc as new (config: SuperDocConfig) => SuperDocInstance;
 
         // Check if we were destroyed while loading
         if (destroyed) return;
@@ -175,8 +204,12 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
         const superdocConfig = {
           ...restProps,
           selector: `#${CSS.escape(containerId)}`,
-          // Use internal toolbar container unless hideToolbar is true
-          ...(!hideToolbar && toolbarContainerRef.current ? { toolbar: `#${CSS.escape(toolbarId)}` } : {}),
+          // Mount into the internal toolbar container when one is rendered.
+          // This is the top-level alias, which the core resolves *after*
+          // `ui.toolbar.container` — so a consumer's own container still wins.
+          // The two are different keys, so spread order here is not what
+          // decides it.
+          ...(rendersToolbar && toolbarContainerRef.current ? { toolbar: `#${CSS.escape(toolbarId)}` } : {}),
           documentMode,
           role,
           contained,
@@ -184,6 +217,7 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
           ...(user ? { user } : {}),
           ...(users ? { users } : {}),
           ...(modules ? { modules } : {}),
+          ...(resolvedUi !== undefined ? { ui: resolvedUi } : {}),
           // Wire up callbacks with lifecycle guards
           onReady: (event: SuperDocReadyEvent) => {
             if (!destroyed) {
@@ -270,7 +304,7 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
     // initial values — use getInstance() methods to change them at runtime.
     // restProps is intentionally excluded to avoid rebuilds on every render.
     // documentMode is handled separately via setDocumentMode() for efficiency.
-  }, [documentProp, user, users, modules, role, hideToolbar, contained, containerId, toolbarId]);
+  }, [documentProp, user, users, modules, ui, role, hideToolbar, contained, containerId, toolbarId]);
 
   const wrapperClassName = ['superdoc-wrapper', className].filter(Boolean).join(' ');
   const hideWhenLoading: CSSProperties | undefined = isLoading ? { display: 'none' } : undefined;
@@ -282,7 +316,7 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
 
   return (
     <div className={wrapperClassName} style={wrapperStyle}>
-      {!hideToolbar && (
+      {rendersToolbar && (
         <div ref={toolbarContainerRef} id={toolbarId} className='superdoc-toolbar-container' style={hideWhenLoading} />
       )}
       <div

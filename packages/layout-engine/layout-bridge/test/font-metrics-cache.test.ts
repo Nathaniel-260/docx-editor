@@ -2,7 +2,7 @@
  * Tests for FontMetricsCache
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vite-plus/test';
 import { FontMetricsCache } from '../src/font-metrics-cache';
 
 // Mock canvas for Node.js test environment

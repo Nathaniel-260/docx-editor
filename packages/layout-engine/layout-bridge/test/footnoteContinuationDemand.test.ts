@@ -8,7 +8,7 @@
  * the right body height on continuation pages and the loop reaches that state.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure } from '@superdoc/contracts';
 import { incrementalLayout } from '../src/incrementalLayout';
 
@@ -90,6 +90,19 @@ describe('SD-3050: continuation-aware body pagination', () => {
       },
       measureBlock,
     );
+
+    const counters = result.bridgeTiming.counters;
+    expect(counters.footnoteRelayouts).toBeGreaterThan(0);
+    expect(counters.paginationPasses).toBe(1 + counters.pageTokenRelayouts + counters.footnoteRelayouts);
+    expect(
+      counters.footnoteReserveRelayouts +
+        counters.footnoteGrowRelayouts +
+        counters.footnoteTightenRelayouts +
+        counters.footnotePreferredRelayouts +
+        counters.footnoteWidowRelayouts +
+        counters.footnoteRevertRelayouts +
+        counters.footnoteOtherRelayouts,
+    ).toBe(counters.footnoteRelayouts);
 
     // The footnote should span pages 1 and 2.
     expect(result.layout.pages.length).toBeGreaterThanOrEqual(2);

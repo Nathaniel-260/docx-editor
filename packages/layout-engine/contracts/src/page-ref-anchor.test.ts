@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { Layout, ListBlock, ParagraphBlock, TableBlock, TableMeasure } from './index.js';
 import { buildPageRefAnchorMap } from './page-ref-anchor.js';
 
@@ -401,5 +401,42 @@ describe('buildPageRefAnchorMap', () => {
     };
 
     expect(buildPageRefAnchorMap(new Map([['missing', 1]]), layout).has('missing')).toBe(false);
+  });
+
+  it('batches thousands of marker-leading bookmarks while preserving caller order', () => {
+    const fragmentCount = 4_096;
+    const fragmentsPerPage = 32;
+    const pages: Layout['pages'] = [];
+    for (let pageIndex = 0; pageIndex < fragmentCount / fragmentsPerPage; pageIndex += 1) {
+      pages.push({
+        number: pageIndex + 1,
+        fragments: Array.from({ length: fragmentsPerPage }, (_, offset) => {
+          const fragmentIndex = pageIndex * fragmentsPerPage + offset;
+          const pmStart = fragmentIndex * 10 + 3;
+          return {
+            kind: 'para' as const,
+            blockId: `p${fragmentIndex}`,
+            fromLine: 0,
+            toLine: 1,
+            x: 0,
+            y: offset * 20,
+            width: 100,
+            pmStart,
+            pmEnd: pmStart + 5,
+          };
+        }),
+      });
+    }
+    const bookmarks = new Map<string, number>();
+    for (let fragmentIndex = fragmentCount - 1; fragmentIndex >= 0; fragmentIndex -= 1) {
+      bookmarks.set(`b${fragmentIndex}`, fragmentIndex * 10 + 1);
+    }
+
+    const result = buildPageRefAnchorMap(bookmarks, { pageSize: { w: 800, h: 1000 }, pages });
+
+    expect(result.size).toBe(fragmentCount);
+    expect([...result.keys()].slice(0, 3)).toEqual(['b4095', 'b4094', 'b4093']);
+    expect(result.get('b0')?.physicalPage).toBe(1);
+    expect(result.get('b4095')?.physicalPage).toBe(128);
   });
 });

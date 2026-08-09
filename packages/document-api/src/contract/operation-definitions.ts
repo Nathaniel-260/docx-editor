@@ -54,6 +54,7 @@ export type ReferenceGroupKey =
   | 'contentControls'
   | 'bookmarks'
   | 'footnotes'
+  | 'clipboard'
   | 'crossRefs'
   | 'index'
   | 'captions'
@@ -63,6 +64,7 @@ export type ReferenceGroupKey =
   | 'ranges'
   | 'selection'
   | 'diff'
+  | 'export'
   | 'protection'
   | 'permissionRanges'
   | 'customXml'
@@ -98,8 +100,28 @@ export interface IntentGroupMeta {
   inputExamples?: Record<string, unknown>[];
 }
 
+export const V1_RUNTIME_UNAVAILABLE_OPERATION_IDS = [
+  'blocks.split',
+  'blocks.merge',
+  'blocks.move',
+  'lists.getState',
+  'lists.apply',
+  'lists.continue',
+  'lists.restart',
+  'lists.remove',
+  'format.paragraph.setMarkRunProps',
+  'tables.moveRow',
+] as const;
+
+const V2_BACKED_ONLY_DESCRIPTION_NOTE =
+  ' Available on v2-backed sessions only; v1-backed sessions currently return `CAPABILITY_UNAVAILABLE`.';
+
+function v2BackedOnlyDescription(description: string): string {
+  return `${description}${V2_BACKED_ONLY_DESCRIPTION_NOTE}`;
+}
+
 const FOOTNOTE_STRUCTURED_BODY_V1_NOTE =
-  ' Structured `body` content is not available in this v1-only branch; those shapes return `CAPABILITY_UNAVAILABLE`.';
+  ' Structured `body` content is currently available on v2-backed sessions only; v1-backed sessions return `CAPABILITY_UNAVAILABLE` for those shapes.';
 
 const FIELD_PRESERVE_CACHED_V1_NOTE =
   ' The current v1 runtime supports rebuild flows; `cachedResultText` / `updatePolicy: "preserveCached"` currently return `CAPABILITY_UNAVAILABLE`.';
@@ -113,7 +135,7 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
       'Text search returns handle.ref covering only the matched substring. Node search finds blocks by type (paragraph, heading, table, listItem, etc.). ' +
       'The "require" parameter controls match cardinality: "first" returns one match, "all" returns every match, "exactlyOne" fails if not exactly one match. ' +
       'Supports scoping via "within" to search inside a single block. ' +
-      'Do NOT use regex or markdown formatting markers (#, **, etc.) in search patterns; patterns are plain text only. ' +
+      'Patterns are plain text by default; pass select.mode: "regex" for regular-expression search (g/gi semantics, 1024-char cap, no wholeWord, capture groups returned on matches). Invalid or unsafe patterns fail with INVALID_INPUT. Do NOT use markdown formatting markers (#, **, etc.) in search patterns. ' +
       'Do NOT use this tool when you already have a ref from superdoc_get_content blocks or superdoc_create; use that ref directly.',
     inputExamples: [
       { select: { type: 'text', pattern: 'Introduction' }, require: 'first' },
@@ -346,7 +368,7 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
       '• "create": make a NEW list from paragraphs. Two modes: ' +
       'mode:"empty" with at:{kind:"block", nodeType:"paragraph", nodeId} converts a single paragraph; ' +
       'mode:"fromParagraphs" with target:{from:{...paragraph block address}, to:{...paragraph block address}} converts a range: ALL paragraphs between from and to become items, so make sure no other content sits between them. ' +
-      'Pass a preset ("disc"|"circle"|"square"|"dash" for bullets; "decimal"|"decimalParenthesis"|"lowerLetter"|"upperLetter"|"lowerRoman"|"upperRoman" for ordered) or a custom style. ' +
+      'Pass a preset ("disc"|"circle"|"square"|"dash" for bullets; "decimal"|"decimalParenthesis"|"lowerLetter"|"lowerLetterParenthesis"|"upperLetter"|"upperLetterParenthesis"|"lowerRoman"|"upperRoman" for ordered) or a custom style. ' +
       'Use "create" to start a fresh list: NOT to extend an existing one (use "attach" for that).\n' +
       '• "attach": add paragraphs to an EXISTING list, inheriting its numbering definition. Pass target:{paragraph block address} (or {from, to} range of paragraphs) + attachTo:{kind:"block", nodeType:"listItem", nodeId:"<any item in destination list>"} + optional level:0..8. Use this to extend a list or as the second half of a merge workflow (see "join" below).\n' +
       '• "set_type": convert an existing list between ordered and bullet. Pass target:{listItem} + kind:"ordered" or "bullet". Adjacent compatible sequences are merged automatically to preserve continuous numbering.\n' +
@@ -399,8 +421,8 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
       'To create a comment, first use superdoc_search to find the target text, then pass action "create" with the comment text and a target built from items[0].blocks. For a single-block match use {kind:"text", blockId: items[0].blocks[0].blockId, range: items[0].blocks[0].range}. For a cross-block match use {kind:"text", segments: items[0].blocks.map(b => ({blockId: b.blockId, range: b.range}))}. Do NOT use items[0].highlightRange (snippet-relative, not block-relative) or items[0].target (a SelectionTarget, not accepted by comments.create). ' +
       'For threaded replies, pass "parentId" with the parent comment ID. ' +
       'Action "list" returns all comments with optional pagination (limit, offset) and filtering (includeResolved:true to include resolved). ' +
-      'Action "get" retrieves a single comment by ID. Action "update" changes comment text, re-anchors the thread, or changes status to "resolved". The legacy `isInternal` field remains in schema for v1 compatibility but is not supported for new comment patch behavior. Action "delete" removes a comment or reply by ID. ' +
-      'Do NOT pass "ref", "id", or "parentId" when creating a new top-level comment; only "action", "text", and "target" are needed.',
+      'Action "get" retrieves a single comment by ID. Action "update" changes comment text, re-anchors the thread, changes status to "resolved", or toggles the legacy `sdcom:internal` flag for v1 compatibility. Action "delete" removes a comment or reply by ID. ' +
+      'Do NOT pass "ref", "id", or "parentId" when creating a new top-level comment; "action", "text", and "target" are required, while commentId (the v1 compatibility alias for externalId), externalId, author fields, and metadata are optional correlation fields.',
     inputExamples: [
       {
         action: 'create',
@@ -418,13 +440,14 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
       'Review and resolve tracked changes (insertions, deletions, replacements, format changes) in the document. ' +
       'Action "list" returns all tracked changes with optional filtering by type (insert, delete, replacement, format) and pagination (limit, offset). Each change includes an ID, type, author, timestamp, and content preview. ' +
       'Action "decide" accepts or rejects changes. Pass decision:"accept" to apply the change permanently, or decision:"reject" to discard it. ' +
-      'Target a single change with {id:"<changeId>"}, a partial selection with {kind:"range", range:{...}}, or all changes at once with {scope:"all"} (optionally plus story). ' +
+      'Target a single change with {id:"<changeId>"}, several whole changes atomically with {kind:"ids", ids:[...]}, a partial selection with {kind:"range", range:{...}}, or all changes at once with {scope:"all"} (optionally plus story). ' +
       'Do NOT use this tool unless the document has tracked changes. Use superdoc_get_content info to check the tracked change count first.',
     inputExamples: [
       { action: 'list' },
       { action: 'list', type: 'insertion', limit: 10 },
       { action: 'list', type: 'replacement', limit: 10 },
       { action: 'decide', decision: 'accept', target: { id: '<changeId>' } },
+      { action: 'decide', decision: 'accept', target: { kind: 'ids', ids: ['<changeId1>', '<changeId2>'] } },
       {
         action: 'decide',
         decision: 'reject',
@@ -535,18 +558,21 @@ function mutationOperation(options: {
   idempotency: OperationIdempotency;
   supportsDryRun: boolean;
   supportsTrackedMode: boolean;
+  supportsConditionalTrackedMode?: boolean;
   possibleFailureCodes: readonly ReceiptFailureCode[];
   throws: readonly PreApplyThrowCode[];
   deterministicTargetResolution?: boolean;
   remediationHints?: readonly string[];
   historyUnsafe?: boolean;
   returnsPromise?: boolean;
+  returnsReceipt?: boolean;
 }): CommandStaticMetadata {
   return {
     mutates: true,
     idempotency: options.idempotency,
     supportsDryRun: options.supportsDryRun,
     supportsTrackedMode: options.supportsTrackedMode,
+    supportsConditionalTrackedMode: options.supportsConditionalTrackedMode,
     possibleFailureCodes: options.possibleFailureCodes,
     throws: {
       preApply: options.throws,
@@ -556,6 +582,7 @@ function mutationOperation(options: {
     remediationHints: options.remediationHints,
     historyUnsafe: options.historyUnsafe,
     returnsPromise: options.returnsPromise,
+    returnsReceipt: options.returnsReceipt,
   };
 }
 // Throw-code shorthand arrays
@@ -679,6 +706,7 @@ const FORMAT_INLINE_ALIAS_OPERATION_DEFINITIONS: Record<FormatInlineAliasOperati
           supportsTrackedMode: entry.tracked,
           possibleFailureCodes: ['INVALID_TARGET'],
           throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT', ...T_STORY],
+          returnsReceipt: true,
         }),
         referenceDocPath: `format/${camelToKebab(entry.key)}.mdx`,
         referenceGroup: 'format',
@@ -827,6 +855,7 @@ export const OPERATION_DEFINITIONS = {
       supportsTrackedMode: false,
       possibleFailureCodes: ['NO_OP'],
       throws: ['CAPABILITY_UNAVAILABLE'],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'clear-content.mdx',
     referenceGroup: 'core',
@@ -841,7 +870,7 @@ export const OPERATION_DEFINITIONS = {
       'Text mode supports text (default), markdown, and html content types via the `type` field. ' +
       'Structural mode uses `placement` (before/after/insideStart/insideEnd) to position relative to the target block.',
     expectedResult:
-      'Returns an SDMutationReceipt with applied status; resolution reports the inserted TextAddress for text insertion or a BlockNodeAddress for structural insertion. Receipt reports NO_OP if the insertion point is invalid or content is empty.',
+      'Returns an SDMutationReceipt with applied status; resolution reports the resolved insertion point/target. Created visible text and structural blocks are reported through effects.insertedText and effects.insertedBlocks when available. Receipt reports NO_OP if the insertion point is invalid or content is empty.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
       idempotency: 'non-idempotent',
@@ -874,6 +903,7 @@ export const OPERATION_DEFINITIONS = {
         'CAPABILITY_UNSUPPORTED',
         ...T_STORY,
       ],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'insert.mdx',
     referenceGroup: 'core',
@@ -918,6 +948,7 @@ export const OPERATION_DEFINITIONS = {
         'CAPABILITY_UNSUPPORTED',
         ...T_STORY,
       ],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'replace.mdx',
     referenceGroup: 'core',
@@ -937,6 +968,7 @@ export const OPERATION_DEFINITIONS = {
       supportsTrackedMode: true,
       possibleFailureCodes: ['NO_OP'],
       throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT', ...T_STORY],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'delete.mdx',
     referenceGroup: 'core',
@@ -955,6 +987,7 @@ export const OPERATION_DEFINITIONS = {
       supportsTrackedMode: true,
       possibleFailureCodes: ['INVALID_TARGET', 'NO_OP'],
       throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT', ...T_STORY],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'format/apply.mdx',
     referenceGroup: 'format',
@@ -963,7 +996,7 @@ export const OPERATION_DEFINITIONS = {
   'blocks.list': {
     memberPath: 'blocks.list',
     description:
-      'List top-level blocks in document order with IDs, types, text previews, and optional full text when includeText:true. Text, previews, lengths, and formatting hints use the VISIBLE model: pending tracked deletions are excluded (matching how edit refs resolve), and inline atoms render as a single placeholder character. Supports pagination via offset/limit, optional nodeType filtering, and single-story scoping via `in: <StoryLocator>`.',
+      'List top-level blocks in document order with IDs, types, text previews, and optional full text when includeText:true. Supports pagination via offset/limit, optional nodeType filtering, and single-story scoping via `in: <StoryLocator>`.',
     expectedResult:
       'Returns a BlocksListResult with total block count, an ordered array of block entries (ordinal, nodeId, nodeType, textPreview, optional text, isEmpty), and the current document revision.',
     requiresDocumentContext: true,
@@ -995,6 +1028,7 @@ export const OPERATION_DEFINITIONS = {
         'INTERNAL_ERROR',
         ...T_STORY,
       ],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'blocks/delete.mdx',
     referenceGroup: 'blocks',
@@ -1009,7 +1043,7 @@ export const OPERATION_DEFINITIONS = {
     metadata: mutationOperation({
       idempotency: 'conditional',
       supportsDryRun: true,
-      supportsTrackedMode: false,
+      supportsTrackedMode: true,
       possibleFailureCodes: NONE_FAILURES,
       throws: [
         'TARGET_NOT_FOUND',
@@ -1024,6 +1058,81 @@ export const OPERATION_DEFINITIONS = {
     referenceDocPath: 'blocks/delete-range.mdx',
     referenceGroup: 'blocks',
   },
+  'blocks.split': {
+    memberPath: 'blocks.split',
+    description: v2BackedOnlyDescription(
+      'Split a paragraph at a visible-text offset, producing two paragraphs. Preserves unambiguous simple run properties around the cut. Rejects when the paragraph contains fields, content controls, drawings, equations, or unsupported tracked-change wrappers.',
+    ),
+    expectedResult:
+      'Returns a BlocksSplitResult; on success carries the new tail paragraph address, affectedStories, and (for engines that report them) story-absolute textRangeShifts and a txId for history correlation.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'non-idempotent',
+      supportsDryRun: false,
+      supportsTrackedMode: true,
+      possibleFailureCodes: [
+        'INVALID_TARGET',
+        'TARGET_NOT_FOUND',
+        'CAPABILITY_UNAVAILABLE',
+        'INVALID_CONTEXT',
+        'INVALID_INPUT',
+      ],
+      throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT'],
+      returnsReceipt: true,
+    }),
+    referenceDocPath: 'blocks/split.mdx',
+    referenceGroup: 'blocks',
+  },
+  'blocks.merge': {
+    memberPath: 'blocks.merge',
+    description: v2BackedOnlyDescription(
+      'Merge two adjacent paragraphs in the same story. The first paragraph keeps its pPr; the second paragraph is removed. Rejects when either paragraph carries a w:sectPr or when their numbering definitions differ.',
+    ),
+    expectedResult:
+      'Returns a BlocksMergeResult; on success carries the removed paragraph address plus affectedStories, textRangeShifts, and a txId.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'non-idempotent',
+      supportsDryRun: false,
+      supportsTrackedMode: true,
+      possibleFailureCodes: [
+        'INVALID_TARGET',
+        'TARGET_NOT_FOUND',
+        'CAPABILITY_UNAVAILABLE',
+        'INVALID_CONTEXT',
+        'INVALID_INPUT',
+      ],
+      throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT'],
+      returnsReceipt: true,
+    }),
+    referenceDocPath: 'blocks/merge.mdx',
+    referenceGroup: 'blocks',
+  },
+  'blocks.move': {
+    memberPath: 'blocks.move',
+    description: v2BackedOnlyDescription(
+      'Move a paragraph within the same story to a new anchor paragraph (before or after). Cross-story and relationship-bearing moves reject with named reasons. Tracked-mode authoring emits paired `<w:moveFrom>` / `<w:moveTo>` review state with explicit move range marker identity; safe content (no comment/bookmark/permission anchors and no pre-existing tracked wrappers) is required for tracked authoring.',
+    ),
+    expectedResult:
+      'Returns a BlocksMoveResult; on success carries the moved paragraph address plus affectedStories and a txId. Tracked-mode results include `trackedChangeRefs` pointing at the paired move review entity.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'non-idempotent',
+      supportsDryRun: false,
+      supportsTrackedMode: true,
+      possibleFailureCodes: [
+        'INVALID_TARGET',
+        'TARGET_NOT_FOUND',
+        'CAPABILITY_UNAVAILABLE',
+        'INVALID_CONTEXT',
+        'INVALID_INPUT',
+      ],
+      throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT'],
+      returnsReceipt: true,
+    }),
+    referenceDocPath: 'blocks/move.mdx',
+    referenceGroup: 'blocks',
+  },
   'format.apply': {
     memberPath: 'format.apply',
     description: 'Apply inline run-property patch changes to the target range with explicit set/clear semantics.',
@@ -1035,6 +1144,7 @@ export const OPERATION_DEFINITIONS = {
       supportsTrackedMode: true,
       possibleFailureCodes: ['INVALID_TARGET', 'NO_OP'],
       throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT', ...T_STORY],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'format/apply.mdx',
     referenceGroup: 'format',
@@ -1057,6 +1167,17 @@ export const OPERATION_DEFINITIONS = {
       historyUnsafe: true,
     }),
     referenceDocPath: 'styles/apply.mdx',
+    referenceGroup: 'styles',
+  },
+  'styles.getCatalog': {
+    memberPath: 'styles.getCatalog',
+    description:
+      'List the available styles as a normalized catalogue with stable IDs, display names, type, visibility, priority, provenance, and source diagnostics. Supports view (quickGallery/recommended/currentDocument/all/inUse), type filtering, hidden/latent inclusion, usage rollups, and UI-safe preview tokens. Distinct from DocumentInfo.styles, which is a usage summary.',
+    expectedResult:
+      'Returns a StylesGetCatalogResult with the requested view, the full filtered style set, document defaults, per-source status, and diagnostics (including labeled fallbacks and unsupported-option notices).',
+    requiresDocumentContext: true,
+    metadata: readOperation({ idempotency: 'idempotent', throws: ['INVALID_INPUT', 'CAPABILITY_UNAVAILABLE'] }),
+    referenceDocPath: 'styles/get-catalog.mdx',
     referenceGroup: 'styles',
   },
   'templates.apply': {
@@ -1441,13 +1562,31 @@ export const OPERATION_DEFINITIONS = {
       idempotency: 'conditional',
       supportsDryRun: true,
       supportsTrackedMode: true,
-      possibleFailureCodes: ['NO_OP'],
+      possibleFailureCodes: ['NO_OP', 'INVALID_INPUT', 'PRECONDITION_FAILED'],
       throws: T_PARAGRAPH_MUTATION,
     }),
     referenceDocPath: 'styles/paragraph/set-style.mdx',
     referenceGroup: 'styles.paragraph',
     intentGroup: 'format',
     intentAction: 'set_style',
+  },
+  'styles.paragraph.setStyleRef': {
+    memberPath: 'styles.paragraph.setStyleRef',
+    description: 'Apply a paragraph style (w:pStyle) to a paragraph-like block without clearing direct run formatting.',
+    expectedResult:
+      'Returns a ParagraphMutationResult; reports NO_OP if the style reference already matches. Unlike setStyle, existing run formatting is preserved.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'conditional',
+      supportsDryRun: true,
+      supportsTrackedMode: true,
+      possibleFailureCodes: ['NO_OP', 'INVALID_INPUT', 'PRECONDITION_FAILED'],
+      throws: T_PARAGRAPH_MUTATION,
+    }),
+    referenceDocPath: 'styles/paragraph/set-style-ref.mdx',
+    referenceGroup: 'styles.paragraph',
+    intentGroup: 'format',
+    intentAction: 'set_style_ref',
   },
   'styles.paragraph.clearStyle': {
     memberPath: 'styles.paragraph.clearStyle',
@@ -1731,6 +1870,24 @@ export const OPERATION_DEFINITIONS = {
     referenceDocPath: 'format/paragraph/clear-shading.mdx',
     referenceGroup: 'format.paragraph',
   },
+  'format.paragraph.setMarkRunProps': {
+    memberPath: 'format.paragraph.setMarkRunProps',
+    description: v2BackedOnlyDescription(
+      "Set the paragraph mark's run properties (w:pPr/w:rPr), e.g. the font size or specVanish carried by the paragraph-end mark.",
+    ),
+    expectedResult:
+      'Returns a ParagraphMutationResult; reports NO_OP if the encoded mark run properties already match.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'conditional',
+      supportsDryRun: true,
+      supportsTrackedMode: false,
+      possibleFailureCodes: ['NO_OP', 'CAPABILITY_UNAVAILABLE'],
+      throws: T_PARAGRAPH_MUTATION,
+    }),
+    referenceDocPath: 'format/paragraph/set-mark-run-props.mdx',
+    referenceGroup: 'format.paragraph',
+  },
   'format.paragraph.setDirection': {
     memberPath: 'format.paragraph.setDirection',
     description: 'Set paragraph base direction (LTR or RTL via w:bidi). Optionally align text to match.',
@@ -1842,15 +1999,21 @@ export const OPERATION_DEFINITIONS = {
   },
   'lists.attach': {
     memberPath: 'lists.attach',
-    description:
-      'Convert non-list paragraphs to list items under an existing list sequence. With changeMode:"tracked" the former (unnumbered) paragraph properties are recorded as a w:pPrChange so a reviewer can accept/reject the numbering.',
-    expectedResult: 'Returns a ListsMutateItemResult confirming attachment.',
+    description: 'Convert non-list paragraphs to list items under an existing list sequence.',
+    expectedResult:
+      'Returns a ListsMutateItemResult confirming attachment. Tracked-mode results include `trackedChangeRefs` pointing at the pPrChange-backed numPr revision.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
       idempotency: 'conditional',
       supportsDryRun: true,
+      // The v2 adapter authors tracked attach via
+      // prepareTrackedListDefinitionMutation (pPrChange-backed numPr revision);
+      // the catalog flag was lagging the adapter and blocked CLI-transport hosts.
       supportsTrackedMode: true,
-      possibleFailureCodes: ['INVALID_TARGET', 'NO_OP'],
+      // PRECONDITION_FAILED is reachable in tracked mode:
+      // prepareTrackedListDefinitionMutation returns it when no author is
+      // configured or the target paragraph carries a conflicting pPrChange.
+      possibleFailureCodes: ['INVALID_TARGET', 'NO_OP', 'PRECONDITION_FAILED'],
       throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET'],
     }),
     referenceDocPath: 'lists/attach.mdx',
@@ -2058,6 +2221,7 @@ export const OPERATION_DEFINITIONS = {
       idempotency: 'conditional',
       supportsDryRun: true,
       supportsTrackedMode: false,
+      returnsReceipt: true,
       possibleFailureCodes: ['INVALID_TARGET', 'NO_COMPATIBLE_PREVIOUS', 'ALREADY_CONTINUOUS'],
       throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET'],
     }),
@@ -2412,10 +2576,107 @@ export const OPERATION_DEFINITIONS = {
     referenceDocPath: 'lists/set-level-layout.mdx',
     referenceGroup: 'lists',
   },
+  // v2 numbering-aware list operation surface.
+  'lists.getState': {
+    memberPath: 'lists.getState',
+    description: v2BackedOnlyDescription(
+      'Read the numbering-aware list state for a paragraph (numId, ilvl, abstract reference, level format). Returns null when the target is not a list item.',
+    ),
+    expectedResult:
+      'Returns a ListsGetStateResult with `isListItem` plus numId/ilvl/abstract/numFmt metadata when present.',
+    requiresDocumentContext: true,
+    metadata: readOperation({
+      possibleFailureCodes: ['TARGET_NOT_FOUND', 'CAPABILITY_UNAVAILABLE'],
+      throws: [...T_NOT_FOUND_CAPABLE],
+    }),
+    referenceDocPath: 'lists/get-state.mdx',
+    referenceGroup: 'lists',
+  },
+  'lists.apply': {
+    memberPath: 'lists.apply',
+    description: v2BackedOnlyDescription(
+      'Apply a numbering definition to a paragraph. When `/word/numbering.xml` is absent it is materialized atomically together with the package content-type override and document relationship. Seeds bullet or ordered single-level definitions when no `reuseNumId` is provided.',
+    ),
+    expectedResult:
+      'Returns a ListsMutateItemResult receipt with txId; partsChanged includes numbering / content-types / rels when first-list materialization fires.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'non-idempotent',
+      supportsDryRun: false,
+      supportsTrackedMode: true,
+      possibleFailureCodes: [
+        'INVALID_TARGET',
+        'TARGET_NOT_FOUND',
+        'CAPABILITY_UNAVAILABLE',
+        'INVALID_CONTEXT',
+        'INVALID_INPUT',
+      ],
+      throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT'],
+    }),
+    referenceDocPath: 'lists/apply.mdx',
+    referenceGroup: 'lists',
+  },
+  'lists.continue': {
+    memberPath: 'lists.continue',
+    description: v2BackedOnlyDescription(
+      "Continue from the previous compatible list item in the same story. Adopts the previous paragraph's numId+ilvl. Rejects with named reasons when no compatible previous item exists or when an intervening structural boundary blocks the continuation.",
+    ),
+    expectedResult: 'Returns a ListsMutateItemResult receipt with txId.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'non-idempotent',
+      supportsDryRun: false,
+      supportsTrackedMode: true,
+      possibleFailureCodes: ['INVALID_TARGET', 'TARGET_NOT_FOUND', 'CAPABILITY_UNAVAILABLE', 'INVALID_CONTEXT'],
+      throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET'],
+    }),
+    referenceDocPath: 'lists/continue.mdx',
+    referenceGroup: 'lists',
+  },
+  'lists.restart': {
+    memberPath: 'lists.restart',
+    description: v2BackedOnlyDescription(
+      'Restart numbering at a list item. Creates a new `<w:num>` that references the existing `<w:abstractNumId>` with a `<w:lvlOverride><w:startOverride/></w:lvlOverride>`. Distant paragraphs sharing the old numId are intentionally untouched.',
+    ),
+    expectedResult: 'Returns a ListsMutateItemResult receipt with txId; partsChanged includes /word/numbering.xml.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'non-idempotent',
+      supportsDryRun: false,
+      supportsTrackedMode: true,
+      possibleFailureCodes: [
+        'INVALID_TARGET',
+        'TARGET_NOT_FOUND',
+        'CAPABILITY_UNAVAILABLE',
+        'INVALID_CONTEXT',
+        'INVALID_INPUT',
+      ],
+      throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT'],
+    }),
+    referenceDocPath: 'lists/restart.mdx',
+    referenceGroup: 'lists',
+  },
+  'lists.remove': {
+    memberPath: 'lists.remove',
+    description: v2BackedOnlyDescription(
+      'Strip the `<w:numPr>` from a list-item paragraph. The numbering definition in `/word/numbering.xml` is intentionally NOT modified; orphan cleanup is handled by the export-side stripper.',
+    ),
+    expectedResult: 'Returns a ListsMutateItemResult receipt with txId.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'non-idempotent',
+      supportsDryRun: false,
+      supportsTrackedMode: true,
+      possibleFailureCodes: ['INVALID_TARGET', 'TARGET_NOT_FOUND', 'CAPABILITY_UNAVAILABLE', 'INVALID_CONTEXT'],
+      throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET'],
+    }),
+    referenceDocPath: 'lists/remove.mdx',
+    referenceGroup: 'lists',
+  },
   'comments.create': {
     memberPath: 'comments.create',
     description:
-      'Create a new comment thread (or reply when parentCommentId is given). Accepts TextAddress / TextTarget anchors, or a TrackedChangeCommentTarget that names a logical tracked-change id. The tracked-change target accepts both the explicit kind form and the Labs-compatible trackedChangeId-only form; the adapter normalizes it to a Word-compatible content anchor on the requested revision side.',
+      'Create a new comment thread (or reply when parentCommentId is given). Accepts TextAddress / TextTarget anchors, or a TrackedChangeCommentTarget that names a logical tracked-change id. The tracked-change target accepts both the explicit kind form and the Labs-compatible trackedChangeId-only form; the adapter normalizes it to a Word-compatible content anchor on the requested revision side. Callers may supply a durable externalId, or use the v1-compatible caller-supplied commentId alias, plus author fields and arbitrary JSON metadata for integration correlation. The caller-owned id remains distinct from the generated Word-compatible commentId.',
     expectedResult:
       'Returns a Receipt with the new commentId in `id` and `inserted` on success; rejects whitespace-only bodies, unsupported anchor contexts, and cross-story targets. Tracked-change comment targets support insertion, deletion, replacement, and paired-move revisions; they fail with `TARGET_NOT_FOUND` for stale ids, `CAPABILITY_UNAVAILABLE` for formatting / structural revisions and unpaired move sides, and `INVALID_TARGET` for incompatible side requests or ambiguous replacement targets that omit a required `side`.',
     requiresDocumentContext: true,
@@ -2431,6 +2692,7 @@ export const OPERATION_DEFINITIONS = {
         'CAPABILITY_UNAVAILABLE',
       ],
       throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT'],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'comments/create.mdx',
     referenceGroup: 'comments',
@@ -2440,9 +2702,9 @@ export const OPERATION_DEFINITIONS = {
   'comments.patch': {
     memberPath: 'comments.patch',
     description:
-      'Patch exactly one field on an existing comment (`text`, `target`, or `status`). The `target` branch accepts a plain TextAddress or a TrackedChangeCommentTarget, with or without `kind: "trackedChange"`, that names a logical tracked-change id. The legacy `isInternal` input is preserved in the schema for v1 backward compatibility but is not supported for new patch behavior and fails with `CAPABILITY_UNAVAILABLE` (kernel reason `internal-comments-unsupported`). Multi-field patches and no-op edits are rejected with `INVALID_INPUT`; reply target / status patches are rejected with `INVALID_CONTEXT`.',
+      'Patch exactly one field on an existing comment (`text`, `target`, `status`, or `isInternal`). The `target` branch accepts a plain TextAddress or a TrackedChangeCommentTarget, with or without `kind: "trackedChange"`, that names a logical tracked-change id. The legacy `isInternal` input sets or clears the `sdcom:internal` attribute for v1 backward compatibility. Multi-field patches and no-op edits are rejected with `INVALID_INPUT`; reply target / status patches are rejected with `INVALID_CONTEXT`.',
     expectedResult:
-      'Returns a Receipt with `updated` populated on success. Reports `NO_OP` for byte-identical edits, rejects empty-body / trim-equivalent edits with `INVALID_INPUT`, no-op resolve/reopen with `INVALID_INPUT`, reply target/status with `INVALID_CONTEXT`, cross-story moves with `INVALID_CONTEXT`, materializing inherited slot moves with `CAPABILITY_UNAVAILABLE`, stale tracked-change targets with `TARGET_NOT_FOUND`, formatting / structural / unpaired-move tracked-change targets with `CAPABILITY_UNAVAILABLE`, and `isInternal` patches with `CAPABILITY_UNAVAILABLE`.',
+      'Returns a Receipt with `updated` populated on success. Reports `NO_OP` for byte-identical edits, rejects empty-body / trim-equivalent edits with `INVALID_INPUT`, no-op resolve/reopen/setInternal with `INVALID_INPUT`, reply target/status with `INVALID_CONTEXT`, cross-story moves with `INVALID_CONTEXT`, materializing inherited slot moves with `CAPABILITY_UNAVAILABLE`, stale tracked-change targets with `TARGET_NOT_FOUND`, and formatting / structural / unpaired-move tracked-change targets with `CAPABILITY_UNAVAILABLE`.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
       idempotency: 'conditional',
@@ -2457,6 +2719,7 @@ export const OPERATION_DEFINITIONS = {
         'NO_OP',
       ],
       throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT'],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'comments/patch.mdx',
     referenceGroup: 'comments',
@@ -2465,9 +2728,9 @@ export const OPERATION_DEFINITIONS = {
   },
   'comments.delete': {
     memberPath: 'comments.delete',
-    description: 'Remove a comment or reply by ID. Deleting a root cascades through every descendant reply.',
+    description: 'Remove the targeted comment or reply by ID. Deleting a root does not delete descendant replies.',
     expectedResult:
-      'Returns a Receipt with every removed commentId in `removed` and every story touched in `affectedStories`. Rejects with `TARGET_NOT_FOUND` when the comment id does not exist and reports `NO_OP` when the command layer accepts the target but removes nothing.',
+      'Returns a Receipt with the targeted removed commentId in `removed` and every story touched in `affectedStories`. Rejects with `TARGET_NOT_FOUND` when the comment id does not exist and reports `NO_OP` when the command layer accepts the target but removes nothing.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
       idempotency: 'conditional',
@@ -2475,6 +2738,7 @@ export const OPERATION_DEFINITIONS = {
       supportsTrackedMode: false,
       possibleFailureCodes: ['TARGET_NOT_FOUND', 'CAPABILITY_UNAVAILABLE', 'NO_OP'],
       throws: T_NOT_FOUND_CAPABLE,
+      returnsReceipt: true,
     }),
     referenceDocPath: 'comments/delete.mdx',
     referenceGroup: 'comments',
@@ -2541,7 +2805,7 @@ export const OPERATION_DEFINITIONS = {
   'trackChanges.decide': {
     memberPath: 'trackChanges.decide',
     description:
-      'Accept or reject tracked changes by logical id, by selected text range, by logical anchor range ({ anchor, relativeStart, relativeEnd }), or every active change in the document. Range targets may include overlap / side selectors and may partially resolve a change, splitting surviving content into new fragments with stable ids. Legacy `{ id, range: { kind: "partial", ... } }` targets are promoted only when the active adapter supports `decide()`; legacy fallback adapters fail closed with `INVALID_INPUT`. `input.expectedRevision` is accepted as a compatibility alias for mutation options.',
+      'Accept or reject tracked changes by logical id, by several logical ids atomically, by selected text range, by logical anchor range ({ anchor, relativeStart, relativeEnd }), or every active change in the document. Range targets may include overlap / side selectors and may partially resolve a change, splitting surviving content into new fragments with stable ids. Legacy `{ id, range: { kind: "partial", ... } }` targets are promoted only when the active adapter supports `decide()`; legacy fallback adapters fail closed with `INVALID_INPUT`. `input.expectedRevision` is accepted as a compatibility alias for mutation options.',
     expectedResult:
       "Returns a Receipt. `removed` lists retired tracked-change ids; `inserted` lists successor fragment ids produced by partial range splits; `invalidatedRefs` lists every retired tracked-change ref plus cascade-deleted comment ids; `remappedRefs` carries surviving comment anchors moved by the decision; `affectedStories` lists touched stories; `textRangeShifts` reports per-story visible-text deltas; `txId` correlates with history. Failures: SPAN_FRAGMENTED when a range crosses an indivisible boundary, CAPABILITY_UNAVAILABLE for formatting / structural / move targets (not yet supported), TARGET_NOT_FOUND for retired ids or zero overlap, STALE_REVISION for stale expectedRevision, REVISION_MISMATCH for stale range coverage, NO_OP when { kind: 'all' } resolves an empty target set.",
     requiresDocumentContext: true,
@@ -2563,6 +2827,7 @@ export const OPERATION_DEFINITIONS = {
         'REVISION_MISMATCH',
       ],
       throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_INPUT', 'INVALID_TARGET'],
+      returnsReceipt: true,
     }),
     referenceDocPath: 'track-changes/decide.mdx',
     referenceGroup: 'trackChanges',
@@ -2588,13 +2853,22 @@ export const OPERATION_DEFINITIONS = {
   'ranges.resolve': {
     memberPath: 'ranges.resolve',
     description:
-      'Resolve two explicit anchors into a contiguous document range. Returns a transparent SelectionTarget, a mutation-ready ref, and preview metadata. Stateless and deterministic.',
+      'Resolve two explicit anchors into a contiguous document range. Returns a transparent SelectionTarget, handle metadata, and preview metadata. handle.ref is nullable and present only when the resolved range is mutation-ready; callers must check handle.ref !== null and/or coversFullTarget before using it for mutations. Stateless and deterministic.',
     expectedResult:
-      'Returns a ResolveRangeOutput with evaluatedRevision, handle.ref, target (SelectionTarget), and preview metadata.',
+      'Returns a ResolveRangeOutput with evaluatedRevision, handle.ref may be null, handle.coversFullTarget, target (SelectionTarget), and preview metadata.',
     requiresDocumentContext: true,
     metadata: readOperation({
       idempotency: 'idempotent',
-      throws: ['INVALID_INPUT', 'INVALID_TARGET', 'TARGET_NOT_FOUND', 'INVALID_CONTEXT', 'REVISION_MISMATCH'],
+      throws: [
+        'INVALID_INPUT',
+        'INVALID_TARGET',
+        'TARGET_NOT_FOUND',
+        'INVALID_CONTEXT',
+        'REVISION_MISMATCH',
+        'AMBIGUOUS_MATCH',
+        'ADDRESS_STALE',
+        'STORY_MISMATCH',
+      ],
       deterministicTargetResolution: true,
     }),
     referenceDocPath: 'ranges/resolve.mdx',
@@ -2605,7 +2879,7 @@ export const OPERATION_DEFINITIONS = {
     description:
       "Read the editor's current selection as a portable SelectionInfo with a text-anchored TextTarget. Primitive for building custom comments UIs, floating toolbars, and other selection-driven components without reaching into ProseMirror internals.",
     expectedResult:
-      'Returns a SelectionInfo with `empty`, `target` (TextTarget or null), `activeMarks`, and optionally `text` when `includeText: true`.',
+      'Returns a SelectionInfo with `empty`, `target` (TextTarget or null), optional `selectionTarget`, `activeMarks`, and optionally `text` when `includeText: true`.',
     requiresDocumentContext: true,
     metadata: readOperation({
       idempotency: 'idempotent',
@@ -2815,7 +3089,7 @@ export const OPERATION_DEFINITIONS = {
     metadata: mutationOperation({
       idempotency: 'idempotent',
       supportsDryRun: true,
-      supportsTrackedMode: false,
+      supportsTrackedMode: true,
       possibleFailureCodes: ['INVALID_TARGET', 'NO_OP'],
       throws: T_NOT_FOUND_COMMAND,
     }),
@@ -2861,6 +3135,24 @@ export const OPERATION_DEFINITIONS = {
     referenceGroup: 'tables',
     intentGroup: 'table',
     intentAction: 'delete_row',
+  },
+  'tables.moveRow': {
+    memberPath: 'tables.moveRow',
+    description: v2BackedOnlyDescription('Move a row to a new position within the same table.'),
+    expectedResult:
+      'Returns a TableMutationResult receipt; reports NO_OP if the row is already at the requested position.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'conditional',
+      supportsDryRun: true,
+      supportsTrackedMode: false,
+      possibleFailureCodes: ['INVALID_TARGET', 'NO_OP', 'CAPABILITY_UNAVAILABLE'],
+      throws: [...T_NOT_FOUND_COMMAND, 'INVALID_TARGET'],
+    }),
+    referenceDocPath: 'tables/move-row.mdx',
+    referenceGroup: 'tables',
+    intentGroup: 'table',
+    intentAction: 'move_row',
   },
   'tables.setRowHeight': {
     memberPath: 'tables.setRowHeight',
@@ -3096,7 +3388,18 @@ export const OPERATION_DEFINITIONS = {
     metadata: mutationOperation({
       idempotency: 'idempotent',
       supportsDryRun: true,
+      // Cell text is authored as a structural replacement of the cell body, so
+      // this operation cannot emit its own reviewable revision and must not
+      // advertise tracked support.
       supportsTrackedMode: false,
+      // It is nonetheless permitted for one target class: a cell whose row was
+      // tracked-inserted by the same author. That row's `<w:ins>` already owns
+      // the accept/reject fate of everything inside it, so filling the cell
+      // directly is what the editor does when you type into such a row, and
+      // rejecting the row removes the text with it. Only the adapter can tell
+      // whether a given cell qualifies, so transports must forward the tracked
+      // call and let it decide instead of rejecting on metadata alone.
+      supportsConditionalTrackedMode: true,
       possibleFailureCodes: ['INVALID_TARGET', 'NO_OP'],
       throws: T_NOT_FOUND_COMMAND,
     }),
@@ -3143,9 +3446,9 @@ export const OPERATION_DEFINITIONS = {
   // -------------------------------------------------------------------------
   'tables.setStyle': {
     memberPath: 'tables.setStyle',
-    description: 'Apply a named table style to the target table.',
+    description: 'Apply a named table style to the target table, or clear the style when styleId is omitted.',
     expectedResult:
-      'Returns a TableMutationResult receipt; reports NO_OP if the table already uses the requested style.',
+      'Returns a TableMutationResult receipt; reports NO_OP if the table already uses the requested style or has no style to clear.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
       idempotency: 'idempotent',
@@ -3701,7 +4004,8 @@ export const OPERATION_DEFINITIONS = {
   'create.image': {
     memberPath: 'create.image',
     description: 'Insert a new image at the target position.',
-    expectedResult: 'Returns a CreateImageResult with the new image address.',
+    expectedResult:
+      'Returns a CreateImageResult with the new image address. Tracked-mode results include `trackedChangeRefs` pointing at the tracked insertion review entity.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
       idempotency: 'non-idempotent',
@@ -4172,7 +4476,7 @@ export const OPERATION_DEFINITIONS = {
     metadata: mutationOperation({
       idempotency: 'non-idempotent',
       supportsDryRun: true,
-      supportsTrackedMode: false,
+      supportsTrackedMode: true,
       deterministicTargetResolution: true,
       possibleFailureCodes: ['NO_OP', 'INVALID_TARGET'],
       throws: [...T_NOT_FOUND_CAPABLE, 'INVALID_TARGET', 'INVALID_INPUT'],
@@ -4353,7 +4657,8 @@ export const OPERATION_DEFINITIONS = {
   // --- A. Core CRUD + Discovery ---
   'create.contentControl': {
     memberPath: 'create.contentControl',
-    description: 'Create a new content control (SDT) in the document.',
+    description:
+      'Create a new content control (SDT) in the document, optionally seeded with plain text or structured block preset content.',
     expectedResult: 'Returns a ContentControlMutationResult with the created content control target.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
@@ -4492,7 +4797,7 @@ export const OPERATION_DEFINITIONS = {
   'contentControls.move': {
     memberPath: 'contentControls.move',
     description:
-      'Move a content control to a new position. Direct moves preserve the original ID; tracked-mode authoring supports safe top-level block SDTs and remaps the destination SDT ID to avoid duplicate live anchors.',
+      'Move a content control to a new position: before or after another SDT, to the document start or end, or to an arbitrary caret inside a paragraph (the inParagraph destination) for drag-and-drop. Direct moves preserve the original ID; tracked-mode authoring supports safe top-level block SDTs (SDT-to-SDT destinations only) and remaps the destination SDT ID to avoid duplicate live anchors.',
     expectedResult:
       'Returns a ContentControlMutationResult with the updated target position. Tracked-mode results include `trackedChangeRefs` pointing at the paired move review entity.',
     requiresDocumentContext: true,
@@ -4569,7 +4874,7 @@ export const OPERATION_DEFINITIONS = {
     metadata: mutationOperation({
       idempotency: 'conditional',
       supportsDryRun: true,
-      supportsTrackedMode: false,
+      supportsTrackedMode: true,
       possibleFailureCodes: ['NO_OP'],
       throws: T_CC_MUTATION,
     }),
@@ -5257,6 +5562,67 @@ export const OPERATION_DEFINITIONS = {
     referenceGroup: 'footnotes',
   },
   // -------------------------------------------------------------------------
+  // Clipboard
+  // -------------------------------------------------------------------------
+  'clipboard.parse': {
+    memberPath: 'clipboard.parse',
+    description:
+      'Parse and sanitize a ClipboardPayload into a deterministic v2 clipboard insert plan with diagnostics. Does not mutate the document.',
+    expectedResult: 'Returns a ClipboardParseResult with a ClipboardInsertPlan or a named fail-closed reason.',
+    requiresDocumentContext: true,
+    metadata: readOperation({
+      possibleFailureCodes: [
+        'INVALID_INPUT',
+        'INVALID_PAYLOAD',
+        'EMPTY_FRAGMENT',
+        'CAPABILITY_UNSUPPORTED',
+        'INVALID_FRAGMENT',
+        'CAPABILITY_UNAVAILABLE',
+      ],
+    }),
+    referenceDocPath: 'clipboard/parse.mdx',
+    referenceGroup: 'clipboard',
+  },
+  'clipboard.insert': {
+    memberPath: 'clipboard.insert',
+    description:
+      'Insert a parsed clipboard plan, v2 fragment, or raw ClipboardPayload through the v2 pasteFragment kernel operation.',
+    expectedResult:
+      'Returns a ClipboardInsertResult with inserted refs, diagnostics, and one paste transaction receipt, or a named fail-closed reason.',
+    requiresDocumentContext: true,
+    metadata: mutationOperation({
+      idempotency: 'non-idempotent',
+      supportsDryRun: true,
+      supportsTrackedMode: true,
+      possibleFailureCodes: [
+        'INVALID_INPUT',
+        'INVALID_TARGET',
+        'INVALID_PAYLOAD',
+        'EMPTY_FRAGMENT',
+        'INVALID_FRAGMENT',
+        'CAPABILITY_UNSUPPORTED',
+        'CAPABILITY_UNAVAILABLE',
+        'REVISION_MISMATCH',
+        'PRECONDITION_FAILED',
+      ],
+      throws: T_REF_INSERT,
+    }),
+    referenceDocPath: 'clipboard/insert.mdx',
+    referenceGroup: 'clipboard',
+  },
+  'clipboard.serializeSelection': {
+    memberPath: 'clipboard.serializeSelection',
+    description:
+      'Serialize the current or supplied model selection into text/plain, text/html, and application/x-superdoc-v2-fragment clipboard payloads.',
+    expectedResult: 'Returns a ClipboardSerializeResult containing the payload and normalized insert plan.',
+    requiresDocumentContext: true,
+    metadata: readOperation({
+      possibleFailureCodes: ['INVALID_TARGET', 'CAPABILITY_UNAVAILABLE'],
+    }),
+    referenceDocPath: 'clipboard/serialize-selection.mdx',
+    referenceGroup: 'clipboard',
+  },
+  // -------------------------------------------------------------------------
   // Cross-References
   // -------------------------------------------------------------------------
   'crossRefs.list': {
@@ -5529,14 +5895,15 @@ export const OPERATION_DEFINITIONS = {
   },
   'captions.update': {
     memberPath: 'captions.update',
-    description: 'Update the text of an existing caption paragraph.',
-    expectedResult: 'Returns a CaptionMutationResult indicating success or a failure.',
+    description: 'Append patch text to an existing caption paragraph.',
+    expectedResult:
+      'Returns a CaptionMutationResult indicating success after appending patch.text to the existing caption body, or NO_OP when no text patch is provided.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
-      idempotency: 'idempotent',
+      idempotency: 'non-idempotent',
       supportsDryRun: true,
       supportsTrackedMode: false,
-      possibleFailureCodes: NONE_FAILURES,
+      possibleFailureCodes: ['NO_OP'],
       throws: T_REF_MUTATION,
     }),
     referenceDocPath: 'captions/update.mdx',
@@ -6024,11 +6391,13 @@ export const OPERATION_DEFINITIONS = {
     memberPath: 'diff.capture',
     description:
       "Capture the current document's diffable state as a versioned snapshot. " +
-      'v1 covers body, comments, styles, and numbering. Header/footer content is not included.',
+      'v2 capture requires source-complete state and reports coverage for body, comments, styles, numbering, and header/footers, ' +
+      'with extended family coverage carried in the opaque payload. Legacy body-only v2 artifacts remain accepted for compare/apply compatibility.',
     expectedResult: 'Returns a DiffSnapshot with a fingerprint and opaque payload.',
     requiresDocumentContext: true,
     metadata: readOperation({
       idempotency: 'idempotent',
+      throws: ['PRECONDITION_FAILED'],
     }),
     referenceDocPath: 'diff/capture.mdx',
     referenceGroup: 'diff',
@@ -6038,7 +6407,8 @@ export const OPERATION_DEFINITIONS = {
     memberPath: 'diff.compare',
     description:
       'Compare the current document (base) against a previously captured target snapshot. ' +
-      'Returns a versioned diff payload describing the changes from base to target.',
+      'Returns a versioned diff payload whose summary reports which components changed: ' +
+      'body, comments, styles, numbering, header/footers, and parts.',
     expectedResult: 'Returns a DiffPayload with a summary and opaque payload.',
     requiresDocumentContext: true,
     metadata: readOperation({
@@ -6054,7 +6424,9 @@ export const OPERATION_DEFINITIONS = {
     description:
       'Apply a previously computed diff payload to the current document. ' +
       'The document fingerprint must match the diff base fingerprint. ' +
-      'Tracked mode governs body content only; styles, numbering, and comments are always applied directly.',
+      'Omitted changeMode applies story content directly; explicit tracked mode governs all four story families (body, header/footer parts, footnotes, endnotes). Comments, styles, and numbering are always applied directly. ' +
+      'Supported mixed full-diff payloads apply atomically across body, comments, styles, numbering, and header/footers. ' +
+      'Unsupported/deferred families such as package-graph/media/hyperlink closure, settings/theme, and textboxes fail closed before mutation.',
     expectedResult: 'Returns a DiffApplyResult with applied operation count and diagnostics.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
@@ -6067,6 +6439,28 @@ export const OPERATION_DEFINITIONS = {
     }),
     referenceDocPath: 'diff/apply.mdx',
     referenceGroup: 'diff',
+    skipAsATool: true,
+  },
+  // =========================================================================
+  // export.*
+  // =========================================================================
+  'export.toDocx': {
+    memberPath: 'export.toDocx',
+    description:
+      'Serialize the current document to DOCX bytes under an explicit tracked-change export mode. ' +
+      '`review-preserving` (default) keeps open tracked changes as Word revision markup, `final` resolves ' +
+      'them as accepted, and `original` resolves them as rejected. Returns the exported bytes plus a ' +
+      'structured degradation report of allowed warnings. An invalid mode fails closed with INVALID_INPUT ' +
+      'before any work happens.',
+    expectedResult:
+      'Returns an ExportToDocxResult with the resolved mode, base64 DOCX bytes, byte length, and a report.warnings array.',
+    requiresDocumentContext: true,
+    metadata: readOperation({
+      idempotency: 'idempotent',
+      throws: ['INVALID_INPUT', 'CAPABILITY_UNSUPPORTED'],
+    }),
+    referenceDocPath: 'export/to-docx.mdx',
+    referenceGroup: 'export',
     skipAsATool: true,
   },
   // =========================================================================

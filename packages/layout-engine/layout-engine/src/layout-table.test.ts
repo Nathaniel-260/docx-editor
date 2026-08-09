@@ -1650,6 +1650,41 @@ describe('layoutTableBlock', () => {
       expect(fragments[1].fromRow).toBe(2);
       expect(fragments[1].toRow).toBe(3);
     });
+
+    it('reserves a collapsed terminal border when deciding whether the final row fits', () => {
+      const block = createMockTableBlock(2, undefined, { borderCollapse: 'collapse' });
+      const measure = {
+        ...createMockTableMeasure([100], [40, 60]),
+        tableBorderWidths: { top: 1, right: 1, bottom: 1, left: 1 },
+      };
+      const pages: Array<{ fragments: TableFragment[] }> = [{ fragments: [] }];
+      let state = {
+        page: pages[0],
+        columnIndex: 0,
+        cursorY: 0,
+        contentBottom: 100.5,
+      };
+
+      layoutTableBlock({
+        block,
+        measure,
+        columnWidth: 100,
+        ensurePage: () => state,
+        advanceColumn: () => {
+          const page = { fragments: [] as TableFragment[] };
+          pages.push(page);
+          state = { ...state, page, cursorY: 0 };
+          return state;
+        },
+        columnX: () => 0,
+      });
+
+      expect(pages).toHaveLength(2);
+      expect(pages[0].fragments).toHaveLength(1);
+      expect(pages[0].fragments[0]).toMatchObject({ fromRow: 0, toRow: 1, height: 40 });
+      expect(pages[1].fragments).toHaveLength(1);
+      expect(pages[1].fragments[0]).toMatchObject({ fromRow: 1, toRow: 2, height: 60 });
+    });
   });
 
   describe('integration: table splitting scenarios', () => {
@@ -1735,82 +1770,12 @@ describe('layoutTableBlock', () => {
       }
     });
 
-    it('extends the repeated header to cover a header-row vMerge spanning a non-header row (SD-1962)', () => {
-      // Row 0 is the ONLY w:tblHeader row, but its first cell is a vertical merge
-      // (w:vMerge="restart", rowSpan=2) that spans into row 1, which is NOT flagged
-      // as a header. Word repeats the entire merged header band as a unit, so the
-      // continuation fragment must repeat BOTH rows. Repeating only row 0 leaves the
-      // painter drawing the merged cell at its full rowSpan height inside a one-row
-      // header, overflowing onto the body/footnotes below (the SD-1962 symptom).
-      const rows = Array.from({ length: 10 }, (_, i) => ({
-        id: `row-${i}` as BlockId,
-        cells: [
-          {
-            id: `cell-${i}-0` as BlockId,
-            // Row 0 owns a 2-row vertical merge; row 1 is its continuation.
-            ...(i === 0 ? { rowSpan: 2 } : {}),
-            paragraph: { kind: 'paragraph' as const, id: `para-${i}-0` as BlockId, runs: [] },
-          },
-          {
-            id: `cell-${i}-1` as BlockId,
-            paragraph: { kind: 'paragraph' as const, id: `para-${i}-1` as BlockId, runs: [] },
-          },
-        ],
-        attrs: { tableRowProperties: { repeatHeader: i === 0 } }, // only row 0 flagged
-      }));
-      const block: TableBlock = { kind: 'table', id: 'test-table' as BlockId, rows };
-      const measure = createMockTableMeasure([100, 100], Array(10).fill(20));
-
-      const fragments: TableFragment[] = [];
-      let cursorY = 0;
-      const mockPage = { fragments };
-
-      layoutTableBlock({
-        block,
-        measure,
-        columnWidth: 200,
-        ensurePage: () => ({ page: mockPage, columnIndex: 0, cursorY, contentBottom: 120 }),
-        advanceColumn: () => {
-          cursorY = 0;
-          return { page: mockPage, columnIndex: 0, cursorY: 0, contentBottom: 120 };
-        },
-        columnX: () => 0,
-      });
-
-      expect(fragments.length).toBeGreaterThan(1);
-      // Continuation must repeat the full merged band (rows 0 and 1), not just row 0.
-      expect(fragments[1].repeatHeaderCount).toBe(2);
-    });
-
-    it('does not extend the repeated header when header-row cells do not vertically merge', () => {
-      // Regression guard: a single flagged header row with no rowSpan cells must
-      // still repeat exactly one row (the fix only triggers on vMerge spans).
-      const block = createMockTableBlock(10, [{ repeatHeader: true }, ...Array(9).fill({ repeatHeader: false })]);
-      const measure = createMockTableMeasure([100], Array(10).fill(20));
-
-      const fragments: TableFragment[] = [];
-      let cursorY = 0;
-      const mockPage = { fragments };
-
-      layoutTableBlock({
-        block,
-        measure,
-        columnWidth: 100,
-        ensurePage: () => ({ page: mockPage, columnIndex: 0, cursorY, contentBottom: 120 }),
-        advanceColumn: () => {
-          cursorY = 0;
-          return { page: mockPage, columnIndex: 0, cursorY: 0, contentBottom: 120 };
-        },
-        columnX: () => 0,
-      });
-
-      expect(fragments.length).toBeGreaterThan(1);
-      expect(fragments[1].repeatHeaderCount).toBe(1);
-    });
-
     it('repeats only the completed header prefix when a later header row continues on a new page', () => {
       const block = createMockTableBlock(3, [{ repeatHeader: true }, { repeatHeader: true }, { repeatHeader: false }]);
-      const measure = createMockTableMeasure([100, 100], [10, 20, 10], [[10], [10, 10, 10], [10]], 2);
+      // row2's height (40) exceeds the leftover space on the continuation page after
+      // the split header row (row1) completes there, so it must genuinely advance to
+      // a fresh page rather than fit as a second same-page fragment.
+      const measure = createMockTableMeasure([100, 100], [10, 20, 40], [[10], [10, 10, 10], [40]], 2);
 
       const firstPage = { fragments: [] as TableFragment[] };
       const secondPage = { fragments: [] as TableFragment[] };
@@ -1898,6 +1863,287 @@ describe('layoutTableBlock', () => {
       if (fragments.length > 1) {
         expect(fragments[1].repeatHeaderCount).toBe(0);
       }
+    });
+
+    describe('header rowspan crossing the declared header boundary (SD-1962)', () => {
+      it('extends repeatHeaderCount to cover a rowspan that crosses into a non-header row', () => {
+        // Only row 0 is declared repeatHeader, but its cell vertically merges
+        // (rowSpan=2) into row 1, which is NOT flagged repeatHeader. Word
+        // repeats such a merge in its entirety, so the effective header must
+        // extend to cover row 1 too.
+        const block = createMockTableBlock(10, [{ repeatHeader: true }, ...Array(9).fill({ repeatHeader: false })]);
+        const measure = createMockTableMeasure([100], Array(10).fill(20));
+        (measure.rows[0].cells[0] as any).rowSpan = 2;
+
+        const fragments: TableFragment[] = [];
+        let cursorY = 0;
+        const mockPage = { fragments };
+
+        layoutTableBlock({
+          block,
+          measure,
+          columnWidth: 100,
+          ensurePage: () => ({
+            page: mockPage,
+            columnIndex: 0,
+            cursorY,
+            contentBottom: 120, // Fits 6 rows (120px / 20px)
+          }),
+          advanceColumn: () => {
+            cursorY = 0;
+            return {
+              page: mockPage,
+              columnIndex: 0,
+              cursorY: 0,
+              contentBottom: 120,
+            };
+          },
+          columnX: () => 0,
+        });
+
+        expect(fragments.length).toBeGreaterThan(1);
+        const continuation = fragments[1];
+        expect(continuation.repeatHeaderCount).toBe(2);
+
+        // Geometry check, closest to the actual visual overlap symptom: header
+        // rows 0 and 1 must occupy y=0..20 and y=20..40, and the first body
+        // row (row 6) must start at y=40 — not y=20, which would overlap
+        // the still-visible bottom half of row 0's merged cell.
+        const rowBoundaries = continuation.metadata?.rowBoundaries;
+        expect(rowBoundaries).toBeDefined();
+        expect(rowBoundaries!.find((rb) => rb.index === 0)).toMatchObject({ y: 0, height: 20 });
+        expect(rowBoundaries!.find((rb) => rb.index === 1)).toMatchObject({ y: 20, height: 20 });
+        expect(rowBoundaries!.find((rb) => rb.index === 6)).toMatchObject({ y: 40, height: 20 });
+      });
+
+      it('extends to the farthest reach across multiple declared header rows with differing rowspans', () => {
+        // Rows 0 and 1 are both declared headers. Row 1's cell merges 3 rows
+        // down (into row 4, not declared). The effective count must reach the
+        // farthest span (4), not just the declared count (2).
+        const block = createMockTableBlock(10, [
+          { repeatHeader: true },
+          { repeatHeader: true },
+          ...Array(8).fill({ repeatHeader: false }),
+        ]);
+        const measure = createMockTableMeasure([100], Array(10).fill(20));
+        (measure.rows[1].cells[0] as any).rowSpan = 3;
+
+        const fragments: TableFragment[] = [];
+        let cursorY = 0;
+        const mockPage = { fragments };
+
+        layoutTableBlock({
+          block,
+          measure,
+          columnWidth: 100,
+          ensurePage: () => ({
+            page: mockPage,
+            columnIndex: 0,
+            cursorY,
+            contentBottom: 120, // Fits 6 rows (120px / 20px)
+          }),
+          advanceColumn: () => {
+            cursorY = 0;
+            return {
+              page: mockPage,
+              columnIndex: 0,
+              cursorY: 0,
+              contentBottom: 120,
+            };
+          },
+          columnX: () => 0,
+        });
+
+        expect(fragments.length).toBeGreaterThan(1);
+        expect(fragments[1].repeatHeaderCount).toBe(4);
+      });
+
+      it('extends transitively when a row pulled in by one merge itself merges further (chained merges)', () => {
+        // Row 0 is the only declared header row. Its rowSpan=2 pulls row 1 in.
+        // Row 1 — itself only part of the header because of that pull-in, not
+        // independently flagged — has its own rowSpan=2 reaching into row 2.
+        // A single non-transitive pass over the originally-declared header
+        // rows would stop at 2; the effective count must reach 3.
+        const block = createMockTableBlock(10, [{ repeatHeader: true }, ...Array(9).fill({ repeatHeader: false })]);
+        const measure = createMockTableMeasure([100], Array(10).fill(20));
+        (measure.rows[0].cells[0] as any).rowSpan = 2;
+        (measure.rows[1].cells[0] as any).rowSpan = 2;
+
+        const fragments: TableFragment[] = [];
+        let cursorY = 0;
+        const mockPage = { fragments };
+
+        layoutTableBlock({
+          block,
+          measure,
+          columnWidth: 100,
+          ensurePage: () => ({
+            page: mockPage,
+            columnIndex: 0,
+            cursorY,
+            contentBottom: 120, // Fits 6 rows (120px / 20px)
+          }),
+          advanceColumn: () => {
+            cursorY = 0;
+            return {
+              page: mockPage,
+              columnIndex: 0,
+              cursorY: 0,
+              contentBottom: 120,
+            };
+          },
+          columnX: () => 0,
+        });
+
+        expect(fragments.length).toBeGreaterThan(1);
+        const continuation = fragments[1];
+        expect(continuation.repeatHeaderCount).toBe(3);
+
+        const rowBoundaries = continuation.metadata?.rowBoundaries;
+        expect(rowBoundaries!.find((rb) => rb.index === 2)).toMatchObject({ y: 40, height: 20 });
+        expect(rowBoundaries!.find((rb) => rb.index === 6)).toMatchObject({ y: 60, height: 20 });
+      });
+
+      it('clamps the effective header count to the table row count instead of an out-of-range rowspan', () => {
+        const block = createMockTableBlock(5, [
+          { repeatHeader: true },
+          { repeatHeader: false },
+          { repeatHeader: false },
+          { repeatHeader: false },
+          { repeatHeader: false },
+        ]);
+        const measure = createMockTableMeasure([100], [20, 20, 20, 20, 20]);
+        // Deliberately absurd: rowSpan reaches far past the end of the table.
+        (measure.rows[0].cells[0] as any).rowSpan = 100;
+
+        const fragments: TableFragment[] = [];
+        let cursorY = 0;
+        const mockPage = { fragments };
+
+        layoutTableBlock({
+          block,
+          measure,
+          columnWidth: 100,
+          ensurePage: () => ({
+            page: mockPage,
+            columnIndex: 0,
+            cursorY,
+            contentBottom: 60, // Fits 3 rows
+          }),
+          advanceColumn: () => {
+            cursorY = 0;
+            return {
+              page: mockPage,
+              columnIndex: 0,
+              cursorY: 0,
+              contentBottom: 60,
+            };
+          },
+          columnX: () => 0,
+        });
+
+        // Must not throw, and must never claim to repeat more header rows than
+        // the table actually has.
+        for (const fragment of fragments) {
+          expect(fragment.repeatHeaderCount ?? 0).toBeLessThanOrEqual(block.rows.length);
+        }
+      });
+
+      it('still skips header repetition gracefully when a rowspan-extended header no longer fits the page', () => {
+        // Same total header height (160px over rows of 80px each) as the
+        // existing "taller than page" test, but reached via a single declared
+        // header row whose cell merges into row 1, instead of two declared
+        // header rows. The skip-when-too-tall behavior must degrade the same
+        // way either way — never repeating only part of a merged cell.
+        const block = createMockTableBlock(5, [
+          { repeatHeader: true },
+          { repeatHeader: false },
+          { repeatHeader: false },
+          { repeatHeader: false },
+          { repeatHeader: false },
+        ]);
+        const measure = createMockTableMeasure([100], [80, 80, 20, 20, 20]);
+        (measure.rows[0].cells[0] as any).rowSpan = 2;
+
+        const fragments: TableFragment[] = [];
+        let cursorY = 0;
+        const mockPage = { fragments };
+
+        layoutTableBlock({
+          block,
+          measure,
+          columnWidth: 100,
+          ensurePage: () => ({
+            page: mockPage,
+            columnIndex: 0,
+            cursorY,
+            contentBottom: 100, // Headers are 160px, page is 100px
+          }),
+          advanceColumn: () => {
+            cursorY = 0;
+            return {
+              page: mockPage,
+              columnIndex: 0,
+              cursorY: 0,
+              contentBottom: 100,
+            };
+          },
+          columnX: () => 0,
+        });
+
+        if (fragments.length > 1) {
+          expect(fragments[1].repeatHeaderCount).toBe(0);
+        }
+      });
+
+      it('does not repeat a completed header prefix that would still cut through a continued merged header row', () => {
+        const block = createMockTableBlock(3, [
+          { repeatHeader: true },
+          { repeatHeader: false },
+          { repeatHeader: false },
+        ]);
+        const measure = createMockTableMeasure([100, 100], [10, 40, 10], [[10], [10, 10, 10, 10], [10]]);
+        (measure.rows[0].cells[0] as any).rowSpan = 2;
+
+        const firstPage = { fragments: [] as TableFragment[] };
+        const secondPage = { fragments: [] as TableFragment[] };
+        const pages = [firstPage, secondPage];
+        let currentPageIndex = 0;
+        let state = {
+          page: firstPage,
+          columnIndex: 0,
+          cursorY: 0,
+          contentBottom: 35,
+          topMargin: 0,
+        };
+
+        layoutTableBlock({
+          block,
+          measure,
+          columnWidth: 200,
+          ensurePage: () => state,
+          advanceColumn: () => {
+            currentPageIndex += 1;
+            state = {
+              ...state,
+              page: pages[currentPageIndex],
+              cursorY: 0,
+              contentBottom: 60,
+            };
+            return state;
+          },
+          columnX: () => 0,
+        });
+
+        expect(firstPage.fragments).toHaveLength(1);
+        expect(firstPage.fragments[0].partialRow?.rowIndex).toBe(1);
+
+        expect(secondPage.fragments.length).toBeGreaterThan(0);
+        const continuedHeaderRow = secondPage.fragments.find((fragment) => fragment.partialRow?.rowIndex === 1);
+        expect(continuedHeaderRow).toBeDefined();
+        expect(continuedHeaderRow!.repeatHeaderCount).toBe(0);
+        expect(currentPageIndex).toBe(1);
+      });
     });
 
     it('retries a continued partial row without headers when repeated headers consume the body budget', () => {
@@ -2010,6 +2256,112 @@ describe('layoutTableBlock', () => {
       expect(secondPage.fragments[1].repeatHeaderCount).toBe(0);
       expect(secondPage.fragments[0].partialRow?.rowIndex).toBe(2);
       expect(secondPage.fragments[1].partialRow?.rowIndex).toBe(2);
+    });
+
+    it('suppresses a repeated header when a split row completes and the next row fits on the same continuation page', () => {
+      // row0 = header (1 line, height 10)
+      // row1 = body row that must split across the page boundary (4 lines x 10 = 40)
+      // row2 = body row that fits in the leftover space on page 2 after row1 completes (1 line, height 10)
+      const block = createMockTableBlock(3, [{ repeatHeader: true }, undefined, undefined]);
+      const measure = createMockTableMeasure([100, 100], [10, 40, 10], [[10], [10, 10, 10, 10], [10]]);
+
+      const firstPage = { fragments: [] as TableFragment[] };
+      const secondPage = { fragments: [] as TableFragment[] };
+      let state = {
+        page: firstPage,
+        columnIndex: 0,
+        cursorY: 0,
+        // Page 1 fits header(10) + 2 lines of row1 (20) = 30, forcing row1 to
+        // continue onto page 2.
+        contentBottom: 30,
+        topMargin: 0,
+      };
+
+      layoutTableBlock({
+        block,
+        measure,
+        columnWidth: 200,
+        ensurePage: () => state,
+        advanceColumn: () => {
+          state = {
+            ...state,
+            page: secondPage,
+            cursorY: 0,
+            // Page 2 has room for: repeated header (10) + remaining 2 lines
+            // of row1 (20) + all of row2 (10) = 40, with slack to spare.
+            contentBottom: 50,
+          };
+          return state;
+        },
+        columnX: () => 0,
+      });
+
+      // Page 1: header + first 2 lines of row1, split not yet complete.
+      expect(firstPage.fragments).toHaveLength(1);
+      expect(firstPage.fragments[0].partialRow?.rowIndex).toBe(1);
+
+      // Page 2: first fragment completes row1 (repeats the header once, since
+      // this is a genuine continuation page); second fragment is row2, on the
+      // SAME physical page as the first — it must NOT repeat the header again.
+      expect(secondPage.fragments.length).toBeGreaterThanOrEqual(2);
+
+      const completingFragment = secondPage.fragments.find((fragment) => fragment.fromRow === 1);
+      expect(completingFragment).toBeDefined();
+      expect(completingFragment!.repeatHeaderCount).toBe(1);
+
+      const nextRowFragment = secondPage.fragments.find((fragment) => fragment.fromRow === 2);
+      expect(nextRowFragment).toBeDefined();
+      expect(nextRowFragment!.repeatHeaderCount).toBe(0);
+    });
+
+    it('repeats the header again when the row after a completed split advances to a fresh page', () => {
+      const block = createMockTableBlock(3, [{ repeatHeader: true }, undefined, undefined]);
+      const measure = createMockTableMeasure([100, 100], [10, 40, 40], [[10], [10, 10, 10, 10], [40]]);
+
+      const firstPage = { fragments: [] as TableFragment[] };
+      const secondPage = { fragments: [] as TableFragment[] };
+      const thirdPage = { fragments: [] as TableFragment[] };
+      const pages = [firstPage, secondPage, thirdPage];
+      let currentPageIndex = 0;
+      let state = {
+        page: firstPage,
+        columnIndex: 0,
+        cursorY: 0,
+        contentBottom: 30,
+        topMargin: 0,
+      };
+
+      layoutTableBlock({
+        block,
+        measure,
+        columnWidth: 200,
+        ensurePage: () => state,
+        advanceColumn: () => {
+          currentPageIndex += 1;
+          state = {
+            ...state,
+            page: pages[currentPageIndex],
+            cursorY: 0,
+            // Page 2 leaves only 10px after the repeated header and remaining
+            // row1 lines, so row2 must advance to page 3.
+            contentBottom: currentPageIndex === 1 ? 40 : 60,
+          };
+          return state;
+        },
+        columnX: () => 0,
+      });
+
+      expect(firstPage.fragments).toHaveLength(1);
+      expect(firstPage.fragments[0].partialRow?.rowIndex).toBe(1);
+
+      expect(secondPage.fragments).toHaveLength(1);
+      expect(secondPage.fragments[0].fromRow).toBe(1);
+      expect(secondPage.fragments[0].repeatHeaderCount).toBe(1);
+
+      expect(thirdPage.fragments).toHaveLength(1);
+      expect(thirdPage.fragments[0].fromRow).toBe(2);
+      expect(thirdPage.fragments[0].repeatHeaderCount).toBe(1);
+      expect(currentPageIndex).toBe(2);
     });
 
     it('suppresses repeated headers between same-page slices after a forced split on a continuation page', () => {

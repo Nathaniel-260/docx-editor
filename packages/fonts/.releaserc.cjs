@@ -1,4 +1,3 @@
-/* eslint-env node */
 const {
   createCommitAnalyzer,
   createReleaseNotesGenerator,
@@ -14,8 +13,7 @@ const branches = [
 ];
 
 const isPrerelease = branches.some((b) => typeof b === 'object' && b.name === branch && b.prerelease);
-// GitHub Releases are stable-only; prerelease tags and package publishing still proceed.
-const shouldPublishGitHubRelease = Boolean(branch) && !isPrerelease;
+const shouldCommentOnRelease = !isPrerelease;
 const shouldCommentOnLinearRelease = true;
 const notesPlugin = isPrerelease ? createReleaseNotesGenerator() : ['semantic-release-ai-notes', { style: 'concise' }];
 
@@ -50,14 +48,13 @@ config.plugins.push([
   },
 ]);
 
-if (shouldPublishGitHubRelease) {
-  config.plugins.push([
-    '@semantic-release/github',
-    {
-      successComment:
-        ':tada: This ${issue.pull_request ? "PR" : "issue"} is included in **@superdoc-dev/fonts** v${nextRelease.version}\n\nThe release is available on [GitHub release](https://github.com/superdoc/docx-editor/releases/tag/${nextRelease.gitTag})',
-    },
-  ]);
-}
+config.plugins.push([
+  '@semantic-release/github',
+  {
+    successComment:
+      ':tada: This ${issue.pull_request ? "PR" : "issue"} is included in **@superdoc/fonts** v${nextRelease.version}\n\nThe release is available on [GitHub release](https://github.com/superdoc/docx-editor/releases/tag/${nextRelease.gitTag})',
+    successCommentCondition: shouldCommentOnRelease ? undefined : false,
+  },
+]);
 
 module.exports = config;

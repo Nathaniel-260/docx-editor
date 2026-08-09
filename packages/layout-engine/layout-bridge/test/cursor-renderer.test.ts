@@ -5,7 +5,7 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import { CursorRenderer, type CursorRect } from '../src/cursor-renderer';
 
 describe('CursorRenderer', () => {

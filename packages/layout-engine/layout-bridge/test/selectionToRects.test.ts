@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { selectionToRects, getFragmentAtPosition } from '../src/index.ts';
 import type { FlowBlock, Layout, Measure } from '@superdoc/contracts';
 import {

@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, '..', '..');
 const devFiles = [
   'src/dev/components/SuperdocDev.vue',
   'src/dev/components/sidebar/SidebarSearch.vue',
-  'src/dev/components/sidebar/SidebarFieldAnnotations.vue',
+  'src/dev/components/sidebar/SidebarCollaboration.vue',
   'src/dev/components/sidebar/SidebarLayout.vue',
 ];
 

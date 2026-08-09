@@ -4,8 +4,12 @@ import type {
   ParagraphBlock,
   ParagraphMeasure,
   Line,
+  ParaFragment,
   TextboxDrawing,
   DrawingMeasure,
+  ImageBlock,
+  ImageMeasure,
+  ImageFragment,
 } from '@superdoc/contracts';
 import { layoutParagraphBlock, type ParagraphLayoutContext } from './layout-paragraph.js';
 import type { PageState } from './paginator.js';
@@ -84,6 +88,8 @@ const makeFloatManager = (): FloatingObjectManager => ({
     width: columnWidth,
     offsetX: 0,
   })),
+  computeAvailableRegions: mock((_lineY, _lineHeight, columnWidth) => [{ offsetX: 0, width: columnWidth }]),
+  computeVerticalClearance: mock(() => null),
   getAllFloatsForPage: mock(() => []),
   clear: mock(),
   setLayoutContext: mock(),
@@ -513,12 +519,135 @@ describe('layoutParagraphBlock - remeasurement with list markers', () => {
   });
 
   describe('float remeasurement', () => {
+    it('moves flow text below a TopAndBottom exclusion', () => {
+      const floatManager = makeFloatManager();
+      floatManager.computeVerticalClearance = mock(() => 262);
+      const pageState = makePageState();
+      const block: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'top-bottom-wrap',
+        runs: [{ text: 'Text below the image', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: {},
+      };
+
+      layoutParagraphBlock({
+        block,
+        measure: makeMeasure([{ width: 120, lineHeight: 20, maxWidth: 200 }]),
+        columnWidth: 200,
+        ensurePage: mock(() => pageState),
+        advanceColumn: mock((state) => state),
+        columnX: mock(() => 50),
+        floatManager,
+      });
+
+      const fragment = pageState.page.fragments[0];
+      expect(fragment?.kind).toBe('para');
+      if (fragment?.kind !== 'para') return;
+      expect(fragment.y).toBe(262);
+      expect(fragment.x).toBe(50);
+      expect(fragment.width).toBe(200);
+    });
+
+    it('keeps the full-width measure after clearing a full-width Square exclusion', () => {
+      const floatManager = makeFloatManager();
+      floatManager.computeVerticalClearance = mock((lineY) => (lineY < 262 ? 262 : null));
+      floatManager.computeAvailableRegions = mock((lineY, _lineHeight, columnWidth) =>
+        lineY < 262 ? [{ offsetX: 0, width: 1 }] : [{ offsetX: 0, width: columnWidth }],
+      );
+      const remeasureParagraph = mock((_block, maxWidth) => makeMeasure([{ width: 120, lineHeight: 20, maxWidth }]));
+      const pageState = makePageState();
+      const block: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'full-width-square-wrap',
+        runs: [{ text: 'Text below the image', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: {},
+      };
+
+      layoutParagraphBlock({
+        block,
+        measure: makeMeasure([{ width: 120, lineHeight: 20, maxWidth: 200 }]),
+        columnWidth: 200,
+        ensurePage: mock(() => pageState),
+        advanceColumn: mock((state) => state),
+        columnX: mock(() => 50),
+        floatManager,
+        remeasureParagraph,
+      });
+
+      expect(remeasureParagraph).not.toHaveBeenCalled();
+      const fragment = pageState.page.fragments[0];
+      expect(fragment?.kind).toBe('para');
+      if (fragment?.kind !== 'para') return;
+      expect(fragment.y).toBe(262);
+      expect(fragment.lines).toBeUndefined();
+    });
+
+    it('splits a paragraph when a later line reaches a TopAndBottom exclusion', () => {
+      const floatManager = makeFloatManager();
+      floatManager.computeVerticalClearance = mock((lineY, lineHeight) =>
+        lineY < 200 && lineY + lineHeight > 70 ? 200 : null,
+      );
+      const pageState = makePageState();
+      const block: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'top-bottom-mid-paragraph',
+        runs: [{ text: 'One line above, one below', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: {},
+      };
+
+      layoutParagraphBlock({
+        block,
+        measure: makeMeasure([
+          { width: 120, lineHeight: 20, maxWidth: 200 },
+          { width: 120, lineHeight: 20, maxWidth: 200 },
+        ]),
+        columnWidth: 200,
+        ensurePage: mock(() => pageState),
+        advanceColumn: mock((state) => state),
+        columnX: mock(() => 50),
+        floatManager,
+      });
+
+      const fragments = pageState.page.fragments.filter((fragment) => fragment.kind === 'para');
+      expect(fragments).toHaveLength(2);
+      expect(fragments[0]?.y).toBe(50);
+      expect(fragments[1]?.y).toBe(200);
+    });
+
+    it('preserves both regions around a centered float for the remeasure callback', () => {
+      const remeasureParagraph = mock((_block, maxWidth) => makeMeasure([{ width: 180, lineHeight: 20, maxWidth }]));
+      const floatManager = makeFloatManager();
+      floatManager.computeAvailableRegions = mock(() => [
+        { offsetX: 0, width: 80 },
+        { offsetX: 120, width: 80 },
+      ]);
+      const block: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'centered-both-sides',
+        runs: [{ text: 'Text on both sides', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: {},
+      };
+
+      layoutParagraphBlock({
+        block,
+        measure: makeMeasure([{ width: 180, lineHeight: 20, maxWidth: 200 }]),
+        columnWidth: 200,
+        ensurePage: mock(() => makePageState()),
+        advanceColumn: mock((state) => state),
+        columnX: mock(() => 50),
+        floatManager,
+        remeasureParagraph,
+      });
+
+      expect(remeasureParagraph.mock.calls[0]?.[3]?.[0]).toEqual([
+        { offsetX: 0, width: 80 },
+        { offsetX: 120, width: 80 },
+      ]);
+    });
+
     it('remeasures with correct firstLineIndent when narrower width is found due to floats', () => {
       const remeasureParagraph = mock((block, maxWidth, firstLineIndent) => {
-        if (maxWidth === 120) {
-          // This is the float remeasurement - should include marker indent
-          expect(firstLineIndent).toBe(24); // 18 + 6
-        }
+        expect(firstLineIndent).toBe(24); // 18 + 6
         return makeMeasure([{ width: 100, lineHeight: 20, maxWidth }]);
       });
 
@@ -528,6 +657,7 @@ describe('layoutParagraphBlock - remeasurement with list markers', () => {
         width: 120, // Narrower than column width
         offsetX: 10,
       }));
+      floatManager.computeAvailableRegions = mock(() => [{ width: 120, offsetX: 10 }]);
 
       const block: ParagraphBlock = {
         kind: 'paragraph',
@@ -558,17 +688,67 @@ describe('layoutParagraphBlock - remeasurement with list markers', () => {
 
       layoutParagraphBlock(ctx);
 
-      expect(remeasureParagraph).toHaveBeenCalledWith(block, 120, 24);
+      expect(remeasureParagraph).toHaveBeenCalledWith(block, 150, 24, [[{ width: 120, offsetX: 10 }]]);
+    });
+
+    it('keeps full-width layout when remeasured lines no longer intersect the float', () => {
+      const remeasureParagraph = mock((_block, maxWidth) => makeMeasure([{ width: 0, lineHeight: 20.8, maxWidth }]));
+
+      const floatManager = makeFloatManager();
+      const floatTop = 72.4;
+      floatManager.computeAvailableWidth = mock((lineY, lineHeight, columnWidth) => {
+        const intersectsFloat = lineY < floatTop && lineY + lineHeight > floatTop;
+        return intersectsFloat ? { width: 120, offsetX: 80 } : { width: columnWidth, offsetX: 0 };
+      });
+      floatManager.computeAvailableRegions = mock((lineY, lineHeight, columnWidth) => {
+        const intersectsFloat = lineY < floatTop && lineY + lineHeight > floatTop;
+        return intersectsFloat ? [{ width: 120, offsetX: 80 }] : [{ width: columnWidth, offsetX: 0 }];
+      });
+
+      const block: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'barely-intersecting-empty-line',
+        runs: [{ text: '', fontFamily: 'IBM Plex Sans', fontSize: 17.33 }],
+        attrs: {},
+      };
+      const measure = makeMeasure([{ width: 0, lineHeight: 22.7, maxWidth: 200 }]);
+      const pageState = makePageState();
+
+      layoutParagraphBlock({
+        block,
+        measure,
+        columnWidth: 200,
+        ensurePage: mock(() => pageState),
+        advanceColumn: mock((state) => state),
+        columnX: mock(() => 50),
+        floatManager,
+        remeasureParagraph,
+      });
+
+      expect(remeasureParagraph).toHaveBeenCalledWith(block, 200, 0, [[{ width: 120, offsetX: 80 }]]);
+      const fragment = pageState.page.fragments[0];
+      expect(fragment?.kind).toBe('para');
+      if (fragment?.kind !== 'para') return;
+      expect(fragment.x).toBe(50);
+      expect(fragment.width).toBe(200);
+      expect(fragment.lines).toBeUndefined();
     });
 
     it('does not expand fragment width past column when negative indents meet float wrap', () => {
-      const remeasureParagraph = mock((_block, maxWidth) => makeMeasure([{ width: 100, lineHeight: 20, maxWidth }]));
+      const remeasureParagraph = mock((_block, maxWidth, _firstLineIndent, lineRegions) => {
+        const next = makeMeasure([{ width: 100, lineHeight: 20, maxWidth }]);
+        next.lines[0]!.segments = [
+          { runIndex: 0, fromChar: 0, toChar: 12, width: 100, x: lineRegions?.[0]?.[0]?.offsetX },
+        ];
+        return next;
+      });
 
       const floatManager = makeFloatManager();
       floatManager.computeAvailableWidth = mock(() => ({
         width: 400,
         offsetX: 80,
       }));
+      floatManager.computeAvailableRegions = mock(() => [{ width: 400, offsetX: 80 }]);
 
       const block: ParagraphBlock = {
         kind: 'paragraph',
@@ -596,10 +776,49 @@ describe('layoutParagraphBlock - remeasurement with list markers', () => {
       const fragment = pageState.page.fragments[0];
       expect(fragment?.kind).toBe('para');
       if (fragment?.kind !== 'para') return;
-      expect(fragment.x).toBe(130);
-      expect(fragment.width).toBe(400);
-      expect(fragment.x + fragment.width).toBe(530);
+      expect(fragment.x).toBe(50);
+      expect(fragment.width).toBe(500);
+      expect(fragment.lines?.[0]?.segments?.[0]?.x).toBe(88);
     });
+  });
+});
+
+describe('layoutParagraphBlock - split line-break carriers', () => {
+  it('keeps carrier collapse after column-width remeasurement', () => {
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'split-carrier',
+      runs: [{ kind: 'lineBreak' }],
+    };
+    const measure = makeMeasure([
+      { width: 0, lineHeight: 20, maxWidth: 300 },
+      { width: 0, lineHeight: 20, maxWidth: 300 },
+    ]);
+    const remeasureParagraph = mock(() =>
+      makeMeasure([
+        { width: 0, lineHeight: 20, maxWidth: 100 },
+        { width: 0, lineHeight: 20, maxWidth: 100 },
+      ]),
+    );
+    const pageState = makePageState();
+
+    layoutParagraphBlock({
+      block,
+      measure,
+      columnWidth: 100,
+      ensurePage: mock(() => pageState),
+      advanceColumn: mock((state) => state),
+      columnX: mock(() => 50),
+      floatManager: makeFloatManager(),
+      remeasureParagraph,
+      collapseSplitLineBreakCarrier: true,
+    });
+
+    expect(remeasureParagraph).toHaveBeenCalledWith(block, 100, 0);
+    const fragment = pageState.page.fragments[0] as ParaFragment | undefined;
+    expect(fragment?.kind).toBe('para');
+    expect(fragment?.toLine).toBe(1);
+    expect(pageState.cursorY).toBe(70);
   });
 });
 
@@ -749,7 +968,7 @@ describe('layoutParagraphBlock - contextualSpacing', () => {
       const pageState = makePageState();
       pageState.lastParagraphStyleId = 'Normal';
       pageState.lastParagraphContextualSpacing = true;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
       (pageState.trailingSpacing as any) = null;
       pageState.cursorY = 100;
 
@@ -1290,10 +1509,242 @@ describe('layoutParagraphBlock - contextualSpacing', () => {
       expect(pageState.lastParagraphStyleId).toBe('Normal');
       expect(pageState.lastParagraphContextualSpacing).toBe(true);
     });
+
+    it('advances a wrap=none frame whose anchor starts at the page boundary without advancing flow', () => {
+      const firstPage = makePageState();
+      firstPage.cursorY = firstPage.contentBottom;
+      const nextPage = {
+        ...makePageState(),
+        page: { number: 2, fragments: [] },
+      };
+      let currentPage = firstPage;
+      const advanceColumn = mock(() => {
+        currentPage = nextPage;
+        return nextPage;
+      });
+      const frameBlock: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'overlay-frame',
+        runs: [{ text: 'Frame', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: { frame: { wrap: 'none', y: 10 } },
+      };
+
+      layoutParagraphBlock({
+        block: frameBlock,
+        measure: makeMeasure([{ width: 100, lineHeight: 20, maxWidth: 150 }]),
+        columnWidth: 150,
+        ensurePage: mock(() => currentPage),
+        advanceColumn,
+        columnX: mock(() => 50),
+        floatManager: makeFloatManager(),
+      });
+
+      expect(advanceColumn).toHaveBeenCalledTimes(1);
+      expect(firstPage.page.fragments).toHaveLength(0);
+      expect(nextPage.page.fragments).toHaveLength(1);
+      expect(nextPage.page.fragments[0]?.y).toBe(60);
+      expect(nextPage.cursorY).toBe(50);
+    });
+
+    it('positions frame paragraphs with wrap=around using frame alignment', () => {
+      const pageState = makePageState();
+      const ensurePage = mock(() => pageState);
+
+      const frameBlock: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'frame-around',
+        runs: [{ text: 'Frame', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: {
+          frame: {
+            wrap: 'around',
+            xAlign: 'center',
+            y: 1,
+            hAnchor: 'margin',
+            vAnchor: 'text',
+          },
+        },
+      };
+
+      const measure = makeMeasure([{ width: 100, lineHeight: 20, maxWidth: 600 }]);
+
+      layoutParagraphBlock({
+        block: frameBlock,
+        measure,
+        columnWidth: 600,
+        ensurePage,
+        advanceColumn: mock((state) => state),
+        columnX: mock(() => 0),
+        floatManager: makeFloatManager(),
+      });
+
+      const fragment = pageState.page.fragments[0] as DrawingFragment | undefined;
+      expect(fragment).toBeDefined();
+      expect(fragment?.kind).toBe('para');
+      expect(fragment?.x).toBe(250);
+      expect(fragment?.y).toBe(51);
+      expect(fragment?.width).toBe(600);
+      expect(pageState.cursorY).toBe(70);
+      expect(pageState.maxCursorY).toBe(70);
+    });
+
+    it('centers empty wrap=around frame paragraphs using content width while keeping full fragment width', () => {
+      const pageState = makePageState();
+      const ensurePage = mock(() => pageState);
+
+      const frameBlock: ParagraphBlock = {
+        kind: 'paragraph',
+        id: 'frame-empty',
+        runs: [{ text: '', fontFamily: 'Arial', fontSize: 12 }],
+        attrs: {
+          frame: {
+            wrap: 'around',
+            xAlign: 'center',
+            y: 1,
+            hAnchor: 'margin',
+            vAnchor: 'text',
+          },
+        },
+      };
+
+      const measure = makeMeasure([{ width: 0, lineHeight: 20, maxWidth: 600 }]);
+
+      layoutParagraphBlock({
+        block: frameBlock,
+        measure,
+        columnWidth: 600,
+        ensurePage,
+        advanceColumn: mock((state) => state),
+        columnX: mock(() => 0),
+        floatManager: makeFloatManager(),
+      });
+
+      const fragment = pageState.page.fragments[0] as DrawingFragment | undefined;
+      expect(fragment).toBeDefined();
+      expect(fragment?.kind).toBe('para');
+      expect(fragment?.x).toBe(300);
+      expect(fragment?.y).toBe(51);
+      expect(fragment?.width).toBe(600);
+      expect(pageState.cursorY).toBe(70);
+    });
   });
 });
 
 describe('layoutParagraphBlock - anchored textbox drawings', () => {
+  it('anchors paragraph-relative drawings before paragraph spaceBefore', () => {
+    const pageState = makePageState();
+    const ensurePage = mock(() => pageState);
+    const floatManager = makeFloatManager();
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'spaced-anchor-paragraph',
+      runs: [{ text: 'Anchor', fontFamily: 'Arial', fontSize: 12 }],
+      attrs: { spacing: { before: 18.4 } },
+    };
+    const drawingBlock: TextboxDrawing = {
+      kind: 'drawing',
+      id: 'paragraph-relative-drawing',
+      drawingKind: 'textboxShape',
+      geometry: { width: 100, height: 40, rotation: 0, flipH: false, flipV: false },
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'column',
+        vRelativeFrom: 'paragraph',
+        offsetH: 0,
+        offsetV: -38.2,
+      },
+    };
+    const drawingMeasure: DrawingMeasure = {
+      kind: 'drawing',
+      width: 100,
+      height: 40,
+      geometry: drawingBlock.geometry,
+      scale: 1,
+    };
+
+    layoutParagraphBlock(
+      {
+        block,
+        measure: makeMeasure([{ width: 100, lineHeight: 20, maxWidth: 150 }]),
+        columnWidth: 150,
+        ensurePage,
+        advanceColumn: mock((state) => state),
+        columnX: mock(() => 50),
+        floatManager,
+      },
+      {
+        anchoredDrawings: [{ block: drawingBlock, measure: drawingMeasure }],
+        anchoredTables: [],
+        columnWidth: 150,
+        pageWidth: 600,
+        pageMargins: { top: 50, right: 50, bottom: 50, left: 50 },
+        columns: { width: 150, gap: 20, count: 1 },
+        placedAnchoredIds: new Set<string>(),
+      },
+    );
+
+    const fragment = pageState.page.fragments.find((entry) => entry.kind === 'drawing') as DrawingFragment;
+    expect(fragment.y).toBeCloseTo(11.8);
+    const registeredY = (floatManager.registerDrawing as ReturnType<typeof mock>).mock.calls[0]?.[2] as number;
+    expect(registeredY).toBeCloseTo(11.8);
+  });
+
+  it('anchors legacy drawings without vRelativeFrom after paragraph spaceBefore', () => {
+    const pageState = makePageState();
+    const ensurePage = mock(() => pageState);
+    const floatManager = makeFloatManager();
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'spaced-legacy-anchor-paragraph',
+      runs: [{ text: 'Anchor', fontFamily: 'Arial', fontSize: 12 }],
+      attrs: { spacing: { before: 18.4 } },
+    };
+    const drawingBlock: TextboxDrawing = {
+      kind: 'drawing',
+      id: 'legacy-paragraph-anchor-drawing',
+      drawingKind: 'textboxShape',
+      geometry: { width: 100, height: 40, rotation: 0, flipH: false, flipV: false },
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'column',
+        offsetH: 0,
+        offsetV: -38.2,
+      },
+    };
+    const drawingMeasure: DrawingMeasure = {
+      kind: 'drawing',
+      width: 100,
+      height: 40,
+      geometry: drawingBlock.geometry,
+      scale: 1,
+    };
+
+    layoutParagraphBlock(
+      {
+        block,
+        measure: makeMeasure([{ width: 100, lineHeight: 20, maxWidth: 150 }]),
+        columnWidth: 150,
+        ensurePage,
+        advanceColumn: mock((state) => state),
+        columnX: mock(() => 50),
+        floatManager,
+      },
+      {
+        anchoredDrawings: [{ block: drawingBlock, measure: drawingMeasure }],
+        anchoredTables: [],
+        columnWidth: 150,
+        pageWidth: 600,
+        pageMargins: { top: 50, right: 50, bottom: 50, left: 50 },
+        columns: { width: 150, gap: 20, count: 1 },
+        placedAnchoredIds: new Set<string>(),
+      },
+    );
+
+    const fragment = pageState.page.fragments.find((entry) => entry.kind === 'drawing') as DrawingFragment;
+    expect(fragment.y).toBeCloseTo(30.2);
+    const registeredY = (floatManager.registerDrawing as ReturnType<typeof mock>).mock.calls[0]?.[2] as number;
+    expect(registeredY).toBeCloseTo(30.2);
+  });
+
   it('attaches textbox content measures for anchored textbox fragments', () => {
     const pageState = makePageState();
     const ensurePage = mock(() => pageState);
@@ -1366,6 +1817,121 @@ describe('layoutParagraphBlock - anchored textbox drawings', () => {
     expect(pageState.page.fragments[0]?.kind).toBe('drawing');
     const fragment = pageState.page.fragments[0] as DrawingFragment;
     expect(fragment.contentMeasures).toEqual([{ kind: 'paragraph', lines: [], totalHeight: 18 }]);
+  });
+});
+
+describe('layoutParagraphBlock - paragraph-relative anchored image pagination', () => {
+  it('moves the anchor paragraph and image together when the image would cross the page bottom', () => {
+    const firstPage = makePageState();
+    firstPage.cursorY = 700;
+    firstPage.maxCursorY = 700;
+
+    const secondPage = makePageState();
+    secondPage.page.number = 2;
+
+    let currentState = firstPage;
+    const ensurePage = mock(() => currentState);
+    const advanceColumn = mock(() => {
+      currentState = secondPage;
+      return secondPage;
+    });
+    const floatManager = makeFloatManager();
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'image-anchor-paragraph',
+      runs: [],
+    };
+    const imageBlock: ImageBlock = {
+      kind: 'image',
+      id: 'page-bottom-image',
+      src: 'blob:page-bottom-image',
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'column',
+        vRelativeFrom: 'paragraph',
+        alignH: 'center',
+        alignV: 'top',
+      },
+      wrap: { type: 'Square', wrapText: 'largest' },
+    };
+    const imageMeasure: ImageMeasure = {
+      kind: 'image',
+      width: 500,
+      height: 320,
+    };
+
+    layoutParagraphBlock(
+      {
+        block,
+        measure: makeMeasure([{ width: 0, lineHeight: 20, maxWidth: 600 }]),
+        columnWidth: 600,
+        ensurePage,
+        advanceColumn,
+        columnX: mock(() => 50),
+        floatManager,
+      },
+      {
+        anchoredDrawings: [{ block: imageBlock, measure: imageMeasure }],
+        anchoredTables: [],
+        columnWidth: 600,
+        pageWidth: 700,
+        pageMargins: { top: 50, right: 50, bottom: 50, left: 50 },
+        columns: { width: 600, gap: 0, count: 1 },
+        placedAnchoredIds: new Set<string>(),
+      },
+    );
+
+    expect(advanceColumn).toHaveBeenCalledTimes(1);
+    expect(firstPage.page.fragments).toHaveLength(0);
+    expect(secondPage.page.fragments.map((fragment) => fragment.kind)).toEqual(['image', 'para']);
+    const image = secondPage.page.fragments[0] as ImageFragment;
+    expect(image.y).toBe(50);
+    expect(image.y + image.height).toBeLessThanOrEqual(secondPage.contentBottom);
+    expect(floatManager.registerDrawing).toHaveBeenCalledWith(imageBlock, imageMeasure, 50, 0, 2);
+  });
+
+  it('does not advance repeatedly when the image cannot fit on an empty page', () => {
+    const page = makePageState();
+    page.cursorY = 700;
+    page.maxCursorY = 700;
+
+    const advanceColumn = mock(() => page);
+    const imageBlock: ImageBlock = {
+      kind: 'image',
+      id: 'oversized-page-bottom-image',
+      src: 'blob:oversized-page-bottom-image',
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'column',
+        vRelativeFrom: 'paragraph',
+        alignH: 'center',
+        alignV: 'top',
+      },
+      wrap: { type: 'Square', wrapText: 'largest' },
+    };
+
+    layoutParagraphBlock(
+      {
+        block: { kind: 'paragraph', id: 'oversized-image-anchor', runs: [] },
+        measure: makeMeasure([{ width: 0, lineHeight: 20, maxWidth: 600 }]),
+        columnWidth: 600,
+        ensurePage: mock(() => page),
+        advanceColumn,
+        columnX: mock(() => 50),
+        floatManager: makeFloatManager(),
+      },
+      {
+        anchoredDrawings: [{ block: imageBlock, measure: { kind: 'image', width: 500, height: 1000 } }],
+        anchoredTables: [],
+        columnWidth: 600,
+        pageWidth: 700,
+        pageMargins: { top: 50, right: 50, bottom: 50, left: 50 },
+        columns: { width: 600, gap: 0, count: 1 },
+        placedAnchoredIds: new Set<string>(),
+      },
+    );
+
+    expect(advanceColumn).not.toHaveBeenCalled();
   });
 });
 
@@ -1571,6 +2137,74 @@ describe('layoutParagraphBlock - keepLines', () => {
   });
 });
 
+describe('layoutParagraphBlock - widowControl', () => {
+  const makeWidowContext = (attrs: ParagraphBlock['attrs'], cursorY: number) => {
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'widow-block',
+      runs: [{ text: 'Four measured lines', fontFamily: 'Arial', fontSize: 12 }],
+      attrs,
+    };
+    const measure = makeMeasure(Array.from({ length: 4 }, () => ({ width: 100, lineHeight: 20, maxWidth: 200 })));
+    const firstPage = makePageState();
+    firstPage.cursorY = cursorY;
+    firstPage.page.fragments.push({ blockId: 'existing', kind: 'para' } as never);
+    const secondPage: PageState = {
+      ...makePageState(),
+      page: { number: 2, fragments: [] },
+      cursorY: 50,
+      maxCursorY: 50,
+      trailingSpacing: 0,
+    };
+    let currentState = firstPage;
+    const advanceColumn = mock(() => {
+      currentState = secondPage;
+      return secondPage;
+    });
+
+    layoutParagraphBlock({
+      block,
+      measure,
+      columnWidth: 200,
+      ensurePage: mock(() => currentState),
+      advanceColumn,
+      columnX: mock(() => 50),
+      floatManager: makeFloatManager(),
+    });
+
+    return { firstPage, secondPage, advanceColumn };
+  };
+
+  it('moves a single first line off the bottom of a populated page by default', () => {
+    const { firstPage, secondPage, advanceColumn } = makeWidowContext({}, 730);
+
+    expect(advanceColumn).toHaveBeenCalled();
+    expect(firstPage.page.fragments.filter((fragment) => fragment.blockId === 'widow-block')).toHaveLength(0);
+    expect(secondPage.page.fragments).toEqual(
+      expect.arrayContaining([expect.objectContaining({ blockId: 'widow-block', fromLine: 0, toLine: 4 })]),
+    );
+  });
+
+  it('allows a single first line when widowControl is explicitly disabled', () => {
+    const { firstPage } = makeWidowContext({ widowControl: false }, 730);
+
+    expect(firstPage.page.fragments).toEqual(
+      expect.arrayContaining([expect.objectContaining({ blockId: 'widow-block', fromLine: 0, toLine: 1 })]),
+    );
+  });
+
+  it('moves a preceding line forward instead of leaving one final line alone', () => {
+    const { firstPage, secondPage } = makeWidowContext({}, 690);
+
+    expect(firstPage.page.fragments).toEqual(
+      expect.arrayContaining([expect.objectContaining({ blockId: 'widow-block', fromLine: 0, toLine: 2 })]),
+    );
+    expect(secondPage.page.fragments).toEqual(
+      expect.arrayContaining([expect.objectContaining({ blockId: 'widow-block', fromLine: 2, toLine: 4 })]),
+    );
+  });
+});
+
 describe('SD-3049: footnote demand survives advanceColumn within one iteration', () => {
   it('charges the block demand onto the page advanceColumn lands on', () => {
     const block: ParagraphBlock = {
@@ -1623,5 +2257,102 @@ describe('SD-3049: footnote demand survives advanceColumn within one iteration',
     });
 
     expect(pageQ.footnoteDemandThisPage).toBe(BLOCK_DEMAND);
+  });
+});
+
+describe('layoutParagraphBlock - measuredAtMaxWidth width-change gate', () => {
+  const makeCtx = (
+    block: ParagraphBlock,
+    measure: ParagraphMeasure,
+    columnWidth: number,
+    remeasureParagraph: ParagraphLayoutContext['remeasureParagraph'],
+  ): ParagraphLayoutContext => ({
+    block,
+    measure,
+    columnWidth,
+    ensurePage: mock(() => makePageState()),
+    advanceColumn: mock((state) => state),
+    columnX: mock(() => 50),
+    floatManager: makeFloatManager(),
+    remeasureParagraph,
+  });
+
+  it('does NOT remeasure a hanging-indent paragraph measured at the current column width', () => {
+    // Regression shape from "Freddie Mac Loan Agreement": column 672, indent
+    // left 96, hanging 48. The FIRST line's available width (624) legitimately
+    // exceeds the body width (576); the legacy lines[0].maxWidth heuristic
+    // remeasured every such paragraph even though the constraint never changed.
+    const remeasureParagraph = mock(() => makeMeasure([{ width: 100, lineHeight: 20, maxWidth: 576 }]));
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'hanging-block',
+      runs: [{ text: 'Test clause', fontFamily: 'Arial', fontSize: 12 }],
+      attrs: { indent: { left: 96, hanging: 48 } },
+    };
+    const measure: ParagraphMeasure = {
+      ...makeMeasure([
+        { width: 500, lineHeight: 20, maxWidth: 624 }, // first line: body width + hanging
+        { width: 480, lineHeight: 20, maxWidth: 576 }, // body lines
+      ]),
+      measuredAtMaxWidth: 672,
+    };
+
+    layoutParagraphBlock(makeCtx(block, measure, 672, remeasureParagraph));
+
+    expect(remeasureParagraph).not.toHaveBeenCalled();
+  });
+
+  it('does NOT remeasure when the constraint delta is below the FP epsilon', () => {
+    const remeasureParagraph = mock(() => makeMeasure([{ width: 100, lineHeight: 20, maxWidth: 576 }]));
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'epsilon-block',
+      runs: [{ text: 'Test', fontFamily: 'Arial', fontSize: 12 }],
+      attrs: {},
+    };
+    const measure: ParagraphMeasure = {
+      ...makeMeasure([{ width: 500, lineHeight: 20, maxWidth: 672.4 }]),
+      measuredAtMaxWidth: 672.4,
+    };
+
+    layoutParagraphBlock(makeCtx(block, measure, 672, remeasureParagraph));
+
+    expect(remeasureParagraph).not.toHaveBeenCalled();
+  });
+
+  it('remeasures a stamped measure when the column is genuinely narrower', () => {
+    // Multi-column shape: measured single-column (672), placed in a 312px column.
+    const remeasureParagraph = mock(() => makeMeasure([{ width: 100, lineHeight: 20, maxWidth: 312 }]));
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'narrow-column-block',
+      runs: [{ text: 'Test', fontFamily: 'Arial', fontSize: 12 }],
+      attrs: { indent: { left: 96, hanging: 48 } },
+    };
+    const measure: ParagraphMeasure = {
+      ...makeMeasure([{ width: 500, lineHeight: 20, maxWidth: 624 }]),
+      measuredAtMaxWidth: 672,
+    };
+
+    layoutParagraphBlock(makeCtx(block, measure, 312, remeasureParagraph));
+
+    expect(remeasureParagraph).toHaveBeenCalledWith(block, 312, 0);
+  });
+
+  it('falls back to the legacy first-line heuristic for unstamped measures', () => {
+    // Producers that predate the measuredAtMaxWidth stamp keep today's behavior.
+    const remeasureParagraph = mock(() => makeMeasure([{ width: 100, lineHeight: 20, maxWidth: 576 }]));
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'unstamped-block',
+      runs: [{ text: 'Test', fontFamily: 'Arial', fontSize: 12 }],
+      attrs: { indent: { left: 96, hanging: 48 } },
+    };
+    // No measuredAtMaxWidth: legacy predicate (624 > 672 - 96 = 576) fires.
+    const measure = makeMeasure([{ width: 500, lineHeight: 20, maxWidth: 624 }]);
+
+    layoutParagraphBlock(makeCtx(block, measure, 672, remeasureParagraph));
+
+    expect(remeasureParagraph).toHaveBeenCalledWith(block, 672, 0);
   });
 });

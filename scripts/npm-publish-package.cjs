@@ -2,36 +2,21 @@
 const { execFileSync } = require('node:child_process');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
-
-const rootDir = path.resolve(__dirname, '..');
-const defaultRegistry = process.env.NPM_CONFIG_REGISTRY || 'https://registry.npmjs.org';
+const {
+  defaultRegistry,
+  isVersionLookupNotFoundError,
+  makeRegistryLookup,
+  rootDir,
+} = require('./npm-registry.cjs');
 
 const run = (command, args, cwd = rootDir) => {
   execFileSync(command, args, { stdio: 'inherit', cwd });
 };
 
-const isVersionLookupNotFoundError = (error) => {
-  const details = [error?.stderr, error?.stdout, error?.message]
-    .filter(Boolean)
-    .join('\n');
-  return /E404|Not found|not found|No match found/i.test(details);
-};
-
-const isVersionPublished = (packageName, version) => {
-  try {
-    execFileSync(
-      'pnpm',
-      ['view', `${packageName}@${version}`, 'version', '--registry', defaultRegistry],
-      { stdio: 'pipe' },
-    );
-    return true;
-  } catch (error) {
-    if (isVersionLookupNotFoundError(error)) {
-      return false;
-    }
-    throw error;
-  }
-};
+// Bound once for the common path. Callers that need to intercept the registry
+// (tests, dry runs) pass their own `effects` to publishPackage instead, matching
+// how npm-mirror-publish.cjs threads them through.
+const isVersionPublished = makeRegistryLookup();
 
 const getPackageMetadata = (packageDir) => {
   const pkgPath = path.join(rootDir, packageDir, 'package.json');
@@ -42,18 +27,20 @@ const getPackageMetadata = (packageDir) => {
   return pkg;
 };
 
-const publishPackage = ({ packageDir, tag = 'latest', logger = console }) => {
+const publishPackage = ({ packageDir, tag = 'latest', logger = console, effects } = {}) => {
   const cwd = path.join(rootDir, packageDir);
   const pkg = getPackageMetadata(packageDir);
+  const lookup = effects ? makeRegistryLookup(effects) : isVersionPublished;
+  const exec = effects ? effects.run : run;
 
-  if (isVersionPublished(pkg.name, pkg.version)) {
+  if (lookup(pkg.name, pkg.version)) {
     logger.log(`${pkg.name}@${pkg.version} already published, ensuring dist-tag "${tag}" and skipping.`);
-    run('pnpm', ['dist-tag', 'add', `${pkg.name}@${pkg.version}`, tag, '--registry', defaultRegistry]);
+    exec('pnpm', ['dist-tag', 'add', `${pkg.name}@${pkg.version}`, tag, '--registry', defaultRegistry()], rootDir);
     return;
   }
 
   logger.log(`Publishing ${pkg.name} with dist-tag "${tag}"...`);
-  run('pnpm', ['publish', '--access', 'public', '--tag', tag, '--no-git-checks'], cwd);
+  exec('pnpm', ['publish', '--access', 'public', '--tag', tag, '--no-git-checks'], cwd);
 };
 
 const parseArgs = (argv) => {

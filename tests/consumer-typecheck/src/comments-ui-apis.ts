@@ -21,13 +21,24 @@
  *   - removeCommentsList:returns
  *   - scrollToComment:parameters / scrollToComment:returns
  */
-import type { SuperDoc } from 'superdoc';
+import type { Config, SuperDoc } from 'superdoc';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type AssertEqual<A, B> = Equal<A, B> extends true ? true : never;
 
 declare const sd: SuperDoc;
 declare const hostElement: HTMLElement;
+
+// ─── comments module review policy ──────────────────────────────────
+// These named fields must remain boolean rather than falling through the
+// module's open pass-through config signature as `unknown`.
+type CommentsModuleConfig = Exclude<NonNullable<NonNullable<Config['modules']>['comments']>, false>;
+const _readOnlyTypeOk: AssertEqual<CommentsModuleConfig['readOnly'], boolean | undefined> = true;
+const _allowResolveTypeOk: AssertEqual<CommentsModuleConfig['allowResolve'], boolean | undefined> = true;
+const _readOnlyConfig: Config = {
+  selector: '#editor',
+  modules: { comments: { readOnly: true, allowResolve: false } },
+};
 
 // ─── addCommentsList ────────────────────────────────────────────────
 // Mounts the comments side panel into the consumer-provided host
@@ -67,4 +78,7 @@ void [
   _removeCommentsListReturnOk,
   _scrollToCommentParamsOk,
   _scrollToCommentReturnOk,
+  _readOnlyTypeOk,
+  _allowResolveTypeOk,
+  _readOnlyConfig,
 ];

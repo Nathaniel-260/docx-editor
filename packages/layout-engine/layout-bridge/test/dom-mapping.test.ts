@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { beforeEach, describe, expect, it, afterEach } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach } from 'vite-plus/test';
 import { clickToPositionDom } from '../src/dom-mapping.ts';
 
 type MutableElementsFromPointDocument = Document & {

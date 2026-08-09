@@ -358,7 +358,7 @@ export class SurfaceManager {
     // No built-in registry yet — fail fast
     throw new Error(
       `SurfaceManager: no renderer resolved for kind "${request.kind}". ` +
-        'Provide a resolver via modules.surfaces.resolver, or use a direct-render request.',
+        'Provide a resolver via surfaces.resolver, or use a direct-render request.',
     );
   }
 

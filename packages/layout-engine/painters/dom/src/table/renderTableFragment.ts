@@ -1,15 +1,15 @@
 import type {
   DrawingBlock,
+  DrawingMeasure,
   Fragment,
   Line,
   ParagraphBlock,
   SdtMetadata,
   TableBlock,
-  TableBorders,
   TableFragment,
   TableMeasure,
 } from '@superdoc/contracts';
-import { getTableVisualDirection, getBorderBandProfile, isNativeCssDoubleStyle } from '@superdoc/contracts';
+import { getTableVisualDirection } from '@superdoc/contracts';
 import type { ResolvePhysicalFamily } from '@superdoc/font-system';
 import { CLASS_NAMES, fragmentStyles } from '../styles.js';
 import { DOM_CLASS_NAMES } from '../constants.js';
@@ -20,21 +20,11 @@ import {
   getSdtContainerKey,
   getSdtContainerMetadata,
   hasExplicitSdtContainerKey,
-  resolveRenderedSdtBoundary,
   type SdtAncestorOptions,
   type SdtBoundaryOptions,
 } from '../sdt/container.js';
-import {
-  bevelToneSpec,
-  applyBorder,
-  borderValueToSpec,
-  hasExplicitCellBorders,
-  isExplicitNoneBorder,
-  isPresentBorder,
-  resolveTableBorderValue,
-} from './border-utils.js';
+import { applyBorder, borderValueToSpec, hasExplicitCellBorders } from './border-utils.js';
 import { getTableCellGridBounds } from './grid-geometry.js';
-import { buildColumnOccupancy, computeBoundaryGapSegments } from './row-boundary-gaps.js';
 
 type ApplyStylesFn = (el: HTMLElement, styles: Partial<CSSStyleDeclaration>) => void;
 /**
@@ -79,6 +69,7 @@ export type TableRenderDependencies = {
     context: FragmentRenderContext,
     lineIndex: number,
     isLastLine: boolean,
+    resolvedListTextStartPx?: number,
   ) => HTMLElement;
   /** Optional callback invoked after a table line's final styles/markers are applied. */
   captureLineSnapshot?: (
@@ -87,7 +78,7 @@ export type TableRenderDependencies = {
     options?: { inTableParagraph?: boolean; wrapperEl?: HTMLElement },
   ) => void;
   /** Function to render drawing content (images, shapes, shape groups) */
-  renderDrawingContent?: (block: DrawingBlock) => HTMLElement;
+  renderDrawingContent?: (block: DrawingBlock, interactionHost: HTMLElement, measure: DrawingMeasure) => HTMLElement;
   /** Function to apply fragment positioning and dimensions */
   applyFragmentFrame: (el: HTMLElement, fragment: Fragment) => void;
   /** Function to apply SDT metadata as data attributes */
@@ -244,7 +235,6 @@ export const renderTableFragment = (deps: TableRenderDependencies): HTMLElement 
   }
   const contentLeft = tableBorderWidths?.left ?? 0;
   const contentTop = tableBorderWidths?.top ?? 0;
-  const effectiveSdtBoundary = resolveRenderedSdtBoundary(block.attrs?.sdt, block.attrs?.containerSdt, sdtBoundary);
 
   // Apply SDT container styling (document sections, structured content blocks)
   if (
@@ -253,7 +243,7 @@ export const renderTableFragment = (deps: TableRenderDependencies): HTMLElement 
       container,
       block.attrs?.sdt,
       block.attrs?.containerSdt,
-      effectiveSdtBoundary,
+      sdtBoundary,
       {
         ancestorContainerKey,
         ancestorContainerSdt,
@@ -436,41 +426,11 @@ export const renderTableFragment = (deps: TableRenderDependencies): HTMLElement 
   }
 
   const borderCollapse = block.attrs?.borderCollapse ?? (block.attrs?.cellSpacing != null ? 'separate' : 'collapse');
-  // Word's separate-borders model also applies at spacing 0: edges stack, cells paint all four
-  // sides, and outset/inset render as the legacy HTML bevel (SD-3028, 300dpi probes).
-  const separateBorders = borderCollapse === 'separate';
   if (borderCollapse === 'separate' && tableBorders) {
-    // The table frame renders raised for outset (visual top/left light, bottom/right dark),
-    // the inverse of its cells; inset mirrors. Other styles pass through unchanged. (SD-3028)
-    applyBorder(container, 'Top', bevelToneSpec(borderValueToSpec(tableBorders.top), 'top', 'table'));
-    applyBorder(
-      container,
-      'Right',
-      bevelToneSpec(borderValueToSpec(isRtl ? tableBorders.left : tableBorders.right), 'right', 'table'),
-    );
-    applyBorder(container, 'Bottom', bevelToneSpec(borderValueToSpec(tableBorders.bottom), 'bottom', 'table'));
-    applyBorder(
-      container,
-      'Left',
-      bevelToneSpec(borderValueToSpec(isRtl ? tableBorders.right : tableBorders.left), 'left', 'table'),
-    );
-    // A compound table border (double/triple/thinThick*) is painted by the nested-rectangle
-    // outline + middle-grid overlay below, exactly as cell compound borders are. Keep the
-    // container CSS border WIDTH (so separate-mode gap geometry is unchanged) but make its
-    // color transparent on compound sides, or applyBorder's solid band would render a filled
-    // slab under the overlay rules. (SD-3028 review)
-    for (const [cssSide, value] of [
-      ['Top', tableBorders.top],
-      ['Right', isRtl ? tableBorders.left : tableBorders.right],
-      ['Bottom', tableBorders.bottom],
-      ['Left', isRtl ? tableBorders.right : tableBorders.left],
-    ] as const) {
-      const spec = borderValueToSpec(value);
-      // `double` paints via native CSS (two rules); only true overlay styles go transparent.
-      if (spec && getBorderBandProfile(spec) && !isNativeCssDoubleStyle(spec.style)) {
-        container.style[`border${cssSide}Color` as 'borderTopColor'] = 'transparent';
-      }
-    }
+    applyBorder(container, 'Top', borderValueToSpec(tableBorders.top));
+    applyBorder(container, 'Right', borderValueToSpec(isRtl ? tableBorders.left : tableBorders.right));
+    applyBorder(container, 'Bottom', borderValueToSpec(tableBorders.bottom));
+    applyBorder(container, 'Left', borderValueToSpec(isRtl ? tableBorders.right : tableBorders.left));
   }
 
   // Pre-calculate all row heights for rowspan calculations
@@ -524,8 +484,9 @@ export const renderTableFragment = (deps: TableRenderDependencies): HTMLElement 
         prevRow: r > 0 ? block.rows[r - 1] : undefined,
         prevRowMeasure: r > 0 ? measure.rows[r - 1] : undefined,
         nextRow: r < block.rows.length - 1 ? block.rows[r + 1] : undefined,
+        nextRowMeasure: r < block.rows.length - 1 ? measure.rows[r + 1] : undefined,
         rowOccupiedRightCol: rowOccupiedRightCols[r],
-        separateBorders,
+        nextRowOccupiedRightCol: rowOccupiedRightCols[r + 1],
         totalRows: block.rows.length,
         tableBorders,
         columnWidths: effectiveColumnWidths,
@@ -675,14 +636,9 @@ export const renderTableFragment = (deps: TableRenderDependencies): HTMLElement 
   }
 
   // Render body rows (fromRow to toRow)
-  // Interior row boundary Ys, collected for the fragment-level compound middle grid and
-  // the row-boundary gap strips.
-  const interiorRowBoundaries: Array<{ y: number; belowRowIndex: number }> = [];
   for (let r = fragment.fromRow; r < fragment.toRow; r += 1) {
     const rowMeasure = measure.rows[r];
     if (!rowMeasure) break;
-
-    if (r > fragment.fromRow) interiorRowBoundaries.push({ y, belowRowIndex: r });
 
     const isFirstRenderedBodyRow = r === fragment.fromRow;
     const isLastRenderedBodyRow = r === fragment.toRow - 1;
@@ -702,8 +658,9 @@ export const renderTableFragment = (deps: TableRenderDependencies): HTMLElement 
       prevRow: r > 0 ? block.rows[r - 1] : undefined,
       prevRowMeasure: r > 0 ? measure.rows[r - 1] : undefined,
       nextRow: r < block.rows.length - 1 ? block.rows[r + 1] : undefined,
+      nextRowMeasure: r < block.rows.length - 1 ? measure.rows[r + 1] : undefined,
       rowOccupiedRightCol: rowOccupiedRightCols[r],
-      separateBorders,
+      nextRowOccupiedRightCol: rowOccupiedRightCols[r + 1],
       totalRows: block.rows.length,
       tableBorders,
       columnWidths: effectiveColumnWidths,
@@ -732,196 +689,6 @@ export const renderTableFragment = (deps: TableRenderDependencies): HTMLElement 
     });
     // Add row height + spacing after every row (including last) for outer spacing after last row
     y += actualRowHeight + cellSpacingPx;
-  }
-
-  // Word paints a compound table border (double, triple, thinThick*) as an outer
-  // OUTLINE rule at the table boundary plus each cell's inner rectangle (see
-  // appendCompoundBorderRects). The outline rule is the band's OUTER-face rule
-  // (profile segments[0]). Continuation fragments skip the broken edge. (SD-3308)
-  {
-    const sides = [
-      ['top', tableBorders?.top, fragment.continuesFromPrev !== true],
-      ['right', isRtl ? tableBorders?.left : tableBorders?.right, true],
-      ['bottom', tableBorders?.bottom, fragment.continuesOnNext !== true],
-      ['left', isRtl ? tableBorders?.right : tableBorders?.left, true],
-    ] as const;
-    let outlineEl: HTMLElement | null = null;
-    for (const [side, value, enabled] of sides) {
-      if (!enabled || value == null || typeof value !== 'object') continue;
-      const spec = value as { style?: string; color?: string };
-      const profile = getBorderBandProfile(value);
-      if (!profile) continue;
-      // `double` renders via the boundary cells' native CSS border (two equal rules);
-      // drawing it here too would stack a third rule. Only true multi-rule overlay styles
-      // (triple/thinThick*) need the outline. (SD-3028)
-      if (isNativeCssDoubleStyle(spec.style)) continue;
-      const rule = Math.max(1, Math.round(profile.segments[0]));
-      const color = spec.color && /^#[0-9A-Fa-f]{6}$/.test(spec.color) ? spec.color : '#000000';
-      if (!outlineEl) {
-        outlineEl = doc.createElement('div');
-        outlineEl.className = 'superdoc-compound-border-outline';
-        const st = outlineEl.style;
-        st.position = 'absolute';
-        st.inset = '0';
-        st.boxSizing = 'border-box';
-        st.pointerEvents = 'none';
-        container.appendChild(outlineEl);
-      }
-      const cssSide = side[0].toUpperCase() + side.slice(1);
-      outlineEl.style[`border${cssSide}` as 'borderTop'] = `${rule}px solid ${color}`;
-    }
-  }
-
-  // Middle layer of table-level 3-rule bands (triple, thinThickThin*): Word paints
-  // it as a CONTINUOUS grid, measured from 300dpi probes: a ring inset by
-  // outer rule + gap from the table boundary, plus full-length center strips per
-  // interior gridline that run unbroken through perpendicular band crossings and
-  // meet the ring squarely. Per-cell middle rectangles are suppressed for these
-  // sides (see renderTableRow). Interior vertical strips sit centered on the
-  // gridline (the band straddles it); interior horizontal strips sit at the
-  // band's middle inside the lower row. (SD-3308)
-  {
-    const midProfileOf = (value: unknown) => {
-      if (value == null || typeof value !== 'object') return null;
-      const profile = getBorderBandProfile(value as never);
-      return profile && profile.segments.length === 5 ? profile : null;
-    };
-    const colorOf = (value: unknown): string => {
-      const c = (value as { color?: string } | null)?.color;
-      return c && /^#[0-9A-Fa-f]{6}$/.test(c) ? c : '#000000';
-    };
-    const midOffsetOf = (profile: { segments: number[] }): number =>
-      Math.round(profile.segments[0] + profile.segments[1]);
-    const midRuleOf = (profile: { segments: number[] }): number => Math.max(1, Math.round(profile.segments[2]));
-
-    const topBorder = tableBorders?.top;
-    const bottomBorder = tableBorders?.bottom;
-    const leftBorder = isRtl ? tableBorders?.right : tableBorders?.left;
-    const rightBorder = isRtl ? tableBorders?.left : tableBorders?.right;
-    const topMid = fragment.continuesFromPrev !== true ? midProfileOf(topBorder) : null;
-    const bottomMid = fragment.continuesOnNext !== true ? midProfileOf(bottomBorder) : null;
-    const leftMid = midProfileOf(leftBorder);
-    const rightMid = midProfileOf(rightBorder);
-    const insideHMid = midProfileOf(tableBorders?.insideH);
-    const insideVMid = midProfileOf(tableBorders?.insideV);
-
-    const fragmentWidth = fragment.width;
-    const fragmentHeight = fragment.height;
-    const ringTopInset = topMid ? midOffsetOf(topMid) : 0;
-    const ringBottomInset = bottomMid ? midOffsetOf(bottomMid) : 0;
-    const ringLeftInset = leftMid ? midOffsetOf(leftMid) : 0;
-    const ringRightInset = rightMid ? midOffsetOf(rightMid) : 0;
-
-    if (topMid || bottomMid || leftMid || rightMid) {
-      const ring = doc.createElement('div');
-      ring.className = 'superdoc-compound-border-midring';
-      const rs = ring.style;
-      rs.position = 'absolute';
-      rs.boxSizing = 'border-box';
-      rs.pointerEvents = 'none';
-      rs.left = `${ringLeftInset}px`;
-      rs.top = `${ringTopInset}px`;
-      rs.width = `${fragmentWidth - ringLeftInset - ringRightInset}px`;
-      rs.height = `${fragmentHeight - ringTopInset - ringBottomInset}px`;
-      if (topMid) rs.borderTop = `${midRuleOf(topMid)}px solid ${colorOf(topBorder)}`;
-      if (bottomMid) rs.borderBottom = `${midRuleOf(bottomMid)}px solid ${colorOf(bottomBorder)}`;
-      if (leftMid) rs.borderLeft = `${midRuleOf(leftMid)}px solid ${colorOf(leftBorder)}`;
-      if (rightMid) rs.borderRight = `${midRuleOf(rightMid)}px solid ${colorOf(rightBorder)}`;
-      container.appendChild(ring);
-    }
-
-    const appendStrip = (className: string, l: number, t: number, w: number, h: number, color: string): void => {
-      const strip = doc.createElement('div');
-      strip.className = className;
-      const ss = strip.style;
-      ss.position = 'absolute';
-      ss.pointerEvents = 'none';
-      ss.left = `${l}px`;
-      ss.top = `${t}px`;
-      ss.width = `${w}px`;
-      ss.height = `${h}px`;
-      ss.background = color;
-      container.appendChild(strip);
-    };
-
-    if (insideVMid && effectiveColumnWidths.length > 1) {
-      const rule = midRuleOf(insideVMid);
-      const color = colorOf(tableBorders?.insideV);
-      let cum = 0;
-      for (let i = 0; i < effectiveColumnWidths.length - 1; i += 1) {
-        cum += effectiveColumnWidths[i];
-        const gx = isRtl ? fragmentWidth - cum : cum;
-        appendStrip(
-          'superdoc-compound-border-midv',
-          Math.round(gx - rule / 2),
-          ringTopInset,
-          rule,
-          fragmentHeight - ringTopInset - ringBottomInset,
-          color,
-        );
-      }
-    }
-
-    if (insideHMid && interiorRowBoundaries.length > 0) {
-      const rule = midRuleOf(insideHMid);
-      const color = colorOf(tableBorders?.insideH);
-      for (const { y: gy } of interiorRowBoundaries) {
-        appendStrip(
-          'superdoc-compound-border-midh',
-          ringLeftInset,
-          Math.round(gy + midOffsetOf(insideHMid)),
-          fragmentWidth - ringLeftInset - ringRightInset,
-          rule,
-          color,
-        );
-      }
-    }
-  }
-
-  // Word paints an interior row boundary as ONE continuous line across the UNION of the two
-  // adjacent rows' extents (300dpi probes: gridBefore/gridAfter slivers render with insideH).
-  // Cells in the row below own and paint their top across their own span; segments with a
-  // cell above but none below are closed here as positioned strips, so the line never doubles
-  // and never stops short of a wider row's edge. (SD-3028 / SD-1513)
-  if (cellSpacingPx === 0 && !separateBorders && interiorRowBoundaries.length > 0 && block.rows?.length) {
-    const occupancy = buildColumnOccupancy(measure.rows, effectiveColumnWidths.length);
-    const columnX: number[] = [0];
-    for (const width of effectiveColumnWidths) columnX.push(columnX[columnX.length - 1] + width);
-
-    for (const { y: boundaryY, belowRowIndex } of interiorRowBoundaries) {
-      for (const segment of computeBoundaryGapSegments(occupancy, belowRowIndex)) {
-        // A rowspan cell that started before this fragment is rendered as a ghost cell,
-        // which already paints its own bottom edge.
-        if (segment.aboveCell.rowIndex < fragment.fromRow) continue;
-
-        const aboveCell = block.rows[segment.aboveCell.rowIndex]?.cells?.[segment.aboveCell.cellIndex];
-        const boundaryRowBorders = block.rows[belowRowIndex - 1]?.attrs?.borders;
-        const effectiveInsideH = boundaryRowBorders
-          ? ({ ...(tableBorders ?? {}), ...boundaryRowBorders } as TableBorders).insideH
-          : tableBorders?.insideH;
-        const cellBottom = aboveCell?.attrs?.borders?.bottom;
-        const spec = isExplicitNoneBorder(cellBottom)
-          ? undefined
-          : resolveTableBorderValue(cellBottom, effectiveInsideH);
-        if (!isPresentBorder(spec)) continue;
-
-        const x = columnX[segment.startCol];
-        const width = columnX[segment.endColExclusive] - x;
-        if (width <= 0) continue;
-
-        const strip = doc.createElement('div');
-        strip.className = 'superdoc-row-boundary-gap';
-        const ss = strip.style;
-        ss.position = 'absolute';
-        ss.pointerEvents = 'none';
-        ss.left = `${isRtl ? fragment.width - x - width : x}px`;
-        ss.top = `${boundaryY}px`;
-        ss.width = `${width}px`;
-        ss.height = '0';
-        applyBorder(strip, 'Top', spec);
-        container.appendChild(strip);
-      }
-    }
   }
 
   return container;

@@ -6,7 +6,12 @@ import type {
   TableBorders,
   TableFragment,
 } from '@superdoc/contracts';
-import { getBorderBandWidthPx } from '@superdoc/contracts';
+import {
+  getRenderedTableBorderWidthPx,
+  isExplicitNoneBorder as isExplicitNoneBorderContract,
+  isPresentBorder as isPresentBorderContract,
+  resolveBorderConflict as resolveBorderConflictContract,
+} from '@superdoc/contracts';
 import { getTableCellGridBounds, type TableCellGridPosition } from './grid-geometry.js';
 
 const ALLOWED_BORDER_STYLES = new Set<BorderStyle>([
@@ -14,28 +19,13 @@ const ALLOWED_BORDER_STYLES = new Set<BorderStyle>([
   'single',
   'double',
   'dashed',
-  'dashSmallGap',
   'dotted',
   'thick',
   'triple',
   'dotDash',
   'dotDotDash',
-  'thinThickSmallGap',
-  'thickThinSmallGap',
-  'thinThickThinSmallGap',
-  'thinThickMediumGap',
-  'thickThinMediumGap',
-  'thinThickThinMediumGap',
-  'thinThickLargeGap',
-  'thickThinLargeGap',
-  'thinThickThinLargeGap',
   'wave',
   'doubleWave',
-  'dashDotStroked',
-  'threeDEmboss',
-  'threeDEngrave',
-  'outset',
-  'inset',
 ]);
 
 const borderStyleToCSS = (style?: BorderStyle): string => {
@@ -47,48 +37,199 @@ const borderStyleToCSS = (style?: BorderStyle): string => {
     return 'solid';
   }
 
-  // Compound styles (triple, thinThick*) map to 'solid' so the CSS border carries
-  // the full band width for layout; their visible rules are painted by the
-  // nested-rectangle compound path, which makes this CSS paint transparent. (SD-3308)
   const styleMap: Record<BorderStyle, string> = {
     none: 'none',
     single: 'solid',
     double: 'double',
     dashed: 'dashed',
-    dashSmallGap: 'dashed',
     dotted: 'dotted',
     thick: 'solid',
     triple: 'solid',
     dotDash: 'dashed',
     dotDotDash: 'dashed',
-    thinThickSmallGap: 'solid',
-    thickThinSmallGap: 'solid',
-    thinThickThinSmallGap: 'solid',
-    thinThickMediumGap: 'solid',
-    thickThinMediumGap: 'solid',
-    thinThickThinMediumGap: 'solid',
-    thinThickLargeGap: 'solid',
-    thickThinLargeGap: 'solid',
-    thinThickThinLargeGap: 'solid',
     wave: 'solid',
     doubleWave: 'solid',
-    // dashDotStroked: CSS cannot alternate dash and dot, so approximate as dashed
-    // (consistent with dotDash/dotDotDash). threeDEmboss/threeDEngrave map to CSS's
-    // native 3D bevels (ridge = raised, groove = engraved) as a close approximation. (SD-3028)
-    dashDotStroked: 'dashed',
-    threeDEmboss: 'ridge',
-    threeDEngrave: 'groove',
-    // In the collapsed model Word paints outset/inset as plain solid lines at the
-    // authored width and color (300dpi probes, SD-3028); the bevel only exists in
-    // separate-borders mode where bevelToneSpec retones the sides.
-    outset: 'solid',
-    inset: 'solid',
   };
 
   return styleMap[style];
 };
 
 const isValidHexColor = (color: string): boolean => /^#[0-9A-Fa-f]{6}$/.test(color);
+
+type BorderSide = 'Top' | 'Right' | 'Bottom' | 'Left';
+
+const BORDER_SIDES: readonly BorderSide[] = ['Top', 'Right', 'Bottom', 'Left'];
+const NATIVE_DOUBLE_BORDER_MIN_WIDTH_PX = 3;
+const THIN_DOUBLE_BORDER_DATASET_KEY = 'superdocThinDoubleBorder';
+const THIN_DOUBLE_BORDER_CLASS_NAME = 'superdoc-thin-double-border';
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+// V2 publishes the inverse of its CSS transform on the paint wrapper. Other
+// hosts fall back to 1, so the painter keeps the same one-screen-pixel floor.
+const RENDER_ZOOM_INVERSE_PROPERTY = '--sd-render-zoom-inverse';
+
+const cssPixels = (value: number): string => `${Number(value.toFixed(6))}px`;
+
+type DoubleBorderProperty = 'color' | 'stroke' | 'offset' | 'paint-stroke' | 'paint-offset';
+
+const doubleBorderProperty = (side: BorderSide, suffix: DoubleBorderProperty): string =>
+  `--sd-table-double-${side.toLowerCase()}-${suffix}`;
+
+const hasThinDoubleBorder = (element: HTMLElement): boolean =>
+  BORDER_SIDES.some((side) => element.style.getPropertyValue(doubleBorderProperty(side, 'color')) !== '');
+
+const syncThinDoubleBorderRaster = (element: HTMLElement): void => {
+  if (hasThinDoubleBorder(element)) {
+    element.dataset[THIN_DOUBLE_BORDER_DATASET_KEY] = 'true';
+    element.classList.add(THIN_DOUBLE_BORDER_CLASS_NAME);
+    return;
+  }
+
+  delete element.dataset[THIN_DOUBLE_BORDER_DATASET_KEY];
+  element.classList.remove(THIN_DOUBLE_BORDER_CLASS_NAME);
+};
+
+const clearThinDoubleBorderRasterSide = (element: HTMLElement, side: BorderSide): void => {
+  element.style.removeProperty(doubleBorderProperty(side, 'color'));
+  element.style.removeProperty(doubleBorderProperty(side, 'stroke'));
+  element.style.removeProperty(doubleBorderProperty(side, 'offset'));
+};
+
+const applyThinDoubleBorderRasterSide = (
+  element: HTMLElement,
+  side: BorderSide,
+  width: number,
+  color: string,
+): void => {
+  const authoredStrokeWidth = width / 3;
+  element.style.setProperty(doubleBorderProperty(side, 'color'), color);
+  element.style.setProperty(doubleBorderProperty(side, 'stroke'), cssPixels(authoredStrokeWidth));
+  element.style.setProperty(doubleBorderProperty(side, 'offset'), cssPixels(authoredStrokeWidth * 2));
+};
+
+type ThinDoubleBorderOverlayGeometry = {
+  left: string;
+  top: string;
+  width: string;
+  height: string;
+};
+
+type SvgRectGeometry = {
+  x: string;
+  y: string;
+  width: string;
+  height: string;
+};
+
+/**
+ * Paints thin double borders in an unclipped sibling SVG. CSS gradients are
+ * clipped at cell seams and cannot form Word's continuous rectangular rings.
+ * The SVG preserves authored geometry once it is large enough, while the V2
+ * wrapper's inverse-zoom variable keeps sub-pixel components at Word's
+ * one-screen-pixel minimum across editor zoom levels.
+ */
+export const createThinDoubleBorderOverlay = (
+  doc: Document,
+  source: HTMLElement,
+  geometry: ThinDoubleBorderOverlayGeometry,
+): SVGSVGElement | null => {
+  const activeSides = BORDER_SIDES.filter(
+    (side) => source.style.getPropertyValue(doubleBorderProperty(side, 'color')) !== '',
+  );
+  if (activeSides.length === 0) return null;
+
+  const active = new Set(activeSides);
+  const overlay = doc.createElementNS(SVG_NAMESPACE, 'svg');
+  overlay.classList.add('superdoc-thin-double-border-overlay');
+  overlay.dataset.superdocThinDoubleBorderOverlay = 'true';
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.style.position = 'absolute';
+  overlay.style.left = geometry.left;
+  overlay.style.top = geometry.top;
+  overlay.style.width = geometry.width;
+  overlay.style.height = geometry.height;
+  overlay.style.overflow = 'visible';
+  overlay.style.pointerEvents = 'none';
+  overlay.style.zIndex = '1';
+
+  for (const side of activeSides) {
+    for (const suffix of ['color', 'stroke', 'offset'] as const) {
+      overlay.style.setProperty(
+        doubleBorderProperty(side, suffix),
+        source.style.getPropertyValue(doubleBorderProperty(side, suffix)),
+      );
+    }
+    overlay.style.setProperty(
+      doubleBorderProperty(side, 'paint-stroke'),
+      `max(var(${doubleBorderProperty(side, 'stroke')}), calc(1px * var(${RENDER_ZOOM_INVERSE_PROPERTY}, 1)))`,
+    );
+    overlay.style.setProperty(
+      doubleBorderProperty(side, 'paint-offset'),
+      `max(var(${doubleBorderProperty(side, 'offset')}), calc(2px * var(${RENDER_ZOOM_INVERSE_PROPERTY}, 1)))`,
+    );
+  }
+
+  const stroke = (side: BorderSide): string => `var(${doubleBorderProperty(side, 'paint-stroke')})`;
+  const offset = (side: BorderSide): string => `var(${doubleBorderProperty(side, 'paint-offset')})`;
+  const perpendicularInset = (side: BorderSide): string => (active.has(side) ? offset(side) : '0px');
+  const horizontalInnerWidth = `calc(100% - ${perpendicularInset('Left')} - ${perpendicularInset('Right')})`;
+  const verticalInnerHeight = `calc(100% - ${perpendicularInset('Top')} - ${perpendicularInset('Bottom')})`;
+  const geometries: Record<BorderSide, { outer: SvgRectGeometry; inner: SvgRectGeometry }> = {
+    Top: {
+      outer: { x: '0px', y: '0px', width: '100%', height: stroke('Top') },
+      inner: {
+        x: perpendicularInset('Left'),
+        y: offset('Top'),
+        width: horizontalInnerWidth,
+        height: stroke('Top'),
+      },
+    },
+    Right: {
+      outer: { x: `calc(100% - ${stroke('Right')})`, y: '0px', width: stroke('Right'), height: '100%' },
+      inner: {
+        x: `calc(100% - ${offset('Right')} - ${stroke('Right')})`,
+        y: perpendicularInset('Top'),
+        width: stroke('Right'),
+        height: verticalInnerHeight,
+      },
+    },
+    Bottom: {
+      outer: { x: '0px', y: `calc(100% - ${stroke('Bottom')})`, width: '100%', height: stroke('Bottom') },
+      inner: {
+        x: perpendicularInset('Left'),
+        y: `calc(100% - ${offset('Bottom')} - ${stroke('Bottom')})`,
+        width: horizontalInnerWidth,
+        height: stroke('Bottom'),
+      },
+    },
+    Left: {
+      outer: { x: '0px', y: '0px', width: stroke('Left'), height: '100%' },
+      inner: {
+        x: offset('Left'),
+        y: perpendicularInset('Top'),
+        width: stroke('Left'),
+        height: verticalInnerHeight,
+      },
+    },
+  };
+
+  for (const layer of ['outer', 'inner'] as const) {
+    for (const side of activeSides) {
+      const rect = doc.createElementNS(SVG_NAMESPACE, 'rect');
+      rect.dataset.side = side.toLowerCase();
+      rect.dataset.layer = layer;
+      rect.setAttribute('shape-rendering', 'crispEdges');
+      rect.style.fill = `var(${doubleBorderProperty(side, 'color')}, transparent)`;
+      const rectGeometry = geometries[side][layer];
+      rect.style.setProperty('x', rectGeometry.x);
+      rect.style.setProperty('y', rectGeometry.y);
+      rect.style.setProperty('width', rectGeometry.width);
+      rect.style.setProperty('height', rectGeometry.height);
+      overlay.append(rect);
+    }
+  }
+
+  return overlay;
+};
 
 /**
  * Applies a border specification to one side of an HTML element.
@@ -108,30 +249,26 @@ const isValidHexColor = (color: string): boolean => /^#[0-9A-Fa-f]{6}$/.test(col
  * // Sets cell.style.borderTop = '2px solid #FF0000'
  * ```
  */
-export const applyBorder = (
-  element: HTMLElement,
-  side: 'Top' | 'Right' | 'Bottom' | 'Left',
-  border?: BorderSpec,
-  widthOverridePx?: number,
-): void => {
+export const applyBorder = (element: HTMLElement, side: BorderSide, border?: BorderSpec): void => {
   if (!border) return;
+  clearThinDoubleBorderRasterSide(element, side);
   if (border.style === 'none' || border.width === 0) {
     element.style[`border${side}`] = 'none';
+    syncThinDoubleBorderRaster(element);
     return;
   }
 
   const style = borderStyleToCSS(border.style);
+  const width = border.width ?? 1;
   const color = border.color ?? '#000000';
   const safeColor = isValidHexColor(color) ? color : '#000000';
-  // Band width comes from the shared contracts helper so the painted width and the
-  // measuring engine's row-height reservation can never disagree. Word semantics:
-  // thick = authored w:sz width (SD-3028: no 2x; min 1px); double = 3x the per-rule
-  // w:sz (min 3px so CSS renders both rules); everything else = authored width.
-  // `widthOverridePx` carries the
-  // straddled half-band for interior compound edges (Word centers those bands on
-  // the gridline, half in each adjacent cell). (SD-3308)
-  const actualWidth = widthOverridePx ?? getBorderBandWidthPx(border);
-  element.style[`border${side}`] = `${actualWidth}px ${style} ${safeColor}`;
+  const actualWidth = getRenderedTableBorderWidthPx({ style: border.style, width }, 1);
+  const needsThinDoubleRaster = border.style === 'double' && actualWidth < NATIVE_DOUBLE_BORDER_MIN_WIDTH_PX;
+  element.style[`border${side}`] = `${actualWidth}px ${style} ${needsThinDoubleRaster ? 'transparent' : safeColor}`;
+  if (needsThinDoubleRaster) {
+    applyThinDoubleBorderRasterSide(element, side, actualWidth, safeColor);
+  }
+  syncThinDoubleBorderRaster(element);
 };
 
 /**
@@ -153,57 +290,12 @@ export const applyBorder = (
  * });
  * ```
  */
-export const applyCellBorders = (
-  element: HTMLElement,
-  borders?: CellBorders,
-  widthOverridesPx?: { left?: number; right?: number },
-): void => {
+export const applyCellBorders = (element: HTMLElement, borders?: CellBorders): void => {
   if (!borders) return;
   applyBorder(element, 'Top', borders.top);
-  applyBorder(element, 'Right', borders.right, widthOverridesPx?.right);
+  applyBorder(element, 'Right', borders.right);
   applyBorder(element, 'Bottom', borders.bottom);
-  applyBorder(element, 'Left', borders.left, widthOverridesPx?.left);
-};
-
-/** The two tones Word uses for outset/inset bevel sides (300dpi probes, SD-3028). */
-const BEVEL_LIGHT_AUTO = '#F0F0F0';
-const BEVEL_DARK_AUTO = '#A0A0A0';
-
-const bevelDarkColor = (color?: string): string => {
-  if (!color || !/^#[0-9A-Fa-f]{6}$/.test(color) || color.toLowerCase() === '#000000') return BEVEL_DARK_AUTO;
-  const half = (i: number) => Math.floor(parseInt(color.slice(i, i + 2), 16) / 2);
-  return `#${[1, 3, 5].map((i) => half(i).toString(16).padStart(2, '0')).join('')}`;
-};
-
-const bevelLightColor = (color?: string): string => {
-  if (!color || !/^#[0-9A-Fa-f]{6}$/.test(color) || color.toLowerCase() === '#000000') return BEVEL_LIGHT_AUTO;
-  return color;
-};
-
-/**
- * Word's separate-borders bevel model for `outset`/`inset` (measured from 300dpi
- * probes, SD-3028): the legacy HTML table look. With `outset` the TABLE frame is
- * raised (visual top/left light, bottom/right dark) and each CELL is sunken (the
- * inverse); `inset` mirrors both. Tones derive from the authored color: auto/black
- * uses #F0F0F0 / #A0A0A0, an explicit color uses the color itself (light) and the
- * color at half intensity (dark). All other styles pass through unchanged. Only
- * separate-borders mode calls this; in the collapsed model Word paints these
- * styles as plain solid lines.
- */
-export const bevelToneSpec = (
-  spec: BorderSpec | undefined,
-  visualSide: 'top' | 'right' | 'bottom' | 'left',
-  owner: 'table' | 'cell',
-): BorderSpec | undefined => {
-  if (!spec || (spec.style !== 'outset' && spec.style !== 'inset')) return spec;
-  const raisedSide = visualSide === 'top' || visualSide === 'left';
-  const raisedOwner = (spec.style === 'outset') === (owner === 'table');
-  const light = raisedOwner === raisedSide;
-  return {
-    ...spec,
-    style: 'single',
-    color: light ? bevelLightColor(spec.color) : bevelDarkColor(spec.color),
-  };
+  applyBorder(element, 'Left', borders.left);
 };
 
 /**
@@ -275,129 +367,9 @@ export const resolveTableBorderValue = (
   return borderValueToSpec(fallback);
 };
 
-// Border "number" per ECMA-376 §17.4.66 (only the realistic styles; unknown → 1).
-const BORDER_STYLE_NUMBER: Partial<Record<BorderStyle, number>> = {
-  single: 1,
-  thick: 2,
-  double: 3,
-  dotted: 4,
-  dashed: 5,
-  dotDash: 6,
-  dotDotDash: 7,
-  triple: 8,
-  thinThickSmallGap: 9,
-  thickThinSmallGap: 10,
-  thinThickThinSmallGap: 11,
-  thinThickMediumGap: 12,
-  thickThinMediumGap: 13,
-  thinThickThinMediumGap: 14,
-  thinThickLargeGap: 15,
-  thickThinLargeGap: 16,
-  thinThickThinLargeGap: 17,
-  wave: 18,
-  doubleWave: 19,
-  dashSmallGap: 20,
-  dashDotStroked: 21,
-  threeDEmboss: 22,
-  threeDEngrave: 23,
-  outset: 24,
-  inset: 25,
-};
-// Number of drawn lines per style (single=1, double=2, triple=3, …).
-const BORDER_STYLE_LINES: Partial<Record<BorderStyle, number>> = {
-  single: 1,
-  thick: 1,
-  double: 2,
-  dotted: 1,
-  dashed: 1,
-  dotDash: 1,
-  dotDotDash: 1,
-  triple: 3,
-  thinThickSmallGap: 2,
-  thickThinSmallGap: 2,
-  thinThickThinSmallGap: 3,
-  thinThickMediumGap: 2,
-  thickThinMediumGap: 2,
-  thinThickThinMediumGap: 3,
-  thinThickLargeGap: 2,
-  thickThinLargeGap: 2,
-  thinThickThinLargeGap: 3,
-  wave: 1,
-  doubleWave: 2,
-  dashSmallGap: 1,
-  dashDotStroked: 1,
-  threeDEmboss: 1,
-  threeDEngrave: 1,
-};
-
-export const isPresentBorder = (b?: BorderSpec): b is BorderSpec =>
-  !!b && b.style !== undefined && b.style !== 'none' && (b.width === undefined || b.width > 0);
-
-/**
- * True when a border is EXPLICITLY set to none/nil (`w:val="nil"`/`"none"`), as opposed to
- * simply unset/absent. The distinction matters for shared interior edges (§17.4.66): an
- * explicit none on BOTH adjacent cells suppresses the divider, while an unset side inherits
- * the table's insideH/insideV. Accepts either a CellBorders BorderSpec (`{style:'none'}`) or
- * a TableBorderValue (`{none:true}`).
- */
-export const isExplicitNoneBorder = (b?: unknown): boolean => {
-  if (!b || typeof b !== 'object') return false;
-  const r = b as Record<string, unknown>;
-  return r.style === 'none' || r.none === true;
-};
-
-const borderWeight = (b: BorderSpec): number =>
-  (BORDER_STYLE_LINES[b.style as BorderStyle] ?? 1) * (BORDER_STYLE_NUMBER[b.style as BorderStyle] ?? 1);
-
-const colorBrightness = (color: string | undefined, formula: (r: number, g: number, bl: number) => number): number => {
-  const hex = (color ?? '#000000').replace('#', '');
-  if (hex.length < 6) return 0;
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const bl = parseInt(hex.slice(4, 6), 16);
-  return formula(r, g, bl);
-};
-
-/**
- * OOXML cell-border conflict resolution (ECMA-376 §17.4.66).
- *
- * With zero cell spacing, two cells sharing an edge each specify a border; the spec
- * collapses them to a SINGLE displayed border:
- *  1. If either side is nil/none/absent, the opposing (present) border is displayed.
- *  2. Otherwise the border with greater weight wins, where
- *     weight = (#lines in the style) × (style number).
- *  3. Equal weight → the style higher on the precedence list (single first) wins.
- *  4. Identical style → the color with the smaller brightness (R+B+2G, then B+2G, then
- *     G) wins; finally the first border (reading order) wins.
- *
- * @param a - One side's border (the owning cell's, e.g. the lower/right cell)
- * @param b - The opposing side's border (e.g. the upper/left neighbor)
- * @returns The single BorderSpec to display, or undefined if neither is present.
- */
-export const resolveBorderConflict = (a?: BorderSpec, b?: BorderSpec): BorderSpec | undefined => {
-  const pa = isPresentBorder(a);
-  const pb = isPresentBorder(b);
-  if (!pa && !pb) return undefined;
-  if (!pa) return b;
-  if (!pb) return a;
-  const wa = borderWeight(a);
-  const wb = borderWeight(b);
-  if (wa !== wb) return wa > wb ? a : b;
-  const na = BORDER_STYLE_NUMBER[a.style as BorderStyle] ?? 99;
-  const nb = BORDER_STYLE_NUMBER[b.style as BorderStyle] ?? 99;
-  if (na !== nb) return na < nb ? a : b;
-  const formulas: Array<(r: number, g: number, bl: number) => number> = [
-    (r, g, bl) => r + bl + 2 * g,
-    (_r, g, bl) => bl + 2 * g,
-    (_r, g) => g,
-  ];
-  for (const f of formulas) {
-    const ba = colorBrightness(a.color, f);
-    const bb = colorBrightness(b.color, f);
-    if (ba !== bb) return ba < bb ? a : b;
-  }
-  return a;
-};
+export const isPresentBorder = isPresentBorderContract;
+export const isExplicitNoneBorder = isExplicitNoneBorderContract;
+export const resolveBorderConflict = resolveBorderConflictContract;
 
 /**
  * Creates a border overlay element for a table fragment.
@@ -494,10 +466,10 @@ export const createTableBorderOverlay = (
 export const hasExplicitCellBorders = (cellBorders?: CellBorders): cellBorders is CellBorders =>
   Boolean(
     cellBorders &&
-      (cellBorders.top !== undefined ||
-        cellBorders.right !== undefined ||
-        cellBorders.bottom !== undefined ||
-        cellBorders.left !== undefined),
+    (cellBorders.top !== undefined ||
+      cellBorders.right !== undefined ||
+      cellBorders.bottom !== undefined ||
+      cellBorders.left !== undefined),
   );
 
 export const resolveTableCellBorders = (

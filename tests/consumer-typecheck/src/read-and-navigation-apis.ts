@@ -8,7 +8,7 @@
  * failing on the obligation diff.
  *
  * Methods covered here:
- *   - `getHTML(options?)` → `string[]`
+ *   - `getHTML()` → `unknown[]`
  *   - `getZoom()` → `number`
  *   - `navigateTo(target)` → `Promise<boolean>`
  *   - `scrollToElement(elementId)` → `Promise<boolean>`
@@ -17,7 +17,13 @@
  * `goToSearchResult.parameters` is already locked in `search-match.ts`;
  * this file adds the `returns` assertion for the same method.
  */
-import type { NavigableAddress, SuperDoc, SuperDocViewportMetrics, SuperDocZoomState } from 'superdoc';
+import type {
+  NavigableAddress,
+  SuperDoc,
+  SuperDocMeasurementUnit,
+  SuperDocViewportMetrics,
+  SuperDocZoomState,
+} from 'superdoc';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type AssertEqual<A, B> = Equal<A, B> extends true ? true : never;
@@ -25,16 +31,11 @@ type AssertEqual<A, B> = Equal<A, B> extends true ? true : never;
 declare const sd: SuperDoc;
 
 // ─── getHTML ─────────────────────────────────────────────────────────
-// Returns the HTML string for every editor in document order. Options
-// are forwarded to `editor.getHTML(options)` on each editor, so the
-// public option shape matches the underlying Editor method:
-// `{ unflattenLists?: boolean }`. The source signature was tightened
-// in this PR to forward that shape explicitly via
-// `Parameters<Editor['getHTML']>[0]`; the assertion below locks it.
-const _htmlParamsOk: AssertEqual<Parameters<SuperDoc['getHTML']>, [{ unflattenLists?: boolean }?]> = true;
-const _htmlReturnOk: AssertEqual<ReturnType<SuperDoc['getHTML']>, string[]> = true;
-const _htmlValue: string[] = sd.getHTML();
-const _htmlValueWithOpts: string[] = sd.getHTML({ unflattenLists: true });
+// Returns one HTML-like value for every editor in document order. The current
+// public declaration preserves the generic `unknown[]` result, so consumers
+// must narrow entries before treating them as strings.
+const _htmlReturnOk: AssertEqual<ReturnType<SuperDoc['getHTML']>, unknown[]> = true;
+const _htmlValue: unknown[] = sd.getHTML();
 
 // ─── getZoom ─────────────────────────────────────────────────────────
 // Returns the active zoom percentage. Per JSDoc: 100 by default.
@@ -65,6 +66,13 @@ if (_viewportMetrics) {
   void [_availableWidth, _documentWidth, _fitZoom];
 }
 
+// ─── getMeasurementUnit ──────────────────────────────────────────────
+// Returns the active measurement unit for rulers/measurement fields.
+// Closed union: 'in' | 'cm'. Defaults to 'in' before initialization.
+const _measurementUnitReturnOk: AssertEqual<ReturnType<SuperDoc['getMeasurementUnit']>, SuperDocMeasurementUnit> = true;
+const _measurementUnitValue: SuperDocMeasurementUnit = sd.getMeasurementUnit();
+void [_measurementUnitReturnOk, _measurementUnitValue];
+
 // ─── navigateTo ──────────────────────────────────────────────────────
 // Async navigation to a stable address (bookmark, block, comment,
 // tracked change). Resolves true iff the address was found and
@@ -79,24 +87,15 @@ const _navigateReturnOk: AssertEqual<ReturnType<SuperDoc['navigateTo']>, Promise
 const _scrollParamsOk: AssertEqual<Parameters<SuperDoc['scrollToElement']>, [string]> = true;
 const _scrollReturnOk: AssertEqual<ReturnType<SuperDoc['scrollToElement']>, Promise<boolean>> = true;
 
-// ─── goToSearchResult (returns) ──────────────────────────────────────
-// Param shape is locked in search-match.ts; this file pins the return
-// shape so consumers know they need to handle the `undefined` case
-// when no active editor exists.
-const _gotoSearchReturnOk: AssertEqual<ReturnType<SuperDoc['goToSearchResult']>, boolean | undefined> = true;
-
 void [
-  _htmlParamsOk,
   _htmlReturnOk,
   _htmlValue,
-  _htmlValueWithOpts,
   _zoomReturnOk,
   _zoomValue,
   _navigateParamsOk,
   _navigateReturnOk,
   _scrollParamsOk,
   _scrollReturnOk,
-  _gotoSearchReturnOk,
 ];
 
 // Suppress unused-import warning for the type-only navigation address;

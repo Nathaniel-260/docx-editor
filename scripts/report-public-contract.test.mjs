@@ -80,10 +80,10 @@ describe('validatePublicContract', () => {
       );
     });
 
-    it('uses kebab-case "legacy-raw" for the legacyRaw bucket', () => {
+    it('uses kebab-case "legacy-raw" for the legacyRaw bucket before rejecting the bucket', () => {
       const contract = baseContract();
-      contract.legacyRaw.push({ subpath: './super-editor', tier: 'legacyRaw', note: 'wrong case' });
-      const exportsMap = { ...baseExports(), './super-editor': ent('./dist/superdoc/src/super-editor.d.ts') };
+      contract.legacyRaw.push({ subpath: './raw', tier: 'legacyRaw', note: 'wrong case' });
+      const exportsMap = { ...baseExports(), './raw': ent('./dist/superdoc/src/raw.d.ts') };
       const failures = validatePublicContract(contract, exportsMap);
       assert.ok(
         failures.some((f) => /tier="legacyRaw"; expected "legacy-raw"/.test(f)),
@@ -131,19 +131,8 @@ describe('validatePublicContract', () => {
     });
   });
 
-  describe('legacyRaw allowlist', () => {
-    it('passes for the accepted ./super-editor entry', () => {
-      const contract = baseContract();
-      contract.legacyRaw.push({ subpath: './super-editor', tier: 'legacy-raw', note: '' });
-      const exportsMap = {
-        ...baseExports(),
-        './super-editor': ent('./dist/superdoc/src/super-editor.d.ts'),
-      };
-      const failures = validatePublicContract(contract, exportsMap);
-      assert.deepEqual(failures, []);
-    });
-
-    it('flags a non-allowlisted legacyRaw subpath', () => {
+  describe('legacyRaw removal', () => {
+    it('flags any legacyRaw subpath', () => {
       const contract = baseContract();
       contract.legacyRaw.push({ subpath: './fake', tier: 'legacy-raw', note: '' });
       const exportsMap = {
@@ -152,22 +141,29 @@ describe('validatePublicContract', () => {
       };
       const failures = validatePublicContract(contract, exportsMap);
       assert.ok(
-        failures.some((f) => /legacyRaw "\.\/fake": not on the accepted list/.test(f)),
-        `expected allowlist failure, got: ${failures.join('\n')}`,
+        failures.some((f) => /legacyRaw "\.\/fake": raw legacy subpaths are not allowed in superdoc@2/.test(f)),
+        `expected raw legacy failure, got: ${failures.join('\n')}`,
       );
     });
 
     it('flags a legacyRaw subpath that accidentally routes through public/', () => {
       const contract = baseContract();
-      contract.legacyRaw.push({ subpath: './super-editor', tier: 'legacy-raw', note: '' });
+      contract.legacyRaw.push({ subpath: './raw', tier: 'legacy-raw', note: '' });
       const exportsMap = {
         ...baseExports(),
         // Routes under public/ - should not be in legacyRaw.
-        './super-editor': ent('./dist/superdoc/src/public/super-editor.d.ts'),
+        './raw': ent('./dist/superdoc/src/public/raw.d.ts'),
       };
       const failures = validatePublicContract(contract, exportsMap);
-      assert.equal(failures.length, 1);
-      assert.match(failures[0], /legacyRaw "\.\/super-editor".*promote to legacy/);
+      assert.equal(failures.length, 2);
+      assert.ok(
+        failures.some((f) => /legacyRaw "\.\/raw": raw legacy subpaths are not allowed in superdoc@2/.test(f)),
+        `expected raw legacy failure, got: ${failures.join('\n')}`,
+      );
+      assert.ok(
+        failures.some((f) => /legacyRaw "\.\/raw".*remove the raw legacy entry/.test(f)),
+        `expected public-route failure, got: ${failures.join('\n')}`,
+      );
     });
   });
 

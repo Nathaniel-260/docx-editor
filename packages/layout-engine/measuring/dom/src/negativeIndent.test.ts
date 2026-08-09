@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vite-plus/test';
 import { measureBlock } from './index.js';
 import type { FlowBlock, ParagraphMeasure, Measure } from '@superdoc/contracts';
 

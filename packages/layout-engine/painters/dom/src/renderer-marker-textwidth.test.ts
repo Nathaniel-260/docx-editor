@@ -9,7 +9,7 @@
  * - Right/center justified markers use markerBoxWidth for visual alignment
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { createTestPainter as createDomPainter } from './_test-utils.js';
 import type { FlowBlock, Measure, Layout, WordParagraphLayoutOutput } from '@superdoc/contracts';
 

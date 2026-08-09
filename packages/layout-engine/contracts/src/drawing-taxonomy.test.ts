@@ -7,7 +7,7 @@
  * decision, one of these fails — that is the point of "freezing" the
  * taxonomy in code rather than prose.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 
 import {
   DRAWING_DIAGNOSTIC_CODES,
@@ -42,6 +42,7 @@ describe('drawing support taxonomy (frozen)', () => {
       'imageChildInGroup',
       'vectorShape',
       'shapeGroup',
+      'chart',
       'alternateContent',
       // fail-closed
       'externalImage',
@@ -61,7 +62,6 @@ describe('drawing support taxonomy (frozen)', () => {
       'unsupportedWrapFields',
       'alternateContentNoSupportedChoice',
       'groupChildUnsupported',
-      'chart',
       // deferred
       'objectEditing',
       'customWrapPolygon',
@@ -90,6 +90,8 @@ describe('drawing support taxonomy (frozen)', () => {
     expect(getDrawingFamilySpec('vectorShape').drawingKind).toBe('vectorShape');
     expect(getDrawingFamilySpec('shapeGroup').contract).toBe('DrawingBlock');
     expect(getDrawingFamilySpec('shapeGroup').drawingKind).toBe('shapeGroup');
+    expect(getDrawingFamilySpec('chart').contract).toBe('DrawingBlock');
+    expect(getDrawingFamilySpec('chart').drawingKind).toBe('chart');
     expect(getDrawingFamilySpec('alternateContent').contract).toBe('selected-choice');
   });
 
@@ -140,10 +142,13 @@ describe('drawing support taxonomy (frozen)', () => {
     expect(new Set(codes).size).toBe(codes.length);
   });
 
-  it('the chart decision is fail-closed', () => {
+  it('the chart decision is supported while full fidelity remains deferred', () => {
     const spec = getDrawingFamilySpec('chart');
-    expect(spec.support).toBe('fail-closed');
-    expect(spec.diagnostic).toBe('render.chart-not-supported');
+    expect(spec.support).toBe('supported');
+    expect(spec.contract).toBe('DrawingBlock');
+    expect(spec.drawingKind).toBe('chart');
+    expect(spec.diagnostic).toBeUndefined();
+    expect(getDrawingFamilySpec('chartFidelity').support).toBe('deferred');
   });
 
   it('VML defaults to fail-closed preservation', () => {
@@ -188,6 +193,9 @@ describe('drawing diagnostic code normalization', () => {
     );
     expect(canonicalDrawingDiagnosticCode('render.media.invalid-image-size')).toBe(
       DRAWING_DIAGNOSTIC_CODES.imageTooLarge,
+    );
+    expect(canonicalDrawingDiagnosticCode('render.chart-not-supported')).toBe(
+      DRAWING_DIAGNOSTIC_CODES.unsupportedObject,
     );
     expect(canonicalDrawingDiagnosticCode('render.textbox.vml-unsupported')).toBe(
       DRAWING_DIAGNOSTIC_CODES.vmlUnsupported,

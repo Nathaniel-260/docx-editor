@@ -2,6 +2,7 @@ import { ref, reactive } from 'vue';
 import { v4 as uuidv4 } from 'uuid';
 import useSelection from '@superdoc/helpers/use-selection';
 import useComment from '@superdoc/components/CommentsLayer/use-comment';
+import { DOCUMENT_EDITOR_SELECTION_SOURCE } from '@superdoc/helpers/selection-source';
 
 export default function useConversation(params) {
   const conversationId = params.conversationId || uuidv4();
@@ -11,7 +12,7 @@ export default function useConversation(params) {
   const comments = ref(params.comments ? params.comments.map((c) => useComment(c)) : []);
   const selection = useSelection(params.selection);
   const suppressHighlight = ref(params.suppressHighlight);
-  const suppressClick = ref(params.suppressClick || params.selection?.source === 'super-editor');
+  const suppressClick = ref(params.suppressClick || params.selection?.source === DOCUMENT_EDITOR_SELECTION_SOURCE);
   const thread = ref(params.thread == null ? null : params.thread);
   const isTrackedChange = ref(params.isTrackedChange || false);
   const trackedChange = reactive(params.trackedChange || { insertion: null, deletion: null });

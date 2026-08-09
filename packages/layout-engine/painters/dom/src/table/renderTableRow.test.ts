@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import { renderTableRow } from './renderTableRow.js';
 
 const renderTableCellMock = vi.fn(() => ({ cellElement: document.createElement('div') }));
@@ -292,196 +292,13 @@ describe('renderTableRow', () => {
     expect(secondCall.borders?.left).toBeDefined();
   });
 
-  // SD-3028: `double` renders via the native CSS `border-style: double` (two equal rules +
-  // gap), which matches Word exactly (300dpi probes). It is NOT routed through the multi-rule
-  // nested-rectangle overlay (that path forced the CSS border transparent and repainted a
-  // single inner rule, collapsing the double to one line). So the cell keeps a real `double`
-  // border and no compound rect is emitted. triple/thinThick* still use the overlay.
-  it('renders double borders via native CSS, not the single-rule compound overlay', () => {
+  it('keeps a uniform double-border rectangle on one cell so its corners can join', () => {
+    const redDouble = { style: 'double' as const, width: 2, color: '#C00000' };
+    const ring = { top: redDouble, right: redDouble, bottom: redDouble, left: redDouble };
     renderTableRow(
       createDeps({
-        rowIndex: 0,
-        totalRows: 1,
-        cellSpacingPx: 0,
-        tableBorders: {
-          top: { style: 'double', width: 2, color: '#000000' },
-          bottom: { style: 'double', width: 2, color: '#000000' },
-          left: { style: 'double', width: 2, color: '#000000' },
-          right: { style: 'double', width: 2, color: '#000000' },
-        },
-      }) as never,
-    );
-
-    // No overlay rects/strips for a plain double — the browser draws the two rules.
-    expect(container.querySelectorAll('.superdoc-compound-border-rect').length).toBe(0);
-    expect(container.querySelectorAll('.superdoc-compound-border-mid').length).toBe(0);
-    // The cell receives a real `double` border (renderTableCell applies native CSS double).
-    const cellArgs = renderTableCellMock.mock.calls[0][0] as { borders?: { top?: { style?: string } } };
-    expect(cellArgs.borders?.top?.style).toBe('double');
-  });
-
-  // SD-3308: asymmetric 2-rule bands. thinThickSmallGap = [w, 0.75pt, 0.75pt] outer
-  // to inner (measured from Word 300dpi probes): the inner rectangle paints the
-  // INNER-face rule (1px), the outline paints the outer-face rule.
-  it('paints thinThickSmallGap with the inner-face rule width on the inner rectangle', () => {
-    renderTableRow(
-      createDeps({
-        rowIndex: 0,
-        totalRows: 1,
-        cellSpacingPx: 0,
-        tableBorders: {
-          top: { style: 'thinThickSmallGap', width: 4, color: '#000000' },
-          bottom: { style: 'thinThickSmallGap', width: 4, color: '#000000' },
-          left: { style: 'thinThickSmallGap', width: 4, color: '#000000' },
-          right: { style: 'thinThickSmallGap', width: 4, color: '#000000' },
-        },
-      }) as never,
-    );
-
-    const rects = container.querySelectorAll('.superdoc-compound-border-rect');
-    expect(rects.length).toBe(1);
-    const rect = rects[0] as HTMLElement;
-    // band 6 (4+1+1), inner rule 1: rule sits band - rule = 5px inside the owned edges.
-    expect(rect.style.left).toBe('5px');
-    expect(rect.style.top).toBe('5px');
-    expect(rect.style.borderTop).toMatch(/1px solid/);
-    expect(rect.style.borderLeft).toMatch(/1px solid/);
-    // 2-rule band: no middle strips
-    expect(container.querySelectorAll('.superdoc-compound-border-mid').length).toBe(0);
-  });
-
-  // SD-3028 (Gabriel review, style_plus_direct_border_overrides + matrixB): an INTERIOR
-  // bottom compound border (cell is not the last row, so it does not own the bottom band)
-  // must keep its overlay rect INSIDE the cell box. The prior code used bottomInset =
-  // -outerRule, which pushed the rect ~outerRule px BELOW the cell, bleeding the double
-  // rule into the row below. The fix mirrors the interior VERTICAL divider (band/2 -
-  // outerRule), straddling the gridline instead of overshooting past it.
-  it('keeps an interior-bottom compound overlay rect inside the cell box (no downward bleed)', () => {
-    const cellHeight = 20; // rowMeasure.height
-    renderTableRow(
-      createDeps({
-        rowIndex: 0,
-        totalRows: 2, // row 0 of 2 -> bottom edge is INTERIOR (does not own bottom band)
-        cellSpacingPx: 0,
-        tableBorders: undefined,
-        row: {
-          id: 'row-1',
-          cells: [
-            {
-              id: 'cell-1',
-              attrs: {
-                borders: {
-                  top: { style: 'double', width: 2, color: '#FF0000' },
-                  bottom: { style: 'double', width: 2, color: '#FF0000' },
-                  left: { style: 'double', width: 2, color: '#FF0000' },
-                  right: { style: 'double', width: 2, color: '#FF0000' },
-                },
-              },
-              blocks: [{ kind: 'paragraph', id: 'p1', runs: [] }],
-            },
-          ],
-        },
-      }) as never,
-    );
-
-    const rects = Array.from(container.querySelectorAll('.superdoc-compound-border-rect')) as HTMLElement[];
-    expect(rects.length).toBeGreaterThan(0);
-    for (const rect of rects) {
-      const top = parseFloat(rect.style.top) || 0;
-      const height = parseFloat(rect.style.height) || 0;
-      // The overlay must not extend below the cell's bottom edge (was top+height = 22 > 20).
-      expect(top + height).toBeLessThanOrEqual(cellHeight);
-    }
-  });
-
-  // SD-3308: 3-rule bands (triple = [w, w, w, w, w]) add a middle RECTANGLE between
-  // the outline and the inner rectangle (Word's 300dpi corner crops show three clean
-  // nested boxes; full-edge strips would protrude across the outer and inner rings).
-  // Cell-level borders here: table-level 3-rule borders paint their middle layer as
-  // a continuous fragment-level grid instead (see renderTableFragment).
-  it('paints triple borders as inner rectangle plus a middle rectangle on owned edges', () => {
-    renderTableRow(
-      createDeps({
-        rowIndex: 0,
-        totalRows: 1,
-        cellSpacingPx: 0,
-        tableBorders: undefined,
-        row: {
-          id: 'row-1',
-          cells: [
-            {
-              id: 'cell-1',
-              attrs: {
-                borders: {
-                  top: { style: 'triple', width: 2, color: '#000000' },
-                  bottom: { style: 'triple', width: 2, color: '#000000' },
-                  left: { style: 'triple', width: 2, color: '#000000' },
-                  right: { style: 'triple', width: 2, color: '#000000' },
-                },
-              },
-              blocks: [{ kind: 'paragraph', id: 'p1', runs: [] }],
-            },
-          ],
-        },
-      }) as never,
-    );
-
-    const rects = container.querySelectorAll('.superdoc-compound-border-rect');
-    expect(rects.length).toBe(1);
-    const rect = rects[0] as HTMLElement;
-    // band 10 (2+2+2+2+2), inner rule 2: rule sits band - rule = 8px inside.
-    expect(rect.style.left).toBe('8px');
-    expect(rect.style.top).toBe('8px');
-    expect(rect.style.borderTop).toMatch(/2px solid/);
-
-    // The middle rule is ONE bordered rectangle inset by outer rule + gap = 4px,
-    // so its corners join cleanly instead of crossing the other rings.
-    const mids = container.querySelectorAll('.superdoc-compound-border-mid');
-    expect(mids.length).toBe(1);
-    const mid = mids[0] as HTMLElement;
-    expect(mid.style.left).toBe('4px');
-    expect(mid.style.top).toBe('4px');
-    // 100x20 cell inset 4px on each side
-    expect(mid.style.width).toBe('92px');
-    expect(mid.style.height).toBe('12px');
-    expect(mid.style.borderTop).toMatch(/2px solid/);
-    expect(mid.style.borderBottom).toMatch(/2px solid/);
-    expect(mid.style.borderLeft).toMatch(/2px solid/);
-    expect(mid.style.borderRight).toMatch(/2px solid/);
-  });
-
-  // SD-3308: table-level 3-rule borders paint their middle layer at the FRAGMENT
-  // level (continuous grid through band intersections, measured from Word), so the
-  // per-cell middle rectangle must not double-paint it.
-  it('suppresses the per-cell middle rectangle when table-level borders provide the grid', () => {
-    renderTableRow(
-      createDeps({
-        rowIndex: 0,
-        totalRows: 1,
-        cellSpacingPx: 0,
-        tableBorders: {
-          top: { style: 'triple', width: 2, color: '#000000' },
-          bottom: { style: 'triple', width: 2, color: '#000000' },
-          left: { style: 'triple', width: 2, color: '#000000' },
-          right: { style: 'triple', width: 2, color: '#000000' },
-        },
-      }) as never,
-    );
-
-    expect(container.querySelectorAll('.superdoc-compound-border-rect').length).toBe(1);
-    expect(container.querySelectorAll('.superdoc-compound-border-mid').length).toBe(0);
-  });
-
-  // SD-3308: Word centers an interior compound band ON the gridline (measured from
-  // the triple probe: the divider spans gridline -band/2 .. +band/2 and both cells
-  // keep equal content widths). Each adjacent cell carries HALF the band as its
-  // transparent CSS border, and the inner rectangles place their divider-facing
-  // rules at the straddled band's faces.
-  it('straddles an interior vertical compound band across the gridline', () => {
-    renderTableRow(
-      createDeps({
-        rowIndex: 0,
-        totalRows: 1,
+        rowIndex: 1,
+        totalRows: 3,
         cellSpacingPx: 0,
         columnWidths: [100, 100],
         rowMeasure: {
@@ -494,62 +311,60 @@ describe('renderTableRow', () => {
         row: {
           id: 'row-1',
           cells: [
-            { id: 'cell-1', blocks: [{ kind: 'paragraph', id: 'p1', runs: [] }] },
-            { id: 'cell-2', blocks: [{ kind: 'paragraph', id: 'p2', runs: [] }] },
+            { id: 'cell-1', attrs: { borders: ring }, blocks: [{ kind: 'paragraph', id: 'p1', runs: [] }] },
+            {
+              id: 'cell-2',
+              attrs: { borders: { left: redDouble } },
+              blocks: [{ kind: 'paragraph', id: 'p2', runs: [] }],
+            },
           ],
-        },
-        tableBorders: {
-          top: { style: 'double', width: 2, color: '#000000' },
-          bottom: { style: 'double', width: 2, color: '#000000' },
-          left: { style: 'double', width: 2, color: '#000000' },
-          right: { style: 'double', width: 2, color: '#000000' },
-          insideV: { style: 'double', width: 2, color: '#000000' },
         },
       }) as never,
     );
 
-    // The interior vertical divider keeps the straddle: each cell carries half the divider
-    // band (6/2 = 3px) on its divider-facing side, and each draws one rule via the overlay
-    // rect — together the two rules form the double centered on the gridline. (SD-3028: only
-    // the straddled interior-vertical double stays in the overlay; full-band sides are native.)
-    const callA = renderTableCellMock.mock.calls[0][0] as {
-      borders?: { left?: { style?: string }; right?: unknown };
-      borderBandOverridesPx?: { left?: number; right?: number };
-    };
-    const callB = renderTableCellMock.mock.calls[1][0] as {
-      borders?: { left?: unknown; right?: { style?: string } };
-      borderBandOverridesPx?: { left?: number; right?: number };
-    };
-    expect(callA.borders?.right).toBeDefined();
-    expect(callA.borderBandOverridesPx?.right).toBe(3);
-    expect(callB.borders?.left).toBeDefined();
-    expect(callB.borderBandOverridesPx?.left).toBe(3);
-    // Boundary sides render via native CSS double (not the overlay): they reach renderTableCell
-    // as a real `double` border, with no half-band override.
-    expect(callA.borders?.left?.style).toBe('double');
-    expect(callA.borderBandOverridesPx?.left).toBeUndefined();
-    expect(callB.borders?.right?.style).toBe('double');
-    expect(callB.borderBandOverridesPx?.right).toBeUndefined();
+    const firstCall = renderTableCellMock.mock.calls[0][0] as { borders?: typeof ring };
+    const secondCall = renderTableCellMock.mock.calls[1][0] as { borders?: typeof ring };
+    expect(firstCall.borders).toMatchObject(ring);
+    expect(secondCall.borders?.left).toBeUndefined();
+  });
 
-    // Two overlay rects: one per cell, drawing only the straddled interior divider rule.
-    const rects = container.querySelectorAll('.superdoc-compound-border-rect');
-    expect(rects.length).toBe(2);
-    const rectA = rects[0] as HTMLElement;
-    const rectB = rects[1] as HTMLElement;
-    // cellA: only the right (divider) rule; left/top/bottom boundaries are native CSS.
-    expect(rectA.style.borderRightWidth).not.toBe('');
-    expect(rectA.style.borderLeftWidth).toBe('');
-    // cellB: only the left (divider) rule; right boundary is native CSS. Its rule sits just
-    // past the gridline (100 + band/2 - innerRule = 101).
-    expect(rectB.style.left).toBe('101px');
-    expect(rectB.style.borderLeftWidth).not.toBe('');
-    expect(rectB.style.borderRightWidth).toBe('');
+  it('defers a mirrored top edge to the complete double-border cell above', () => {
+    const redDouble = { style: 'double' as const, width: 2, color: '#C00000' };
+    const ring = { top: redDouble, right: redDouble, bottom: redDouble, left: redDouble };
+    renderTableRow(
+      createDeps({
+        rowIndex: 1,
+        totalRows: 3,
+        cellSpacingPx: 0,
+        prevRowMeasure: {
+          height: 20,
+          cells: [{ width: 100, height: 20, gridColumnStart: 0, colSpan: 1, rowSpan: 1 }],
+        },
+        prevRow: {
+          id: 'row-0',
+          cells: [{ id: 'cell-0', attrs: { borders: ring }, blocks: [{ kind: 'paragraph', id: 'p0', runs: [] }] }],
+        },
+        row: {
+          id: 'row-1',
+          cells: [
+            {
+              id: 'cell-1',
+              attrs: { borders: { top: redDouble } },
+              blocks: [{ kind: 'paragraph', id: 'p1', runs: [] }],
+            },
+          ],
+        },
+      }) as never,
+    );
+
+    expect(getRenderedCellCall().borders?.top).toBeUndefined();
   });
 
   // SD-1797: a single row's measure only lists cells that START in it, so on a w:vMerge
   // (rowspan) continuation row the columns held by a cell spanning from above look empty.
-  // `rowOccupiedRightCol` counts that occupancy so the single-owner edge ownership doesn't
-  // misfire (a leftmost cell drawing a right border) and double the shared edge.
+  // `rowOccupiedRightCol` / `nextRowOccupiedRightCol` count that occupancy so the single-owner
+  // edge ownership doesn't misfire (a leftmost cell drawing a right border, or a covered column
+  // mistaken for a gridAfter gap) and double the shared edge.
   const sparseRow = (overrides: Record<string, unknown> = {}) =>
     createDeps({
       rowIndex: 2,
@@ -571,19 +386,32 @@ describe('renderTableRow', () => {
     expect(call.borders?.left).toBeDefined();
   });
 
-  it('never paints an interior bottom on a spanning cell, even over a gridAfter gap below', () => {
-    // Interior bottoms are always owned by the row below; boundary segments the row below
-    // leaves uncovered (gridBefore/gridAfter slivers) are closed by fragment-level gap strips
-    // (row-boundary-gaps.ts), never by this cell painting its full-width bottom — that would
-    // double the covered part of the edge (this painter has no border-collapse). (SD-3028)
+  it('does not treat a rowspan-covered column below a spanning cell as a gridAfter gap', () => {
+    // A cell spanning all 4 columns; the row below is fully covered (occupancy 4) -> no gap,
+    // so the spanning cell does NOT draw its own bottom (the cell below owns the shared edge).
     renderTableRow(
       sparseRow({
         rowMeasure: { height: 20, cells: [{ width: 400, height: 20, gridColumnStart: 0, colSpan: 4, rowSpan: 1 }] },
+        nextRowOccupiedRightCol: 4,
       }) as never,
     );
 
     const call = getRenderedCellCall();
     expect(call.borders?.bottom).toBeUndefined();
+  });
+
+  it('still treats a genuine gridAfter gap as a bottom boundary (SD-3345 preserved)', () => {
+    // The cell spans all 4 columns but the row below only reaches column 2 (real gridAfter gap),
+    // so the spanning cell must draw its own bottom across the uncovered span.
+    renderTableRow(
+      sparseRow({
+        rowMeasure: { height: 20, cells: [{ width: 400, height: 20, gridColumnStart: 0, colSpan: 4, rowSpan: 1 }] },
+        nextRowOccupiedRightCol: 2,
+      }) as never,
+    );
+
+    const call = getRenderedCellCall();
+    expect(call.borders?.bottom).toBeDefined();
   });
 
   it('does not paint interior bottom border for explicit cell borders in collapsed mode on non-final row', () => {
@@ -926,12 +754,12 @@ describe('renderTableRow', () => {
       expect(cell.borders?.top).toMatchObject({ style: 'single', color: '#000000' });
     });
 
-    it('keeps the interior bottom on the spanning callout suppressed even over a gridAfter gap below (SD-3345)', () => {
-      // SD-3345 23_notification: the callout cell spans the full grid, the row below has a
-      // gridAfter. The covered span of the shared edge is painted by the row below (its top
-      // resolves to the §17.4.66 winner, the callout blue), and the uncovered sliver is
-      // closed by a fragment-level gap strip (row-boundary-gaps.ts) — never by the callout
-      // painting its full-width bottom, which would double the covered part. (SD-3028)
+    it('draws its own bottom border when the next row leaves a gridAfter gap under it (SD-3345 callout corner)', () => {
+      // SD-3345 23_notification: the callout cell spans the full grid (gridSpan), but the
+      // row below has a gridAfter so its real cells do not reach the callout's rightmost
+      // column. Single-owner would defer the callout's bottom to the row below, which then
+      // stops short of the right edge → a gap at the bottom-right corner. The callout must
+      // draw its own bottom across the uncovered span instead.
       const blue = { style: 'single' as const, width: 1, color: '#342D8C' };
       renderTableRow(
         createDeps({
@@ -952,17 +780,21 @@ describe('renderTableRow', () => {
               },
             ],
           },
+          // next row covers only col0 (col1 is a gridAfter spacer → not a real cell)
+          nextRowMeasure: {
+            height: 20,
+            cells: [{ width: 100, height: 20, gridColumnStart: 0, colSpan: 1, rowSpan: 1 }],
+          },
         }) as never,
       );
       const cell = renderTableCellMock.mock.calls[0][0] as { borders?: { bottom?: unknown } };
-      expect(cell.borders?.bottom).toBeUndefined();
+      expect(cell.borders?.bottom).toMatchObject({ style: 'single', color: '#342D8C' });
     });
 
-    it('paints this row top as the conflict winner when the cell above spans past it (single line, below owns)', () => {
-      // The narrower row below a spanning bordered cell owns the covered span of the shared
-      // edge: its top resolves to the §17.4.66 winner of (own top, callout bottom) — the
-      // callout blue. The uncovered gridAfter sliver is closed by a fragment-level gap strip.
-      // Exactly one paint per segment: no doubling, no dropped corner. (SD-3028)
+    it('suppresses this row top border when the cell above spans past it (gridAfter) so the edge is drawn once', () => {
+      // The companion to the case above: when the spanning cell owns the shared bottom edge,
+      // the narrower row below must NOT also draw its top, or the two adjacent cell divs stack
+      // into a doubled line (this painter has no border-collapse). (SD-3345 callout)
       const blue = { style: 'single' as const, width: 1, color: '#342D8C' };
       renderTableRow(
         createDeps({
@@ -977,7 +809,7 @@ describe('renderTableRow', () => {
             id: 'r1',
             cells: [{ id: 'opt', attrs: {}, blocks: [{ kind: 'paragraph', id: 'po', runs: [] }] }],
           },
-          // the cell above spans BOTH columns and has a bottom border
+          // the cell above spans BOTH columns and has a bottom border (it owns the shared edge)
           prevRow: {
             id: 'r0',
             cells: [
@@ -994,8 +826,8 @@ describe('renderTableRow', () => {
           },
         }) as never,
       );
-      const cell = renderTableCellMock.mock.calls[0][0] as { borders?: { top?: unknown } };
-      expect(cell.borders?.top).toMatchObject({ style: 'single', color: '#342D8C' });
+      const cell = renderTableCellMock.mock.calls[0][0] as { borders?: { top?: unknown } } | undefined;
+      expect(cell?.borders?.top).toBeUndefined();
     });
   });
 
@@ -1117,100 +949,6 @@ describe('renderTableRow', () => {
     });
   });
 
-  describe('separate-borders mode (authored tblCellSpacing, even 0) (SD-3028)', () => {
-    // Word probes (300dpi): with w:tblCellSpacing present every cell paints all four edges
-    // (own border, else the table border for its position) and adjacent edges STACK; outset
-    // cells render sunken: visual top/left dark #A0A0A0, bottom/right light #F0F0F0.
-    it('paints all four edges on an interior cell so adjacent edges stack like Word', () => {
-      renderTableRow(
-        createDeps({
-          rowIndex: 3,
-          totalRows: 10,
-          cellSpacingPx: 0,
-          separateBorders: true,
-        }) as never,
-      );
-
-      const call = getRenderedCellCall();
-      expect(call.borders?.top).toBeDefined();
-      expect(call.borders?.bottom).toBeDefined();
-      expect(call.borders?.left).toBeDefined();
-      expect(call.borders?.right).toBeDefined();
-    });
-
-    it('tones outset cell edges sunken: top dark, bottom light', () => {
-      renderTableRow(
-        createDeps({
-          rowIndex: 3,
-          totalRows: 10,
-          cellSpacingPx: 0,
-          separateBorders: true,
-          tableBorders: {
-            top: { style: 'outset', width: 1, color: '#000000' },
-            bottom: { style: 'outset', width: 1, color: '#000000' },
-            left: { style: 'outset', width: 1, color: '#000000' },
-            right: { style: 'outset', width: 1, color: '#000000' },
-            insideH: { style: 'outset', width: 1, color: '#000000' },
-            insideV: { style: 'outset', width: 1, color: '#000000' },
-          },
-        }) as never,
-      );
-
-      const call = getRenderedCellCall();
-      expect(call.borders?.top).toMatchObject({ style: 'single', color: '#A0A0A0' });
-      expect(call.borders?.bottom).toMatchObject({ style: 'single', color: '#F0F0F0' });
-      expect(call.borders?.left).toMatchObject({ color: '#A0A0A0' });
-      expect(call.borders?.right).toMatchObject({ color: '#F0F0F0' });
-    });
-
-    it('keeps collapsed single-owner behavior when no cell spacing is authored', () => {
-      renderTableRow(createDeps({ rowIndex: 3, totalRows: 10, cellSpacingPx: 0 }) as never);
-
-      const call = getRenderedCellCall();
-      // Interior bottom owned by the row below in the collapsed model.
-      expect(call.borders?.bottom).toBeUndefined();
-    });
-  });
-
-  describe('explicitly borderless cells in a compound-bordered table (SD-3308 review)', () => {
-    // A cell whose `borders` attribute is present but clears every side is intentionally
-    // borderless. Even in a table with compound (triple) table borders, the
-    // nested-rectangle compound path must NOT draw the rules onto it. (triple, not double:
-    // a plain double renders via native CSS and never uses the overlay rects.)
-    const compoundTableBorders = {
-      top: { style: 'triple' as const, width: 2, color: '#000000' },
-      bottom: { style: 'triple' as const, width: 2, color: '#000000' },
-      left: { style: 'triple' as const, width: 2, color: '#000000' },
-      right: { style: 'triple' as const, width: 2, color: '#000000' },
-    };
-
-    it('draws compound rects for a normal cell (control)', () => {
-      renderTableRow(
-        createDeps({ rowIndex: 0, totalRows: 1, cellSpacingPx: 0, tableBorders: compoundTableBorders }) as never,
-      );
-      expect(container.querySelectorAll('.superdoc-compound-border-rect').length).toBe(1);
-    });
-
-    it('draws NO compound rects for a cell with an empty borders attribute', () => {
-      renderTableRow(
-        createDeps({
-          rowIndex: 0,
-          totalRows: 1,
-          cellSpacingPx: 0,
-          tableBorders: compoundTableBorders,
-          row: {
-            id: 'row-1',
-            cells: [{ id: 'c1', attrs: { borders: {} }, blocks: [{ kind: 'paragraph', id: 'p1', runs: [] }] }],
-          },
-        }) as never,
-      );
-      expect(container.querySelectorAll('.superdoc-compound-border-rect').length).toBe(0);
-      // and the cell itself stays borderless (no CSS border resolved)
-      const call = renderTableCellMock.mock.calls[0][0] as { borders?: unknown };
-      expect(call.borders).toBeUndefined();
-    });
-  });
-
   describe('structural row tracked changes', () => {
     const trackedRowDeps = (
       kind: 'insert' | 'delete',
@@ -1257,6 +995,142 @@ describe('renderTableRow', () => {
       }
     });
 
+    it('stamps row-level semantic metadata and leaves paint to the CSS category variables', () => {
+      renderTableRow(
+        trackedRowDeps('insert', 'review', {
+          row: {
+            id: 'row-1',
+            attrs: {
+              trackedChange: {
+                kind: 'insert',
+                id: 'row-tc-ins',
+                author: 'Alice',
+                color: '#abcdef',
+                semanticColorKey: 'table-row-insertion',
+                type: 'structural',
+                subtype: 'table-row-insertion',
+                targetKind: 'row',
+              },
+            },
+            cells: [
+              { id: 'c1', blocks: [makeParagraph('review', true)] },
+              { id: 'c2', blocks: [makeParagraph('review', true)] },
+            ],
+          },
+        }) as never,
+      );
+
+      const cells = Array.from(container.children) as HTMLElement[];
+      expect(cells).toHaveLength(2);
+      for (const cell of cells) {
+        expect(cell.classList.contains('table-row-insertion')).toBe(true);
+        expect(cell.dataset.trackChangeSemanticColorKey).toBe('table-row-insertion');
+        expect(cell.dataset.trackChangeTargetKind).toBe('row');
+        expect(cell.dataset.trackChangeAuthorColor).toBe('#abcdef');
+        // CSS-only category: the stylesheet rules keyed on the semantic
+        // dataset own the color (`--sd-tracked-changes-table-row-insertion-*`).
+        // No inline variable may be stamped — an inline var would beat any
+        // host `:root` CSS override.
+        expect(cell.style.getPropertyValue('--sd-tracked-changes-insert-border')).toBe('');
+        expect(cell.style.getPropertyValue('--sd-tracked-changes-insert-background-focused')).toBe('');
+        expect(cell.style.getPropertyValue('--sd-tracked-changes-semantic-color')).toBe('');
+      }
+    });
+
+    it('stamps table-level semantic metadata through the row carrier without inline color vars', () => {
+      renderTableRow(
+        trackedRowDeps('delete', 'review', {
+          row: {
+            id: 'row-1',
+            attrs: {
+              trackedChange: {
+                kind: 'delete',
+                id: 'table-tc-del',
+                color: '#abcdef',
+                semanticColorKey: 'table-deletion',
+                type: 'structural',
+                subtype: 'table-deletion',
+                targetKind: 'table',
+              },
+            },
+            cells: [
+              { id: 'c1', blocks: [makeParagraph('review', true)] },
+              { id: 'c2', blocks: [makeParagraph('review', true)] },
+            ],
+          },
+        }) as never,
+      );
+
+      const cells = Array.from(container.children) as HTMLElement[];
+      expect(cells).toHaveLength(2);
+      for (const cell of cells) {
+        expect(cell.classList.contains('table-deletion')).toBe(true);
+        expect(cell.dataset.trackChangeId).toBe('table-tc-del');
+        expect(cell.dataset.trackChangeSemanticColorKey).toBe('table-deletion');
+        expect(cell.dataset.trackChangeTargetKind).toBe('table');
+        // CSS-only category: no inline delete-family vars, even from the
+        // author color — `--sd-tracked-changes-table-deletion-*` owns paint.
+        expect(cell.style.getPropertyValue('--sd-tracked-changes-delete-border')).toBe('');
+        expect(cell.style.getPropertyValue('--sd-tracked-changes-delete-text')).toBe('');
+      }
+    });
+
+    it('keeps the row-category class when overlapping cell metadata overwrites the semantic dataset', () => {
+      renderTableRow(
+        trackedRowDeps('insert', 'review', {
+          row: {
+            id: 'row-1',
+            attrs: {
+              trackedChange: {
+                kind: 'insert',
+                id: 'row-tc-ins',
+                author: 'Alice',
+                semanticColorKey: 'table-row-insertion',
+                type: 'structural',
+                subtype: 'table-row-insertion',
+                targetKind: 'row',
+              },
+            },
+            cells: [
+              {
+                id: 'c1',
+                attrs: {
+                  trackedChange: {
+                    kind: 'insert',
+                    id: 'cell-tc-ins',
+                    author: 'Alice',
+                    semanticColorKey: 'table-cell-insertion',
+                    type: 'structural',
+                    subtype: 'table-cell-insertion',
+                    targetKind: 'cell',
+                  },
+                },
+                blocks: [makeParagraph('review', true)],
+              },
+              { id: 'c2', blocks: [makeParagraph('review', true)] },
+            ],
+          },
+        }) as never,
+      );
+
+      const cells = Array.from(container.children) as HTMLElement[];
+      expect(cells).toHaveLength(2);
+      const overlapped = cells[0]!;
+      // The single-valued semantic dataset is overwritten by the cell key —
+      // which is exactly why the CSS-only category rules key on the CLASS:
+      // classes accumulate, so the row category paint (and any host
+      // `--sd-tracked-changes-table-row-insertion-*` override) still applies.
+      expect(overlapped.dataset.trackChangeSemanticColorKey).toBe('table-cell-insertion');
+      expect(overlapped.classList.contains('table-row-insertion')).toBe(true);
+      expect(overlapped.classList.contains('table-cell-insertion')).toBe(true);
+      // Row precedence: the same-kind cell change must not stamp inline
+      // insert-family vars over the CSS-owned row category paint.
+      expect(overlapped.style.getPropertyValue('--sd-tracked-changes-insert-border')).toBe('');
+      // The non-overlapped cell keeps plain row-carrier metadata.
+      expect(cells[1]!.dataset.trackChangeSemanticColorKey).toBe('table-row-insertion');
+      expect(cells[1]!.classList.contains('table-row-insertion')).toBe(true);
+    });
+
     it('adds the delete class + author-color vars to every cell element of a deleted row', () => {
       renderTableRow(trackedRowDeps('delete', 'review') as never);
 
@@ -1299,6 +1173,288 @@ describe('renderTableRow', () => {
         expect(cell.classList.contains('track-delete-dec')).toBe(false);
         expect(cell.classList.contains('track-row-cell-dec')).toBe(false);
       }
+    });
+  });
+
+  describe('structural cell tracked changes (SD-3481)', () => {
+    const trackedCellDeps = (
+      cellMeta: Record<string, unknown>,
+      mode: string,
+      overrides: Record<string, unknown> = {},
+    ): Record<string, unknown> =>
+      createDeps({
+        rowIndex: 0,
+        totalRows: 1,
+        cellSpacingPx: 0,
+        columnWidths: [100, 100],
+        rowMeasure: {
+          height: 20,
+          cells: [
+            { width: 100, height: 20, gridColumnStart: 0, colSpan: 1, rowSpan: 1 },
+            { width: 100, height: 20, gridColumnStart: 1, colSpan: 1, rowSpan: 1 },
+          ],
+        },
+        row: {
+          id: 'row-1',
+          cells: [
+            { id: 'c1', attrs: { trackedChange: cellMeta }, blocks: [makeParagraph(mode, true)] },
+            { id: 'c2', blocks: [makeParagraph(mode, true)] },
+          ],
+        },
+        ...overrides,
+      });
+
+    it('paints an inserted cell with the cell marker class, broad class, semantic vars and datasets', () => {
+      renderTableRow(
+        trackedCellDeps(
+          {
+            kind: 'insert',
+            id: 'cell-tc-ins',
+            author: 'Bob',
+            color: '#abcdef',
+            semanticColorKey: 'table-cell-insertion',
+            semanticColor: '#1f6feb',
+          },
+          'review',
+        ) as never,
+      );
+
+      const cells = Array.from(container.children) as HTMLElement[];
+      expect(cells).toHaveLength(2);
+      const [tracked, untracked] = cells;
+
+      expect(tracked.classList.contains('track-insert-dec')).toBe(true);
+      expect(tracked.classList.contains('track-cell-dec')).toBe(true);
+      expect(tracked.classList.contains('highlighted')).toBe(true);
+      expect(tracked.classList.contains('table-cell-insertion')).toBe(true);
+      // Cell-level marker only — never the row marker.
+      expect(tracked.classList.contains('track-row-cell-dec')).toBe(false);
+      // Cell-structural semantic categories own their visual variable.
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-insert-border')).toBe('#1f6feb');
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-insert-background-focused')).toBe('#1f6feb44');
+      expect(tracked.dataset.trackChangeKind).toBe('insert');
+      expect(tracked.dataset.trackChangeStructural).toBe('cell');
+      expect(tracked.dataset.trackChangeSemanticColorKey).toBe('table-cell-insertion');
+      expect(tracked.dataset.trackChangeSemanticColor).toBe('#1f6feb');
+      // Author color preserved, not repurposed.
+      expect(tracked.dataset.trackChangeAuthorColor).toBe('#abcdef');
+
+      expect(untracked.classList.contains('track-insert-dec')).toBe(false);
+      expect(untracked.classList.contains('track-cell-dec')).toBe(false);
+    });
+
+    it('paints a deleted cell with the delete class, marker, and semantic delete vars', () => {
+      renderTableRow(
+        trackedCellDeps(
+          {
+            kind: 'delete',
+            id: 'cell-tc-del',
+            author: 'Bob',
+            color: '#abcdef',
+            semanticColorKey: 'table-cell-deletion',
+            semanticColor: '#cb0e47',
+          },
+          'review',
+        ) as never,
+      );
+
+      const tracked = container.children[0] as HTMLElement;
+      expect(tracked.classList.contains('track-delete-dec')).toBe(true);
+      expect(tracked.classList.contains('track-cell-dec')).toBe(true);
+      expect(tracked.classList.contains('table-cell-deletion')).toBe(true);
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-delete-border')).toBe('#cb0e47');
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-delete-text')).toBe('#cb0e47');
+      expect(tracked.dataset.trackChangeStructural).toBe('cell');
+      expect(tracked.dataset.trackChangeSemanticColorKey).toBe('table-cell-deletion');
+    });
+
+    it('paints a cell-merge through the format variable family with subtype/target/anchor metadata', () => {
+      renderTableRow(
+        trackedCellDeps(
+          {
+            kind: 'format',
+            id: 'cell-tc-merge',
+            author: 'Bob',
+            color: '#abcdef',
+            semanticColorKey: 'cell-merge',
+            semanticColor: '#d4a72c',
+            type: 'cellMerge',
+            subtype: 'cell-merge',
+            targetKind: 'cell',
+            semanticAnchorScope: 'direct',
+          },
+          'review',
+        ) as never,
+      );
+
+      const tracked = container.children[0] as HTMLElement;
+      expect(tracked.classList.contains('track-format-dec')).toBe(true);
+      expect(tracked.classList.contains('track-cell-dec')).toBe(true);
+      expect(tracked.classList.contains('cell-merge')).toBe(true);
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-format-border')).toBe('#d4a72c');
+      expect(tracked.dataset.trackChangeSemanticColorKey).toBe('cell-merge');
+      expect(tracked.dataset.trackChangeType).toBe('cellMerge');
+      expect(tracked.dataset.trackChangeSubtype).toBe('cell-merge');
+      expect(tracked.dataset.trackChangeTargetKind).toBe('cell');
+      expect(tracked.dataset.trackChangeSemanticAnchorScope).toBe('direct');
+    });
+
+    it('paints a cell-split through the format variable family carrying affected-range anchor metadata', () => {
+      renderTableRow(
+        trackedCellDeps(
+          {
+            kind: 'format',
+            id: 'cell-tc-split',
+            semanticColorKey: 'cell-split',
+            semanticColor: '#f4964f',
+            subtype: 'cell-split',
+            targetKind: 'cell',
+            semanticAnchorScope: 'affected-range',
+          },
+          'review',
+        ) as never,
+      );
+
+      const tracked = container.children[0] as HTMLElement;
+      expect(tracked.classList.contains('track-format-dec')).toBe(true);
+      expect(tracked.classList.contains('cell-split')).toBe(true);
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-format-border')).toBe('#f4964f');
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-format-background-focused')).toBe('#f4964f44');
+      expect(tracked.dataset.trackChangeSemanticColorKey).toBe('cell-split');
+      expect(tracked.dataset.trackChangeSemanticAnchorScope).toBe('affected-range');
+    });
+
+    it('suppresses cell-level painting when tracked changes are off', () => {
+      renderTableRow(
+        trackedCellDeps(
+          {
+            kind: 'insert',
+            id: 'cell-tc-off',
+            semanticColorKey: 'table-cell-insertion',
+            semanticColor: '#1f6feb',
+          },
+          'off',
+        ) as never,
+      );
+
+      const tracked = container.children[0] as HTMLElement;
+      expect(tracked.classList.contains('track-insert-dec')).toBe(false);
+      expect(tracked.classList.contains('track-cell-dec')).toBe(false);
+      expect(tracked.classList.contains('table-cell-insertion')).toBe(false);
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-insert-border')).toBe('');
+    });
+
+    it('keeps both structural markers and gives the row precedence on shared datasets when both exist', () => {
+      renderTableRow(
+        trackedCellDeps(
+          {
+            kind: 'insert',
+            id: 'cell-tc-ins',
+            author: 'Bob',
+            color: '#abcdef',
+            semanticColorKey: 'table-cell-insertion',
+            semanticColor: '#1f6feb',
+          },
+          'review',
+          {
+            row: {
+              id: 'row-1',
+              attrs: {
+                trackedChange: { kind: 'insert', id: 'row-tc-ins', author: 'Alice', color: '#fedcba' },
+              },
+              cells: [
+                {
+                  id: 'c1',
+                  attrs: {
+                    trackedChange: {
+                      kind: 'insert',
+                      id: 'cell-tc-ins',
+                      author: 'Bob',
+                      color: '#abcdef',
+                      semanticColorKey: 'table-cell-insertion',
+                      semanticColor: '#1f6feb',
+                    },
+                  },
+                  blocks: [makeParagraph('review', true)],
+                },
+                { id: 'c2', blocks: [makeParagraph('review', true)] },
+              ],
+            },
+          },
+        ) as never,
+      );
+
+      const tracked = container.children[0] as HTMLElement;
+      // Neither structural marker is dropped.
+      expect(tracked.classList.contains('track-row-cell-dec')).toBe(true);
+      expect(tracked.classList.contains('track-cell-dec')).toBe(true);
+      expect(tracked.classList.contains('table-cell-insertion')).toBe(true);
+      // Row precedence on the shared single-value datasets.
+      expect(tracked.dataset.trackChangeId).toBe('row-tc-ins');
+      expect(tracked.dataset.trackChangeStructural).toBe('row cell');
+      expect(tracked.dataset.trackChangeAuthorColor).toBe('#fedcba');
+      // Row keeps ownership of the color variable family (cell does not clobber it).
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-insert-border')).toBe('#fedcba');
+      // Cell-level semantic datasets are still stamped (namespaced, no collision).
+      expect(tracked.dataset.trackChangeSemanticColorKey).toBe('table-cell-insertion');
+      expect(tracked.dataset.trackChangeSemanticColor).toBe('#1f6feb');
+    });
+
+    it('preserves row vars while stamping independent cell vars when row and cell kinds differ', () => {
+      renderTableRow(
+        trackedCellDeps(
+          {
+            kind: 'format',
+            id: 'cell-tc-merge',
+            author: 'Bob',
+            color: '#abcdef',
+            semanticColorKey: 'cell-merge',
+            semanticColor: '#d4a72c',
+          },
+          'review',
+          {
+            row: {
+              id: 'row-1',
+              attrs: {
+                trackedChange: { kind: 'insert', id: 'row-tc-ins', author: 'Alice', color: '#fedcba' },
+              },
+              cells: [
+                {
+                  id: 'c1',
+                  attrs: {
+                    trackedChange: {
+                      kind: 'format',
+                      id: 'cell-tc-merge',
+                      author: 'Bob',
+                      color: '#abcdef',
+                      semanticColorKey: 'cell-merge',
+                      semanticColor: '#d4a72c',
+                    },
+                  },
+                  blocks: [makeParagraph('review', true)],
+                },
+                { id: 'c2', blocks: [makeParagraph('review', true)] },
+              ],
+            },
+          },
+        ) as never,
+      );
+
+      const tracked = container.children[0] as HTMLElement;
+      expect(tracked.classList.contains('track-row-cell-dec')).toBe(true);
+      expect(tracked.classList.contains('track-cell-dec')).toBe(true);
+      expect(tracked.classList.contains('track-insert-dec')).toBe(true);
+      expect(tracked.classList.contains('track-format-dec')).toBe(true);
+      expect(tracked.classList.contains('cell-merge')).toBe(true);
+      // Row keeps ownership of shared row datasets and the insert variable family.
+      expect(tracked.dataset.trackChangeId).toBe('row-tc-ins');
+      expect(tracked.dataset.trackChangeAuthorColor).toBe('#fedcba');
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-insert-border')).toBe('#fedcba');
+      // Different cell kind gets its independent semantic variable family.
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-format-border')).toBe('#d4a72c');
+      expect(tracked.style.getPropertyValue('--sd-tracked-changes-format-background-focused')).toBe('#d4a72c44');
+      expect(tracked.dataset.trackChangeSemanticColorKey).toBe('cell-merge');
+      expect(tracked.dataset.trackChangeSemanticColor).toBe('#d4a72c');
     });
   });
 });

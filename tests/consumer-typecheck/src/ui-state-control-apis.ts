@@ -19,14 +19,14 @@
  *   - `setTrackedChangesPreferences(preferences?)` → `void`
  *   - `toggleFormattingMarks()` → `void`
  *   - `toggleRuler()` → `void`
- *   - `focus()` → `void`
+ *   - `focus(options?)` → `void`
  *   - `destroy()` → `void`
  *   - `element` (getter) → `Element | null`
  *   - `requiredNumberOfEditors` (getter) → `number`
  *
- * Drained obligations (18): 6 method pairs (parameters + returns)
- * for the setters, plus 4 zero-param method returns and 2 getter
- * returns.
+ * Drained obligations (19): 6 method pairs (parameters + returns)
+ * for the setters, plus the `focus(options?)` parameter/return pair,
+ * 3 zero-param method returns, and 2 getter returns.
  *
  * Not covered here:
  *
@@ -41,16 +41,28 @@
  *     type (out of scope here). The corresponding obligation is left
  *     on the debt snapshot until that surface decision is made.
  */
-import type { SuperDoc } from 'superdoc';
+import type { SuperDoc, SuperDocMeasurementUnit } from 'superdoc';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type AssertEqual<A, B> = Equal<A, B> extends true ? true : never;
 
 declare const sd: SuperDoc;
 
+// ─── setMeasurementUnit ─────────────────────────────────────────────
+// Switches the ruler/measurement-field unit. Closed union parameter
+// (SuperDocMeasurementUnit); invalid strings must be rejected at compile time.
+const _setMeasurementUnitParamsOk: AssertEqual<
+  Parameters<SuperDoc['setMeasurementUnit']>,
+  [unit: SuperDocMeasurementUnit]
+> = true;
+const _setMeasurementUnitReturnOk: AssertEqual<ReturnType<SuperDoc['setMeasurementUnit']>, void> = true;
+sd.setMeasurementUnit('cm');
+sd.setMeasurementUnit('in');
+// @ts-expect-error measurement unit is a closed union; only 'in' / 'cm'.
+sd.setMeasurementUnit('furlongs');
+
 // ─── setZoom ────────────────────────────────────────────────────────
-// Updates the active zoom in the Pinia store; the Vue layer's
-// activeZoom watcher propagates to each PresentationEditor.
+// Updates the active zoom in the public SuperDoc state.
 // Early-returns on non-positive / non-finite input.
 const _setZoomParamsOk: AssertEqual<Parameters<SuperDoc['setZoom']>, [percent: number]> = true;
 const _setZoomReturnOk: AssertEqual<ReturnType<SuperDoc['setZoom']>, void> = true;
@@ -77,8 +89,7 @@ const _setHighContrastReturnOk: AssertEqual<ReturnType<SuperDoc['setHighContrast
 sd.setHighContrastMode(true);
 
 // ─── setShowBookmarks ───────────────────────────────────────────────
-// Writes `layoutEngineOptions.showBookmarks` and forwards to each
-// PresentationEditor. Parameter has a `= true` default in source, so
+// Writes `layoutEngineOptions.showBookmarks`. Parameter has a `= true` default in source, so
 // the emitted signature is `(show?: boolean)`.
 const _setShowBookmarksParamsOk: AssertEqual<Parameters<SuperDoc['setShowBookmarks']>, [show?: boolean]> = true;
 const _setShowBookmarksReturnOk: AssertEqual<ReturnType<SuperDoc['setShowBookmarks']>, void> = true;
@@ -86,8 +97,8 @@ sd.setShowBookmarks(true);
 sd.setShowBookmarks();
 
 // ─── setShowFormattingMarks ─────────────────────────────────────────
-// Same shape as setShowBookmarks. Writes the layout option, forwards
-// to PresentationEditor, and emits `formatting-marks-change`.
+// Same shape as setShowBookmarks. Writes the layout option and emits
+// `formatting-marks-change`.
 const _setShowFormattingMarksParamsOk: AssertEqual<
   Parameters<SuperDoc['setShowFormattingMarks']>,
   [show?: boolean]
@@ -96,9 +107,8 @@ const _setShowFormattingMarksReturnOk: AssertEqual<ReturnType<SuperDoc['setShowF
 sd.setShowFormattingMarks(true);
 
 // ─── setDisableContextMenu ──────────────────────────────────────────
-// Writes `config.disableContextMenu` and forwards to each
-// PresentationEditor / Editor. Same `(disabled?: boolean)` default
-// shape as the other toggles.
+// Writes `config.disableContextMenu`. Same `(disabled?: boolean)` default shape
+// as the other toggles.
 const _setDisableContextMenuParamsOk: AssertEqual<
   Parameters<SuperDoc['setDisableContextMenu']>,
   [disabled?: boolean]
@@ -131,7 +141,14 @@ const _toggleRulerReturnOk: AssertEqual<ReturnType<SuperDoc['toggleRuler']>, voi
 // ─── focus ──────────────────────────────────────────────────────────
 // Focuses `activeEditor` if present; otherwise walks the document
 // list and focuses the first editor found.
+const _focusParamsOk: AssertEqual<
+  Parameters<SuperDoc['focus']>,
+  [options?: { readonly preventScroll?: boolean; readonly restoreSelection?: boolean }]
+> = true;
 const _focusReturnOk: AssertEqual<ReturnType<SuperDoc['focus']>, void> = true;
+sd.focus({ preventScroll: true });
+sd.focus({ restoreSelection: false });
+sd.focus();
 
 // ─── destroy ────────────────────────────────────────────────────────
 // Tears down surfaces, toolbar, Vue app, collaboration, and the
@@ -150,6 +167,8 @@ const _elementOk: AssertEqual<SuperDoc['element'], Element | null> = true;
 const _requiredNumberOfEditorsOk: AssertEqual<SuperDoc['requiredNumberOfEditors'], number> = true;
 
 void [
+  _setMeasurementUnitParamsOk,
+  _setMeasurementUnitReturnOk,
   _setZoomParamsOk,
   _setZoomReturnOk,
   _setHighContrastParamsOk,
@@ -164,6 +183,7 @@ void [
   _setTrackedChangesReturnOk,
   _toggleFormattingMarksReturnOk,
   _toggleRulerReturnOk,
+  _focusParamsOk,
   _focusReturnOk,
   _destroyReturnOk,
   _elementOk,

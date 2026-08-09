@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { isRef } from 'vue';
 import useConversation from './use-conversation.js';
+import { DOCUMENT_EDITOR_SELECTION_SOURCE } from '@superdoc/helpers/selection-source';
 
 const baseParams = (overrides = {}) => ({
   documentId: 'doc-1',
@@ -52,8 +53,10 @@ describe('useConversation', () => {
     expect(convo.group.value).toBeNull();
   });
 
-  it('sets suppressClick when selection source is super-editor', () => {
-    const convo = useConversation(baseParams({ selection: { documentId: 'doc-1', source: 'super-editor' } }));
+  it('sets suppressClick when selection source is document editor', () => {
+    const convo = useConversation(
+      baseParams({ selection: { documentId: 'doc-1', source: DOCUMENT_EDITOR_SELECTION_SOURCE } }),
+    );
     expect(convo.suppressClick.value).toBe(true);
   });
 

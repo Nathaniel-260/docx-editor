@@ -7,33 +7,39 @@
 // asset-urls.ts is correct regardless of whether the local assets/ has been synced yet. The
 // emitted PATH is always `../assets/<file>` (this package's own assets dir, where
 // sync-assets.mjs places the files). Re-run via `pnpm generate` whenever faces change.
+//
+// Inside the monorepo the canonical directory must resolve: falling back to the local `assets/`
+// there would generate the list from whatever a previous sync left behind, which is how a stale
+// face list survives a rename. Outside it, the local directory is the only source. See
+// `font-system-source.mjs`.
 import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FONT_SYSTEM_ASSETS, inMonorepo } from './font-system-source.mjs';
+import { formatGenerated } from './lib/format-generated.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const canonical = resolve(here, '../../../shared/font-system/assets');
+const canonical = FONT_SYSTEM_ASSETS;
 const local = resolve(here, '../assets');
+if (inMonorepo() && !existsSync(canonical)) {
+  console.error(
+    [
+      `[@superdoc/fonts] canonical assets are missing inside the monorepo: ${canonical}`,
+      '  Falling back to the local assets/ here would generate the face list from a stale sync.',
+      '  If font-system moved, update FONT_SYSTEM_DIR in packages/fonts/scripts/font-system-source.mjs.',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
 const sourceDir = existsSync(canonical) ? canonical : local;
 const outFile = resolve(here, '../src/asset-urls.ts');
-
-/** Format with the repo Prettier when available so committed output is stable; tolerate its absence. */
-async function formatTs(content, filepath) {
-  try {
-    const prettier = await import('prettier');
-    const config = (await prettier.resolveConfig(filepath)) ?? {};
-    return await prettier.format(content, { ...config, filepath });
-  } catch {
-    return content;
-  }
-}
 
 const files = readdirSync(sourceDir)
   .filter((f) => f.endsWith('.woff2'))
   .sort();
 
 if (files.length === 0) {
-  console.error(`[@superdoc-dev/fonts] no .woff2 found in ${sourceDir}`);
+  console.error(`[@superdoc/fonts] no .woff2 found in ${sourceDir}`);
   process.exit(1);
 }
 
@@ -51,13 +57,12 @@ ${entries}
 });
 `;
 
-// Format with the repo's Prettier so the committed file is Prettier-stable: re-running the
-// generator produces byte-identical output and the format hook never rewrites it. Prettier is
-// optional - in a consumer git-install it may be absent, and the unformatted output is still
-// valid TypeScript - so a missing prettier is not an error.
-writeFileSync(outFile, await formatTs(content, outFile));
+// Format with the repo's formatter so the committed file is Oxfmt-stable: re-running the
+// generator produces byte-identical output and the format hook never rewrites it. See
+// scripts/lib/format-generated.mjs for why a missing formatter is tolerated.
+writeFileSync(outFile, formatGenerated(content, outFile));
 console.log(
-  `[@superdoc-dev/fonts] wrote ${files.length} asset URLs -> src/asset-urls.ts (source: ${sourceDir.includes('shared') ? 'canonical' : 'local'})`,
+  `[@superdoc/fonts] wrote ${files.length} asset URLs -> src/asset-urls.ts (source: ${sourceDir.includes('shared') ? 'canonical' : 'local'})`,
 );
 
 // Also emit the flat filename list WITHOUT import.meta.url. The browser/IIFE entry (cdn-entry.ts)
@@ -76,8 +81,8 @@ export const BUNDLED_FONT_FILES: readonly string[] = Object.freeze([
 ${fileEntries}
 ]);
 `;
-writeFileSync(filesOutFile, await formatTs(filesContent, filesOutFile));
-console.log(`[@superdoc-dev/fonts] wrote ${files.length} filenames -> src/bundled-files.ts`);
+writeFileSync(filesOutFile, formatGenerated(filesContent, filesOutFile));
+console.log(`[@superdoc/fonts] wrote ${files.length} filenames -> src/bundled-files.ts`);
 
 // The curatable family-name list (src/bundled-families.ts) is generated SEPARATELY by
 // scripts/generate-bundled-families.ts: it must mirror the runtime resolver/offerings curation set

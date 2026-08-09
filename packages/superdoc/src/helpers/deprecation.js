@@ -53,8 +53,8 @@ const _boundFns = new WeakMap();
  * The proxy is fully transparent — all property access and method calls are
  * forwarded to the underlying editor. Only the warning side-effect is added.
  *
- * @param {import('@superdoc/super-editor').Editor} editor
- * @returns {import('@superdoc/super-editor').Editor} Proxied editor (or the
+ * @param {import('../core/types/index.js').Editor} editor
+ * @returns {import('../core/types/index.js').Editor} Proxied editor (or the
  *   original if null/already wrapped)
  */
 export function createDeprecatedEditorProxy(editor) {
@@ -98,8 +98,8 @@ export function createDeprecatedEditorProxy(editor) {
  * Unwrap a potentially proxied editor back to the raw Editor instance.
  * Safe to call on an already-raw editor — returns it unchanged.
  *
- * @param {import('@superdoc/super-editor').Editor | null | undefined} editor
- * @returns {import('@superdoc/super-editor').Editor | null | undefined}
+ * @param {import('../core/types/index.js').Editor | null | undefined} editor
+ * @returns {import('../core/types/index.js').Editor | null | undefined}
  */
 export function unwrapEditor(editor) {
   return editor?.[RAW_EDITOR] ?? editor;

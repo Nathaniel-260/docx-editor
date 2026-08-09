@@ -65,15 +65,21 @@ const DEFAULT_PREFERRED_DELTA_THRESHOLD_PX = 8;
 const DEFAULT_MANDATORY_ONLY_TOLERANCE_PX = 2;
 const DEFAULT_DEAD_RESERVE_BLOAT_THRESHOLD_PX = 128;
 const DEFAULT_WHOLE_DOCUMENT_DEAD_RESERVE_BLOAT_THRESHOLD_PX = 128;
+const DEFAULT_ONE_LINE_TAIL_PX = 24;
 const FULL_ANCHOR_RENDER_SENTINEL = Number.MAX_SAFE_INTEGER;
 const DEFAULT_TRIAL_TARGET_COUNT = 12;
+
+const didLastFootnoteAnchorSpill = (ledger: FootnotePageLedger): boolean => {
+  const lastAnchorId = ledger.anchorIds[ledger.anchorIds.length - 1];
+  return lastAnchorId != null && ledger.continuationOut.some((entry) => entry.id === lastAnchorId);
+};
 
 export const isMandatoryOnlyFootnotePage = (
   ledger: FootnotePageLedger,
   preferredDeltaThresholdPx = DEFAULT_PREFERRED_DELTA_THRESHOLD_PX,
   mandatoryOnlyTolerancePx = DEFAULT_MANDATORY_ONLY_TOLERANCE_PX,
 ): boolean => {
-  if (ledger.anchorIds.length === 0) return false;
+  if (!didLastFootnoteAnchorSpill(ledger)) return false;
   return (
     Math.abs(ledger.actualBandHeightPx - ledger.mandatoryReservePx) <= mandatoryOnlyTolerancePx &&
     ledger.preferredReservePx - ledger.mandatoryReservePx > preferredDeltaThresholdPx &&
@@ -82,7 +88,7 @@ export const isMandatoryOnlyFootnotePage = (
 };
 
 /**
- * SD-2656 (post-Vivienne-feedback): a page whose LAST anchor partially rendered
+ * SD-2656: a page whose LAST anchor partially rendered
  * but spilled to a later page. The user-visible bug is a footnote split across
  * pages even when the preferred reserve would fit the whole anchor on the
  * anchor page (Word does keep it together).
@@ -98,10 +104,7 @@ export const isSplitLastAnchorFootnotePage = (
   ledger: FootnotePageLedger,
   preferredDeltaThresholdPx = DEFAULT_PREFERRED_DELTA_THRESHOLD_PX,
 ): boolean => {
-  if (ledger.anchorIds.length === 0) return false;
-  const lastAnchorId = ledger.anchorIds[ledger.anchorIds.length - 1];
-  const lastAnchorSpilled = ledger.continuationOut.some((entry) => entry.id === lastAnchorId);
-  if (!lastAnchorSpilled) return false;
+  if (!didLastFootnoteAnchorSpill(ledger)) return false;
   return (
     ledger.preferredReservePx - ledger.mandatoryReservePx > preferredDeltaThresholdPx &&
     ledger.actualBandHeightPx < ledger.preferredReservePx - preferredDeltaThresholdPx
@@ -158,6 +161,15 @@ export const getPreferredReserveTrialTargets = (
   return Array.from(targets)
     .sort((a, b) => b - a)
     .slice(0, Math.max(1, maxTargets));
+};
+
+export const shouldAbsorbOneLineFootnoteWidow = (
+  ledger: FootnotePageLedger,
+  tailPx: number,
+  oneLineTailPx = DEFAULT_ONE_LINE_TAIL_PX,
+): boolean => {
+  if (ledger.anchorIds.length !== 1) return false;
+  return tailPx > 0 && tailPx <= oneLineTailPx;
 };
 
 export const collectFootnoteLedgers = (layout: Layout): FootnotePageLedger[] => {
@@ -344,7 +356,7 @@ export const scoreFootnoteWindow = (input: FootnoteWindowScoreInput): FootnoteWi
     mandatoryOnlyTolerancePx,
   );
 
-  // SD-2656 (Vivienne feedback): a trial that ELIMINATES a cluster split is a
+  // SD-2656: a trial that ELIMINATES a cluster split is a
   // direct user-visible win. Trade a larger dead-reserve growth for fewer
   // footnotes splitting across pages. Without this relaxation the scorer
   // accepts a smaller partial bump that improves mandatory-only count but
@@ -353,11 +365,11 @@ export const scoreFootnoteWindow = (input: FootnoteWindowScoreInput): FootnoteWi
   const eliminatesSplitInDoc = beforeDocumentDiagnostics.clusterSplitCount > afterDocumentDiagnostics.clusterSplitCount;
 
   if (after.totalPages > before.totalPages) {
-    // SD-2656 (post-Vivienne+Carlsbad p43): allow exactly +1 page when the
+    // SD-2656: allow exactly +1 page when the
     // trial eliminates a doc-level cluster split. Mirrors Word's behavior of
     // growing the document by one page to keep a footnote together when body
-    // content is densely packed. Larger growth caps measured no improvement
-    // on Carlsbad (4 remaining splits hit other gates regardless).
+    // content is densely packed. Larger growth caps did not improve the
+    // remaining splits because they hit other gates.
     const grewByOne = after.totalPages === before.totalPages + 1;
     if (!(grewByOne && eliminatesSplitInDoc)) {
       return { accept: false, reason: 'page-count-grew', before, after };

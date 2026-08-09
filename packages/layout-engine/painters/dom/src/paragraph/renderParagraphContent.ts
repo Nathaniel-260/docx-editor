@@ -1,6 +1,7 @@
 import type {
   DropCapDescriptor,
   Line,
+  MarkerTrackedChange,
   ParagraphBlock,
   ParagraphMeasure,
   ResolvedParagraphContent,
@@ -22,7 +23,6 @@ import {
   applySdtContainerChrome,
   getSdtContainerMetadata,
   isStructuredContentMetadata,
-  resolveRenderedSdtBoundary,
   shouldRenderSdtContainerChrome,
   type SdtAncestorOptions,
   type SdtBoundaryOptions,
@@ -36,8 +36,267 @@ import {
 } from './indentation.js';
 import { renderLegacyListMarker, renderResolvedListMarker, resolvePainterListTextStartPx } from './list-marker.js';
 import { applyParagraphBlockStyles, clearParagraphFrameIndentStyles } from './styles.js';
+import {
+  TRACK_CHANGE_BASE_CLASS,
+  TRACK_CHANGE_MODIFIER_CLASS,
+  applySemanticTrackedChangeMetadata,
+  applyTrackedChangeColorVariables,
+  resolveTrackedChangesConfig,
+} from '../runs/tracked-changes.js';
 
 const INLINE_SDT_CHROME_EXTRA_WIDTH_PX = 4;
+const SECTION_BREAK_TRACKED_CHANGE_MARKER_CLASS = 'superdoc-section-break-review-marker';
+const PARAGRAPH_MARK_TRACKED_CHANGE_CLASS = 'superdoc-tracked-paragraph-mark';
+const PARAGRAPH_PROPERTY_TRACKED_CHANGE_MARKER_CLASS = 'superdoc-paragraph-property-review-marker';
+
+type ParagraphTrackedChangeAnchorKind = 'paragraph-mark' | 'paragraph-property';
+
+const trackedChangeGroupedIds = (trackedChange: MarkerTrackedChange): string[] =>
+  Array.isArray(trackedChange.groupedIds) && trackedChange.groupedIds.length > 0
+    ? trackedChange.groupedIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : [trackedChange.id];
+
+const mergeTrackChangeIds = (existing: string | undefined, next: readonly string[]): string[] => {
+  const ids = new Set<string>();
+  for (const id of (existing ?? '').split(',')) {
+    const trimmed = id.trim();
+    if (trimmed) ids.add(trimmed);
+  }
+  for (const id of next) {
+    if (id) ids.add(id);
+  }
+  return [...ids];
+};
+
+const applyParagraphTrackedChangeAnchor = (
+  element: HTMLElement,
+  trackedChange: MarkerTrackedChange,
+  anchorKind: ParagraphTrackedChangeAnchorKind,
+): void => {
+  if (!trackedChange?.id) return;
+  const ids = trackedChangeGroupedIds(trackedChange);
+  element.dataset.trackChangeId = trackedChange.id;
+  element.dataset.trackChangeIds = mergeTrackChangeIds(element.dataset.trackChangeIds, ids).join(',');
+  element.dataset.trackChangeKind = trackedChange.kind;
+  element.dataset.trackChangeAnchor = anchorKind;
+  if (anchorKind === 'paragraph-mark') {
+    element.dataset.trackChangeStructural = 'paragraph-mark';
+    element.dataset.trackChangeMarker = 'paragraph';
+  } else {
+    delete element.dataset.trackChangeStructural;
+    delete element.dataset.trackChangeMarker;
+  }
+  // No 'body' default for a missing story key: an unknown owning story must not
+  // masquerade as body (IT-1250; see runs/tracked-changes.ts).
+  if (trackedChange.storyKey) {
+    element.dataset.storyKey = trackedChange.storyKey;
+  }
+  if (trackedChange.type) element.dataset.trackChangeType = trackedChange.type;
+  if (trackedChange.subtype) element.dataset.trackChangeSubtype = trackedChange.subtype;
+  if (trackedChange.targetKind) element.dataset.trackChangeTargetKind = trackedChange.targetKind;
+  if (trackedChange.semanticColorKey) {
+    element.dataset.trackChangeSemanticColorKey = trackedChange.semanticColorKey;
+  }
+  if (trackedChange.semanticColor) {
+    element.dataset.trackChangeSemanticColor = trackedChange.semanticColor;
+  }
+  if (trackedChange.semanticAnchorScope) {
+    element.dataset.trackChangeSemanticAnchorScope = trackedChange.semanticAnchorScope;
+  }
+  if (trackedChange.author) element.dataset.trackChangeAuthor = trackedChange.author;
+  if (trackedChange.authorEmail) element.dataset.trackChangeAuthorEmail = trackedChange.authorEmail;
+  if (trackedChange.color) element.dataset.trackChangeAuthorColor = trackedChange.color;
+  if (trackedChange.date) element.dataset.trackChangeDate = trackedChange.date;
+};
+
+const applyParagraphMarkTrackedChangeAnchor = (element: HTMLElement, trackedChange: MarkerTrackedChange): void => {
+  applyParagraphTrackedChangeAnchor(element, trackedChange, 'paragraph-mark');
+};
+
+const applyParagraphPropertyTrackedChangeAnchor = (element: HTMLElement, trackedChange: MarkerTrackedChange): void => {
+  applyParagraphTrackedChangeAnchor(element, trackedChange, 'paragraph-property');
+  applyTrackedChangeColorVariables(element, trackedChange);
+  applySemanticTrackedChangeMetadata(element, trackedChange);
+};
+
+const shouldRenderParagraphPropertyTrackedChangeMarker = (block: ParagraphBlock): boolean => {
+  const trackedChange = block.attrs?.paragraphPropertyTrackedChange;
+  if (!trackedChange?.id) return false;
+  const config = resolveTrackedChangesConfig(block);
+  if (!config.enabled || config.mode === 'off') return false;
+  return TRACK_CHANGE_MODIFIER_CLASS[trackedChange.kind]?.[config.mode] === 'highlighted';
+};
+
+const renderParagraphPropertyTrackedChangeMarker = (
+  doc: Document,
+  frameEl: HTMLElement,
+  block: ParagraphBlock,
+): void => {
+  const trackedChange = block.attrs?.paragraphPropertyTrackedChange;
+  if (!trackedChange?.id) return;
+  if (!shouldRenderParagraphPropertyTrackedChangeMarker(block)) return;
+  const config = resolveTrackedChangesConfig(block);
+  const modifier = TRACK_CHANGE_MODIFIER_CLASS[trackedChange.kind]?.[config.mode];
+  if (!modifier) return;
+
+  const markerEl = doc.createElement('span');
+  markerEl.classList.add(PARAGRAPH_PROPERTY_TRACKED_CHANGE_MARKER_CLASS);
+
+  const baseClass = TRACK_CHANGE_BASE_CLASS[trackedChange.kind];
+  if (baseClass) markerEl.classList.add(baseClass);
+  markerEl.classList.add(modifier);
+  applyTrackedChangeColorVariables(markerEl, trackedChange);
+  applySemanticTrackedChangeMetadata(markerEl, trackedChange);
+  applyParagraphPropertyTrackedChangeAnchor(markerEl, trackedChange);
+
+  frameEl.dataset.trackChangeMarkerVisible = 'true';
+  frameEl.appendChild(markerEl);
+};
+
+const parseCssPx = (value: string): number => {
+  if (!value) return 0;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const resolveParagraphPropertyMarkerLineLeft = (params: {
+  block: ParagraphBlock;
+  line: Line;
+  lineEl: HTMLElement;
+  fragmentWidth: number;
+  availableWidth?: number;
+  contentWidth?: number;
+}): number => {
+  const { block, line, lineEl, fragmentWidth, availableWidth, contentWidth } = params;
+  const paddingLeft = parseCssPx(lineEl.style.paddingLeft);
+  const textIndent = parseCssPx(lineEl.style.textIndent);
+  const explicitPositioningOffset =
+    hasExplicitSegmentPositioning(line) && typeof line.segments?.[0]?.x === 'number' ? line.segments[0].x : 0;
+  const textStartOffset = Math.max(0, paddingLeft + textIndent + explicitPositioningOffset);
+  const lineContentWidth = Math.max(0, contentWidth ?? line.naturalWidth ?? line.width ?? 0);
+  const effectiveAvailableWidth = Math.max(0, availableWidth ?? line.maxWidth ?? fragmentWidth - textStartOffset);
+  const alignmentSlack = Math.max(0, effectiveAvailableWidth - lineContentWidth);
+  const alignment = resolveTextAlign(block.attrs?.alignment, getParagraphInlineDirection(block.attrs) === 'rtl');
+  const alignmentOffset = alignment === 'center' ? alignmentSlack / 2 : alignment === 'right' ? alignmentSlack : 0;
+  return Math.max(0, textStartOffset + alignmentOffset);
+};
+
+const placeParagraphPropertyTrackedChangeMarker = (params: {
+  block: ParagraphBlock;
+  frameEl: HTMLElement;
+  lineEl: HTMLElement;
+  line: Line;
+  fragmentWidth: number;
+  availableWidth?: number;
+  contentWidth?: number;
+}): void => {
+  if (!shouldRenderParagraphPropertyTrackedChangeMarker(params.block)) return;
+  const markerLeft = resolveParagraphPropertyMarkerLineLeft(params);
+  params.frameEl.style.setProperty(
+    '--sd-tracked-changes-paragraph-property-marker-left',
+    `${Math.round(markerLeft - 10)}px`,
+  );
+};
+
+const isSectionBreakTrackedChange = (trackedChange: MarkerTrackedChange | undefined): boolean =>
+  trackedChange?.targetKind === 'section-break' ||
+  trackedChange?.subtype === 'section-break-insertion' ||
+  trackedChange?.subtype === 'section-break-deletion';
+
+const applySectionBreakTrackedChangeMarker = (
+  markerEl: HTMLElement,
+  trackedChange: MarkerTrackedChange,
+  block: ParagraphBlock,
+): void => {
+  const config = resolveTrackedChangesConfig(block);
+  if (!config.enabled || config.mode === 'off') return;
+
+  const baseClass = TRACK_CHANGE_BASE_CLASS[trackedChange.kind];
+  if (baseClass) markerEl.classList.add(baseClass);
+  const modifier = TRACK_CHANGE_MODIFIER_CLASS[trackedChange.kind]?.[config.mode];
+  if (modifier) markerEl.classList.add(modifier);
+  applyTrackedChangeColorVariables(markerEl, trackedChange);
+  applySemanticTrackedChangeMetadata(markerEl, trackedChange);
+
+  const ids =
+    Array.isArray(trackedChange.groupedIds) && trackedChange.groupedIds.length > 0
+      ? trackedChange.groupedIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [trackedChange.id];
+  markerEl.dataset.trackChangeId = trackedChange.id;
+  markerEl.dataset.trackChangeIds = ids.join(',');
+  markerEl.dataset.trackChangeKind = trackedChange.kind;
+  markerEl.dataset.trackChangeAnchor = 'section-break';
+  markerEl.dataset.trackChangeStructural = 'section-break';
+  markerEl.dataset.trackChangeMarker = 'section-break';
+  if (trackedChange.storyKey) markerEl.dataset.storyKey = trackedChange.storyKey;
+  if (trackedChange.author) markerEl.dataset.trackChangeAuthor = trackedChange.author;
+  if (trackedChange.authorEmail) markerEl.dataset.trackChangeAuthorEmail = trackedChange.authorEmail;
+  if (trackedChange.color) markerEl.dataset.trackChangeAuthorColor = trackedChange.color;
+  if (trackedChange.date) markerEl.dataset.trackChangeDate = trackedChange.date;
+};
+
+const applyParagraphMarkGlyphTrackedChange = (
+  lineEl: HTMLElement,
+  trackedChange: MarkerTrackedChange | undefined,
+  block: ParagraphBlock,
+): void => {
+  if (!trackedChange?.id || isSectionBreakTrackedChange(trackedChange)) return;
+
+  const config = resolveTrackedChangesConfig(block);
+  if (!config.enabled || config.mode === 'off') return;
+
+  const markEl = lineEl.querySelector<HTMLElement>('.superdoc-formatting-paragraph-mark');
+  if (!markEl) return;
+
+  const baseClass = TRACK_CHANGE_BASE_CLASS[trackedChange.kind];
+  if (baseClass) markEl.classList.add(baseClass);
+  markEl.classList.add(PARAGRAPH_MARK_TRACKED_CHANGE_CLASS);
+  const modifier = TRACK_CHANGE_MODIFIER_CLASS[trackedChange.kind]?.[config.mode];
+  if (modifier) markEl.classList.add(modifier);
+
+  applyTrackedChangeColorVariables(markEl, trackedChange);
+  applySemanticTrackedChangeMetadata(markEl, trackedChange);
+
+  const ids =
+    Array.isArray(trackedChange.groupedIds) && trackedChange.groupedIds.length > 0
+      ? trackedChange.groupedIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [trackedChange.id];
+  markEl.dataset.trackChangeId = trackedChange.id;
+  markEl.dataset.trackChangeIds = ids.join(',');
+  markEl.dataset.trackChangeKind = trackedChange.kind;
+  markEl.dataset.trackChangeAnchor = 'paragraph-mark';
+  markEl.dataset.trackChangeStructural = 'paragraph-mark';
+  markEl.dataset.trackChangeMarker = 'paragraph';
+  if (trackedChange.storyKey) markEl.dataset.storyKey = trackedChange.storyKey;
+  if (trackedChange.author) markEl.dataset.trackChangeAuthor = trackedChange.author;
+  if (trackedChange.authorEmail) markEl.dataset.trackChangeAuthorEmail = trackedChange.authorEmail;
+  if (trackedChange.color) markEl.dataset.trackChangeAuthorColor = trackedChange.color;
+  if (trackedChange.date) markEl.dataset.trackChangeDate = trackedChange.date;
+
+  if (modifier === 'highlighted') {
+    markEl.style.display = 'inline';
+    markEl.style.textDecorationColor = 'currentColor';
+    markEl.style.textDecorationLine = trackedChange.kind === 'delete' ? 'line-through' : 'underline';
+  }
+};
+
+const renderSectionBreakTrackedChangeMarker = (doc: Document, frameEl: HTMLElement, block: ParagraphBlock): void => {
+  if (block.attrs?.sectPrMarker !== true) return;
+  const trackedChange = block.attrs.paragraphMarkTrackedChange;
+  if (!trackedChange || !isSectionBreakTrackedChange(trackedChange)) return;
+  const config = resolveTrackedChangesConfig(block);
+  if (!config.enabled || config.mode === 'off') return;
+
+  const markerEl = doc.createElement('span');
+  markerEl.classList.add(SECTION_BREAK_TRACKED_CHANGE_MARKER_CLASS);
+  markerEl.textContent = 'Section Break';
+  markerEl.dataset.trackChangeAnchor = 'section-break';
+  markerEl.dataset.trackChangeStructural = 'section-break';
+  markerEl.dataset.trackChangeMarker = 'section-break';
+  markerEl.setAttribute('aria-label', 'Section Break tracked change');
+  applySectionBreakTrackedChangeMarker(markerEl, trackedChange, block);
+  frameEl.appendChild(markerEl);
+};
 
 export type RenderedParagraphLineInfo = {
   el: HTMLElement;
@@ -163,9 +422,15 @@ export const renderParagraphContent = (params: RenderParagraphContentParams): Re
     frameEl.dataset.styleId = block.attrs.styleId;
     frameEl.setAttribute('styleid', block.attrs.styleId);
   }
+  if (block.attrs?.paragraphMarkTrackedChange) {
+    applyParagraphMarkTrackedChangeAnchor(frameEl, block.attrs.paragraphMarkTrackedChange);
+  }
+  if (block.attrs?.paragraphPropertyTrackedChange) {
+    applyParagraphPropertyTrackedChangeAnchor(frameEl, block.attrs.paragraphPropertyTrackedChange);
+  }
+  renderSectionBreakTrackedChangeMarker(doc, frameEl, block);
   applySdtDataset(frameEl, block.attrs?.sdt);
   applyContainerSdtDataset?.(frameEl, block.attrs?.containerSdt);
-  const effectiveSdtBoundary = resolveRenderedSdtBoundary(block.attrs?.sdt, block.attrs?.containerSdt, sdtBoundary);
 
   const applySdtChrome = shouldRenderSdtContainerChrome(block.attrs?.sdt, block.attrs?.containerSdt, {
     ancestorContainerKey,
@@ -180,7 +445,7 @@ export const renderParagraphContent = (params: RenderParagraphContentParams): Re
         frameEl,
         block.attrs?.sdt,
         block.attrs?.containerSdt,
-        effectiveSdtBoundary,
+        sdtBoundary,
         undefined,
         contentControlsChrome,
       )
@@ -230,7 +495,7 @@ export const renderParagraphContent = (params: RenderParagraphContentParams): Re
       lineIndexOffset + localStartLine,
       continuesFromPrev,
       continuesOnNext,
-      effectiveSdtBoundary,
+      sdtBoundary,
       resolvedContent,
     );
   }
@@ -257,6 +522,7 @@ export const renderParagraphContent = (params: RenderParagraphContentParams): Re
   if (renderedHeight > 0) {
     frameEl.style.height = `${renderedHeight}px`;
   }
+  renderParagraphPropertyTrackedChangeMarker(doc, frameEl, block);
 
   return {
     renderedHeight,
@@ -487,6 +753,7 @@ const renderResolvedLines = (
   const resolvedMarker = content.marker;
   const expandedRunsForBlock = expandRunsForInlineNewlines(block.runs);
   const isRtl = getParagraphInlineDirection(block.attrs) === 'rtl';
+  const trackedChangesConfig = resolveTrackedChangesConfig(block);
   let renderedHeight = 0;
 
   content.lines.forEach((resolvedLine, index) => {
@@ -514,6 +781,17 @@ const renderResolvedLines = (
     if (resolvedLine.paddingRightPx > 0) {
       lineEl.style.paddingRight = `${resolvedLine.paddingRightPx}px`;
     }
+    if (index === 0 && !content.continuesFromPrev) {
+      placeParagraphPropertyTrackedChangeMarker({
+        block,
+        frameEl,
+        lineEl,
+        line: resolvedLine.line,
+        fragmentWidth: params.width,
+        availableWidth: resolvedLine.availableWidth,
+        contentWidth: resolvedLine.line.naturalWidth ?? resolvedLine.line.width,
+      });
+    }
     if (resolvedLine.isListFirstLine && resolvedMarker) {
       renderResolvedListMarker({
         doc: params.doc,
@@ -522,10 +800,14 @@ const renderResolvedLines = (
         isRtl,
         sourceAnchor,
         resolvePhysical,
+        trackedChangesConfig,
       });
     }
     if (convertFinalParagraphMark && index === content.lines.length - 1 && !content.continuesOnNext) {
       convertParagraphMarkToCellMark(lineEl);
+    }
+    if (index === content.lines.length - 1 && !content.continuesOnNext) {
+      applyParagraphMarkGlyphTrackedChange(lineEl, block.attrs?.paragraphMarkTrackedChange, block);
     }
     captureLineSnapshot?.(lineEl, {
       inTableParagraph: params.containerKind === 'table-cell',
@@ -587,6 +869,7 @@ const renderMeasuredLines = (
   const paragraphEndsWithLineBreak = lastRun?.kind === 'lineBreak';
   const markerLayout = wordLayout?.marker;
   const markerMeasure = measure.marker;
+  const trackedChangesConfig = resolveTrackedChangesConfig(block);
 
   const legacyMarkerWidth = markerWidth ?? markerMeasure?.markerWidth;
   const legacyMarkerTextWidth = markerTextWidth ?? markerMeasure?.markerTextWidth;
@@ -648,6 +931,9 @@ const renderMeasuredLines = (
     if (convertFinalParagraphMark && isLastLineOfParagraph) {
       convertParagraphMarkToCellMark(lineEl);
     }
+    if (isLastLineOfParagraph) {
+      applyParagraphMarkGlyphTrackedChange(lineEl, block.attrs?.paragraphMarkTrackedChange, block);
+    }
 
     if (isListFirstLine && markerLayout && markerMeasure) {
       if (paraIndentRight > 0) {
@@ -666,6 +952,7 @@ const renderMeasuredLines = (
         isRtl,
         sourceAnchor,
         resolvePhysical,
+        trackedChangesConfig,
       });
     } else {
       applyParagraphLineIndentation({
@@ -679,6 +966,18 @@ const renderMeasuredLines = (
         continuesFromPrev,
         suppressFirstLineIndent,
         resetContinuationTextIndent: containerKind === 'body-fragment',
+      });
+    }
+
+    if (lineIdx === localStartLine && !continuesFromPrev) {
+      placeParagraphPropertyTrackedChangeMarker({
+        block,
+        frameEl,
+        lineEl,
+        line,
+        fragmentWidth: width,
+        availableWidth,
+        contentWidth: line.naturalWidth ?? line.width,
       });
     }
 

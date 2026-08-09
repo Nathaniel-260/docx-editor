@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { createTestPainter as createDomPainter } from './_test-utils.js';
 import type { FlowBlock, Layout, Measure, SourceAnchor } from '@superdoc/contracts';
 import type { PaintSnapshot } from './renderer.js';

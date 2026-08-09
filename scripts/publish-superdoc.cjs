@@ -54,6 +54,17 @@ const ensurePackageJson = () => {
   return packageJson;
 };
 
+const assertPublicPublisherVersionAllowed = (version) => {
+  const match = /^(\d+)\./.exec(String(version));
+  if (!match) throw new Error(`Invalid SuperDoc package version: ${version}`);
+  if (Number(match[1]) >= 2) {
+    throw new Error(
+      `SuperDoc ${version} is not eligible for this publisher; ` +
+        'the public publisher is restricted to 1.x releases.'
+    );
+  }
+};
+
 const ensureDist = () => {
   const distPath = path.join(superdocDir, 'dist');
   if (!existsSync(distPath)) {
@@ -61,15 +72,6 @@ const ensureDist = () => {
   }
 };
 
-// The scoped mirror is a V1-only package: nothing else publishes it, and no
-// V2 release line claims its dist-tags. So the tag split that protects the
-// unscoped `superdoc` (V1 -> `legacy`, V2 owns `latest`) must not be applied
-// here — it would freeze `@harbour-enterprises/superdoc@latest` at whatever
-// shipped last and silently stop default installs from updating.
-//
-// `scopedDistTag` lets the caller keep the two apart. It defaults to the
-// package's own tag so the PR-preview path (`pr-<number>`) stays identical
-// across both names.
 const publishScopedMirror = (packageJson, distTag, logger = console) => {
   const scopedName = '@harbour-enterprises/superdoc';
 
@@ -116,17 +118,17 @@ const publishScopedMirror = (packageJson, distTag, logger = console) => {
 
 const publishPackages = ({
   distTag = 'latest',
-  scopedDistTag = distTag,
   publishUnscoped = true,
   build = true,
   logger = console
 } = {}) => {
+  const packageJson = ensurePackageJson();
+  assertPublicPublisherVersionAllowed(packageJson.version);
   if (build) {
     logger.log('Building packages...');
     run('pnpm', ['run', 'build'], rootDir);
   }
 
-  const packageJson = ensurePackageJson();
   ensureDist();
 
   if (publishUnscoped) {
@@ -139,20 +141,8 @@ const publishPackages = ({
     }
   }
 
-  publishScopedMirror(packageJson, scopedDistTag, logger);
+  publishScopedMirror(packageJson, distTag, logger);
 };
-
-// The unscoped `superdoc` shares its npm name with the V2 release line, so V1
-// stable releases publish it to `legacy`. The scoped mirror has no such
-// contention — mapping `legacy` onto it too would strand its `latest`.
-const SCOPED_MIRROR_STABLE_TAG = 'latest';
-const V1_STABLE_DIST_TAG = 'legacy';
-
-// The dist-tag the scoped mirror should use for a given unscoped tag. Only the
-// V1 stable channel is remapped; previews and prereleases stay aligned so
-// `pr-<number>` and `next` mean the same thing under both names.
-const scopedTagFor = (distTag) =>
-  distTag === V1_STABLE_DIST_TAG ? SCOPED_MIRROR_STABLE_TAG : distTag;
 
 const parseArgs = (argv) => {
   let distTag;
@@ -176,7 +166,6 @@ const parseArgs = (argv) => {
 
   return {
     distTag: resolvedTag,
-    scopedDistTag: scopedTagFor(resolvedTag),
     publishUnscoped: !skipUnscoped && process.env.SKIP_UNSCOPED_PUBLISH !== 'true',
     build: !skipBuild && process.env.SKIP_BUILD !== 'true'
   };
@@ -192,22 +181,18 @@ if (require.main === module) {
   }
 }
 
-// The unscoped `superdoc` shares its npm name with the V2 release line, so V1
-// stable releases publish it to `legacy`. The scoped mirror has no such
-// contention — mapping `legacy` onto it too would strand its `latest`.
 module.exports = {
+  assertPublicPublisherVersionAllowed,
   publish: async (pluginConfig, context) => {
     const { nextRelease, logger = console } = context;
     const distTag = (nextRelease && nextRelease.channel) || 'latest';
 
     publishPackages({
       distTag,
-      scopedDistTag: scopedTagFor(distTag),
       publishUnscoped: true,
       build: true,
       logger
     });
   },
-  publishPackages,
-  scopedTagFor
+  publishPackages
 };

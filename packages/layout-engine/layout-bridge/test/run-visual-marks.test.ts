@@ -4,7 +4,7 @@
  * @vitest-environment node
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { hashRunVisualMarks } from '../src/run-visual-marks';
 import type { Run } from '@superdoc/contracts';
 
@@ -95,6 +95,9 @@ describe('hashRunVisualMarks', () => {
     expect(hashRunVisualMarks({ ...base, fontFamily: 'Georgia' } as Run)).not.toBe(h0);
     expect(hashRunVisualMarks({ ...base, highlight: 'cyan' } as Run)).not.toBe(h0);
     expect(hashRunVisualMarks({ ...base, link: { href: 'https://a.test' } } as Run)).not.toBe(h0);
+    expect(hashRunVisualMarks({ ...base, textTransform: 'uppercase' } as Run)).not.toBe(h0);
+    expect(hashRunVisualMarks({ ...base, vanish: true } as Run)).not.toBe(h0);
+    expect(hashRunVisualMarks({ ...base, horizontalScale: 0.9 } as Run)).not.toBe(h0);
   });
 
   it('ignores properties not read by the helper (e.g. letterSpacing)', () => {

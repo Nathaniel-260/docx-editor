@@ -51,7 +51,7 @@ export const resolvePersistentReviewCardTop = ({
   return anchorTop;
 };
 
-export const shouldMountFloatingCommentDialog = ({ id, visibleIds, activeCommentInstanceId, comment }) => {
+export const shouldMountFloatingCommentDialog = ({ id, visibleIds, activeCommentInstanceId }) => {
   if (!id) {
     return false;
   }
@@ -68,5 +68,34 @@ export const shouldMountFloatingCommentDialog = ({ id, visibleIds, activeComment
     return true;
   }
 
-  return isPersistentReviewSidebarItem(comment);
+  return false;
+};
+
+/**
+ * Pick a stable surviving card when an active review row is removed.
+ * Continue forward in review order when possible, then fall back backward.
+ *
+ * @param {object} input
+ * @param {readonly string[]} input.previousIds Ordered IDs before removal.
+ * @param {ReadonlySet<string>} input.currentIds IDs that still exist.
+ * @param {string} input.removedId Removed active card ID.
+ * @returns {string | null}
+ */
+export const resolveRemovedReviewCardContinuityTarget = ({ previousIds, currentIds, removedId }) => {
+  if (!Array.isArray(previousIds) || !(currentIds instanceof Set) || !removedId) return null;
+
+  const removedIndex = previousIds.indexOf(removedId);
+  if (removedIndex < 0) return null;
+
+  for (let index = removedIndex + 1; index < previousIds.length; index += 1) {
+    const candidateId = previousIds[index];
+    if (currentIds.has(candidateId)) return candidateId;
+  }
+
+  for (let index = removedIndex - 1; index >= 0; index -= 1) {
+    const candidateId = previousIds[index];
+    if (currentIds.has(candidateId)) return candidateId;
+  }
+
+  return null;
 };

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -19,11 +19,6 @@ const superdocCss = readFileSync(
   'utf8',
 );
 
-const editorScopedCss = readFileSync(
-  join(repoRoot, 'packages', 'super-editor', 'src', 'editors', 'v1', 'assets', 'styles', 'elements', 'prosemirror.css'),
-  'utf8',
-);
-
 const extractRuleBody = (css, selector) => {
   const idx = css.indexOf(selector);
   if (idx === -1) return null;
@@ -35,30 +30,27 @@ const extractRuleBody = (css, selector) => {
 
 describe('search-match CSS precedence (SD-3045)', () => {
   describe('packages/superdoc/src/assets/styles/elements/superdoc.css', () => {
-    it('`.superdoc .ProseMirror-search-match` background uses !important', () => {
-      const body = extractRuleBody(superdocCss, '.superdoc .ProseMirror-search-match');
-      expect(body, '.superdoc .ProseMirror-search-match rule must exist').not.toBeNull();
+    it('the coarse match fallback excludes exact-range carriers and uses !important', () => {
+      const selector = '.superdoc .ProseMirror-search-match:not([data-sd-search-exact-highlight])';
+      const body = extractRuleBody(superdocCss, selector);
+      expect(body, `${selector} rule must exist`).not.toBeNull();
       expect(body).toMatch(/background\s*:[^;]*!important/);
     });
 
-    it('`.superdoc .ProseMirror-active-search-match` background uses !important', () => {
-      const body = extractRuleBody(superdocCss, '.superdoc .ProseMirror-active-search-match');
-      expect(body, '.superdoc .ProseMirror-active-search-match rule must exist').not.toBeNull();
+    it('the coarse active fallback excludes exact-range carriers and uses !important', () => {
+      const selector = '.superdoc .ProseMirror-active-search-match:not([data-sd-search-exact-highlight])';
+      const body = extractRuleBody(superdocCss, selector);
+      expect(body, `${selector} rule must exist`).not.toBeNull();
       expect(body).toMatch(/background\s*:[^;]*!important/);
     });
-  });
 
-  describe('packages/super-editor/.../prosemirror.css', () => {
-    it('`.sd-editor-scoped .ProseMirror-search-match` background-color uses !important', () => {
-      const body = extractRuleBody(editorScopedCss, '.sd-editor-scoped .ProseMirror-search-match');
-      expect(body, '.sd-editor-scoped .ProseMirror-search-match rule must exist').not.toBeNull();
-      expect(body).toMatch(/background-color\s*:[^;]*!important/);
-    });
-
-    it('`.sd-editor-scoped .ProseMirror-active-search-match` background-color uses !important', () => {
-      const body = extractRuleBody(editorScopedCss, '.sd-editor-scoped .ProseMirror-active-search-match');
-      expect(body, '.sd-editor-scoped .ProseMirror-active-search-match rule must exist').not.toBeNull();
-      expect(body).toMatch(/background-color\s*:[^;]*!important/);
+    it('uses the existing search variables for exact custom-highlight colors', () => {
+      expect(extractRuleBody(superdocCss, '::highlight(superdoc-search-match)')).toMatch(
+        /background\s*:\s*var\(--sd-ui-search-match-bg\)/,
+      );
+      expect(extractRuleBody(superdocCss, '::highlight(superdoc-search-active-match)')).toMatch(
+        /background\s*:\s*var\(--sd-ui-search-match-active-bg\)/,
+      );
     });
   });
 

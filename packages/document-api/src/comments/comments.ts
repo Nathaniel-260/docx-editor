@@ -1,6 +1,7 @@
 import type { Receipt, ReceiptFailureResult, ReceiptSuccess, StoryLocator } from '../types/index.js';
 import type {
   CommentInfo,
+  CommentCreateAttributionInput,
   CommentTarget,
   CommentsListQuery,
   CommentsListResult,
@@ -13,8 +14,10 @@ import { DocumentApiValidationError } from '../errors.js';
 import { isRecord, isTextAddress, isTextTarget, assertNoUnknownFields } from '../validation-primitives.js';
 import { validateStoryLocator } from '../validation/story-validator.js';
 import { isSelectionTarget } from '../validation/selection-target-validator.js';
+import { normalizeCommentCreateAttribution } from './comment-create-attribution.js';
 
 export type { TextSearchCommentTarget, TrackedChangeCommentTarget, TrackedChangeCommentTargetSide };
+export type { CommentCreateAttributionInput, CommentMetadata, CommentMetadataValue } from './comments.types.js';
 
 function isTrackedChangeCommentTarget(value: unknown): value is TrackedChangeCommentTarget {
   // Accept both the canonical `{ kind: 'trackedChange', trackedChangeId }`
@@ -38,7 +41,7 @@ function isTrackedChangeCommentTarget(value: unknown): value is TrackedChangeCom
  * across contiguous blocks: use it directly from `editor.doc.selection.current().target`
  * without picking a single segment.
  */
-export interface AddCommentInput {
+export interface AddCommentInput extends CommentCreateAttributionInput {
   /**
    * The text range to attach the comment to.
    *
@@ -59,7 +62,7 @@ export interface EditCommentInput {
   text: string;
 }
 
-export interface ReplyToCommentInput {
+export interface ReplyToCommentInput extends CommentCreateAttributionInput {
   parentCommentId: string;
   text: string;
 }
@@ -117,9 +120,17 @@ export interface GetCommentInput {
  * When `parentCommentId` is provided, creates a reply on an existing thread.
  * Otherwise, creates a new root comment anchored to the given text range.
  */
-export interface CommentsCreateInput {
+export interface CommentsCreateInput extends CommentCreateAttributionInput {
   /** The comment body text. */
   text: string;
+  /**
+   * Compatibility alias for {@link CommentCreateAttributionInput.externalId},
+   * matching the caller-supplied `commentId` accepted by the v1 editor.
+   *
+   * V2 still mints a separate Word-compatible id for the document. Pass
+   * either `commentId` or `externalId`; when both are present they must agree.
+   */
+  commentId?: string;
   /**
    * The text range to attach the comment to (root comments only).
    *
@@ -143,8 +154,8 @@ export interface CommentsCreateInput {
   /** Parent comment ID: when provided, creates a reply instead of a root comment. */
   parentCommentId?: string;
   /**
-   * Public contract alias for {@link parentCommentId} (the operation's param
-   * name is `parentId`); normalized during validation. Pass one or the other.
+   * Public contract alias for {@link parentCommentId}. Pass either key, or
+   * both when they contain the same value.
    */
   parentId?: string;
 }
@@ -246,37 +257,79 @@ export interface CommentsApi {
   list(query?: CommentsListQuery): CommentsListResult;
 }
 
-const CREATE_COMMENT_ALLOWED_KEYS = new Set(['target', 'text', 'parentCommentId', 'trackedChangeId', 'side', 'story']);
+const CREATE_COMMENT_ALLOWED_KEYS = new Set([
+  'target',
+  'text',
+  'parentCommentId',
+  'parentId',
+  'trackedChangeId',
+  'side',
+  'story',
+  'commentId',
+  'externalId',
+  'author',
+  'authorId',
+  'authorEmail',
+  'authorImage',
+  'metadata',
+]);
 
 /**
  * Validates CommentsCreateInput for root comments (non-reply) and throws DocumentApiValidationError on violations.
  */
-function validateCreateCommentInput(input: unknown): asserts input is CommentsCreateInput {
+function normalizeCreateCommentInput(input: unknown): CommentsCreateInput {
   if (!isRecord(input)) {
     throw new DocumentApiValidationError('INVALID_INPUT', 'comments.create input must be a non-null object.');
   }
 
-  // `parentId` is the public contract param name for reply threading (the CLI
-  // renames it to parentCommentId after parsing); accept it here too so
-  // in-process callers can use the contract name. When both are present they
-  // must agree.
-  const record = input as Record<string, unknown>;
-  if (record.parentId !== undefined) {
-    if (record.parentCommentId !== undefined && record.parentCommentId !== record.parentId) {
-      throw new DocumentApiValidationError('INVALID_INPUT', 'parentId and parentCommentId disagree; pass one.', {
-        field: 'parentId',
-        value: record.parentId,
-      });
-    }
-    record.parentCommentId = record.parentId;
-    delete record.parentId;
-  }
-
   assertNoUnknownFields(input, CREATE_COMMENT_ALLOWED_KEYS, 'comments.create');
 
-  const { target, text, parentCommentId, trackedChangeId } = input;
+  const callerCommentId = input.commentId;
+  const externalId = input.externalId;
+  if (callerCommentId !== undefined && externalId !== undefined && callerCommentId !== externalId) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      'commentId and externalId disagree; pass one value or make them identical.',
+      {
+        field: 'commentId',
+        value: callerCommentId,
+      },
+    );
+  }
+
+  // Keep the standard V2 path allocation-free. The compatibility path is
+  // normalized once at the public boundary so adapters only ever receive the
+  // canonical externalId spelling.
+  let normalizedRecord = input;
+  if (Object.prototype.hasOwnProperty.call(input, 'commentId')) {
+    const { commentId: _commentId, ...rest } = input;
+    normalizedRecord =
+      callerCommentId !== undefined && externalId === undefined ? { ...rest, externalId: callerCommentId } : rest;
+  }
+
+  const parentId = normalizedRecord.parentId;
+  const parentCommentId = normalizedRecord.parentCommentId;
+  if (parentId !== undefined && parentCommentId !== undefined && parentId !== parentCommentId) {
+    throw new DocumentApiValidationError('INVALID_INPUT', 'parentId and parentCommentId disagree; pass one.', {
+      field: 'parentId',
+      value: parentId,
+    });
+  }
+
+  let normalizedInput: CommentsCreateInput =
+    parentId === undefined
+      ? (normalizedRecord as unknown as CommentsCreateInput)
+      : (() => {
+          const { parentId: _parentId, ...rest } = normalizedRecord;
+          return { ...rest, parentCommentId: parentId } as CommentsCreateInput;
+        })();
+
+  const attribution = normalizeCommentCreateAttribution(normalizedInput);
+  if (attribution) normalizedInput = { ...normalizedInput, ...attribution };
+
+  const { target, text, parentCommentId: normalizedParentCommentId, trackedChangeId } = normalizedInput;
   const hasTarget = target !== undefined;
-  const isReply = parentCommentId !== undefined;
+  const isReply = normalizedParentCommentId !== undefined;
 
   if (typeof text !== 'string') {
     throw new DocumentApiValidationError('INVALID_INPUT', `text must be a string, got ${typeof text}.`, {
@@ -287,10 +340,10 @@ function validateCreateCommentInput(input: unknown): asserts input is CommentsCr
 
   // Replies only need parentCommentId + text: skip target validation
   if (isReply) {
-    if (typeof parentCommentId !== 'string' || parentCommentId.length === 0) {
+    if (typeof normalizedParentCommentId !== 'string' || normalizedParentCommentId.length === 0) {
       throw new DocumentApiValidationError('INVALID_INPUT', 'parentCommentId must be a non-empty string.', {
         field: 'parentCommentId',
-        value: parentCommentId,
+        value: normalizedParentCommentId,
       });
     }
     if (hasTarget) {
@@ -307,7 +360,7 @@ function validateCreateCommentInput(input: unknown): asserts input is CommentsCr
         { fields: ['parentCommentId', 'trackedChangeId'] },
       );
     }
-    return;
+    return normalizedInput;
   }
 
   if (!hasTarget && trackedChangeId === undefined) {
@@ -316,18 +369,16 @@ function validateCreateCommentInput(input: unknown): asserts input is CommentsCr
     });
   }
 
-  const effectiveTarget = hasTarget
-    ? target
-    : buildTrackedChangeTargetFromCreateShorthand(input as unknown as CommentsCreateInput);
+  const effectiveTarget = hasTarget ? target : buildTrackedChangeTargetFromCreateShorthand(normalizedInput);
 
   if (isTrackedChangeCommentTarget(effectiveTarget)) {
     validateTrackedChangeCommentTarget(effectiveTarget, 'comments.create');
-    return;
+    return normalizedInput;
   }
 
   if (isTextSearchCommentTarget(effectiveTarget)) {
     validateTextSearchCommentTarget(effectiveTarget, 'comments.create');
-    return;
+    return normalizedInput;
   }
 
   if (!isTextAddress(effectiveTarget) && !isTextTarget(effectiveTarget) && !isSelectionTarget(effectiveTarget)) {
@@ -340,6 +391,8 @@ function validateCreateCommentInput(input: unknown): asserts input is CommentsCr
       },
     );
   }
+
+  return normalizedInput;
 }
 
 function buildTrackedChangeTargetFromCreateShorthand(
@@ -512,17 +565,19 @@ export function executeCommentsCreate(
   input: CommentsCreateInput,
   options?: RevisionGuardOptions,
 ): CommentsCreateReceipt {
-  // Validate the raw input first (catches null, unknown fields, etc.)
-  validateCreateCommentInput(input);
+  // Normalize the public parentId alias before dispatch so adapters only see
+  // the internal parentCommentId spelling.
+  const normalizedInput = normalizeCreateCommentInput(input);
+  const creation = projectCommentCreationInput(normalizedInput);
 
-  if (input.parentCommentId !== undefined) {
-    return adapter.reply({ parentCommentId: input.parentCommentId, text: input.text }, options);
+  if (normalizedInput.parentCommentId !== undefined) {
+    return adapter.reply({ parentCommentId: normalizedInput.parentCommentId, ...creation }, options);
   }
-  if (input.target === undefined && input.trackedChangeId !== undefined) {
-    const { trackedChangeId, side, story, text } = input;
+  if (normalizedInput.target === undefined && normalizedInput.trackedChangeId !== undefined) {
+    const { trackedChangeId, side, story } = normalizedInput;
     return adapter.add(
       {
-        text,
+        ...creation,
         target: {
           trackedChangeId,
           ...(side ? { side } : {}),
@@ -532,7 +587,21 @@ export function executeCommentsCreate(
       options,
     );
   }
-  return adapter.add(input, options);
+  // Preserve the allocation-free default root path: normalizedInput itself is
+  // already a valid AddCommentInput when no reply/shorthand projection is needed.
+  return adapter.add(normalizedInput, options);
+}
+
+function projectCommentCreationInput(input: CommentsCreateInput): Omit<AddCommentInput, 'target'> {
+  return {
+    text: input.text,
+    ...(input.externalId !== undefined ? { externalId: input.externalId } : {}),
+    ...(input.author !== undefined ? { author: input.author } : {}),
+    ...(input.authorId !== undefined ? { authorId: input.authorId } : {}),
+    ...(input.authorEmail !== undefined ? { authorEmail: input.authorEmail } : {}),
+    ...(input.authorImage !== undefined ? { authorImage: input.authorImage } : {}),
+    ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+  };
 }
 
 /**

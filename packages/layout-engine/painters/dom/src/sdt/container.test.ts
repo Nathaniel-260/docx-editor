@@ -1,11 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { SdtMetadata } from '@superdoc/contracts';
 import {
   applySdtContainerChrome,
   getSdtContainerKey,
   getSdtContainerKeyForBlock,
   getSdtSiblingBoundaries,
-  getSdtSiblingBoundariesWithOwnContainers,
   shouldRenderSdtContainerChrome,
 } from './container.js';
 
@@ -198,31 +197,6 @@ describe('SDT container chrome', () => {
     expect(getSdtSiblingBoundaries([getSdtContainerKey(sharedSdt), getSdtContainerKey(sharedSdt)])).toEqual([
       { isStart: true, isEnd: false },
       { isStart: false, isEnd: true },
-    ]);
-  });
-
-  it('preserves own nested container boundaries within shared parent sibling boundaries', () => {
-    expect(getSdtSiblingBoundariesWithOwnContainers(['parent', 'parent'], ['parent', 'child'], new Set())).toEqual([
-      {
-        isStart: true,
-        isEnd: false,
-        showLabel: true,
-        ownIsStart: true,
-        ownIsEnd: true,
-        ownShowLabel: false,
-        ownIsNested: false,
-        nextOwnContainerStartsNested: true,
-      },
-      {
-        isStart: false,
-        isEnd: true,
-        showLabel: false,
-        ownIsStart: true,
-        ownIsEnd: true,
-        ownShowLabel: true,
-        ownIsNested: true,
-        nextOwnContainerStartsNested: false,
-      },
     ]);
   });
 

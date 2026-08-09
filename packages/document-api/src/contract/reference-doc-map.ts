@@ -142,6 +142,11 @@ const GROUP_METADATA: Record<ReferenceGroupKey, { title: string; description: st
     description: 'Footnote and endnote lifecycle and numbering configuration.',
     pagePath: 'footnotes/index.mdx',
   },
+  clipboard: {
+    title: 'Clipboard',
+    description: 'Clipboard parsing, model insertion, and selection serialization.',
+    pagePath: 'clipboard/index.mdx',
+  },
   crossRefs: {
     title: 'Cross-References',
     description: 'Cross-reference field inspection, insertion, rebuild, and removal.',
@@ -186,6 +191,11 @@ const GROUP_METADATA: Record<ReferenceGroupKey, { title: string; description: st
     title: 'Diff',
     description: 'Snapshot-based document comparison and replay.',
     pagePath: 'diff/index.mdx',
+  },
+  export: {
+    title: 'Export',
+    description: 'Modeful DOCX export (review-preserving / final / original) with a structured degradation report.',
+    pagePath: 'export/index.mdx',
   },
   protection: {
     title: 'Protection',

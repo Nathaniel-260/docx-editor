@@ -15,7 +15,7 @@
  * table. The fix computes page-relative Y directly from the page element's
  * bounding rect.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
 import { clickToPosition } from '../src/index.ts';
 import type { Layout, FlowBlock, Measure } from '@superdoc/contracts';
 

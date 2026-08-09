@@ -10,6 +10,8 @@ export type { HistoryAdapter, HistoryApi } from './history/history.js';
 export { executeHistoryGet, executeHistoryUndo, executeHistoryRedo } from './history/history.js';
 export type { DiffAdapter, DiffApi } from './diff/diff.js';
 export * from './diff/diff.types.js';
+export type { ExportAdapter, ExportApi } from './export/export.js';
+export * from './export/export.types.js';
 export type {
   SelectionMutationAdapter,
   SelectionMutationRequest,
@@ -116,8 +118,10 @@ import type {
   StylesApplyInput,
   StylesApplyOptions,
   StylesApplyReceipt,
+  StylesGetCatalogInput,
+  StylesGetCatalogResult,
 } from './styles/index.js';
-import { executeStylesApply } from './styles/index.js';
+import { executeStylesApply, executeStylesGetCatalog } from './styles/index.js';
 import type {
   TemplatesAdapter,
   TemplatesApi,
@@ -210,6 +214,12 @@ import type {
   ListsSetLevelTextInput,
   ListsSetLevelStartInput,
   ListsSetLevelLayoutInput,
+  ListsGetStateInput,
+  ListsGetStateResult,
+  ListsApplyInput,
+  ListsContinueV2Input,
+  ListsRestartV2Input,
+  ListsRemoveV2Input,
 } from './lists/lists.types.js';
 import {
   executeListsGet,
@@ -251,6 +261,11 @@ import {
   executeListsSetLevelText,
   executeListsSetLevelStart,
   executeListsSetLevelLayout,
+  executeListsGetState,
+  executeListsApply,
+  executeListsContinueV2,
+  executeListsRestartV2,
+  executeListsRemoveV2,
 } from './lists/lists.js';
 import { executeReplace, type ReplaceInput } from './replace/replace.js';
 import type { CreateAdapter, CreateApi } from './create/create.js';
@@ -262,7 +277,14 @@ import {
   executeCreateTableOfContents,
 } from './create/create.js';
 import type { BlocksAdapter, BlocksApi } from './blocks/blocks.js';
-import { executeBlocksList, executeBlocksDelete, executeBlocksDeleteRange } from './blocks/blocks.js';
+import {
+  executeBlocksList,
+  executeBlocksDelete,
+  executeBlocksDeleteRange,
+  executeBlocksSplit,
+  executeBlocksMerge,
+  executeBlocksMove,
+} from './blocks/blocks.js';
 import type {
   BlocksDeleteInput,
   BlocksDeleteResult,
@@ -284,6 +306,7 @@ import type {
   TablesSetLayoutInput,
   TablesInsertRowInput,
   TablesDeleteRowInput,
+  TablesMoveRowInput,
   TablesSetRowHeightInput,
   TablesDistributeRowsInput,
   TablesSetRowOptionsInput,
@@ -356,6 +379,7 @@ import type { DynamicInvokeRequest, InvokeRequest, InvokeResult } from './contra
 import { buildDispatchTable } from './invoke/invoke.js';
 import { createPlanApi, type PlanApi } from './plan/plan.js';
 export {
+  createPlanApi,
   type PlanApi,
   type PlanExecuteInput,
   type PlanExecuteEntry,
@@ -380,6 +404,9 @@ import type {
   DiffApplyInput,
   DiffApplyOptions,
 } from './diff/diff.types.js';
+import type { ExportAdapter, ExportApi } from './export/export.js';
+import { executeExportToDocx } from './export/export.js';
+import type { ExportToDocxInput, ExportToDocxResult } from './export/export.types.js';
 import {
   executeTableLocatorOp,
   executeTablesSetLayoutOp,
@@ -389,6 +416,7 @@ import {
   normalizeTablesSplitInput,
   executeTablesApplyStyle,
   executeTablesSetBorders,
+  executeTablesSetCellPadding,
   executeTablesSetTableOptions,
 } from './tables/tables.js';
 import type {
@@ -396,6 +424,8 @@ import type {
   ParagraphFormatApi,
   ParagraphStylesApi,
   ParagraphsSetStyleInput,
+  ParagraphSemanticStyleRole,
+  ParagraphsSetStyleRefInput,
   ParagraphsClearStyleInput,
   ParagraphsResetDirectFormattingInput,
   ParagraphsSetAlignmentInput,
@@ -414,6 +444,7 @@ import type {
   ParagraphsClearBorderInput,
   ParagraphsSetShadingInput,
   ParagraphsClearShadingInput,
+  ParagraphsSetMarkRunPropsInput,
   ParagraphsSetDirectionInput,
   ParagraphsClearDirectionInput,
   ParagraphsSetNumberingInput,
@@ -421,6 +452,7 @@ import type {
 } from './paragraphs/paragraphs.js';
 import {
   executeParagraphsSetStyle,
+  executeParagraphsSetStyleRef,
   executeParagraphsClearStyle,
   executeParagraphsResetDirectFormatting,
   executeParagraphsSetAlignment,
@@ -439,6 +471,7 @@ import {
   executeParagraphsClearBorder,
   executeParagraphsSetShading,
   executeParagraphsClearShading,
+  executeParagraphsSetMarkRunProps,
   executeParagraphsSetDirection,
   executeParagraphsClearDirection,
   executeParagraphsSetNumbering,
@@ -815,6 +848,21 @@ import type {
   FootnoteConfigureInput,
   FootnoteConfigResult,
 } from './footnotes/footnotes.types.js';
+import type { ClipboardApi, ClipboardAdapter } from './clipboard/clipboard.js';
+import {
+  executeClipboardParse,
+  executeClipboardInsert,
+  executeClipboardSerializeSelection,
+} from './clipboard/clipboard.js';
+import type {
+  ClipboardInsertInput,
+  ClipboardInsertResult,
+  ClipboardParseOptions,
+  ClipboardParseResult,
+  ClipboardPayload,
+  ClipboardSerializeInput,
+  ClipboardSerializeResult,
+} from './types/clipboard.js';
 import type { CrossRefsApi, CrossRefsAdapter } from './cross-refs/cross-refs.js';
 import {
   executeCrossRefsList,
@@ -1057,6 +1105,31 @@ export type {
   StylesApplyReceiptSuccess,
   StylesApplyReceiptFailure,
   NormalizedStylesApplyOptions,
+  StyleCatalogView,
+  StyleCatalogItemType,
+  StyleCatalogFilterType,
+  StyleProvenance,
+  StyleCatalogDiagnosticSeverity,
+  StyleSourcePartStatus,
+  StyleCatalogUsageStatus,
+  StyleCatalogPreviewStatus,
+  StyleCatalogViewStatus,
+  StyleCatalogItemVisibility,
+  StyleCatalogItemUsage,
+  StyleCatalogItemPreview,
+  StyleCatalogItem,
+  StyleCatalogDefaults,
+  StyleCatalogDiagnostic,
+  StyleCatalogSourceStatus,
+  StylesGetCatalogInput,
+  StylesGetCatalogResult,
+  StylesGetCatalogAdapter,
+} from './styles/index.js';
+export {
+  STYLE_CATALOG_VIEWS,
+  STYLE_CATALOG_FILTER_TYPES,
+  executeStylesGetCatalog,
+  validateStylesGetCatalogInput,
 } from './styles/index.js';
 export type {
   TemplatesAdapter,
@@ -1167,6 +1240,14 @@ export * from './protection/protection.types.js';
 export type { PermissionRangesApi, PermissionRangesAdapter } from './permission-ranges/permission-ranges.js';
 export type * from './permission-ranges/permission-ranges.types.js';
 export type { FootnotesApi, FootnotesAdapter } from './footnotes/footnotes.js';
+export type { ClipboardApi, ClipboardAdapter } from './clipboard/clipboard.js';
+export {
+  executeClipboardParse,
+  executeClipboardInsert,
+  executeClipboardSerializeSelection,
+} from './clipboard/clipboard.js';
+// Clipboard types are already re-exported via `./types/index.js` above; a
+// second `export * from './types/clipboard.js'` duplicates every name.
 export type { CrossRefsApi, CrossRefsAdapter } from './cross-refs/cross-refs.js';
 export type { IndexApi, IndexAdapter } from './index/index.js';
 export type { CaptionsApi, CaptionsAdapter } from './captions/captions.js';
@@ -1352,6 +1433,8 @@ export type {
   ClearBorderSide,
   LineRule,
   ParagraphsSetStyleInput,
+  ParagraphSemanticStyleRole,
+  ParagraphsSetStyleRefInput,
   ParagraphsClearStyleInput,
   ParagraphsResetDirectFormattingInput,
   ParagraphsSetAlignmentInput,
@@ -1370,6 +1453,7 @@ export type {
   ParagraphsClearBorderInput,
   ParagraphsSetShadingInput,
   ParagraphsClearShadingInput,
+  ParagraphsSetMarkRunPropsInput,
   ParagraphsSetDirectionInput,
   ParagraphsClearDirectionInput,
   ParagraphsSetNumberingInput,
@@ -1432,6 +1516,7 @@ export type {
   LevelAlignment,
   TrailingCharacter,
   ListPresetId,
+  ListPresetMarker,
   ListLevelTemplate,
   ListTemplate,
   ListsApplyTemplateInput,
@@ -1460,6 +1545,12 @@ export type {
   ListsSetLevelTextInput,
   ListsSetLevelStartInput,
   ListsSetLevelLayoutInput,
+  ListsGetStateInput,
+  ListsGetStateResult,
+  ListsApplyInput,
+  ListsContinueV2Input,
+  ListsRestartV2Input,
+  ListsRemoveV2Input,
 } from './lists/lists.types.js';
 export {
   LIST_KINDS,
@@ -1469,6 +1560,7 @@ export {
   LEVEL_ALIGNMENTS,
   TRAILING_CHARACTERS,
   LIST_PRESET_IDS,
+  LIST_PRESET_MARKERS,
 } from './lists/lists.types.js';
 export type {
   CreateSectionBreakInput,
@@ -1523,6 +1615,7 @@ export type {
 export type {
   CommentsCreateReceipt,
   CommentsCreateInput,
+  CommentCreateAttributionInput,
   CommentsPatchInput,
   CommentsDeleteInput,
   CommentsAdapter,
@@ -1554,6 +1647,8 @@ export {
 export type {
   CommentInfo,
   CommentDomain,
+  CommentMetadata,
+  CommentMetadataValue,
   CommentsListQuery,
   CommentsListResult,
   CommentTrackedChangeSide,
@@ -1561,8 +1656,24 @@ export type {
   CommentTarget,
 } from './comments/comments.types.js';
 export type { BlocksApi } from './blocks/blocks.js';
-export { executeBlocksList, executeBlocksDelete, executeBlocksDeleteRange } from './blocks/blocks.js';
-export { executeListsIndent, executeListsOutdent } from './lists/lists.js';
+export {
+  executeBlocksList,
+  executeBlocksDelete,
+  executeBlocksDeleteRange,
+  executeBlocksSplit,
+  executeBlocksMerge,
+  executeBlocksMove,
+} from './blocks/blocks.js';
+// v2 list operation execute wrappers + v1 indent / outdent.
+export {
+  executeListsIndent,
+  executeListsOutdent,
+  executeListsGetState,
+  executeListsApply,
+  executeListsContinueV2,
+  executeListsRestartV2,
+  executeListsRemoveV2,
+} from './lists/lists.js';
 export { DocumentApiValidationError } from './errors.js';
 export { textReceiptToSDReceipt, buildStructuralReceipt } from './receipt-bridge.js';
 export type { StructuralReceiptParams } from './receipt-bridge.js';
@@ -1584,6 +1695,7 @@ export interface TablesApi {
   setLayout(input: TablesSetLayoutInput, options?: MutationOptions): TableMutationResult;
   insertRow(input: TablesInsertRowInput, options?: MutationOptions): TableMutationResult;
   deleteRow(input: TablesDeleteRowInput, options?: MutationOptions): TableMutationResult;
+  moveRow(input: TablesMoveRowInput, options?: MutationOptions): TableMutationResult;
   setRowHeight(input: TablesSetRowHeightInput, options?: MutationOptions): TableMutationResult;
   distributeRows(input: TablesDistributeRowsInput, options?: MutationOptions): TableMutationResult;
   setRowOptions(input: TablesSetRowOptionsInput, options?: MutationOptions): TableMutationResult;
@@ -1623,7 +1735,9 @@ export interface TablesApi {
   setDefaultStyle(input: TablesSetDefaultStyleInput, options?: MutationOptions): DocumentMutationResult;
   clearDefaultStyle(input?: TablesClearDefaultStyleInput, options?: MutationOptions): DocumentMutationResult;
 }
-export type TablesAdapter = TablesApi;
+export type TablesAdapter = Omit<TablesApi, 'moveRow'> & {
+  moveRow?: TablesApi['moveRow'];
+};
 /**
  * Callable capability accessor returned by `createDocumentApi`.
  *
@@ -1634,10 +1748,8 @@ export interface CapabilitiesApi {
   get(): DocumentApiCapabilities;
 }
 export interface QueryApi {
-  /** Canonical nested input. */
-  match(input: QueryMatchInput): QueryMatchOutput;
-  /** TS shorthand: pass a TextSelector or NodeSelector directly (normalized to `{ select: ... }` internally). */
-  match(selector: TextSelector | NodeSelector): QueryMatchOutput;
+  /** Accepts canonical nested input or a selector shorthand normalized to `{ select: ... }` internally. */
+  match(input: QueryMatchInput | TextSelector | NodeSelector): QueryMatchOutput;
 }
 export interface MutationsApi {
   preview(input: MutationsPreviewInput): MutationsPreviewOutput;
@@ -1801,6 +1913,10 @@ export interface DocumentApi {
    */
   footnotes: FootnotesApi;
   /**
+   * Clipboard parse, insert, and selection serialization operations.
+   */
+  clipboard: ClipboardApi;
+  /**
    * Cross-reference field operations.
    */
   crossRefs: CrossRefsApi;
@@ -1849,6 +1965,11 @@ export interface DocumentApi {
    * Snapshot-based document comparison and replay.
    */
   diff: DiffApi;
+  /**
+   * Modeful DOCX export (review-preserving / final / original) with a
+   * structured degradation report.
+   */
+  export: ExportApi;
   /**
    * History operations (undo/redo) scoped to the active editor instance.
    * Session-scoped: reflects the runtime undo/redo stack, not persistent state.
@@ -1925,6 +2046,7 @@ export interface DocumentApiAdapters {
   contentControls: ContentControlsAdapter & ContentControlsCreateAdapter;
   bookmarks?: BookmarksAdapter;
   footnotes?: FootnotesAdapter;
+  clipboard?: ClipboardAdapter;
   crossRefs?: CrossRefsAdapter;
   index?: IndexAdapter;
   captions?: CaptionsAdapter;
@@ -1942,6 +2064,8 @@ export interface DocumentApiAdapters {
   query: QueryAdapter;
   mutations: MutationsAdapter;
   diff: DiffAdapter;
+  /** Modeful DOCX export. Optional; gated when the engine does not provide it. */
+  export?: ExportAdapter;
   history: HistoryAdapter;
   protection: ProtectionAdapter;
   permissionRanges: PermissionRangesAdapter;
@@ -2044,6 +2168,16 @@ function requireAdapter<T>(adapter: T | undefined, namespace: string): T {
   }
   return adapter;
 }
+function unavailableTableMutationResult(operationName: string): TableMutationResult {
+  return {
+    success: false,
+    failure: {
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: `${operationName} is not available. The host engine has not provided an adapter for this capability.`,
+      details: { operation: operationName },
+    },
+  };
+}
 function buildFormatInlineAliasApi(adapter: SelectionMutationAdapter): FormatInlineAliasApi {
   return Object.fromEntries(
     INLINE_PROPERTY_REGISTRY.map((entry) => {
@@ -2058,12 +2192,14 @@ function buildFormatInlineAliasApi(adapter: SelectionMutationAdapter): FormatInl
 const ADAPTER_GATED_PREFIXES = [
   'bookmarks',
   'footnotes',
+  'clipboard',
   'crossRefs',
   'index',
   'captions',
   'fields',
   'citations',
   'authorities',
+  'export',
 ] as const;
 export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
   const rawCapFn = () => executeCapabilities(adapters.capabilities);
@@ -2077,6 +2213,8 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
         if (!opId.startsWith(prefix)) continue;
         const cap = caps.operations[opId as OperationId];
         cap.available = false;
+        cap.tracked = false;
+        cap.dryRun = false;
         cap.reasons = [...(cap.reasons ?? []), 'NAMESPACE_UNAVAILABLE'];
       }
     }
@@ -2163,7 +2301,7 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
     format: {
       ...inlineAliasApi,
       strikethrough(input: FormatStrikethroughInput, options?: MutationOptions): TextMutationReceipt {
-        return executeInlineAlias(adapters.selectionMutation, 'strike', { ...input, value: true }, options);
+        return executeInlineAlias(adapters.selectionMutation, 'strike', input, options);
       },
       apply(input: StyleApplyInput, options?: MutationOptions): TextMutationReceipt {
         return executeStyleApply(adapters.selectionMutation, input, options);
@@ -2223,6 +2361,9 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
         clearShading(input: ParagraphsClearShadingInput, options?: MutationOptions): ParagraphMutationResult {
           return executeParagraphsClearShading(adapters.paragraphs, input, options);
         },
+        setMarkRunProps(input: ParagraphsSetMarkRunPropsInput, options?: MutationOptions): ParagraphMutationResult {
+          return executeParagraphsSetMarkRunProps(adapters.paragraphs, input, options);
+        },
         setDirection(input: ParagraphsSetDirectionInput, options?: MutationOptions): ParagraphMutationResult {
           return executeParagraphsSetDirection(adapters.paragraphs, input, options);
         },
@@ -2238,9 +2379,15 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
       apply(input: StylesApplyInput, options?: StylesApplyOptions): StylesApplyReceipt {
         return executeStylesApply(adapters.styles, input, options);
       },
+      getCatalog(input?: StylesGetCatalogInput): StylesGetCatalogResult {
+        return executeStylesGetCatalog(adapters.styles, input);
+      },
       paragraph: {
         setStyle(input: ParagraphsSetStyleInput, options?: MutationOptions): ParagraphMutationResult {
           return executeParagraphsSetStyle(adapters.paragraphs, input, options);
+        },
+        setStyleRef(input: ParagraphsSetStyleRefInput, options?: MutationOptions): ParagraphMutationResult {
+          return executeParagraphsSetStyleRef(adapters.paragraphs, input, options);
         },
         clearStyle(input: ParagraphsClearStyleInput, options?: MutationOptions): ParagraphMutationResult {
           return executeParagraphsClearStyle(adapters.paragraphs, input, options);
@@ -2272,6 +2419,15 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
       },
       deleteRange(input: BlocksDeleteRangeInput, options?: MutationOptions): BlocksDeleteRangeResult {
         return executeBlocksDeleteRange(adapters.blocks, input, options);
+      },
+      split(input, options) {
+        return executeBlocksSplit(adapters.blocks, input, options);
+      },
+      merge(input, options) {
+        return executeBlocksMerge(adapters.blocks, input, options);
+      },
+      move(input, options) {
+        return executeBlocksMove(adapters.blocks, input, options);
       },
     },
     create: {
@@ -2508,6 +2664,22 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
       setLevelLayout(input: ListsSetLevelLayoutInput, options?: MutationOptions): ListsMutateItemResult {
         return executeListsSetLevelLayout(adapters.lists, input, options);
       },
+      // v2 numbering-aware list operations.
+      getState(input: ListsGetStateInput): ListsGetStateResult {
+        return executeListsGetState(adapters.lists, input);
+      },
+      apply(input: ListsApplyInput, options?: MutationOptions): ListsMutateItemResult {
+        return executeListsApply(adapters.lists, input, options);
+      },
+      continue(input: ListsContinueV2Input, options?: MutationOptions): ListsMutateItemResult {
+        return executeListsContinueV2(adapters.lists, input, options);
+      },
+      restart(input: ListsRestartV2Input, options?: MutationOptions): ListsMutateItemResult {
+        return executeListsRestartV2(adapters.lists, input, options);
+      },
+      remove(input: ListsRemoveV2Input, options?: MutationOptions): ListsMutateItemResult {
+        return executeListsRemoveV2(adapters.lists, input, options);
+      },
     },
     sections: {
       list(query?: SectionsListQuery): SectionsListResult {
@@ -2620,6 +2792,11 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
       },
       deleteRow(input, options?) {
         return executeRowLocatorOp('tables.deleteRow', adapters.tables.deleteRow.bind(adapters.tables), input, options);
+      },
+      moveRow(input, options?) {
+        const moveRowAdapter =
+          adapters.tables.moveRow?.bind(adapters.tables) ?? (() => unavailableTableMutationResult('tables.moveRow'));
+        return executeRowLocatorOp('tables.moveRow', moveRowAdapter, input, options);
       },
       setRowHeight(input, options?) {
         return executeRowLocatorOp(
@@ -2812,7 +2989,7 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
         );
       },
       setCellPadding(input, options?) {
-        return executeTableLocatorOp(
+        return executeTablesSetCellPadding(
           'tables.setCellPadding',
           adapters.tables.setCellPadding.bind(adapters.tables),
           input,
@@ -3187,6 +3364,17 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
         return executeFootnotesConfigure(requireAdapter(adapters.footnotes, 'footnotes'), input, options);
       },
     },
+    clipboard: {
+      parse(payload: ClipboardPayload, options?: ClipboardParseOptions): ClipboardParseResult {
+        return executeClipboardParse(requireAdapter(adapters.clipboard, 'clipboard'), payload, options);
+      },
+      insert(input: ClipboardInsertInput, options?: MutationOptions): ClipboardInsertResult {
+        return executeClipboardInsert(requireAdapter(adapters.clipboard, 'clipboard'), input, options);
+      },
+      serializeSelection(input?: ClipboardSerializeInput): ClipboardSerializeResult {
+        return executeClipboardSerializeSelection(requireAdapter(adapters.clipboard, 'clipboard'), input);
+      },
+    },
     crossRefs: {
       list(query?: CrossRefListInput): CrossRefsListResult {
         return executeCrossRefsList(requireAdapter(adapters.crossRefs, 'crossRefs'), query);
@@ -3408,6 +3596,11 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
       },
       apply(input: DiffApplyInput, options?: DiffApplyOptions): DiffApplyResult {
         return executeDiffApply(adapters.diff, input, options);
+      },
+    },
+    export: {
+      toDocx(input?: ExportToDocxInput): ExportToDocxResult {
+        return executeExportToDocx(adapters.export, input);
       },
     },
     history: {

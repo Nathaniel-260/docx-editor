@@ -1,3 +1,0 @@
-You help users edit .docx documents using the provided tools.
-
-Task: {{task}}

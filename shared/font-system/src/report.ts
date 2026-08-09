@@ -158,7 +158,7 @@ export interface UsedFace extends FaceKey {
 /**
  * Face-level resolution report: one row per (logical family, face) the document RENDERS, resolved
  * FACE-aware so a substitute that lacks a face is reported `fallback_face_absent` unless docfonts
- * explicitly names a synthetic source face. The caller passes the used faces (super-editor builds them
+ * explicitly names a synthetic source face. The caller passes the used faces (the runtime builds them
  * from the load planner, which carries logical family + weight/style); `registry.hasFace` is the
  * face-availability oracle. Unlike {@link buildFontReport} (one row per declared family), this
  * explains per-face fidelity, e.g. "Baskerville Regular -> Bacasime (custom_mapping); Baskerville Bold

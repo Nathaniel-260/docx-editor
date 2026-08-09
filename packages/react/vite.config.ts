@@ -1,9 +1,9 @@
-import { defineConfig } from 'vite';
+import { defineConfig, lazyPlugins } from 'vite-plus';
 import react from '@vitejs/plugin-react';
 import dts from 'vite-plugin-dts';
 
 export default defineConfig({
-  plugins: [
+  plugins: lazyPlugins(() => [
     react(),
     dts({
       include: ['src/**/*'],
@@ -11,7 +11,7 @@ export default defineConfig({
       outDir: 'dist',
       rollupTypes: true,
     }),
-  ],
+  ]),
   build: {
     target: 'es2020',
     lib: {

@@ -1,15 +1,18 @@
 import {
   buildLayoutSourceIdentityForFragment,
   getParagraphInlineDirection,
+  inlineBoxStyleSignature,
   type DrawingBlock,
   type FieldAnnotationRun,
   type FlowBlock,
+  type FlowRunLink,
   type Fragment,
   type ImageBlock,
   type ImageDrawing,
   type ImageRun,
   type LayoutSourceIdentity,
   type LayoutStoryLocator,
+  type ListBlock,
   type ParagraphAttrs,
   type ParagraphBlock,
   type SdtMetadata,
@@ -22,67 +25,109 @@ import {
   type TrackedChangeMeta,
   type TextRun,
   type VectorShapeDrawing,
+  trackedChangeLayersSignature,
+  trackedChangeMetaSignature,
 } from '@superdoc/contracts';
 import { getFontConfigVersion } from '@superdoc/font-system';
 import { hashParagraphBorders } from './paragraphBorderHash.js';
-import {
-  hashCellBorders,
-  hashTableBorders,
-  getRunBooleanProp,
-  getRunNumberProp,
-  getRunStringProp,
-  getRunUnderlineColor,
-  getRunUnderlineStyle,
-} from './hashUtils.js';
+import { hashCellBorders, hashTableBorders } from './hashUtils.js';
 
 // ---------------------------------------------------------------------------
 // SDT metadata helpers
 // ---------------------------------------------------------------------------
 
-const getSdtMetadataId = (metadata: SdtMetadata | null | undefined): string => {
-  if (!metadata) return '';
-  if ('id' in metadata && metadata.id != null) {
-    return String(metadata.id);
-  }
-  return '';
-};
-
-const getSdtMetadataLockMode = (metadata: SdtMetadata | null | undefined): string => {
-  if (!metadata) return '';
-  return metadata.type === 'structuredContent' ? (metadata.lockMode ?? '') : '';
-};
-
 const getSdtMetadataVersion = (metadata: SdtMetadata | null | undefined): string => {
   if (!metadata) return '';
-  return [metadata.type, getSdtMetadataLockMode(metadata), getSdtMetadataId(metadata)].join(':');
+  if (metadata.type === 'structuredContent') {
+    return JSON.stringify([
+      metadata.type,
+      metadata.scope,
+      metadata.id ?? '',
+      metadata.tag ?? '',
+      metadata.alias ?? '',
+      metadata.lockMode ?? '',
+      metadata.appearance ?? '',
+    ]);
+  }
+  if (metadata.type === 'fieldAnnotation') {
+    return JSON.stringify([
+      metadata.type,
+      metadata.fieldId,
+      metadata.fieldType ?? '',
+      metadata.variant ?? '',
+      metadata.visibility ?? '',
+      metadata.hidden ?? '',
+      metadata.isLocked ?? '',
+    ]);
+  }
+  if (metadata.type === 'documentSection') {
+    return JSON.stringify([
+      metadata.type,
+      metadata.id ?? '',
+      metadata.sdBlockId ?? '',
+      metadata.title ?? '',
+      metadata.sectionType ?? '',
+      metadata.isLocked ?? '',
+    ]);
+  }
+  return JSON.stringify([
+    metadata.type,
+    metadata.gallery ?? '',
+    metadata.uniqueId ?? '',
+    metadata.alias ?? '',
+    metadata.instruction ?? '',
+  ]);
 };
 
-const getTrackedChangeLayers = (run: TextRun): TrackedChangeMeta[] => {
+const getBlockSdtVersion = (
+  attrs: { sdt?: SdtMetadata | null; containerSdt?: SdtMetadata | null } | null | undefined,
+): string => {
+  const nearest = getSdtMetadataVersion(attrs?.sdt);
+  const container = getSdtMetadataVersion(attrs?.containerSdt);
+  return nearest || container ? JSON.stringify([nearest, container]) : '';
+};
+
+const getTrackedChangeLayers = (run: Pick<TextRun, 'trackedChange' | 'trackedChanges'>): TrackedChangeMeta[] => {
   if (Array.isArray(run.trackedChanges) && run.trackedChanges.length > 0) {
     return run.trackedChanges;
   }
   return run.trackedChange ? [run.trackedChange] : [];
 };
 
-const trackedChangeVersion = (run: TextRun): string =>
-  getTrackedChangeLayers(run)
-    .map((trackedChange) =>
-      [
-        trackedChange.kind ?? '',
-        trackedChange.id ?? '',
-        trackedChange.storyKey ?? '',
-        trackedChange.overlapParentId ?? '',
-        trackedChange.relationship ?? '',
-        trackedChange.author ?? '',
-        trackedChange.authorEmail ?? '',
-        trackedChange.authorImage ?? '',
-        trackedChange.color ?? '',
-        trackedChange.date ?? '',
-        trackedChange.before ? JSON.stringify(trackedChange.before) : '',
-        trackedChange.after ? JSON.stringify(trackedChange.after) : '',
-      ].join(':'),
-    )
-    .join('|');
+const trackedChangeVersion = (run: TextRun): string => trackedChangeLayersSignature(getTrackedChangeLayers(run));
+
+const inlineBoxesVersion = (block: ParagraphBlock): string =>
+  (block.inlineBoxes ?? [])
+    .map((box) => {
+      const data = Object.entries(box.data ?? {}).sort(([left], [right]) => left.localeCompare(right));
+      return JSON.stringify([
+        box.id,
+        box.from,
+        box.to,
+        inlineBoxStyleSignature({ ...box.layout, ...box.appearance }),
+        box.className ?? '',
+        data,
+        box.cursor ?? '',
+      ]);
+    })
+    .join(';');
+
+const textRunLinkVersion = (link: FlowRunLink | undefined): string => {
+  if (!link) return '';
+  return JSON.stringify([
+    link.version ?? '',
+    link.href ?? '',
+    link.anchor ?? '',
+    link.docLocation ?? '',
+    link.rId ?? '',
+    link.target ?? '',
+    link.rel ?? '',
+    link.tooltip ?? '',
+    link.title ?? '',
+    link.name ?? '',
+    typeof link.history === 'boolean' ? link.history : '',
+  ]);
+};
 
 // ---------------------------------------------------------------------------
 // Clip path helpers
@@ -105,22 +150,10 @@ const resolveClipPathFromAttrs = (attrs: unknown): string => {
   return readClipPathValue(record.clipPath);
 };
 
-const resolveShapeClipPathFromAttrs = (attrs: unknown): string => {
-  if (!attrs || typeof attrs !== 'object') return '';
-  const record = attrs as Record<string, unknown>;
-  return readClipPathValue(record.shapeClipPath);
-};
-
 const resolveBlockClipPath = (block: unknown): string => {
   if (!block || typeof block !== 'object') return '';
   const record = block as Record<string, unknown>;
   return readClipPathValue(record.clipPath) || resolveClipPathFromAttrs(record.attrs);
-};
-
-const resolveBlockShapeClipPath = (block: unknown): string => {
-  if (!block || typeof block !== 'object') return '';
-  const record = block as Record<string, unknown>;
-  return readClipPathValue(record.shapeClipPath) || resolveShapeClipPathFromAttrs(record.attrs);
 };
 
 const imageHyperlinkVersion = (hyperlink: ImageBlock['hyperlink'] | undefined): string => {
@@ -136,7 +169,7 @@ const imageLuminanceVersion = (lum: ImageBlock['lum'] | undefined): string => {
 const drawingTextVersion = (block: VectorShapeDrawing | TextboxDrawing): string => {
   const textboxContentBlocks =
     'contentBlocks' in block && Array.isArray(block.contentBlocks)
-      ? block.contentBlocks.map((contentBlock: ParagraphBlock) => deriveBlockVersion(contentBlock)).join(';')
+      ? block.contentBlocks.map((contentBlock) => deriveBlockVersion(contentBlock)).join(';')
       : '';
 
   return JSON.stringify([
@@ -172,7 +205,7 @@ const renderedBlockImageVersion = (image: ImageBlock | ImageDrawing): string =>
     image.flipV ? 1 : 0,
     imageHyperlinkVersion(image.hyperlink),
     resolveBlockClipPath(image),
-    resolveBlockShapeClipPath(image),
+    trackedChangeLayersSignature(getTrackedChangeLayers(image)),
   ].join('|');
 
 const renderedInlineImageRunVersion = (image: ImageRun): string =>
@@ -184,8 +217,6 @@ const renderedInlineImageRunVersion = (image: ImageRun): string =>
     image.alt ?? '',
     image.title ?? '',
     typeof image.clipPath === 'string' ? image.clipPath.trim() : '',
-    typeof image.shapeClipPath === 'string' ? image.shapeClipPath.trim() : '',
-    image.objectFit ?? '',
     image.distTop ?? '',
     image.distBottom ?? '',
     image.distLeft ?? '',
@@ -202,6 +233,7 @@ const renderedInlineImageRunVersion = (image: ImageRun): string =>
     imageHyperlinkVersion(image.hyperlink),
     stableSerializeEvidenceValue(image.sdt),
     stableSerializeEvidenceValue(image.dataAttrs),
+    trackedChangeLayersSignature(getTrackedChangeLayers(image)),
   ].join('|');
 
 // ---------------------------------------------------------------------------
@@ -212,7 +244,7 @@ const hasListMarkerProperties = (
   attrs: unknown,
 ): attrs is {
   numberingProperties: { numId?: number | string; ilvl?: number };
-  wordLayout?: { marker?: { markerText?: string } };
+  wordLayout?: { marker?: { markerText?: string; trackedChange?: TrackedChangeMeta } };
 } => {
   if (!attrs || typeof attrs !== 'object') return false;
   const obj = attrs as Record<string, unknown>;
@@ -331,8 +363,11 @@ export const resolveFragmentLayoutIdentity = (fragment: Fragment, story?: Layout
  */
 export const deriveBlockVersion = (block: FlowBlock): string => {
   if (block.kind === 'paragraph') {
+    const markerTrackedChangeVersion = block.attrs?.wordLayout?.marker?.trackedChange
+      ? trackedChangeMetaSignature(block.attrs.wordLayout.marker.trackedChange)
+      : '';
     const markerVersion = hasListMarkerProperties(block.attrs)
-      ? `marker:${block.attrs.numberingProperties.numId ?? ''}:${block.attrs.numberingProperties.ilvl ?? 0}:${block.attrs.wordLayout?.marker?.markerText ?? ''}`
+      ? `marker:${block.attrs.numberingProperties.numId ?? ''}:${block.attrs.numberingProperties.ilvl ?? 0}:${block.attrs.wordLayout?.marker?.markerText ?? ''}:${markerTrackedChangeVersion}`
       : '';
 
     const runsVersion = block.runs
@@ -367,6 +402,7 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
             run.fontFamily ?? '',
             (run as { bold?: boolean }).bold ? 1 : 0,
             (run as { italic?: boolean }).italic ? 1 : 0,
+            (run as { vanish?: boolean }).vanish ? 1 : 0,
             getFontConfigVersion(),
             (run as { color?: string }).color ?? '',
           ].join(',');
@@ -412,18 +448,31 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
           textRun.fontSize,
           textRun.bold ? 1 : 0,
           textRun.italic ? 1 : 0,
+          textRun.vanish ? 1 : 0,
+          textRun.textTransform ?? '',
           textRun.color ?? '',
           textRun.underline?.style ?? '',
           textRun.underline?.color ?? '',
           textRun.strike ? 1 : 0,
           textRun.highlight ?? '',
           textRun.letterSpacing != null ? textRun.letterSpacing : '',
+          textRun.horizontalScale != null ? textRun.horizontalScale : '',
           textRun.vertAlign ?? '',
           textRun.baselineShift != null ? textRun.baselineShift : '',
           textRun.token ?? '',
           textRun.pageNumberFieldFormat ? JSON.stringify(textRun.pageNumberFieldFormat) : '',
           trackedVersion,
-          textRun.comments?.length ?? 0,
+          textRunLinkVersion(textRun.link),
+          textRun.comments
+            ?.map((comment) =>
+              [
+                comment.commentId ?? '',
+                comment.importedId ?? '',
+                comment.internal === true ? '1' : '0',
+                comment.trackedChange === true ? '1' : '0',
+              ].join(':'),
+            )
+            .join('|') ?? '',
           // SD-3098: DomPainter reads run.bidi to apply dir + RLM injection; signature must include it.
           textRun.bidi ? JSON.stringify(textRun.bidi) : '',
         ].join(',');
@@ -448,13 +497,16 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
           attrs.shading?.color ?? '',
           getParagraphInlineDirection(attrs) ?? '',
           attrs.tabs?.length ? JSON.stringify(attrs.tabs) : '',
+          attrs.paragraphMarkTrackedChange ? trackedChangeMetaSignature(attrs.paragraphMarkTrackedChange) : '',
+          attrs.paragraphPropertyTrackedChange ? trackedChangeMetaSignature(attrs.paragraphPropertyTrackedChange) : '',
         ].join(':')
       : '';
 
-    const sdtAttrs = (block.attrs as ParagraphAttrs | undefined)?.sdt;
-    const sdtVersion = getSdtMetadataVersion(sdtAttrs);
+    const sdtVersion = getBlockSdtVersion(block.attrs as ParagraphAttrs | undefined);
 
-    const parts = [markerVersion, runsVersion, paragraphAttrsVersion, sdtVersion].filter(Boolean);
+    const parts = [markerVersion, runsVersion, paragraphAttrsVersion, sdtVersion, inlineBoxesVersion(block)].filter(
+      Boolean,
+    );
     return parts.join('|');
   }
 
@@ -463,18 +515,20 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
   }
 
   if (block.kind === 'image') {
-    const imgSdt = (block as ImageBlock).attrs?.sdt;
-    const imgSdtVersion = getSdtMetadataVersion(imgSdt);
+    const imgSdtVersion = getBlockSdtVersion((block as ImageBlock).attrs);
     return [renderedBlockImageVersion(block), imgSdtVersion].join('|');
   }
 
   if (block.kind === 'drawing') {
+    const drawingSdtVersion = getBlockSdtVersion(
+      (block as DrawingBlock & { attrs?: { sdt?: SdtMetadata | null; containerSdt?: SdtMetadata | null } }).attrs,
+    );
     if (block.drawingKind === 'image') {
       const imageLike = block as ImageDrawing;
-      return ['drawing:image', renderedBlockImageVersion(imageLike)].join('|');
+      return ['drawing:image', renderedBlockImageVersion(imageLike), drawingSdtVersion].join('|');
     }
     if (block.drawingKind === 'vectorShape' || block.drawingKind === 'textboxShape') {
-      const vector = block as VectorShapeDrawing | TextboxDrawing;
+      const vector = block as VectorShapeDrawing;
       return [
         block.drawingKind === 'textboxShape' ? 'drawing:textbox' : 'drawing:vector',
         vector.shapeKind ?? '',
@@ -489,8 +543,7 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
         drawingTextVersion(vector),
         block.anchor?.offsetH ?? '',
         block.anchor?.offsetV ?? '',
-        vector.effects ? JSON.stringify(vector.effects) : '',
-        vector.effectExtent ? JSON.stringify(vector.effectExtent) : '',
+        drawingSdtVersion,
       ].join('|');
     }
     if (block.drawingKind === 'shapeGroup') {
@@ -502,9 +555,9 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
         'drawing:group',
         group.geometry.width,
         group.geometry.height,
-        group.effectExtent ? JSON.stringify(group.effectExtent) : '',
         group.groupTransform ? JSON.stringify(group.groupTransform) : '',
         childSignature,
+        drawingSdtVersion,
       ].join('|');
     }
     if (block.drawingKind === 'chart') {
@@ -515,6 +568,7 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
         block.geometry.width,
         block.geometry.height,
         block.chartRelId ?? '',
+        drawingSdtVersion,
       ].join('|');
     }
     const _exhaustive: never = block;
@@ -532,6 +586,9 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
     const rows = tableBlock.rows ?? [];
     for (const row of rows) {
       if (!row || !Array.isArray(row.cells)) continue;
+      if (row.attrs?.trackedChange) {
+        hash = hashString(hash, trackedChangeMetaSignature(row.attrs.trackedChange));
+      }
       hash = hashNumber(hash, row.cells.length);
       for (const cell of row.cells) {
         if (!cell) continue;
@@ -558,68 +615,19 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
           if (cellAttrs.background) {
             hash = hashString(hash, cellAttrs.background);
           }
+          if (cellAttrs.trackedChange) {
+            hash = hashString(hash, trackedChangeMetaSignature(cellAttrs.trackedChange));
+          }
         }
 
         for (const cellBlock of cellBlocks) {
           hash = hashString(hash, cellBlock?.kind ?? 'unknown');
           if (cellBlock?.kind === 'paragraph') {
-            const paragraphBlock = cellBlock as ParagraphBlock;
-            const runs = paragraphBlock.runs ?? [];
-            hash = hashNumber(hash, runs.length);
-
-            const attrs = paragraphBlock.attrs as ParagraphAttrs | undefined;
-
-            if (attrs) {
-              hash = hashString(hash, attrs.alignment ?? '');
-              hash = hashNumber(hash, attrs.spacing?.before ?? 0);
-              hash = hashNumber(hash, attrs.spacing?.after ?? 0);
-              hash = hashNumber(hash, attrs.spacing?.line ?? 0);
-              hash = hashString(hash, attrs.spacing?.lineRule ?? '');
-              hash = hashNumber(hash, attrs.indent?.left ?? 0);
-              hash = hashNumber(hash, attrs.indent?.right ?? 0);
-              hash = hashNumber(hash, attrs.indent?.firstLine ?? 0);
-              hash = hashNumber(hash, attrs.indent?.hanging ?? 0);
-              hash = hashString(hash, attrs.shading?.fill ?? '');
-              hash = hashString(hash, attrs.shading?.color ?? '');
-              hash = hashString(hash, getParagraphInlineDirection(attrs) ?? '');
-              if (attrs.borders) {
-                hash = hashString(hash, hashParagraphBorders(attrs.borders));
-              }
-            }
-
-            for (const run of runs) {
-              if (run.kind === 'image') {
-                hash = hashString(hash, renderedInlineImageRunVersion(run as ImageRun));
-                hash = hashNumber(hash, run.pmStart ?? -1);
-                hash = hashNumber(hash, run.pmEnd ?? -1);
-                continue;
-              }
-
-              if ('text' in run && typeof run.text === 'string') {
-                hash = hashString(hash, run.text);
-              }
-              hash = hashNumber(hash, run.pmStart ?? -1);
-              hash = hashNumber(hash, run.pmEnd ?? -1);
-
-              hash = hashString(hash, getRunStringProp(run, 'color'));
-              hash = hashString(hash, getRunStringProp(run, 'highlight'));
-              hash = hashString(hash, getRunBooleanProp(run, 'bold') ? '1' : '');
-              hash = hashString(hash, getRunBooleanProp(run, 'italic') ? '1' : '');
-              hash = hashNumber(hash, getRunNumberProp(run, 'fontSize'));
-              hash = hashString(hash, getRunStringProp(run, 'fontFamily'));
-              hash = hashString(hash, getRunUnderlineStyle(run));
-              hash = hashString(hash, getRunUnderlineColor(run));
-              hash = hashString(hash, getRunBooleanProp(run, 'strike') ? '1' : '');
-              hash = hashString(hash, getRunStringProp(run, 'vertAlign'));
-              hash = hashNumber(hash, getRunNumberProp(run, 'baselineShift'));
-              hash = hashString(hash, getRunStringProp(run, 'token'));
-              const pageNumberFieldFormat = (run as { pageNumberFieldFormat?: unknown }).pageNumberFieldFormat;
-              hash = hashString(hash, pageNumberFieldFormat ? JSON.stringify(pageNumberFieldFormat) : '');
-              // SD-3098: include run.bidi so rtl-only changes invalidate the cached block hash.
-              const bidi = (run as { bidi?: unknown }).bidi;
-              hash = hashString(hash, bidi ? JSON.stringify(bidi) : '');
-              hash = hashString(hash, trackedChangeVersion(run as TextRun));
-            }
+            // Use the same paragraph signature at every nesting depth. The
+            // previous table-only copy omitted list-marker text and paragraph
+            // property tracked-change metadata, leaving stale TC decoration
+            // inside cells after list mutations.
+            hash = hashString(hash, deriveBlockVersion(cellBlock as ParagraphBlock));
           } else if (cellBlock?.kind) {
             hash = hashString(hash, deriveBlockVersion(cellBlock as FlowBlock));
           }
@@ -645,17 +653,94 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
           hash = hashString(hash, `cs:${v}:${t}`);
         }
       }
-      if (tblAttrs.sdt) {
-        hash = hashString(hash, tblAttrs.sdt.type);
-        hash = hashString(hash, getSdtMetadataLockMode(tblAttrs.sdt));
-        hash = hashString(hash, getSdtMetadataId(tblAttrs.sdt));
-      }
+      hash = hashString(hash, getBlockSdtVersion(tblAttrs));
     }
 
     return [block.id, tableBlock.rows.length, hash.toString(16)].join('|');
   }
 
   return block.id;
+};
+
+// ---------------------------------------------------------------------------
+// pmInteriorVersion (painter plan P5)
+// ---------------------------------------------------------------------------
+
+const collectRunPmPositions = (runs: readonly unknown[] | undefined, positions: number[]): void => {
+  for (const run of runs ?? []) {
+    const pmStart = (run as { pmStart?: unknown }).pmStart;
+    const pmEnd = (run as { pmEnd?: unknown }).pmEnd;
+    if (typeof pmStart === 'number') positions.push(pmStart);
+    if (typeof pmEnd === 'number') positions.push(pmEnd);
+  }
+};
+
+const collectBlockPmPositions = (block: FlowBlock, positions: number[]): void => {
+  if (block.kind === 'paragraph') {
+    collectRunPmPositions((block as ParagraphBlock).runs, positions);
+    return;
+  }
+  if (block.kind === 'list') {
+    for (const item of (block as ListBlock).items ?? []) {
+      collectRunPmPositions(item.paragraph?.runs, positions);
+    }
+    return;
+  }
+  if (block.kind === 'table') {
+    for (const row of (block as TableBlock).rows ?? []) {
+      for (const cell of row.cells ?? []) {
+        const cellBlocks = cell.blocks ?? (cell.paragraph ? [cell.paragraph] : []);
+        for (const cellBlock of cellBlocks) {
+          if (cellBlock) collectBlockPmPositions(cellBlock as FlowBlock, positions);
+        }
+      }
+    }
+    return;
+  }
+  if (block.kind === 'drawing') {
+    const contentBlocks = (block as { contentBlocks?: FlowBlock[] }).contentBlocks;
+    for (const contentBlock of contentBlocks ?? []) {
+      collectBlockPmPositions(contentBlock, positions);
+    }
+    return;
+  }
+  // image and remaining kinds: no interior run pm — painted leaf positions
+  // derive from the fragment/block-level span, which the remap tier compares
+  // directly.
+};
+
+/**
+ * Interior-pm signature (painter plan P5): every run pm position the block
+ * carries, hashed RELATIVE to the block's first pm position. Paint stamps are
+ * deliberately pm-free (positions are coordinates, not content), so a uniform
+ * document shift keeps both this key AND the stamps equal — which is exactly
+ * the proof the painter's window remap tier needs before shifting reused DOM
+ * in place by the fragment-level delta. Any INTERIOR redistribution (a PM
+ * node inserted/moved/removed inside the block without changing a single run
+ * — bookmarks and comment range markers emit no runs) changes the relative
+ * offsets and therefore this key, demoting the fragment to a real rebuild.
+ *
+ * Must cover every source of painted leaf `data-pm-*` under a fragment:
+ * paragraph runs, list item runs, table cell blocks (recursive), and textbox
+ * drawing contentBlocks. Kinds with no interior run pm return 'pm:none'.
+ *
+ * Shape: `pm:<count>:<relativeOffsetsHash>@<absoluteBase>`. The RELATIVE part
+ * is drift-insensitive (a uniform shift keeps it equal — the remap proof);
+ * the absolute base lets the painter verify the interior moved by EXACTLY
+ * the fragment's delta, and gives pm-less fragments (no fragment-level
+ * anchor) an absolute identity so unchanged content stays reusable while any
+ * drift rebuilds.
+ */
+export const derivePmInteriorVersion = (block: FlowBlock): string => {
+  const positions: number[] = [];
+  collectBlockPmPositions(block, positions);
+  if (positions.length === 0) return 'pm:none';
+  const base = positions[0]!;
+  let hash = 5381;
+  for (const position of positions) {
+    hash = hashNumber(hash, position - base);
+  }
+  return `pm:${positions.length}:${(hash >>> 0).toString(36)}@${base}`;
 };
 
 // ---------------------------------------------------------------------------

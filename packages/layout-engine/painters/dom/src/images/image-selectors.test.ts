@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { buildImagePmSelector, buildInlineImagePmSelector } from './image-selectors.js';
 
 describe('buildImagePmSelector', () => {

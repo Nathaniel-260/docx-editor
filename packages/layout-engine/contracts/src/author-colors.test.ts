@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { composeAuthorColorResolver, fallbackAuthorColor, stampTrackedChangeColors } from './author-colors.js';
 import type { FlowBlock, ParagraphBlock, TableBlock, TextRun } from './index.js';
 
@@ -129,5 +129,30 @@ describe('stampTrackedChangeColors', () => {
     stampTrackedChangeColors([table], undefined);
 
     expect(table.rows[0]!.attrs?.trackedChange?.color).toBeUndefined();
+  });
+
+  it('stamps and clears color on a cell-level tracked change', () => {
+    const table: TableBlock = {
+      kind: 'table',
+      id: 't1',
+      rows: [
+        {
+          id: 'r1',
+          cells: [
+            {
+              id: 'c1',
+              attrs: { trackedChange: { kind: 'delete', id: 'cell-tc1', author: 'Alice' } },
+              paragraph: { kind: 'paragraph', id: 'p1', runs: [] },
+            },
+          ],
+        },
+      ],
+    };
+
+    stampTrackedChangeColors([table], composeAuthorColorResolver({ overrides: { Alice: '#abcdef' } })!);
+    expect(table.rows[0]!.cells[0]!.attrs?.trackedChange?.color).toBe('#abcdef');
+
+    stampTrackedChangeColors([table], undefined);
+    expect(table.rows[0]!.cells[0]!.attrs?.trackedChange?.color).toBeUndefined();
   });
 });

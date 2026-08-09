@@ -1,10 +1,10 @@
 /**
  * Editor-neutral XML → tree helper. Produces the canonical
- * `{ name, type, attributes, elements }` shape that both v1 importer
- * translators and this compiler consume.
+ * `{ name, type, attributes, elements }` shape that importer translators and
+ * this compiler consume.
  *
  * `xml-js` is the only XML dependency; the helper is colocated here so
- * style-engine never imports from `super-editor` aliases.
+ * style-engine never imports from editor-runtime aliases.
  */
 import { xml2js } from 'xml-js';
 

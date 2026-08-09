@@ -1,5 +1,6 @@
 import type {
   Layout,
+  Page,
   FlowMode,
   FlowBlock,
   Measure,
@@ -29,7 +30,7 @@ import type {
   TableBlock,
   TextRun,
 } from '@superdoc/contracts';
-import { buildPageRefAnchorMap, getSdtContainerKey } from '@superdoc/contracts';
+import { buildPageRefAnchorMap, getSdtContainerKey, inlineBoxStyleSignature } from '@superdoc/contracts';
 import { resolveParagraphContent } from './resolveParagraph.js';
 import { resolveTableItem } from './resolveTable.js';
 import { resolveImageItem } from './resolveImage.js';
@@ -38,6 +39,7 @@ import type { BlockMapEntry } from './resolvedBlockLookup.js';
 import { hashParagraphBorders } from './paragraphBorderHash.js';
 import {
   deriveBlockVersion,
+  derivePmInteriorVersion,
   fragmentSignature,
   resolveFragmentLayoutIdentity,
   sourceAnchorSignature,
@@ -50,13 +52,32 @@ export type ResolveLayoutInput = {
   blocks: FlowBlock[];
   measures: Measure[];
   /**
+   * Whether body NUMPAGES / SECTIONPAGES fields may paint computed totals.
+   * `false` is copied onto every resolved page so both dense and page-window
+   * painters preserve the provisional text used during measurement.
+   */
+  pageCountFieldsExact?: boolean;
+  /**
    * The document's font-mapping signature, folded into each block's paint-reuse version so a
    * runtime `fonts.map` change repaints (the same way a font load busts reuse via the global
    * epoch). Omitted/'' for default documents, leaving the version unchanged from before.
    */
   fontSignature?: string;
   bookmarks?: Map<string, number>;
+  onProgress?: (stage: ResolveLayoutProgressStage) => void;
 };
+
+export type ResolveLayoutProgressStage =
+  | 'block-map-complete'
+  | 'page-ref-map-complete'
+  | 'pages-25'
+  | 'pages-50'
+  | 'pages-75'
+  | 'pages-complete'
+  | 'block-versions-25'
+  | 'block-versions-50'
+  | 'block-versions-75'
+  | 'block-versions-complete';
 
 export function buildBlockMap(blocks: FlowBlock[], measures: Measure[]): Map<string, BlockMapEntry> {
   const map = new Map<string, BlockMapEntry>();
@@ -317,6 +338,30 @@ function adjustLineForResolvedPageRefs(line: Line, runTexts: Map<number, Resolve
       } satisfies LineSegment;
     });
     nextLine.segments = segments;
+
+    if (line.inlineBoxes?.length) {
+      const remapLineOffset = (offset: number): number => {
+        let originalCursor = 0;
+        let resolvedCursor = 0;
+        for (const segment of line.segments ?? []) {
+          const originalLength = segment.toChar - segment.fromChar;
+          const resolved = runTexts.get(segment.runIndex);
+          const resolvedFrom = resolved ? clampResolvedRunBoundary(segment.fromChar, resolved) : segment.fromChar;
+          const resolvedTo = resolved ? clampResolvedRunBoundary(segment.toChar, resolved) : segment.toChar;
+          const resolvedLength = resolvedTo - resolvedFrom;
+          if (offset <= originalCursor + originalLength) {
+            if (offset === originalCursor + originalLength) return resolvedCursor + resolvedLength;
+            return resolvedCursor + Math.min(offset - originalCursor, resolvedLength);
+          }
+          originalCursor += originalLength;
+          resolvedCursor += resolvedLength;
+        }
+        return resolvedCursor;
+      };
+      nextLine.inlineBoxes = line.inlineBoxes
+        .map((box) => ({ ...box, from: remapLineOffset(box.from), to: remapLineOffset(box.to) }))
+        .filter((box) => box.to > box.from);
+    }
   }
 
   return changed ? nextLine : line;
@@ -448,28 +493,36 @@ function resolveFragmentSdtContainerKey(fragment: Fragment, blockMap: Map<string
   const block = entry.block;
 
   if (fragment.kind === 'para' && block.kind === 'paragraph') {
-    return resolveSdtBoundaryKey(block.attrs?.sdt, block.attrs?.containerSdt);
+    return getSdtContainerKey(block.attrs?.sdt, block.attrs?.containerSdt);
   }
 
   if (fragment.kind === 'list-item' && block.kind === 'list') {
     const listBlock = block as ListBlock;
     const item = listBlock.items.find((listItem) => listItem.id === fragment.itemId);
-    return resolveSdtBoundaryKey(item?.paragraph.attrs?.sdt, item?.paragraph.attrs?.containerSdt);
+    return getSdtContainerKey(item?.paragraph.attrs?.sdt, item?.paragraph.attrs?.containerSdt);
   }
 
   if (fragment.kind === 'table' && block.kind === 'table') {
-    return resolveSdtBoundaryKey(block.attrs?.sdt, block.attrs?.containerSdt);
+    return getSdtContainerKey(block.attrs?.sdt, block.attrs?.containerSdt);
   }
 
-  // image, drawing — no SDT container keys
+  // An image/drawing fragment inside a block SDT must join that SDT's
+  // boundary group like any other fragment kind — otherwise its extent is
+  // invisible to computeSdtBoundaries() and the wrapper is sized from text
+  // line heights alone, rendering too short when the image extends past
+  // them (SD-3303).
+  if (fragment.kind === 'image' && block.kind === 'image') {
+    return getSdtContainerKey(block.attrs?.sdt, block.attrs?.containerSdt);
+  }
+  if (fragment.kind === 'drawing' && block.kind === 'drawing') {
+    const attrs = block.attrs as { sdt?: SdtMetadata | null; containerSdt?: SdtMetadata | null } | undefined;
+    return getSdtContainerKey(attrs?.sdt, attrs?.containerSdt);
+  }
+
   return null;
 }
 
-function resolveSdtBoundaryKey(sdt?: SdtMetadata | null, containerSdt?: SdtMetadata | null): string | null {
-  return getSdtContainerKey(containerSdt) ?? getSdtContainerKey(sdt);
-}
-
-function computeBlockVersion(
+export function computeBlockVersion(
   blockId: string,
   blockMap: Map<string, BlockMapEntry>,
   cache: Map<string, string>,
@@ -495,15 +548,124 @@ function deriveFontAwareBlockVersion(block: FlowBlock, fontSignature = ''): stri
   return fontSignature ? `${fontSignature}|${version}` : version;
 }
 
-function applyPaintVersions(item: Extract<ResolvedPaintItem, { kind: 'fragment' }>, visualVersion: string): void {
+function applyPaintVersions(
+  item: Extract<ResolvedPaintItem, { kind: 'fragment' }>,
+  visualVersion: string,
+  paintVersion = visualVersion,
+): void {
   const evidenceVersion = sourceAnchorSignature(item.sourceAnchor);
   item.version = visualVersion;
   if (evidenceVersion) {
     item.evidenceVersion = evidenceVersion;
-    item.paintCacheVersion = `${visualVersion}|source:${evidenceVersion}`;
+    item.paintCacheVersion = `${paintVersion}|source:${evidenceVersion}`;
   } else {
-    item.paintCacheVersion = visualVersion;
+    item.paintCacheVersion = paintVersion;
   }
+}
+
+// Interior-pm keys are pure functions of the block's run pm layout; blocks are
+// stable objects within (and usually across) resolves, so a WeakMap keyed on
+// block identity makes the stamp O(1) for retained blocks.
+const pmInteriorCache = new WeakMap<object, string>();
+
+/**
+ * Painter plan P5: stamp the interior-pm signature next to the (pm-free)
+ * paint stamps. The painter's window remap tier shifts reused DOM in place
+ * only when this key matched — equal stamps + equal fragment span + equal
+ * interior offsets prove the drift is uniform; anything else rebuilds.
+ */
+function stampPmInteriorVersion(
+  item: Extract<ResolvedPaintItem, { kind: 'fragment' }>,
+  blockMap: Map<string, BlockMapEntry>,
+  blockId: string,
+): void {
+  const block = (item as { block?: FlowBlock }).block ?? blockMap.get(blockId)?.block;
+  if (!block) return;
+  let interior = pmInteriorCache.get(block);
+  if (interior == null) {
+    interior = derivePmInteriorVersion(block);
+    pmInteriorCache.set(block, interior);
+  }
+  item.pmInteriorVersion = interior;
+}
+
+function lineInlineImageAlignmentSignature(lines: Line[] | undefined, fromLine: number, toLine: number): string {
+  if (!lines || lines.length === 0) return '';
+  const parts: string[] = [];
+  for (let lineIndex = fromLine; lineIndex < toLine && lineIndex < lines.length; lineIndex += 1) {
+    const alignments = lines[lineIndex]?.inlineImageAlignments;
+    if (!alignments || alignments.length === 0) continue;
+    const alignmentSignature = alignments
+      .map(({ runIndex, verticalAlign }) => `${runIndex}:${verticalAlign}`)
+      .join(',');
+    parts.push(`${lineIndex}:${alignmentSignature}`);
+  }
+  return parts.length > 0 ? `inlineImageAlignments:${parts.join(';')}` : '';
+}
+
+function lineInlineBoxSignature(lines: Line[] | undefined, fromLine: number, toLine: number): string {
+  if (!lines || lines.length === 0) return '';
+  const parts: string[] = [];
+  for (let lineIndex = fromLine; lineIndex < toLine && lineIndex < lines.length; lineIndex += 1) {
+    const boxes = lines[lineIndex]?.inlineBoxes;
+    if (!boxes || boxes.length === 0) continue;
+    const boxSignature = JSON.stringify(
+      boxes.map((box) => [
+        box.id,
+        box.from,
+        box.to,
+        box.x,
+        box.width,
+        box.top,
+        box.height,
+        box.startsRange ? 1 : 0,
+        box.endsRange ? 1 : 0,
+        inlineBoxStyleSignature(box.style),
+        box.className ?? '',
+        Object.entries(box.data ?? {}).sort(([left], [right]) => left.localeCompare(right)),
+        box.cursor ?? '',
+      ]),
+    );
+    parts.push(`${lineIndex}:${boxSignature}`);
+  }
+  return parts.length > 0 ? `inlineBoxes:${parts.join(';')}` : '';
+}
+
+function linePaintSignature(lines: Line[] | undefined, fromLine: number, toLine: number): string {
+  return [lineInlineImageAlignmentSignature(lines, fromLine, toLine), lineInlineBoxSignature(lines, fromLine, toLine)]
+    .filter(Boolean)
+    .join('|');
+}
+
+function paragraphLinePaintSignature(fragment: ParaFragment, measure: ParagraphMeasure | undefined): string {
+  if (fragment.lines) {
+    return linePaintSignature(fragment.lines, 0, fragment.lines.length);
+  }
+  return linePaintSignature(measure?.lines, fragment.fromLine, fragment.toLine);
+}
+
+function listItemLinePaintSignature(fragment: ListItemFragment, measure: ListMeasure | undefined): string {
+  const item = measure?.items.find((candidate) => candidate.itemId === fragment.itemId);
+  return linePaintSignature(item?.paragraph.lines, fragment.fromLine, fragment.toLine);
+}
+
+function fragmentMeasurePaintSignature(
+  fragment: Fragment,
+  measure: Measure | undefined,
+  listItemMeasure?: ListMeasure,
+): string {
+  if (fragment.kind === 'para' && measure?.kind === 'paragraph') {
+    return paragraphLinePaintSignature(fragment as ParaFragment, measure as ParagraphMeasure);
+  }
+  if (fragment.kind === 'list-item') {
+    const measureForList = listItemMeasure ?? (measure?.kind === 'list' ? (measure as ListMeasure) : undefined);
+    return listItemLinePaintSignature(fragment as ListItemFragment, measureForList);
+  }
+  return '';
+}
+
+function appendMeasurePaintSignature(version: string, signature: string): string {
+  return signature ? `${version}|measure:${signature}` : version;
 }
 
 export function resolveFragmentItem(
@@ -539,6 +701,7 @@ export function resolveFragmentItem(
           ? fragmentSignature(fragment, deriveFontAwareBlockVersion(tablePageRefs.block, fontSignature))
           : version,
       );
+      stampPmInteriorVersion(item, blockMap, fragment.blockId);
       return item;
     }
     case 'image': {
@@ -547,6 +710,7 @@ export function resolveFragmentItem(
       if (fragment.sourceAnchor != null) item.sourceAnchor = fragment.sourceAnchor;
       item.layoutSourceIdentity = layoutSourceIdentity;
       applyPaintVersions(item, version);
+      stampPmInteriorVersion(item, blockMap, fragment.blockId);
       return item;
     }
     case 'drawing': {
@@ -555,6 +719,7 @@ export function resolveFragmentItem(
       if (fragment.sourceAnchor != null) item.sourceAnchor = fragment.sourceAnchor;
       item.layoutSourceIdentity = layoutSourceIdentity;
       applyPaintVersions(item, version);
+      stampPmInteriorVersion(item, blockMap, fragment.blockId);
       return item;
     }
     default: {
@@ -585,6 +750,11 @@ export function resolveFragmentItem(
         : listPageRefs?.changed
           ? fragmentSignature(fragment, deriveFontAwareBlockVersion(listPageRefs.block, fontSignature))
           : version;
+      const measurePaintSignature = fragmentMeasurePaintSignature(
+        paragraphPageRefs?.fragment ?? fragment,
+        entry?.measure,
+        listPageRefs?.measure,
+      );
       // para, list-item — existing generic resolution
       const item: ResolvedFragmentItem = {
         kind: 'fragment',
@@ -649,22 +819,34 @@ export function resolveFragmentItem(
         if (listItem.continuesOnNext != null) item.continuesOnNext = listItem.continuesOnNext;
         if (listItem.markerWidth != null) item.markerWidth = listItem.markerWidth;
       }
-      applyPaintVersions(item, itemVersion);
+      applyPaintVersions(item, itemVersion, appendMeasurePaintSignature(itemVersion, measurePaintSignature));
+      stampPmInteriorVersion(item, blockMap, fragment.blockId);
       return item;
     }
   }
 }
 
-export function resolveLayout(input: ResolveLayoutInput): ResolvedLayout {
-  const { layout, flowMode, blocks, measures, bookmarks } = input;
-  const fontSignature = input.fontSignature ?? '';
-  const blockMap = buildBlockMap(blocks, measures);
-  const blockVersionCache = new Map<string, string>();
-  const pageRefAnchorMap = bookmarks?.size ? buildPageRefAnchorMap(bookmarks, layout, blocks, measures) : undefined;
+export type ResolvePageInput = {
+  layout: Layout;
+  page: Page;
+  pageIndex: number;
+  blockMap: Map<string, BlockMapEntry>;
+  blockVersionCache: Map<string, string>;
+  fontSignature?: string;
+  pageRefAnchorMap?: Map<string, PageRefLocation>;
+  pageCountFieldsExact?: boolean;
+};
 
-  const pages: ResolvedPage[] = layout.pages.map((page, pageIndex) => ({
+/** Resolve one page without scanning or resolving sibling pages. */
+export function resolvePage(input: ResolvePageInput): ResolvedPage {
+  const { layout, page, pageIndex, blockMap, blockVersionCache, pageRefAnchorMap } = input;
+  const fontSignature = input.fontSignature ?? '';
+  return {
     id: `page-${pageIndex}`,
     index: pageIndex,
+    // Painter plan P5x: every page carries its resolve pass's epoch so the
+    // window painter can prove packets and extents share one layout pass.
+    ...(layout.layoutEpoch != null ? { layoutEpoch: layout.layoutEpoch } : {}),
     columns: page.columns,
     columnRegions: page.columnRegions,
     number: page.number,
@@ -682,11 +864,13 @@ export function resolveLayout(input: ResolveLayoutInput): ResolvedLayout {
         pageRefAnchorMap ? { sourcePage: page.number, anchorMap: pageRefAnchorMap } : undefined,
       ),
     ),
+    ...(input.pageCountFieldsExact === false ? { pageCountFieldsExact: false } : {}),
     margins: page.margins,
     footnoteReserved: page.footnoteReserved,
     displayNumber: page.displayNumber,
     numberText: page.numberText,
     effectivePageNumber: page.effectivePageNumber,
+    sectionPageNumber: page.sectionPageNumber,
     pageNumberFormat: page.pageNumberFormat,
     pageNumberChapterText: page.pageNumberChapterText,
     pageNumberChapterSeparator: page.pageNumberChapterSeparator,
@@ -695,24 +879,75 @@ export function resolveLayout(input: ResolveLayoutInput): ResolvedLayout {
     sectionIndex: page.sectionIndex,
     sectionRefs: page.sectionRefs,
     orientation: page.orientation,
-  }));
+  };
+}
+
+export function resolveLayout(input: ResolveLayoutInput): ResolvedLayout {
+  const { layout, flowMode, blocks, measures, bookmarks } = input;
+  const fontSignature = input.fontSignature ?? '';
+  const blockMap = buildBlockMap(blocks, measures);
+  input.onProgress?.('block-map-complete');
+  const blockVersionCache = new Map<string, string>();
+  const pageRefAnchorMap = bookmarks?.size ? buildPageRefAnchorMap(bookmarks, layout, blocks, measures) : undefined;
+  input.onProgress?.('page-ref-map-complete');
+
+  const sectionPageCounts: Record<string, number> = {};
+  const pages: ResolvedPage[] = [];
+  const pageProgress = createQuartileProgress(layout.pages.length, 'pages');
+  layout.pages.forEach((page, pageIndex) => {
+    const sectionKey = String(page.sectionIndex ?? 0);
+    sectionPageCounts[sectionKey] = (sectionPageCounts[sectionKey] ?? 0) + 1;
+    pages.push(
+      resolvePage({
+        layout,
+        page,
+        pageIndex,
+        blockMap,
+        blockVersionCache,
+        fontSignature,
+        pageRefAnchorMap,
+        pageCountFieldsExact: input.pageCountFieldsExact,
+      }),
+    );
+    pageProgress(pageIndex + 1, input.onProgress);
+  });
 
   const resolved: ResolvedLayout = {
     version: 1,
     flowMode,
     pageGap: layout.pageGap ?? 0,
     pages,
+    ...(pages.length > 0 ? { sectionPageCounts } : {}),
     ...(layout.documentBackground ? { documentBackground: layout.documentBackground } : {}),
   };
 
   if (blocks.length > 0) {
-    resolved.blockVersions = Object.fromEntries(
-      blocks.map((block) => [block.id, computeBlockVersion(block.id, blockMap, blockVersionCache, fontSignature)]),
-    );
+    const versions: Record<string, string> = {};
+    const blockProgress = createQuartileProgress(blocks.length, 'block-versions');
+    blocks.forEach((block, index) => {
+      versions[block.id] = computeBlockVersion(block.id, blockMap, blockVersionCache, fontSignature);
+      blockProgress(index + 1, input.onProgress);
+    });
+    resolved.blockVersions = versions;
   }
   if (layout.layoutEpoch != null) {
     resolved.layoutEpoch = layout.layoutEpoch;
   }
 
   return resolved;
+}
+
+function createQuartileProgress(
+  total: number,
+  prefix: 'pages' | 'block-versions',
+): (completed: number, notify: ResolveLayoutInput['onProgress']) => void {
+  const thresholds = [0.25, 0.5, 0.75, 1].map((fraction) => Math.max(1, Math.ceil(total * fraction)));
+  const labels = [`${prefix}-25`, `${prefix}-50`, `${prefix}-75`, `${prefix}-complete`] as const;
+  let next = 0;
+  return (completed, notify) => {
+    while (next < thresholds.length && completed >= thresholds[next]!) {
+      notify?.(labels[next]!);
+      next += 1;
+    }
+  };
 }

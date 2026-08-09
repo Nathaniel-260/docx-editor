@@ -2,6 +2,7 @@ import type { FieldAnnotationRun, ImageRun, MathRun, Run, TextRun } from '@super
 import { EMPTY_SDT_PLACEHOLDER_TEXT, isEmptySdtPlaceholderRun } from '@superdoc/contracts';
 import type { FragmentRenderContext } from '../renderer.js';
 import type { RunRenderContext, TrackedChangesRenderConfig } from './types.js';
+import type { PositionRunKind } from '../pm-position-validation.js';
 import { renderFieldAnnotationRun } from './field-annotation-run.js';
 import { renderImageRun } from './image-run.js';
 import { renderMathRun } from './math-run.js';
@@ -32,6 +33,47 @@ const renderEmptySdtPlaceholderRun = (run: TextRun, renderContext: RunRenderCont
 };
 
 /**
+ * Dynamic page fields are display-only in page furniture. Body fields remain
+ * editable source content and keep the body's coordinate requirement.
+ */
+const PAGE_FIELD_TOKENS = new Set(['pageNumber', 'totalPageCount', 'sectionPageCount']);
+
+const isRenderOnlyPageField = (run: Run, context: FragmentRenderContext): boolean => {
+  const token = (run as { token?: string }).token;
+  return context.section !== 'body' && typeof token === 'string' && PAGE_FIELD_TOKENS.has(token);
+};
+
+/**
+ * Record one content-free position-coverage observation for a rendered run.
+ *
+ * This is the single position-validation point for rendered runs. It has both
+ * the run kind and the fragment story/section, so classification is
+ * story-aware. Dark by default: when the painter did not enable the collector
+ * this returns after one branch, allocating nothing. Only rendered runs
+ * (non-null element) are recorded, matching where the old assertions fired.
+ */
+const recordRunPosition = (
+  renderContext: RunRenderContext,
+  context: FragmentRenderContext,
+  run: Run,
+  runKind: PositionRunKind,
+  element: HTMLElement | null,
+): void => {
+  const collector = renderContext.positionValidation;
+  if (!collector || !collector.isEnabled || element == null) return;
+  const pmStart = (run as { pmStart?: number | null }).pmStart;
+  const pmEnd = (run as { pmEnd?: number | null }).pmEnd;
+  collector.record({
+    runKind,
+    section: context.section,
+    ...(context.story !== undefined ? { story: context.story } : {}),
+    ...(pmStart !== undefined ? { pmStart } : {}),
+    ...(pmEnd !== undefined ? { pmEnd } : {}),
+    renderOnly: runKind === 'text' && isRenderOnlyPageField(run, context),
+  });
+};
+
+/**
  * Render a single run as an HTML element (span or anchor).
  */
 export const renderRun = (
@@ -42,17 +84,23 @@ export const renderRun = (
 ): HTMLElement | null => {
   // Handle ImageRun
   if (isImageRun(run)) {
-    return renderImageRun(run, renderContext);
+    const el = renderImageRun(run, renderContext, trackedConfig);
+    recordRunPosition(renderContext, context, run, 'image', el);
+    return el;
   }
 
   // Handle FieldAnnotationRun - inline pill-styled form fields
   if (isFieldAnnotationRun(run)) {
-    return renderFieldAnnotationRun(run, renderContext);
+    const el = renderFieldAnnotationRun(run, renderContext);
+    recordRunPosition(renderContext, context, run, 'field', el);
+    return el;
   }
 
   // Handle MathRun - inline math rendered as MathML
   if (isMathRun(run)) {
-    return renderMathRun(run, renderContext);
+    const el = renderMathRun(run, renderContext);
+    recordRunPosition(renderContext, context, run, 'math', el);
+    return el;
   }
 
   // Handle LineBreakRun - line breaks are handled by the measurer creating new lines,
@@ -76,5 +124,7 @@ export const renderRun = (
     return null;
   }
 
-  return renderTextRun(run as TextRun, context, renderContext, trackedConfig);
+  const el = renderTextRun(run as TextRun, context, renderContext, trackedConfig);
+  recordRunPosition(renderContext, context, run, 'text', el);
+  return el;
 };

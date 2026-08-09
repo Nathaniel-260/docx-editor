@@ -12,6 +12,7 @@
     { "path": "../layout-engine/tsconfig.json" },
     { "path": "../measuring/dom/tsconfig.json" },
     { "path": "../../word-layout/tsconfig.json" },
-    { "path": "../../../shared/common/tsconfig.json" }
+    { "path": "../../../shared/common/tsconfig.json" },
+    { "path": "../../../shared/font-system/tsconfig.json" }
   ]
 }

@@ -1,11 +1,9 @@
-/* eslint-env node */
-
 /**
  * Shared git-log-parser patch for semantic-release.
  *
  * semantic-release only analyzes commits that touch the package's own directory
  * by default. For packages that bundle multiple sub-packages (CLI bundles
- * layout-engine, super-editor, etc.), we need git-log to also return commits
+ * layout-engine and related runtime packages), we need git-log to also return commits
  * from those dependency paths so that a `fix(layout-engine):` commit can
  * trigger a CLI or SDK release.
  *
@@ -28,7 +26,7 @@ const path = require('path');
  * Patch git-log-parser so semantic-release sees commits from additional paths.
  *
  * @param {string[]} includePaths - Repo-root-relative paths to include
- *   (e.g. ['packages/superdoc', 'packages/super-editor'])
+ *   (e.g. ['packages/superdoc'])
  */
 function patchCommitFilter(includePaths) {
   if (!Array.isArray(includePaths) || includePaths.length === 0) {

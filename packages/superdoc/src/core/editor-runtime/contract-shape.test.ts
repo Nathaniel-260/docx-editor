@@ -10,7 +10,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vite-plus/test';
 import type {
   EditorRuntime,
   EditorRuntimeCapabilities,
@@ -128,7 +128,7 @@ describe('editor-runtime contract  -  compile-time shape', () => {
     expectTypeOf<ReturnType<EditorRuntime['getSnapshot']>['documentMode']>().toEqualTypeOf<EditorRuntimeDocumentMode>();
   });
 
-  it('EditorRuntimeCommand is capability-grouped, not the full v1 catalog', () => {
+  it('EditorRuntimeCommand is capability-grouped, not the full editor catalog', () => {
     type Kind = EditorRuntimeCommand['kind'];
     // Spot-check representative kinds exist...
     expectTypeOf<'text.insert'>().toMatchTypeOf<Kind>();

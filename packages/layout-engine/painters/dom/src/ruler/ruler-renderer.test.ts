@@ -1,5 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { JSDOM } from 'jsdom';
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
+// Fresh isolated documents from the happy-dom test environment (see
+// vitest.config.mjs) - the painter package deliberately has no jsdom
+// dependency, so a direct `import "jsdom"` fails vite's transform here
+// (persistent-page rendering preflight plan, workstream 8).
+const createTestDocument = (): Document => document.implementation.createHTMLDocument('painter-test');
+
 import {
   createRulerElement,
   updateHandlePosition,
@@ -15,8 +20,7 @@ describe('createRulerElement', () => {
   let definition: RulerDefinition;
 
   beforeEach(() => {
-    const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
-    doc = dom.window.document;
+    doc = createTestDocument();
 
     // Standard ruler definition for 8.5 inch page
     definition = {
@@ -192,16 +196,18 @@ describe('createRulerElement', () => {
       const leftHandle = ruler.querySelector(`.${RULER_CLASS_NAMES.handleLeft}`) as HTMLElement;
 
       // Trigger mouseenter
-      const enterEvent = new (doc.defaultView as Window).MouseEvent('mouseenter');
+      const enterEvent = new MouseEvent('mouseenter');
       leftHandle.dispatchEvent(enterEvent);
 
       expect(leftHandle.style.backgroundColor).toBe('rgba(37, 99, 235, 0.4)');
 
       // Trigger mouseleave
-      const leaveEvent = new (doc.defaultView as Window).MouseEvent('mouseleave');
+      const leaveEvent = new MouseEvent('mouseleave');
       leftHandle.dispatchEvent(leaveEvent);
 
-      expect(leftHandle.style.backgroundColor).toBe('rgb(204, 204, 204)');
+      // The renderer sets '#ccc'; jsdom normalizes the readback to rgb() while
+      // happy-dom returns the raw value — accept both (VITEST_DOM switch).
+      expect(['#ccc', 'rgb(204, 204, 204)']).toContain(leftHandle.style.backgroundColor);
     });
   });
 
@@ -310,8 +316,7 @@ describe('updateHandlePosition', () => {
   let ruler: HTMLElement;
 
   beforeEach(() => {
-    const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
-    doc = dom.window.document;
+    doc = createTestDocument();
 
     ruler = doc.createElement('div');
     ruler.className = RULER_CLASS_NAMES.ruler;
@@ -370,8 +375,7 @@ describe('createIndicatorElement', () => {
   let doc: Document;
 
   beforeEach(() => {
-    const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
-    doc = dom.window.document;
+    doc = createTestDocument();
   });
 
   it('creates indicator element with correct class', () => {
@@ -426,8 +430,7 @@ describe('updateIndicator', () => {
   let indicator: HTMLElement;
 
   beforeEach(() => {
-    const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
-    doc = dom.window.document;
+    doc = createTestDocument();
     indicator = createIndicatorElement(doc, 500);
   });
 

@@ -1,6 +1,6 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vite-plus';
 
-// Browser / <script> (IIFE) build of @superdoc-dev/fonts: emits dist/superdoc-fonts.min.js exposing
+// Browser / <script> (IIFE) build of @superdoc/fonts: emits dist/superdoc-fonts.min.js exposing
 // the `SuperDocFonts` global ({ superdocFonts, createSuperDocFonts, resolveBundledFontAssetUrl }).
 // The bundler entry (src/index.ts) stays tsc-built; this build exists only for plain <script>/CDN
 // consumption, where the import.meta.url asset URLs don't apply. tsc runs first and writes the

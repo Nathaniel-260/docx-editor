@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import { normalizeTrackChangesConfig, __resetDeprecationWarnings } from './normalize-track-changes-config.js';
 
 describe('normalizeTrackChangesConfig', () => {
@@ -69,7 +69,7 @@ describe('normalizeTrackChangesConfig', () => {
       expect(config.modules.trackChanges.enabled).toBe(true);
     });
 
-    it('preserves canonical author color config for tracked-change rendering', () => {
+    it('preserves canonical author color config for v2 tracked-change rendering', () => {
       const authorColors = {
         enabled: true,
         overrides: { Ada: '#8250df' },
@@ -83,6 +83,84 @@ describe('normalizeTrackChangesConfig', () => {
       expect(result.authorColors).toBe(authorColors);
       expect(config.modules.trackChanges.authorColors).toBe(authorColors);
       expect(config.layoutEngineOptions.trackedChanges).toEqual({ mode: 'review', enabled: true });
+    });
+  });
+
+  describe('canonical semantic color config (SD-3481)', () => {
+    it('preserves the semanticColors object by reference (keeps the resolve callback intact)', () => {
+      const semanticColors = {
+        enabled: true,
+        overrides: { 'table-cell-insertion': '#1f6feb' },
+        resolve: vi.fn(),
+      };
+      const config = {
+        modules: { trackChanges: { visible: true, semanticColors } },
+      };
+      const result = normalizeTrackChangesConfig(config);
+
+      // Same reference, not a clone, so the composed resolver keeps the callback.
+      expect(result.semanticColors).toBe(semanticColors);
+      expect(config.modules.trackChanges.semanticColors).toBe(semanticColors);
+      expect(result.semanticColors.resolve).toBe(semanticColors.resolve);
+    });
+
+    it('preserves semanticColors and authorColors independently on the canonical path', () => {
+      const authorColors = { overrides: { Ada: '#8250df' } };
+      const semanticColors = { overrides: { 'cell-merge': '#d4a72c' } };
+      const config = {
+        modules: { trackChanges: { visible: true, authorColors, semanticColors } },
+      };
+      const result = normalizeTrackChangesConfig(config);
+
+      expect(result.authorColors).toBe(authorColors);
+      expect(result.semanticColors).toBe(semanticColors);
+    });
+
+    it('omits semanticColors from the normalized result when not supplied', () => {
+      const config = { modules: { trackChanges: { visible: true } } };
+      const result = normalizeTrackChangesConfig(config);
+
+      expect('semanticColors' in result).toBe(false);
+      expect(config.modules.trackChanges.semanticColors).toBeUndefined();
+    });
+
+    it('ignores a non-object semanticColors value', () => {
+      const config = {
+        modules: { trackChanges: { visible: true, semanticColors: 'nope' } },
+      };
+      const result = normalizeTrackChangesConfig(config);
+
+      expect('semanticColors' in result).toBe(false);
+    });
+
+    it('introduces no legacy alias for semanticColors on either legacy path', () => {
+      const semanticColors = { overrides: { 'move-from': '#00853d' } };
+      const config = {
+        modules: { trackChanges: { visible: true, semanticColors } },
+      };
+      normalizeTrackChangesConfig(config);
+
+      // Write-through mirrors only visible/mode/enabled to the legacy buckets;
+      // semanticColors stays solely on the canonical path.
+      expect(config.trackChanges).toEqual({ visible: true });
+      expect('semanticColors' in config.trackChanges).toBe(false);
+      expect(config.layoutEngineOptions.trackedChanges).toEqual({ mode: 'review', enabled: true });
+      expect('semanticColors' in config.layoutEngineOptions.trackedChanges).toBe(false);
+    });
+
+    it('keeps semanticColors stable and by-reference across repeated normalizations', () => {
+      const semanticColors = { overrides: { 'cell-split': '#bc4c00' }, resolve: vi.fn() };
+      const config = {
+        modules: { trackChanges: { visible: true, semanticColors } },
+      };
+
+      const first = normalizeTrackChangesConfig(config);
+      const second = normalizeTrackChangesConfig(config);
+
+      expect(first.semanticColors).toBe(semanticColors);
+      expect(second.semanticColors).toBe(semanticColors);
+      expect(second.semanticColors).toBe(first.semanticColors);
+      expect(warnSpy).not.toHaveBeenCalled();
     });
   });
 

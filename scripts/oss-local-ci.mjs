@@ -7,43 +7,25 @@ import { fileURLToPath } from 'node:url';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), '..');
-
-const GETTING_STARTED_EXAMPLES = ['react', 'vue', 'vanilla', 'cdn', 'angular', 'nuxt', 'laravel', 'solid'];
-const COLLABORATION_EXAMPLES = ['superdoc-yjs', 'hocuspocus', 'liveblocks'];
-const BUILT_IN_UI_EXAMPLES = ['track-changes', 'comments', 'toolbar'];
-const CUSTOM_UI_EXAMPLES = ['selection-capture', 'configurable-toolbar'];
-const ADVANCED_HEADLESS_EXAMPLES = ['react-shadcn', 'react-mui', 'vue-vuetify', 'svelte-shadcn', 'vanilla'];
-const ADVANCED_EXTENSION_EXAMPLES = ['custom-mark', 'custom-node'];
-const DEMOS = [
-  'contract-templates',
-  'custom-ui',
-  'docx-from-html',
-  'fields-source',
-  'grading-papers',
-  'linked-sections',
-  'nextjs-ssr',
-];
-
-const VISUAL_REQUIRED_ENV = [
-  'SD_VISUAL_TESTING_R2_ACCOUNT_ID',
-  'SD_VISUAL_TESTING_R2_ACCESS_KEY_ID',
-  'SD_VISUAL_TESTING_R2_SECRET_ACCESS_KEY',
-  'SD_VISUAL_TESTING_R2_BUCKET',
-  'SUPERDOC_CORPUS_R2_ACCOUNT_ID',
-  'SUPERDOC_CORPUS_R2_ACCESS_KEY_ID',
-  'SUPERDOC_CORPUS_R2_SECRET_ACCESS_KEY',
-  'SUPERDOC_CORPUS_R2_BUCKET',
-];
+const cliAvailable = existsSync(path.join(repoRoot, 'apps/cli/package.json'));
+const mcpAvailable = existsSync(path.join(repoRoot, 'apps/mcp/package.json'));
+const sdkAvailable = existsSync(path.join(repoRoot, 'packages/sdk/package.json'));
+const docsManifestPath = path.join(repoRoot, 'apps/docs/package.json');
+const docsScripts = existsSync(docsManifestPath)
+  ? new Set(Object.keys(JSON.parse(readFileSync(docsManifestPath, 'utf8')).scripts ?? {}))
+  : new Set();
+const docsV1RoutesAvailable = ['check:v1-routes', 'test:v1-routes'].every((script) => docsScripts.has(script));
+const orbitSuperdocWorkflow = '.github/workflows/ci-superdoc.yml';
+const publicV2Workflow = '.github/workflows/v2-public-validation.yml';
+const orbitSuperdocWorkflowAvailable = existsSync(path.join(repoRoot, orbitSuperdocWorkflow));
+const superdocWorkflow = orbitSuperdocWorkflowAvailable
+  ? orbitSuperdocWorkflow
+  : `${publicV2Workflow} (covered across setup, ci-superdoc, and ci-docs)`;
+const superdocLaneTitle = orbitSuperdocWorkflowAvailable ? 'CI SuperDoc' : 'CI V2 Public shared core';
 
 const NON_LOCAL_WORKFLOWS = [
-  'agent-docs-audit.yml: scheduled/LLM-backed audit',
   'docs-preview-pr.yml: GitHub Pages preview context',
-  'pickled.yml: GitHub app/bot automation',
   'pr-labels.yml: GitHub PR labels/comments',
-  'pr-renderer-build.yml: Labs API artifact upload and GitHub PR context',
-  'risk-assess.yml: GitHub PR diff + AI assessment',
-  'spec-review.yml: GitHub PR diff + Claude Code review',
-  'update-contributors.yml: GitHub contributor context',
 ];
 
 function sh(command, options = {}) {
@@ -52,28 +34,9 @@ function sh(command, options = {}) {
     cwd: options.cwd ?? '.',
     env: options.env ?? {},
     requiredEnv: options.requiredEnv ?? [],
+    requiredTools: options.requiredTools ?? [],
     optional: Boolean(options.optional),
     note: options.note ?? '',
-  };
-}
-
-function exampleStage(id, example) {
-  return {
-    id,
-    title: `Run example smoke: ${example}`,
-    ...sh(`EXAMPLE=${quoteShell(example)} npx playwright test`, {
-      cwd: 'examples/__tests__',
-    }),
-  };
-}
-
-function demoStage(demo) {
-  return {
-    id: `demo-${demo}`,
-    title: `Run demo smoke: ${demo}`,
-    ...sh(`DEMO=${quoteShell(demo)} npx playwright test`, {
-      cwd: 'demos/__tests__',
-    }),
   };
 }
 
@@ -83,6 +46,14 @@ const LANES = [
     title: 'Shared setup',
     workflow: '(local prelude)',
     stages: [
+      // Both gates run before `pnpm install` in the hosted workflow, and every
+      // other job is gated on them. Running them after the shared install
+      // inverted that: a configuration the ownership gate rejects had already
+      // steered resolution and run dependency lifecycle scripts by the time it
+      // was reported. They also need no installed dependencies, which is what
+      // makes running them here possible at all.
+      { id: 'pnpm-config', title: 'pnpm config ownership', ...sh('pnpm run check:pnpm-config') },
+      { id: 'vite-plus', title: 'Vite+ toolchain guard', ...sh('pnpm run check:vite-plus') },
       {
         id: 'install',
         title: 'Install dependencies',
@@ -92,18 +63,29 @@ const LANES = [
   },
   {
     id: 'ci-superdoc',
-    title: 'CI SuperDoc',
-    workflow: '.github/workflows/ci-superdoc.yml',
+    title: superdocLaneTitle,
+    // Orbit and the standalone repository intentionally own different hosted
+    // workflows. Report the one that exists so --list/--plan never directs a
+    // public contributor to an exporter-omitted path.
+    workflow: superdocWorkflow,
     stages: [
+      // Repeated from the shared setup so an explicitly selected core lane
+      // remains self-contained. In the standalone projection, setup and docs
+      // own the other v2-public-validation steps reported in the metadata.
+      { id: 'pnpm-config', title: 'pnpm config ownership', ...sh('pnpm run check:pnpm-config') },
+      { id: 'vite-plus', title: 'Vite+ toolchain guard', ...sh('pnpm run check:vite-plus') },
       { id: 'lint', title: 'Lint', ...sh('NODE_OPTIONS=--max-old-space-size=4096 pnpm run lint') },
       { id: 'format', title: 'Format check', ...sh('pnpm run format:check') },
       { id: 'build', title: 'Build', ...sh('pnpm run build') },
-      {
-        id: 'validate-command-types',
-        title: 'Validate command types',
-        ...sh('node scripts/validate-command-types.mjs'),
-      },
       { id: 'typecheck', title: 'Typecheck', ...sh('pnpm run type-check') },
+      // Needs the installed tree: the guard walks both dependencies' real
+      // importer chains rather than reading the lockfile, so it runs after the
+      // build stages like the hosted workflow does.
+      {
+        id: 'removed-patches',
+        title: 'Removed dependency patches stay unnecessary',
+        ...sh('pnpm run check:removed-patches'),
+      },
       {
         id: 'public-interface',
         title: 'SuperDoc public interface check',
@@ -112,32 +94,12 @@ const LANES = [
       {
         id: 'font-families',
         title: 'Font curation list drift check',
-        ...sh('pnpm --filter @superdoc-dev/fonts run check:families'),
+        ...sh('pnpm --filter @superdoc/fonts --fail-if-no-match run check:families'),
       },
-      ...Array.from({ length: 4 }, (_, index) => {
-        const shard = `${index + 1}/4`;
-        return {
-          id: `super-editor-${index + 1}`,
-          title: `Run super-editor tests shard ${shard}`,
-          ...sh(
-            [
-              'NODE_OPTIONS=--max-old-space-size=4096',
-              'pnpm exec vitest run --pool forks --minWorkers 1 --maxWorkers 1',
-              `--shard=${shard}`,
-              "--exclude='**/decrypt-docx.integration*'",
-              "--exclude='**/contract-conformance*'",
-            ].join(' '),
-            { cwd: 'packages/super-editor' },
-          ),
-        };
-      }),
       {
         id: 'other-vitest',
         title: 'Run other package vitest tests',
-        ...sh(
-          'NODE_OPTIONS=--max-old-space-size=4096 VITEST_MAX_WORKERS=1 VITEST_MIN_WORKERS=1 pnpm exec vitest run ' +
-            "'--project=!*super-editor*'",
-        ),
+        ...sh('NODE_OPTIONS=--max-old-space-size=4096 VITEST_MAX_WORKERS=1 VITEST_MIN_WORKERS=1 pnpm exec vp test run'),
       },
       {
         id: 'bun-tests',
@@ -151,19 +113,21 @@ const LANES = [
             '--filter @superdoc/geometry-utils',
             '--filter @superdoc/word-layout',
             '--filter @superdoc/common',
-            '--filter @font-utils',
-            '--filter @locale-utils',
-            '--filter @url-validation',
+            '--filter @superdoc/font-utils',
+            '--filter @superdoc/url-validation',
             'test',
           ].join(' '),
         ),
       },
-      {
-        id: 'sdk-scripts',
-        title: 'Run SDK scripts tests',
-        ...sh('pnpm --prefix packages/sdk run test:scripts'),
-      },
-      { id: 'slow-tests', title: 'Run slow tests', ...sh('pnpm test:slow') },
+      ...(sdkAvailable
+        ? [
+            {
+              id: 'sdk-scripts',
+              title: 'Run SDK scripts tests',
+              ...sh('pnpm --prefix packages/sdk run test:scripts'),
+            },
+          ]
+        : []),
       {
         id: 'cdn-install',
         title: 'Install Playwright Chromium for CDN smoke test',
@@ -174,21 +138,27 @@ const LANES = [
         title: 'Run CDN smoke test',
         ...sh('pnpm test', { cwd: 'packages/superdoc/tests/cdn-smoke' }),
       },
-      {
-        id: 'cli-build-superdoc',
-        title: 'Build superdoc for CLI tests',
-        ...sh('pnpm run build:superdoc'),
-      },
-      { id: 'cli-tests', title: 'Run CLI tests', ...sh('pnpm run test:cli') },
-      {
-        id: 'coverage-build-collaboration',
-        title: 'Build collaboration dependency for coverage',
-        ...sh('pnpm --filter @superdoc-dev/superdoc-yjs-collaboration build'),
-      },
+      ...(cliAvailable
+        ? [
+            {
+              id: 'cli-build-superdoc',
+              title: 'Build superdoc for CLI tests',
+              ...sh('pnpm run build:superdoc'),
+            },
+            {
+              // test:cli runs the TypeScript sources through Bun, so only this
+              // step sees a bundling break; Orbit's hosted lane runs it too.
+              id: 'cli-build',
+              title: 'Build CLI',
+              ...sh('pnpm --prefix apps/cli run build'),
+            },
+            { id: 'cli-tests', title: 'Run CLI tests', ...sh('pnpm run test:cli') },
+          ]
+        : []),
       {
         id: 'coverage',
         title: 'Run SuperDoc coverage locally (Codecov upload excluded)',
-        ...sh('pnpm --filter superdoc exec vitest run --coverage'),
+        ...sh('pnpm --filter superdoc exec vp test run --coverage'),
       },
     ],
   },
@@ -198,11 +168,6 @@ const LANES = [
     workflow: '.github/workflows/ci-document-api.yml',
     stages: [
       { id: 'docapi-sync', title: 'Generate contract outputs', ...sh('pnpm run docapi:sync') },
-      {
-        id: 'overview-freshness',
-        title: 'Check overview freshness',
-        ...sh('git diff --exit-code apps/docs/document-api/overview.mdx'),
-      },
       {
         id: 'docapi-check',
         title: 'Check contract parity and generated outputs',
@@ -214,59 +179,109 @@ const LANES = [
     id: 'ci-docs',
     title: 'CI Docs',
     workflow: '.github/workflows/ci-docs.yml',
+    // Mirrors every step of that workflow in Orbit. Availability guards remove
+    // only stages owned by private workspaces that the exporter omits; the
+    // projected repository runs v2-public-validation instead.
     stages: [
-      { id: 'generate-all', title: 'Generate all artifacts', ...sh('pnpm run generate:all') },
-      { id: 'docs-validate', title: 'Validate docs', ...sh('pnpm --filter @superdoc/docs validate') },
-      { id: 'docs-links', title: 'Check docs links', ...sh('pnpm --filter @superdoc/docs check:links') },
-      { id: 'docs-imports', title: 'Check docs code imports', ...sh('pnpm --filter @superdoc/docs check:imports') },
+      { id: 'docs-pnpm-config', title: 'Check pnpm config', ...sh('pnpm run check:pnpm-config') },
+      { id: 'docs-typecheck', title: 'Typecheck docs', ...sh('pnpm --filter @superdoc/docs typecheck') },
+      ...(sdkAvailable
+        ? [{ id: 'docs-content', title: 'Test docs content', ...sh('pnpm --filter @superdoc/docs test:content') }]
+        : []),
+      { id: 'docs-fixtures', title: 'Test docs fixtures', ...sh('pnpm --filter @superdoc/docs test:fixtures') },
       {
-        id: 'docs-build-superdoc',
-        title: 'Build SuperDoc package for docs',
-        ...sh('pnpm --prefix packages/superdoc run build'),
+        id: 'docs-migration-catalog',
+        title: 'Test migration catalog',
+        ...sh('pnpm --filter @superdoc/docs test:migration-catalog'),
       },
-      { id: 'docs-examples', title: 'Test docs code examples', ...sh('pnpm --filter @superdoc/docs test:examples') },
+      {
+        id: 'docs-migration-explorer',
+        title: 'Test migration explorer',
+        ...sh('pnpm --filter @superdoc/docs test:migration-explorer'),
+      },
+      {
+        id: 'docs-migration-explorer-contrast',
+        title: 'Test migration explorer contrast',
+        ...sh('pnpm --filter @superdoc/docs test:migration-explorer-contrast'),
+      },
+      {
+        id: 'docs-migration-snippets',
+        title: 'Test migration snippets (contract)',
+        ...sh('pnpm --filter @superdoc/docs test:migration-snippets:contract'),
+      },
+      { id: 'docs-links-test', title: 'Test docs links', ...sh('pnpm --filter @superdoc/docs test:links') },
+      {
+        id: 'docs-redirects-test',
+        title: 'Test docs redirects',
+        ...sh('pnpm --filter @superdoc/docs test:redirects'),
+      },
+      // Builds the SDK and CLI through its own pretest, so it is slower than the
+      // rest of the lane but needs nothing a checkout does not have.
+      ...(cliAvailable && sdkAvailable
+        ? [{
+            id: 'docs-document-api-smoke',
+            title: 'Test Document API examples',
+            ...sh('pnpm test:document-api-smoke'),
+          }]
+        : []),
+      { id: 'docs-build', title: 'Build docs', ...sh('pnpm --filter @superdoc/docs build') },
+      { id: 'docs-links', title: 'Check docs links', ...sh('pnpm --filter @superdoc/docs check:links') },
+      // The workflow passes the PR base SHA, and without it `check:redirects`
+      // silently skips the append-only route-history check: a page and its
+      // routes.json entry removed together pass here and fail in CI. The local
+      // stand-in is the merge base with the branch this work targets, which is
+      // what the PR base resolves to. `|| true` keeps the stage runnable in a
+      // checkout with no such ref rather than failing on the lookup; the check
+      // then degrades to what it did before, which is still worth running.
+      {
+        id: 'docs-redirects',
+        title: 'Check docs redirects',
+        ...sh(
+          'DOCS_REDIRECT_BASE_REF="$(git merge-base HEAD "${DOCS_REDIRECT_BASE_BRANCH:-origin/v2}" 2>/dev/null || true)" ' +
+            'pnpm --filter @superdoc/docs check:redirects',
+        ),
+      },
+      ...(cliAvailable && mcpAvailable && docsV1RoutesAvailable
+        ? [
+            {
+              id: 'docs-v1-routes',
+              title: 'Check V1 route dispositions',
+              ...sh('pnpm --filter @superdoc/docs check:v1-routes'),
+            },
+            {
+              id: 'docs-v1-routes-test',
+              title: 'Test V1 route dispositions',
+              ...sh('pnpm --filter @superdoc/docs test:v1-routes'),
+            },
+          ]
+        : []),
+      { id: 'docs-export', title: 'Test docs static export', ...sh('pnpm --filter @superdoc/docs test:export') },
+      {
+        id: 'docs-migration-agent-prompt',
+        title: 'Test migration agent prompt',
+        ...sh('pnpm --filter @superdoc/docs test:migration-agent-prompt'),
+      },
+      {
+        id: 'docs-format',
+        title: 'Check docs formatting',
+        ...sh('pnpm exec vp fmt --check apps/docs'),
+      },
     ],
   },
   {
     id: 'ci-package-wrappers',
     title: 'CI package wrappers',
-    workflow: 'ci-react/esign/template-builder/vscode-ext.yml',
+    workflow: 'ci-react/vscode-ext.yml',
     stages: [
       { id: 'react-build-superdoc', title: 'Build superdoc for React', ...sh('pnpm run build:superdoc') },
       { id: 'react-lint', title: 'Lint React package', ...sh('pnpm --filter @superdoc-dev/react lint') },
-      { id: 'react-typecheck', title: 'Typecheck React package', ...sh('pnpm --filter @superdoc-dev/react type-check') },
+      {
+        id: 'react-typecheck',
+        title: 'Typecheck React package',
+        ...sh('pnpm --filter @superdoc-dev/react type-check'),
+      },
       { id: 'react-build', title: 'Build React package', ...sh('pnpm --filter @superdoc-dev/react build') },
       { id: 'react-test', title: 'Test React package', ...sh('pnpm --filter @superdoc-dev/react test') },
-      { id: 'esign-build-superdoc', title: 'Build superdoc for eSign', ...sh('pnpm run build:superdoc') },
-      { id: 'esign-lint', title: 'Lint eSign package', ...sh('pnpm --filter @superdoc-dev/esign lint') },
-      { id: 'esign-typecheck', title: 'Typecheck eSign package', ...sh('pnpm --filter @superdoc-dev/esign type-check') },
-      { id: 'esign-build', title: 'Build eSign package', ...sh('pnpm --filter @superdoc-dev/esign build') },
-      { id: 'esign-test', title: 'Test eSign package', ...sh('pnpm --filter @superdoc-dev/esign test') },
-      {
-        id: 'template-build-superdoc',
-        title: 'Build superdoc for template builder',
-        ...sh('pnpm run build:superdoc'),
-      },
-      {
-        id: 'template-lint',
-        title: 'Lint template builder package',
-        ...sh('pnpm --filter @superdoc-dev/template-builder lint'),
-      },
-      {
-        id: 'template-typecheck',
-        title: 'Typecheck template builder package',
-        ...sh('pnpm --filter @superdoc-dev/template-builder type-check'),
-      },
-      {
-        id: 'template-build',
-        title: 'Build template builder package',
-        ...sh('pnpm --filter @superdoc-dev/template-builder build'),
-      },
-      {
-        id: 'template-test',
-        title: 'Test template builder package',
-        ...sh('pnpm --filter @superdoc-dev/template-builder test'),
-      },
       { id: 'vscode-lint', title: 'Lint VS Code extension', ...sh('pnpm --filter superdoc-vscode-ext lint') },
       {
         id: 'vscode-typecheck',
@@ -285,6 +300,7 @@ const LANES = [
     id: 'ci-sdk-mcp',
     title: 'CI SDK and MCP',
     workflow: 'ci-sdk.yml + ci-mcp.yml',
+    defaultEnabled: cliAvailable && mcpAvailable && sdkAvailable,
     stages: [
       { id: 'sdk-generate-all', title: 'Generate SDK artifacts', ...sh('pnpm run generate:all') },
       { id: 'sdk-build-node', title: 'Build Node SDK', ...sh('pnpm --prefix packages/sdk/langs/node run build') },
@@ -306,104 +322,8 @@ const LANES = [
     title: 'CI Examples',
     workflow: '.github/workflows/ci-examples.yml',
     stages: [
-      { id: 'examples-build-superdoc', title: 'Build superdoc for examples', ...sh('pnpm build:superdoc') },
-      { id: 'examples-build-react', title: 'Build React wrapper for examples', ...sh('pnpm --filter @superdoc-dev/react build') },
-      {
-        id: 'examples-build-collaboration',
-        title: 'Build collaboration package for examples',
-        ...sh('pnpm --filter @superdoc-dev/superdoc-yjs-collaboration build'),
-      },
-      {
-        id: 'examples-install-playwright',
-        title: 'Install Playwright Chromium for examples',
-        ...sh('pnpm exec playwright install chromium', { cwd: 'examples/__tests__' }),
-      },
-      {
-        id: 'examples-laravel-prepare',
-        title: 'Prepare Laravel example',
-        ...sh('composer install --no-interaction --prefer-dist && cp .env.example .env && php artisan key:generate', {
-          cwd: 'examples/getting-started/laravel',
-        }),
-      },
-      ...GETTING_STARTED_EXAMPLES.map((example) => exampleStage(`getting-started-${example}`, example)),
-      ...COLLABORATION_EXAMPLES.flatMap((example) => {
-        const stages = [];
-        if (example === 'liveblocks') {
-          stages.push({
-            id: 'collaboration-liveblocks-env',
-            title: 'Create Liveblocks example .env',
-            ...sh("printf 'VITE_LIVEBLOCKS_PUBLIC_KEY=%s\\n' \"$VITE_LIVEBLOCKS_PUBLIC_KEY\" > .env", {
-              cwd: 'examples/editor/collaboration/providers/liveblocks',
-              requiredEnv: ['VITE_LIVEBLOCKS_PUBLIC_KEY'],
-            }),
-          });
-        }
-        stages.push(exampleStage(`collaboration-${example}`, `editor/collaboration/providers/${example}`));
-        return stages;
-      }),
-      ...BUILT_IN_UI_EXAMPLES.map((example) => exampleStage(`built-in-ui-${example}`, `editor/built-in-ui/${example}`)),
-      ...CUSTOM_UI_EXAMPLES.map((example) => exampleStage(`custom-ui-${example}`, `editor/custom-ui/${example}`)),
-      { ...exampleStage('ai-redlining', 'ai/redlining') },
-      ...ADVANCED_HEADLESS_EXAMPLES.map((example) => exampleStage(`advanced-headless-${example}`, `advanced/headless-toolbar/${example}`)),
-      ...ADVANCED_EXTENSION_EXAMPLES.map((example) => exampleStage(`advanced-extension-${example}`, `advanced/extensions/${example}`)),
-      {
-        id: 'document-engine-ai-redlining',
-        title: 'Run document-engine AI redlining server-side tests',
-        ...sh('npx tsx src/index.test.ts', { cwd: 'examples/document-engine/ai-redlining' }),
-      },
-    ],
-  },
-  {
-    id: 'ci-demos',
-    title: 'CI Demos',
-    workflow: '.github/workflows/ci-demos.yml',
-    stages: [
-      { id: 'demos-build-superdoc', title: 'Build superdoc for demos', ...sh('pnpm build:superdoc') },
-      { id: 'demos-build-react', title: 'Build React wrapper for demos', ...sh('pnpm --filter @superdoc-dev/react build') },
-      {
-        id: 'demos-install-playwright',
-        title: 'Install Playwright Chromium for demos',
-        ...sh('pnpm exec playwright install chromium', { cwd: 'demos/__tests__' }),
-      },
-      ...DEMOS.map((demo) => demoStage(demo)),
-    ],
-  },
-  {
-    id: 'visual',
-    title: 'Visual Tests',
-    workflow: '.github/workflows/visual-test.yml',
-    defaultEnabled: false,
-    stages: [
-      { id: 'visual-install', title: 'Install visual dependencies', ...sh('pnpm install --ignore-scripts') },
-      { id: 'visual-build', title: 'Build SuperDoc for visual tests', ...sh('pnpm build') },
-      {
-        id: 'visual-install-playwright',
-        title: 'Install visual Playwright browsers',
-        ...sh('pnpm exec playwright install chromium firefox webkit', { cwd: 'tests/visual' }),
-      },
-      {
-        id: 'visual-download-docs',
-        title: 'Download visual test documents from R2',
-        ...sh('pnpm docs:download', { cwd: 'tests/visual', requiredEnv: VISUAL_REQUIRED_ENV }),
-      },
-      {
-        id: 'visual-download-baselines',
-        title: 'Download visual baselines from R2',
-        ...sh('pnpm exec tsx scripts/download-baselines.ts', {
-          cwd: 'tests/visual',
-          requiredEnv: VISUAL_REQUIRED_ENV,
-        }),
-      },
-      {
-        id: 'visual-test',
-        title: 'Run visual tests',
-        ...sh('pnpm test', {
-          cwd: 'tests/visual',
-          requiredEnv: VISUAL_REQUIRED_ENV,
-          optional: true,
-          note: 'Matches GitHub continue-on-error behavior for screenshot diffs.',
-        }),
-      },
+      { id: 'go-links', title: 'Check permanent example links', ...sh('pnpm run check:go-links') },
+      { id: 'examples-reset', title: 'Verify the examples reset', ...sh('node scripts/check-examples.mjs') },
     ],
   },
 ];
@@ -411,7 +331,6 @@ const LANES = [
 function parseArgs(argv) {
   const options = {
     help: false,
-    includeVisual: false,
     lane: '',
     list: false,
     plan: false,
@@ -426,8 +345,6 @@ function parseArgs(argv) {
       options.list = true;
     } else if (arg === '--plan' || arg === '--dry-run') {
       options.plan = true;
-    } else if (arg === '--include-visual') {
-      options.includeVisual = true;
     } else if (arg === '--lane' || arg.startsWith('--lane=')) {
       options.lane = arg.includes('=') ? arg.split('=', 2)[1] : argv[++index];
     } else if (arg === '--stage' || arg.startsWith('--stage=')) {
@@ -449,15 +366,15 @@ Usage:
   pnpm ci:local --list           list lanes and stages
   pnpm ci:local --lane <lane>    run one lane
   pnpm ci:local --lane <lane> --stage <stage>
-  pnpm ci:local --include-visual also run the R2-backed visual workflow locally
 
-Default lanes: ${enabledLanes({ includeVisual: false }).map((lane) => lane.id).join(', ')}
-Optional lanes: visual
+Lanes: ${enabledLanes()
+    .map((lane) => lane.id)
+    .join(', ')}
 `);
 }
 
-function enabledLanes(options) {
-  return LANES.filter((lane) => lane.defaultEnabled !== false || options.includeVisual);
+function enabledLanes() {
+  return LANES.filter((lane) => lane.defaultEnabled !== false);
 }
 
 function resolveLanes(options) {
@@ -468,7 +385,7 @@ function resolveLanes(options) {
     }
     return [lane];
   }
-  return enabledLanes(options);
+  return enabledLanes();
 }
 
 function resolveStages(lane, options) {
@@ -529,11 +446,35 @@ function verifyEnv(plans) {
   return missing;
 }
 
+// Report a missing tool as itself, before any stage runs. `bun` is not part of
+// the documented Node and pnpm setup, so without this a contributor following
+// CONTRIBUTING gets `bash: bun: command not found` partway through a lane and
+// has to work out which stage needed it.
+function verifyTools(plans) {
+  const missing = [];
+  const seen = new Set();
+  for (const { lane, stages } of plans) {
+    for (const stage of stages) {
+      for (const tool of stage.requiredTools ?? []) {
+        const key = `${lane.id}:${stage.id}:${tool}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (spawnSync('bash', ['-lc', `command -v ${tool}`], { stdio: 'ignore' }).status !== 0) {
+          missing.push(`${lane.id}:${stage.id} requires \`${tool}\` on PATH (see CONTRIBUTING.md prerequisites)`);
+        }
+      }
+    }
+  }
+  return missing;
+}
+
 function printToolchainNotes() {
   const nodeVersion = readFileSync(path.join(repoRoot, '.nvmrc'), 'utf8').trim().replace(/^v/, '');
   const packageManager = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).packageManager;
   console.log(`Expected local toolchain: node ${nodeVersion}, ${packageManager}, bun 1.3.13 for SuperDoc PR CI.`);
-  console.log('Some legacy OSS workflows still declare node-version: 20; this runner uses the repository .nvmrc as the local CI toolchain.');
+  console.log(
+    'Some legacy OSS workflows still declare node-version: 20; this runner uses the repository .nvmrc as the local CI toolchain.',
+  );
 }
 
 function runStage(lane, stage) {
@@ -553,10 +494,6 @@ function runStage(lane, stage) {
     stdio: 'inherit',
   });
   return result.status ?? 1;
-}
-
-function quoteShell(value) {
-  return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
 function main() {
@@ -599,6 +536,15 @@ function main() {
   if (missingEnv.length > 0) {
     console.error('Missing required environment for selected stages:');
     for (const issue of missingEnv) {
+      console.error(`- ${issue}`);
+    }
+    return 2;
+  }
+
+  const missingTools = verifyTools(plans);
+  if (missingTools.length > 0) {
+    console.error('Missing required tools for selected stages:');
+    for (const issue of missingTools) {
       console.error(`- ${issue}`);
     }
     return 2;

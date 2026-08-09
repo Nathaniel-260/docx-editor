@@ -355,6 +355,22 @@ describe('resolveListTextStartPx', () => {
   });
 
   describe('standard hanging indent mode', () => {
+    it('uses a direct numbering tab for a zero-indent list level', () => {
+      const wordLayout: MinimalWordLayout = {
+        marker: {
+          glyphWidthPx: 14.8,
+          markerBoxWidthPx: 18,
+          suffix: 'tab',
+        },
+        textStartPx: 0,
+        tabsPx: [18.9333333333],
+      };
+
+      const result = resolveListTextStartPx(wordLayout, 0, 0, 0, mockMeasureMarkerText);
+
+      expect(result).toBeCloseTo(18.9333333333, 8);
+    });
+
     it('ignores paragraph tab stops when textStartPx is present', () => {
       // Regression: tabsPx must NOT override textStartPx in standard hanging-indent mode.
       // Paragraph tabs are for inline w:tab characters, not list-prefix positioning.
@@ -394,6 +410,23 @@ describe('resolveListTextStartPx', () => {
       const result = resolveListTextStartPx(wordLayout, 24, 0, 18, mockMeasureMarkerText);
 
       expect(result).toBe(24);
+    });
+
+    it('advances a right-justified marker to the hanging text start, not the fixed gutter (SD-3778)', () => {
+      // Regression (SD-3778): a right-justified numbering marker (e.g. a roman
+      // "i." level) separates from its text with a tab that lands at the same
+      // stop the painter targets via computeTabWidth — the hanging text start,
+      // not the fixed LIST_MARKER_GAP gutter. Using the gutter left the caret /
+      // text-start ~one glyph left of the painted text, so clicking between two
+      // characters placed the caret over the wrong character.
+      const wordLayout: MinimalWordLayout = {
+        marker: { glyphWidthPx: 10, justification: 'right', gutterWidthPx: LIST_MARKER_GAP, suffix: 'tab' },
+      };
+      // indentLeft 144, firstLine 0, hanging 12 -> anchor = markerContentEnd = 132.
+      // computeTabWidth (right, no positive first-line indent) -> hanging (12),
+      // so text starts at 144 — NOT 132 + gutter(8) = 140.
+      const result = resolveListTextStartPx(wordLayout, 144, 0, 12, mockMeasureMarkerText);
+      expect(result).toBe(144);
     });
 
     it('uses the explicit text start when a wide marker box still leaves clear space after the glyph', () => {

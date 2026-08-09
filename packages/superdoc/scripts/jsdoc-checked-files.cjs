@@ -29,12 +29,8 @@ module.exports = {
    * one file at a time, not in a mass migration.
    */
   CHECKED_FILES: [
-    'packages/superdoc/src/helpers/schema-introspection.js',
     'packages/superdoc/src/composables/use-find-replace.js',
     'packages/superdoc/src/composables/use-password-prompt.js',
-    'packages/super-editor/src/editors/v1/extensions/track-changes/trackChangesHelpers/addMarkStep.js',
-    'packages/super-editor/src/editors/v1/extensions/track-changes/trackChangesHelpers/markDeletion.js',
-    'packages/super-editor/src/editors/v1/extensions/track-changes/trackChangesHelpers/markInsertion.js',
   ],
 
   /**

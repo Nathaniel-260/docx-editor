@@ -284,6 +284,7 @@ function makeTablesAdapter(): TablesAdapter {
     setLayout: mutation,
     insertRow: mutation,
     deleteRow: mutation,
+    moveRow: mutation,
     setRowHeight: mutation,
     distributeRows: mutation,
     setRowOptions: mutation,
@@ -776,6 +777,34 @@ describe('createDocumentApi', () => {
     );
   });
 
+  it('delegates format.strikethrough with an explicit value: false to remove strike', () => {
+    const selectionAdpt = makeSelectionMutationAdapter();
+    const api = createDocumentApi({
+      find: makeFindAdapter(FIND_RESULT),
+      get: makeGetAdapter(),
+      getNode: makeGetNodeAdapter(PARAGRAPH_NODE_RESULT),
+      getText: makeGetTextAdapter(),
+      info: makeInfoAdapter(),
+      comments: makeCommentsAdapter(),
+      write: makeWriteAdapter(),
+      selectionMutation: selectionAdpt,
+      trackChanges: makeTrackChangesAdapter(),
+      create: makeCreateAdapter(),
+      lists: makeListsAdapter(),
+    });
+
+    const target = {
+      kind: 'selection' as const,
+      start: { kind: 'text' as const, blockId: 'p1', offset: 0 },
+      end: { kind: 'text' as const, blockId: 'p1', offset: 2 },
+    };
+    api.format.strikethrough({ target, value: false }, { changeMode: 'tracked' });
+    expect(selectionAdpt.execute).toHaveBeenCalledWith(
+      { kind: 'format', target, ref: undefined, inline: { strike: false } },
+      { changeMode: 'tracked', dryRun: false },
+    );
+  });
+
   it('delegates format.fontFamily to selectionMutation.execute with inline.fontFamily', () => {
     const selectionAdpt = makeSelectionMutationAdapter();
     const api = createDocumentApi({
@@ -1056,7 +1085,7 @@ describe('createDocumentApi', () => {
       expectError(
         () => api.trackChanges.decide({ decision: 'accept', target: 'tc-1' } as any),
         'INVALID_TARGET',
-        "{ kind: 'id', id } / { kind: 'range', range } / { kind: 'all' }",
+        "{ kind: 'id', id } / { kind: 'ids', ids } / { kind: 'range', range } / { kind: 'all' }",
       );
     });
 
@@ -1065,7 +1094,7 @@ describe('createDocumentApi', () => {
       expectError(
         () => api.trackChanges.decide({ decision: 'accept', target: null } as any),
         'INVALID_TARGET',
-        "{ kind: 'id', id } / { kind: 'range', range } / { kind: 'all' }",
+        "{ kind: 'id', id } / { kind: 'ids', ids } / { kind: 'range', range } / { kind: 'all' }",
       );
     });
 
@@ -1450,6 +1479,61 @@ describe('createDocumentApi', () => {
 
     expect(directResult).toEqual(getResult);
     expect(capAdpt.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('masks adapter-gated namespace capabilities when the adapter is absent', () => {
+    const capAdpt = makeCapabilitiesAdapter({
+      operations: {
+        'clipboard.parse': { available: true, tracked: false, dryRun: false },
+        'clipboard.insert': { available: true, tracked: true, dryRun: true },
+        'clipboard.serializeSelection': { available: true, tracked: false, dryRun: false },
+      } as DocumentApiCapabilities['operations'],
+    });
+    const api = createDocumentApi({
+      find: makeFindAdapter(FIND_RESULT),
+      get: makeGetAdapter(),
+      getNode: makeGetNodeAdapter(PARAGRAPH_NODE_RESULT),
+      getText: makeGetTextAdapter(),
+      info: makeInfoAdapter(),
+      capabilities: capAdpt,
+      comments: makeCommentsAdapter(),
+      write: makeWriteAdapter(),
+      selectionMutation: makeSelectionMutationAdapter(),
+      trackChanges: makeTrackChangesAdapter(),
+      create: makeCreateAdapter(),
+      lists: makeListsAdapter(),
+    });
+
+    const capabilities = api.capabilities();
+
+    expect(capabilities.operations['clipboard.parse']).toMatchObject({
+      available: false,
+      tracked: false,
+      dryRun: false,
+      reasons: ['NAMESPACE_UNAVAILABLE'],
+    });
+    expect(capabilities.operations['clipboard.insert']).toMatchObject({
+      available: false,
+      tracked: false,
+      dryRun: false,
+      reasons: ['NAMESPACE_UNAVAILABLE'],
+    });
+    expect(capabilities.operations['clipboard.serializeSelection']).toMatchObject({
+      available: false,
+      tracked: false,
+      dryRun: false,
+      reasons: ['NAMESPACE_UNAVAILABLE'],
+    });
+
+    let capturedCode: string | undefined;
+    try {
+      api.clipboard.insert({
+        payload: { source: 'api', items: [{ type: 'text/plain', kind: 'string', data: 'hello' }] },
+      });
+    } catch (error) {
+      capturedCode = (error as { code?: string }).code;
+    }
+    expect(capturedCode).toBe('CAPABILITY_UNAVAILABLE');
   });
 
   describe('insert target validation', () => {
@@ -3101,6 +3185,10 @@ describe('createDocumentApi', () => {
       // setStyle — another representative mutation
       const styleResult = api.tables.setStyle({ target, styleId: 'TableGrid' });
       expect(styleResult.success).toBe(true);
+
+      const clearViaSetStyleResult = api.tables.setStyle({ target });
+      expect(clearViaSetStyleResult.success).toBe(true);
+      expect(tablesAdpt.setStyle).toHaveBeenCalledWith({ target }, { changeMode: 'direct', dryRun: false });
     });
 
     it('delegates table reads directly without options normalization', () => {
@@ -3259,6 +3347,7 @@ describe('createDocumentApi', () => {
       const target = { kind: 'block' as const, nodeType: 'tableRow' as const, nodeId: 'r1' };
       expect(() => api.tables.insertRow({ target, position: 'after' })).not.toThrow();
       expect(() => api.tables.deleteRow({ target })).not.toThrow();
+      expect(() => api.tables.moveRow({ target, destination: { kind: 'last' } })).not.toThrow();
     });
 
     it('accepts table-scoped locator for row-locator operations', () => {
@@ -3266,6 +3355,19 @@ describe('createDocumentApi', () => {
       const target = { kind: 'block' as const, nodeType: 'table' as const, nodeId: 't1' };
       expect(() => api.tables.insertRow({ target, rowIndex: 0, position: 'after' })).not.toThrow();
       expect(() => api.tables.deleteRow({ nodeId: 't1', rowIndex: 0 })).not.toThrow();
+      expect(() => api.tables.moveRow({ target, rowIndex: 0, destination: { kind: 'last' } })).not.toThrow();
+    });
+
+    it('returns CAPABILITY_UNAVAILABLE when legacy table adapters omit moveRow', () => {
+      const tables = makeTablesAdapter();
+      delete tables.moveRow;
+      const api = makeApi(tables);
+      const target = { kind: 'block' as const, nodeType: 'tableRow' as const, nodeId: 'r1' };
+
+      expect(api.tables.moveRow({ target, destination: { kind: 'last' } })).toMatchObject({
+        success: false,
+        failure: { code: 'CAPABILITY_UNAVAILABLE' },
+      });
     });
 
     it('rejects table-target row ops without rowIndex at the public API boundary', () => {
@@ -3274,6 +3376,9 @@ describe('createDocumentApi', () => {
 
       expect(() => api.tables.insertRow({ target, position: 'after' } as any)).toThrow(/rowIndex is required/);
       expect(() => api.tables.deleteRow({ target } as any)).toThrow(/rowIndex is required/);
+      expect(() => api.tables.moveRow({ target, destination: { kind: 'last' } } as any)).toThrow(
+        /rowIndex is required/,
+      );
       expect(() => api.tables.setRowHeight({ target, heightPt: 12, rule: 'atLeast' } as any)).toThrow(
         /rowIndex is required/,
       );
@@ -3285,6 +3390,9 @@ describe('createDocumentApi', () => {
 
       expect(() => api.tables.insertRow({ nodeId: 't1', position: 'after' } as any)).toThrow(/rowIndex is required/);
       expect(() => api.tables.deleteRow({ nodeId: 't1' } as any)).toThrow(/rowIndex is required/);
+      expect(() => api.tables.moveRow({ nodeId: 't1', destination: { kind: 'last' } } as any)).toThrow(
+        /rowIndex is required/,
+      );
       expect(() => api.tables.setRowHeight({ nodeId: 't1', heightPt: 12, rule: 'atLeast' } as any)).toThrow(
         /rowIndex is required/,
       );
@@ -3301,6 +3409,9 @@ describe('createDocumentApi', () => {
         /rowIndex must not be provided/,
       );
       expect(() => api.tables.deleteRow({ target, rowIndex: 0 } as any)).toThrow(/rowIndex must not be provided/);
+      expect(() => api.tables.moveRow({ target, rowIndex: 0, destination: { kind: 'last' } } as any)).toThrow(
+        /rowIndex must not be provided/,
+      );
       expect(() => api.tables.setRowHeight({ target, rowIndex: 0, heightPt: 12, rule: 'atLeast' } as any)).toThrow(
         /rowIndex must not be provided/,
       );
@@ -3313,6 +3424,43 @@ describe('createDocumentApi', () => {
       const api = makeApi();
       const target = { kind: 'block' as const, nodeType: 'tableRow' as const, nodeId: 'r1' };
       expect(() => api.tables.setRowHeight({ target, heightPt: 12 })).not.toThrow();
+    });
+
+    it('rejects tables.setCellPadding when all sides are omitted', () => {
+      const api = makeApi();
+      const target = { kind: 'block' as const, nodeType: 'tableCell' as const, nodeId: 'c1' };
+      expect(() => api.tables.setCellPadding({ target } as any)).toThrow(
+        /at least one of topPt, rightPt, bottomPt, or leftPt/,
+      );
+      expect(() => api.invoke({ operationId: 'tables.setCellPadding', input: { target } })).toThrow(
+        /at least one of topPt, rightPt, bottomPt, or leftPt/,
+      );
+      try {
+        api.tables.setCellPadding({ target } as any);
+      } catch (error) {
+        expect((error as { code?: string }).code).toBe('INVALID_ARGUMENT');
+        expect((error as { details?: { fields?: string[] } }).details?.fields).toEqual([
+          'topPt',
+          'rightPt',
+          'bottomPt',
+          'leftPt',
+        ]);
+      }
+    });
+
+    it('rejects tables.setCellPadding null and non-finite side values', () => {
+      const api = makeApi();
+      const target = { kind: 'block' as const, nodeType: 'tableCell' as const, nodeId: 'c1' };
+      expect(() => api.tables.setCellPadding({ target, topPt: null } as any)).toThrow(/topPt must be/);
+      expect(() => api.tables.setCellPadding({ target, rightPt: Number.NaN } as any)).toThrow(/rightPt must be/);
+      expect(() => api.tables.setCellPadding({ target, bottomPt: -1 } as any)).toThrow(/bottomPt must be/);
+    });
+
+    it('accepts tables.setCellPadding partial side updates', () => {
+      const api = makeApi();
+      const target = { kind: 'block' as const, nodeType: 'tableCell' as const, nodeId: 'c1' };
+      expect(() => api.tables.setCellPadding({ target, leftPt: 12 })).not.toThrow();
+      expect(() => api.tables.setCellPadding({ nodeId: 'c1', topPt: 0 })).not.toThrow();
     });
 
     // -- column-locator operations (target/nodeId) --

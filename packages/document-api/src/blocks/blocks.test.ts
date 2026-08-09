@@ -1,5 +1,13 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { executeBlocksDelete, executeBlocksDeleteRange, executeBlocksList, type BlocksAdapter } from './blocks.js';
+import {
+  executeBlocksDelete,
+  executeBlocksDeleteRange,
+  executeBlocksList,
+  executeBlocksMerge,
+  executeBlocksMove,
+  executeBlocksSplit,
+  type BlocksAdapter,
+} from './blocks.js';
 import type {
   BlocksDeleteInput,
   BlocksDeleteResult,
@@ -194,6 +202,27 @@ describe('executeBlocksDelete', () => {
         makeInput('paragraph', 'p1'),
         expect.objectContaining({ changeMode: 'direct' }),
       );
+    });
+  });
+});
+
+describe('structural block capability fallbacks', () => {
+  it('returns CAPABILITY_UNAVAILABLE when legacy adapters omit split/merge/move hooks', () => {
+    const adapter = makeAdapter();
+    const target = { kind: 'block' as const, nodeType: 'paragraph' as const, nodeId: 'p1' };
+    const destination = { kind: 'block' as const, nodeType: 'paragraph' as const, nodeId: 'p2' };
+
+    expect(executeBlocksSplit(adapter, { target, offset: 1 })).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+    expect(executeBlocksMerge(adapter, { first: target, second: destination })).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+    expect(executeBlocksMove(adapter, { source: target, destination, placement: 'after' })).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
     });
   });
 });

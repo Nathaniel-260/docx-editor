@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { transactionTouchesStructuralChange } from './transaction-touches-structural-change.js';
 
 // Minimal PM-like stubs. We only exercise the docChanged + mapping + nodesBetween

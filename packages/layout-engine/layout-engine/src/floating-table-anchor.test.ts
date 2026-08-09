@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { FlowBlock, Measure, TableBlock, TableMeasure } from '@superdoc/contracts';
 import { isAnchoredTableFullWidth, resolveFloatingTableAnchorResolution } from './floating-table-anchor.js';
 
@@ -49,6 +49,23 @@ describe('floating-table-anchor', () => {
       } as TableMeasure;
 
       expect(isAnchoredTableFullWidth(block, measure, 672)).toBe(true);
+    });
+
+    it('ignores None-wrap distances when checking whether an anchored table is full width', () => {
+      const block = makeFloatingTable('overlay', 0, {
+        type: 'None',
+        distLeft: 12,
+        distRight: 12,
+      });
+      const measure = {
+        kind: 'table',
+        rows: [],
+        columnWidths: [30, 618],
+        totalWidth: 647.8,
+        totalHeight: 612,
+      } as TableMeasure;
+
+      expect(isAnchoredTableFullWidth(block, measure, 672)).toBe(false);
     });
 
     it('does not treat narrow form fields as full width', () => {
@@ -159,6 +176,30 @@ describe('floating-table-anchor', () => {
       expect(resolution).toEqual({ paragraphIndex: 3, offsetV: 0.27, lineScopedOnAnchor: true });
     });
 
+    it('uses paragraph totalHeight when the first measured line height is zero', () => {
+      const blocks: FlowBlock[] = [
+        makeFloatingTable('field', 15),
+        { kind: 'paragraph', id: 'label', runs: [{ text: 'Label' }] },
+      ];
+      const paragraphMeasure = makeParaMeasure(20);
+      paragraphMeasure.lines[0].lineHeight = 0;
+      const measures: Measure[] = [
+        { kind: 'table', rows: [], columnWidths: [100], totalWidth: 100, totalHeight: 30 } as TableMeasure,
+        paragraphMeasure,
+      ];
+
+      const resolution = resolveFloatingTableAnchorResolution(
+        blocks,
+        measures,
+        blocks.length,
+        0,
+        blocks[0] as TableBlock,
+        new Map(),
+      );
+
+      expect(resolution?.lineScopedOnAnchor).toBe(true);
+    });
+
     it('does not mark lineScopedOnAnchor for page-relative anchors', () => {
       const blocks: FlowBlock[] = [
         { kind: 'paragraph', id: 'label', runs: [{ text: 'Label' }] },
@@ -184,7 +225,7 @@ describe('floating-table-anchor', () => {
       expect(resolution?.lineScopedOnAnchor).toBe(false);
     });
 
-    it('walks forward by measured paragraph heights for large tblpY', () => {
+    it('anchors to the next regular paragraph and preserves a large tblpY', () => {
       const blocks: FlowBlock[] = [
         { kind: 'paragraph', id: 'info', runs: [{ text: 'Long body copy.' }] },
         makeFloatingTable('field-1', 3.8),
@@ -213,12 +254,12 @@ describe('floating-table-anchor', () => {
         new Map(),
       );
 
-      expect(resolution?.paragraphIndex).toBe(6);
-      expect(resolution?.offsetV).toBe(3);
+      expect(resolution?.paragraphIndex).toBe(5);
+      expect(resolution?.offsetV).toBe(56);
       expect(resolution?.lineScopedOnAnchor).toBe(false);
     });
 
-    it('targets the first option row after a multi-line heading (Form F3 hearing loop field)', () => {
+    it('anchors the Form F3 hearing-loop field to the following heading with the raw offset', () => {
       const blocks: FlowBlock[] = [
         { kind: 'paragraph', id: 'info', runs: [{ text: 'Long body copy.' }] },
         makeFloatingTable('field-1', 3.8),
@@ -257,9 +298,224 @@ describe('floating-table-anchor', () => {
         new Map(),
       );
 
-      expect(resolution?.paragraphIndex).toBe(6);
-      expect(resolution?.offsetV).toBeCloseTo(2.43, 2);
+      expect(resolution?.paragraphIndex).toBe(5);
+      expect(resolution?.offsetV).toBe(56.27);
       expect(resolution?.lineScopedOnAnchor).toBe(false);
+    });
+
+    it('uses an empty following paragraph as an anchor', () => {
+      const blocks: FlowBlock[] = [makeFloatingTable('field', 8), { kind: 'paragraph', id: 'empty', runs: [] }];
+      const measures: Measure[] = [
+        { kind: 'table', rows: [], columnWidths: [100], totalWidth: 100, totalHeight: 14 } as TableMeasure,
+        makeParaMeasure(17),
+      ];
+
+      const resolution = resolveFloatingTableAnchorResolution(
+        blocks,
+        measures,
+        blocks.length,
+        0,
+        blocks[0] as TableBlock,
+        new Map(),
+      );
+
+      expect(resolution).toEqual({ paragraphIndex: 1, offsetV: 8, lineScopedOnAnchor: false });
+    });
+
+    it('uses an overlay-framed paragraph as the following authored anchor', () => {
+      const blocks: FlowBlock[] = [
+        makeFloatingTable('field', 8),
+        { kind: 'paragraph', id: 'frame', runs: [{ text: 'Positioned frame' }], attrs: { frame: { wrap: 'none' } } },
+        { kind: 'paragraph', id: 'regular', runs: [{ text: 'Regular paragraph' }] },
+      ];
+      const measures: Measure[] = [
+        { kind: 'table', rows: [], columnWidths: [100], totalWidth: 100, totalHeight: 14 } as TableMeasure,
+        makeParaMeasure(17),
+        makeParaMeasure(17),
+      ];
+
+      const resolution = resolveFloatingTableAnchorResolution(
+        blocks,
+        measures,
+        blocks.length,
+        0,
+        blocks[0] as TableBlock,
+        new Map(),
+      );
+
+      expect(resolution?.paragraphIndex).toBe(1);
+      expect(resolution?.offsetV).toBe(8);
+    });
+
+    it('skips an invisible paragraph that only carries a forced section break', () => {
+      const blocks: FlowBlock[] = [
+        makeFloatingTable('field', 8),
+        { kind: 'paragraph', id: 'marker', runs: [], attrs: { sectPrMarker: true } },
+        { kind: 'sectionBreak', id: 'break', type: 'nextPage' },
+        { kind: 'paragraph', id: 'regular', runs: [{ text: 'Regular paragraph' }] },
+      ];
+      const measures: Measure[] = [
+        { kind: 'table', rows: [], columnWidths: [100], totalWidth: 100, totalHeight: 14 } as TableMeasure,
+        makeParaMeasure(0),
+        { kind: 'sectionBreak' },
+        makeParaMeasure(17),
+      ];
+
+      const resolution = resolveFloatingTableAnchorResolution(
+        blocks,
+        measures,
+        blocks.length,
+        0,
+        blocks[0] as TableBlock,
+        new Map(),
+      );
+
+      expect(resolution?.paragraphIndex).toBe(3);
+    });
+
+    it('skips an empty paragraph omitted between a page break and section break', () => {
+      const blocks: FlowBlock[] = [
+        makeFloatingTable('field', 8),
+        { kind: 'pageBreak', id: 'page-break' },
+        { kind: 'paragraph', id: 'boundary-empty', runs: [] },
+        { kind: 'sectionBreak', id: 'section-break', type: 'continuous' },
+        { kind: 'paragraph', id: 'regular', runs: [{ text: 'Regular paragraph' }] },
+      ];
+      const measures: Measure[] = [
+        { kind: 'table', rows: [], columnWidths: [100], totalWidth: 100, totalHeight: 14 } as TableMeasure,
+        { kind: 'pageBreak' },
+        makeParaMeasure(17),
+        { kind: 'sectionBreak' },
+        makeParaMeasure(17),
+      ];
+
+      const resolution = resolveFloatingTableAnchorResolution(
+        blocks,
+        measures,
+        blocks.length,
+        0,
+        blocks[0] as TableBlock,
+        new Map(),
+      );
+
+      expect(resolution?.paragraphIndex).toBe(4);
+    });
+
+    it('allows a reviewable section marker to remain the anchor paragraph', () => {
+      const blocks: FlowBlock[] = [
+        makeFloatingTable('field', 8),
+        { kind: 'pageBreak', id: 'page-break' },
+        {
+          kind: 'paragraph',
+          id: 'reviewable-marker',
+          runs: [],
+          attrs: {
+            sectPrMarker: true,
+            paragraphMarkTrackedChange: {
+              id: 'change',
+              kind: 'insert',
+              type: 'structural',
+              targetKind: 'section-break',
+            },
+          },
+        },
+        { kind: 'sectionBreak', id: 'section-break', type: 'nextPage' },
+      ];
+      const measures: Measure[] = [
+        { kind: 'table', rows: [], columnWidths: [100], totalWidth: 100, totalHeight: 14 } as TableMeasure,
+        { kind: 'pageBreak' },
+        makeParaMeasure(17),
+        { kind: 'sectionBreak' },
+      ];
+
+      const resolution = resolveFloatingTableAnchorResolution(
+        blocks,
+        measures,
+        blocks.length,
+        0,
+        blocks[0] as TableBlock,
+        new Map(),
+      );
+
+      expect(resolution?.paragraphIndex).toBe(2);
+    });
+
+    it('preserves an explicit framed paragraph anchor', () => {
+      const blocks: FlowBlock[] = [
+        makeFloatingTable('field', 8),
+        { kind: 'paragraph', id: 'near-table', runs: [{ text: 'Near table' }] },
+        { kind: 'paragraph', id: 'explicit-frame', runs: [], attrs: { frame: { wrap: 'around' } } },
+        { kind: 'paragraph', id: 'after-explicit', runs: [{ text: 'After explicit anchor' }] },
+      ];
+      (blocks[0] as TableBlock).attrs = { anchorParagraphId: 'explicit-frame' };
+      const measures: Measure[] = [
+        { kind: 'table', rows: [], columnWidths: [100], totalWidth: 100, totalHeight: 14 } as TableMeasure,
+        makeParaMeasure(17),
+        makeParaMeasure(17),
+        makeParaMeasure(17),
+      ];
+
+      const resolution = resolveFloatingTableAnchorResolution(
+        blocks,
+        measures,
+        blocks.length,
+        0,
+        blocks[0] as TableBlock,
+        new Map([['explicit-frame', 2]]),
+      );
+
+      expect(resolution?.paragraphIndex).toBe(2);
+    });
+
+    it('preserves page-relative placement context with an explicit framed anchor', () => {
+      const blocks: FlowBlock[] = [
+        makeFloatingTable('field', 8),
+        { kind: 'paragraph', id: 'near-table', runs: [{ text: 'Near table' }] },
+        { kind: 'paragraph', id: 'explicit-frame', runs: [], attrs: { frame: { wrap: 'around' } } },
+        { kind: 'paragraph', id: 'after-explicit', runs: [{ text: 'After explicit anchor' }] },
+      ];
+      const table = blocks[0] as TableBlock;
+      table.attrs = { anchorParagraphId: 'explicit-frame' };
+      table.anchor = { ...table.anchor!, vRelativeFrom: 'page' };
+      const measures: Measure[] = [
+        { kind: 'table', rows: [], columnWidths: [100], totalWidth: 100, totalHeight: 14 } as TableMeasure,
+        makeParaMeasure(17),
+        makeParaMeasure(17),
+        makeParaMeasure(17),
+      ];
+
+      const resolution = resolveFloatingTableAnchorResolution(
+        blocks,
+        measures,
+        blocks.length,
+        0,
+        table,
+        new Map([['explicit-frame', 2]]),
+      );
+
+      expect(resolution).toEqual({ paragraphIndex: 2, offsetV: 8, lineScopedOnAnchor: false });
+    });
+
+    it('preserves a negative tblpY', () => {
+      const blocks: FlowBlock[] = [
+        makeFloatingTable('field', -12),
+        { kind: 'paragraph', id: 'regular', runs: [{ text: 'Regular paragraph' }] },
+      ];
+      const measures: Measure[] = [
+        { kind: 'table', rows: [], columnWidths: [100], totalWidth: 100, totalHeight: 14 } as TableMeasure,
+        makeParaMeasure(17),
+      ];
+
+      const resolution = resolveFloatingTableAnchorResolution(
+        blocks,
+        measures,
+        blocks.length,
+        0,
+        blocks[0] as TableBlock,
+        new Map(),
+      );
+
+      expect(resolution).toEqual({ paragraphIndex: 1, offsetV: -12, lineScopedOnAnchor: false });
     });
   });
 });

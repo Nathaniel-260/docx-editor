@@ -1,6 +1,8 @@
 import type {
   CellBorders,
+  BorderSpec,
   DrawingBlock,
+  DrawingMeasure,
   Line,
   ParagraphBlock,
   PartialRowInfo,
@@ -9,7 +11,6 @@ import type {
   TableBorders,
   TableMeasure,
 } from '@superdoc/contracts';
-import { getBorderBandProfile, isNativeCssDoubleStyle } from '@superdoc/contracts';
 import type { ResolvePhysicalFamily } from '@superdoc/font-system';
 import { renderTableCell } from './renderTableCell.js';
 import {
@@ -21,10 +22,14 @@ import {
   isPresentBorder,
   isExplicitNoneBorder,
   swapCellBordersLR,
-  bevelToneSpec,
+  createThinDoubleBorderOverlay,
 } from './border-utils.js';
 import { getTableCellGridBounds, type TableCellGridPosition } from './grid-geometry.js';
-import { resolveTrackedChangesConfig, applyRowTrackedChangeToCell } from '../runs/tracked-changes.js';
+import {
+  resolveTrackedChangesConfig,
+  applyRowTrackedChangeToCell,
+  applyCellTrackedChangeToCell,
+} from '../runs/tracked-changes.js';
 import type { TrackedChangesRenderConfig } from '../runs/types.js';
 import type { FragmentRenderContext } from '../renderer.js';
 import type { SdtAncestorOptions } from '../sdt/container.js';
@@ -47,12 +52,18 @@ type CellBorderResolutionArgs = {
   /** Borders of the cell directly to the right (same row, next grid column), for asymmetric-edge ownership. */
   rightCellBorders?: CellBorders;
   /**
-   * True when the table authored `w:tblCellSpacing` (even 0), which switches Word to the
-   * separate-borders model: every cell paints all four edges from its own/table borders and
-   * adjacent edges STACK (300dpi probes render single sz=6 boundaries 2x wide, SD-3028).
-   * Single-owner suppression does not apply.
+   * True when the next row's real cells do not reach this cell's right edge (e.g. the next
+   * row has a `w:gridAfter` spacer while this cell spans into it). The cell below then can't
+   * own the shared bottom edge across the uncovered span, so this cell must draw its own
+   * bottom border or the line stops short at the bottom-right corner. (SD-3345)
    */
-  separateBorders?: boolean;
+  nextRowLeavesRightGap?: boolean;
+  /**
+   * True when the cell ABOVE spans past this cell's row right edge (this row has a gridAfter
+   * relative to it). The spanning cell owns the shared bottom edge and draws it, so this cell
+   * must suppress its top border to avoid a doubled line. (SD-3345)
+   */
+  deferTopToAboveCell?: boolean;
   /**
    * True when the row BELOW has a tblPrEx border override that suppresses its shared horizontal
    * edge (insideH none/nil). The lower cell owns that edge but won't draw it, so a present
@@ -64,6 +75,22 @@ type CellBorderResolutionArgs = {
 
 const hasAnyResolvedBorder = (borders: CellBorders): boolean =>
   Boolean(borders.top || borders.right || borders.bottom || borders.left);
+
+const borderSpecsMatch = (left?: BorderSpec, right?: BorderSpec): boolean =>
+  left?.style === right?.style && left?.width === right?.width && left?.color === right?.color;
+
+/**
+ * A four-sided double border is a single visual rectangle in Word. Keep that
+ * rectangle on one DOM cell so its two rasterized rings can join at all four
+ * corners instead of being clipped across neighboring border boxes.
+ */
+const uniformDoubleRing = (borders?: CellBorders): BorderSpec | undefined => {
+  const first = borders?.top;
+  if (!first || first.style !== 'double') return undefined;
+  return [borders?.right, borders?.bottom, borders?.left].every((border) => borderSpecsMatch(first, border))
+    ? first
+    : undefined;
+};
 
 /**
  * Resolves the borders that a rendered cell fragment should paint.
@@ -83,19 +110,22 @@ const resolveRenderedCellBorders = ({
   aboveCellBorders,
   leftCellBorders,
   rightCellBorders,
-  separateBorders,
+  nextRowLeavesRightGap,
+  deferTopToAboveCell,
   nextRowSuppressesSharedTop,
 }: CellBorderResolutionArgs): CellBorders | undefined => {
   const hasExplicitBorders = hasExplicitCellBorders(cellBorders);
 
   const cellBounds = getTableCellGridBounds(cellPosition);
   const touchesTopBoundary = cellBounds.touchesTopEdge || continuesFromPrev;
-  // Interior bottoms are always owned by the row below: each cell there paints its own top,
-  // and boundary segments the row below leaves uncovered (gridBefore/gridAfter slivers) are
-  // closed by fragment-level gap strips (see row-boundary-gaps.ts), never by this cell
-  // painting its full-width bottom — this painter has no border-collapse, so two cells
-  // drawing one edge stack into a doubled line. (SD-3345, SD-3028)
-  const touchesBottomBoundary = cellBounds.touchesBottomEdge || continuesOnNext;
+  // The bottom is a real boundary either when this is the last row / a fragment break, OR
+  // when the next row's real cells don't reach this cell's right edge (a gridAfter spacer
+  // under a spanning cell): the row below can't own the shared edge across the uncovered
+  // span, so this (spanning) cell owns and draws its full-width bottom. The row below then
+  // suppresses its top there (see `deferTopToAboveCell`) so the edge is drawn exactly once —
+  // this painter has no border-collapse, so two cells drawing it would stack into a doubled
+  // line, not overlap. (SD-3345)
+  const touchesBottomBoundary = cellBounds.touchesBottomEdge || continuesOnNext || nextRowLeavesRightGap === true;
 
   // A shared interior edge in the collapsed model is owned by the lower/right cell, so a
   // border defined ONLY by the neighbor above/left must still be painted here — even when
@@ -103,7 +133,7 @@ const resolveRenderedCellBorders = ({
   // suppressed its own edge under single-owner). (SD-2969: a bordered clause-header row
   // above a fully borderless spacer row.)
   const hasInteriorNeighborBorder =
-    (!touchesTopBoundary && isPresentBorder(aboveCellBorders?.bottom)) ||
+    (!touchesTopBoundary && !deferTopToAboveCell && isPresentBorder(aboveCellBorders?.bottom)) ||
     (!cellBounds.touchesLeftEdge && isPresentBorder(leftCellBorders?.right));
 
   // Collapsed model (zero cell spacing): single-owner positioning, where the value at a
@@ -114,35 +144,25 @@ const resolveRenderedCellBorders = ({
   // (undefined, x) === x). Interior right/bottom are owned by the neighbor to the right/below;
   // outer edges use the cell border (which beats the table border), falling back to the table
   // border. Works whether or not table-level borders exist. (SD-3345, SD-2969)
-  // Authored `w:tblCellSpacing` (even 0) = Word's separate-borders model: each cell paints
-  // all four edges (own border, else the table outer/inside border for its position) and
-  // adjacent cell edges stack into a double-width line exactly like Word renders them.
-  // Spacing > 0 keeps the legacy branches below (visible gaps, probe-verified earlier).
-  if (separateBorders && cellSpacingPx === 0) {
-    const cb = (cellBorders ?? {}) as CellBorders;
-    return {
-      top: resolveTableBorderValue(cb.top, touchesTopBoundary ? tableBorders?.top : tableBorders?.insideH),
-      right: resolveTableBorderValue(
-        cb.right,
-        cellBounds.touchesRightEdge ? tableBorders?.right : tableBorders?.insideV,
-      ),
-      bottom: resolveTableBorderValue(cb.bottom, touchesBottomBoundary ? tableBorders?.bottom : tableBorders?.insideH),
-      left: resolveTableBorderValue(cb.left, cellBounds.touchesLeftEdge ? tableBorders?.left : tableBorders?.insideV),
-    };
-  }
-
   if (cellSpacingPx === 0 && (hasExplicitBorders || hasInteriorNeighborBorder)) {
     const cb = (cellBorders ?? {}) as CellBorders;
+    const cellDoubleRing = uniformDoubleRing(cb);
+    const aboveDoubleRing = uniformDoubleRing(aboveCellBorders);
+    const leftDoubleRing = uniformDoubleRing(leftCellBorders);
     return {
       top: touchesTopBoundary
         ? resolveTableBorderValue(cb.top, tableBorders?.top)
-        : (resolveBorderConflict(cb.top, aboveCellBorders?.bottom) ??
-          // Both sides not present: an explicit nil on BOTH adjacent cells suppresses the
-          // shared horizontal edge (§17.4.66); only inherit the table insideH when at least
-          // one side is merely unset. (SD-3028)
-          (isExplicitNoneBorder(cb.top) && isExplicitNoneBorder(aboveCellBorders?.bottom)
+        : deferTopToAboveCell
+          ? undefined
+          : aboveDoubleRing && borderSpecsMatch(cb.top, aboveCellBorders?.bottom)
             ? undefined
-            : borderValueToSpec(tableBorders?.insideH))),
+            : (resolveBorderConflict(cb.top, aboveCellBorders?.bottom) ??
+              // Both sides not present: an explicit nil on BOTH adjacent cells suppresses the
+              // shared horizontal edge (§17.4.66); only inherit the table insideH when at least
+              // one side is merely unset. (SD-3028)
+              (isExplicitNoneBorder(cb.top) && isExplicitNoneBorder(aboveCellBorders?.bottom)
+                ? undefined
+                : borderValueToSpec(tableBorders?.insideH))),
       // Vertical interior edges: when BOTH adjacent cells declare a border, the right cell
       // owns it (draws its left as the §17.4.66 winner) so the edge is painted once (no
       // doubling). When only ONE side declares a border (asymmetric, no doubling risk) that
@@ -150,22 +170,30 @@ const resolveRenderedCellBorders = ({
       // the cell after the left/right swap instead of moving onto a borderless neighbor. (SD-3345)
       left: cellBounds.touchesLeftEdge
         ? resolveTableBorderValue(cb.left, tableBorders?.left)
-        : isPresentBorder(cb.left)
-          ? (resolveBorderConflict(cb.left, leftCellBorders?.right) ?? borderValueToSpec(tableBorders?.insideV))
-          : isPresentBorder(leftCellBorders?.right)
-            ? undefined
-            : // Both sides not present: an explicit nil on BOTH adjacent cells suppresses the
-              // divider (§17.4.66); only fall back to the table insideV when at least one side
-              // is merely unset (and would inherit it). (SD-3028)
-              isExplicitNoneBorder(cb.left) && isExplicitNoneBorder(leftCellBorders?.right)
+        : leftDoubleRing && borderSpecsMatch(cb.left, leftCellBorders?.right)
+          ? undefined
+          : isPresentBorder(cb.left)
+            ? (resolveBorderConflict(cb.left, leftCellBorders?.right) ?? borderValueToSpec(tableBorders?.insideV))
+            : isPresentBorder(leftCellBorders?.right)
               ? undefined
-              : borderValueToSpec(tableBorders?.insideV),
+              : // Both sides not present: an explicit nil on BOTH adjacent cells suppresses the
+                // divider (§17.4.66); only fall back to the table insideV when at least one side
+                // is merely unset (and would inherit it). (SD-3028)
+                isExplicitNoneBorder(cb.left) && isExplicitNoneBorder(leftCellBorders?.right)
+                ? undefined
+                : borderValueToSpec(tableBorders?.insideV),
       right: cellBounds.touchesRightEdge
         ? resolveTableBorderValue(cb.right, tableBorders?.right)
-        : isPresentBorder(cb.right) && !isPresentBorder(rightCellBorders?.left)
+        : cellDoubleRing
           ? cb.right
+          : isPresentBorder(cb.right) && !isPresentBorder(rightCellBorders?.left)
+            ? cb.right
+            : undefined,
+      bottom: touchesBottomBoundary
+        ? resolveTableBorderValue(cb.bottom, tableBorders?.bottom)
+        : cellDoubleRing
+          ? cb.bottom
           : undefined,
-      bottom: touchesBottomBoundary ? resolveTableBorderValue(cb.bottom, tableBorders?.bottom) : undefined,
     };
   }
 
@@ -251,6 +279,8 @@ type TableRowRenderDependencies = {
   /** Next (below) row data, to detect a row-level border override that suppresses the shared
    * horizontal edge so the current row closes the grid itself (§17.4.61/§17.4.66). */
   nextRow?: TableRow;
+  /** Next (below) row measure, to detect a gridAfter gap under a spanning cell (SD-3345). */
+  nextRowMeasure?: TableRowMeasure;
   /**
    * Rightmost occupied grid column (exclusive) for THIS row, counting cells that span into it
    * via w:vMerge (rowspan) from an earlier row. Falls back to this row's own cells when absent.
@@ -258,8 +288,9 @@ type TableRowRenderDependencies = {
    * column. (SD-1797)
    */
   rowOccupiedRightCol?: number;
-  /** Authored `w:tblCellSpacing` present (even 0): Word separate-borders model (SD-3028). */
-  separateBorders?: boolean;
+  /** Same as {@link rowOccupiedRightCol} for the NEXT row, so a rowspan continuation below is
+   * not mistaken for a gridAfter gap (which would double the shared bottom edge). (SD-1797) */
+  nextRowOccupiedRightCol?: number;
   /** Total number of rows in the table (for border resolution) */
   totalRows: number;
   /** Table-level borders (for resolving cell borders) */
@@ -289,7 +320,7 @@ type TableRowRenderDependencies = {
     options?: { inTableParagraph?: boolean; wrapperEl?: HTMLElement },
   ) => void;
   /** Function to render drawing content (images, shapes, shape groups) */
-  renderDrawingContent?: (block: DrawingBlock) => HTMLElement;
+  renderDrawingContent?: (block: DrawingBlock, interactionHost: HTMLElement, measure: DrawingMeasure) => HTMLElement;
   /** Function to apply SDT metadata as data attributes */
   applySdtDataset: (el: HTMLElement | null, metadata?: SdtMetadata | null) => void;
   /** Ancestor SDT container key for suppressing duplicate container styling in cells */
@@ -370,159 +401,6 @@ type TableRowRenderDependencies = {
  * // Appends all cell elements to container
  * ```
  */
-/**
- * Paints a cell's compound borders (double, triple, thinThick*) the way Word does:
- * as a single-rule INNER RECTANGLE per cell, connected with square L-joins at the
- * corners (verified against 300dpi Word renders). A band's rules sit at fixed
- * positions measured from Word (see contracts getBorderBandProfile): the inner-face
- * rule belongs to this cell's rectangle, the outer-face rule belongs to the table
- * outline (outer edges) or to the neighboring cell's rectangle (interior edges),
- * and a 3-rule band's middle rule is a centered strip per owned edge (strips span
- * the full edge so they join squarely at corners, forming Word's middle rectangle).
- * CSS compound borders cannot do this: they miter diagonally and their band hugs
- * the owning cell, so junctions render as crossings instead of closed boxes.
- *
- * The cell keeps its CSS border with a TRANSPARENT color so border-box layout
- * (content inset, band reservation) is unchanged. For each compound side, the
- * rectangle's rule sits at the inner face of that side's band: inset (band - rule)
- * on sides whose band lives in this cell (top/left always, bottom/right at table
- * boundaries), and the OUTER-face rule extended past the box on interior
- * bottom/right sides whose band lives in the neighboring cell. The table outline
- * rules are painted by renderTableFragment. (SD-3308)
- */
-const appendCompoundBorderRects = (
-  doc: Document,
-  container: HTMLElement,
-  cellElement: HTMLElement,
-  borders: CellBorders | undefined,
-  rect: { x: number; y: number; width: number; height: number },
-  edges: {
-    ownsBottomBand: boolean;
-    /** Visual right side is the table boundary (band fully inside this cell). */
-    rightIsBoundary: boolean;
-    /** Visual left side is the table boundary (band fully inside this cell). */
-    leftIsBoundary: boolean;
-    /** Sides whose 3-rule middle layer is painted by the fragment grid instead. */
-    suppressMid?: { top?: boolean; right?: boolean; bottom?: boolean; left?: boolean };
-  },
-): void => {
-  if (!borders) return;
-  const { ownsBottomBand, rightIsBoundary, leftIsBoundary, suppressMid } = edges;
-  const sideInfo = (['top', 'right', 'bottom', 'left'] as const).map((side) => {
-    const spec = borders[side];
-    const profile = spec ? getBorderBandProfile(spec) : null;
-    if (!spec || !profile) return null;
-    // A symmetric `double` renders via the native CSS `border-style: double` (two equal rules)
-    // on any FULL-BAND side: the table boundary, and the horizontal interior edge owned by this
-    // cell. Routing those through the overlay paints only a single inner rule (the double
-    // collapses to one line). The straddled interior-VERTICAL divider stays in the overlay:
-    // each half-cell draws one rule and together they form the double centered on the gridline.
-    // (SD-3028)
-    if (isNativeCssDoubleStyle(spec.style)) {
-      const fullBand =
-        side === 'top' ||
-        (side === 'bottom' && ownsBottomBand) ||
-        (side === 'left' && leftIsBoundary) ||
-        (side === 'right' && rightIsBoundary);
-      if (fullBand) return null;
-    }
-    const { segments } = profile;
-    const band = Math.max(1, Math.round(profile.band));
-    const outerRule = Math.max(1, Math.round(segments[0]));
-    const innerRule = Math.max(1, Math.round(segments[segments.length - 1]));
-    // 5 segments = 3 rules: the middle rule sits outer rule + gap inside the band.
-    const midRule = segments.length === 5 ? Math.max(1, Math.round(segments[2])) : 0;
-    const midOffset = segments.length === 5 ? Math.round(segments[0] + segments[1]) : 0;
-    const color = spec.color && /^#[0-9A-Fa-f]{6}$/.test(spec.color) ? spec.color : '#000000';
-    return { side, band, outerRule, innerRule, midRule, midOffset, color };
-  });
-  if (!sideInfo.some(Boolean)) return;
-
-  const x0 = Math.round(rect.x);
-  const y0 = Math.round(rect.y);
-  const x1 = Math.round(rect.x + rect.width);
-  const y1 = Math.round(rect.y + rect.height);
-
-  // Hide the CSS paint for compound sides, keep the layout band.
-  for (const info of sideInfo) {
-    if (!info) continue;
-    const cssSide = (info.side[0].toUpperCase() + info.side.slice(1)) as 'Top' | 'Right' | 'Bottom' | 'Left';
-    cellElement.style[`border${cssSide}Color`] = 'transparent';
-  }
-
-  const [top, right, bottom, left] = sideInfo;
-  const rectEl = doc.createElement('div');
-  rectEl.className = 'superdoc-compound-border-rect';
-  const st = rectEl.style;
-  st.position = 'absolute';
-  st.boxSizing = 'border-box';
-  st.pointerEvents = 'none';
-  // Inner-face placement per side. Boundary band (fully inside the cell): the inner
-  // rule sits band - rule inside the box. Interior VERTICAL bands straddle the
-  // gridline (half in each cell, Word model): this cell's divider-facing rule sits
-  // at the straddled band's near face, band/2 - rule from the gridline (negative
-  // when the rule is wider than the half-band, extending past the gridline).
-  // Interior horizontal bands keep the owner-cell placement: the band lives in the
-  // lower cell's top (the row reservation already centers it visually), and the
-  // upper cell contributes the band's outer-face rule just past its box.
-  const topInset = top ? top.band - top.innerRule : 0;
-  const leftInset = left
-    ? leftIsBoundary
-      ? left.band - left.innerRule
-      : Math.round(left.band / 2) - left.innerRule
-    : 0;
-  const bottomInset = bottom
-    ? ownsBottomBand
-      ? bottom.band - bottom.innerRule
-      : Math.round(bottom.band / 2) - bottom.outerRule
-    : 0;
-  const rightInset = right
-    ? rightIsBoundary
-      ? right.band - right.innerRule
-      : Math.round(right.band / 2) - right.outerRule
-    : 0;
-  st.left = `${x0 + leftInset}px`;
-  st.top = `${y0 + topInset}px`;
-  st.width = `${x1 - x0 - leftInset - rightInset}px`;
-  st.height = `${y1 - y0 - topInset - bottomInset}px`;
-  if (top) st.borderTop = `${top.innerRule}px solid ${top.color}`;
-  if (bottom) st.borderBottom = `${ownsBottomBand ? bottom.innerRule : bottom.outerRule}px solid ${bottom.color}`;
-  if (left) st.borderLeft = `${left.innerRule}px solid ${left.color}`;
-  if (right) st.borderRight = `${rightIsBoundary ? right.innerRule : right.outerRule}px solid ${right.color}`;
-  container.appendChild(rectEl);
-
-  // Middle rule of 3-rule bands: ONE bordered rectangle inset to the middle rule's
-  // position (outer rule + gap) on each OWNED 3-rule side. A box with borders joins
-  // cleanly at corners, matching Word's middle rectangle; full-edge strips would
-  // protrude across the outer and inner rings. Neighbor-owned interior sides are
-  // painted by the owning cell's own middle rectangle.
-  const midTop = top && top.midRule > 0 && !suppressMid?.top ? top : null;
-  const midLeft = left && left.midRule > 0 && !suppressMid?.left ? left : null;
-  const midBottom = bottom && bottom.midRule > 0 && ownsBottomBand && !suppressMid?.bottom ? bottom : null;
-  const midRight = right && right.midRule > 0 && rightIsBoundary && !suppressMid?.right ? right : null;
-  if (midTop || midLeft || midBottom || midRight) {
-    const mid = doc.createElement('div');
-    mid.className = 'superdoc-compound-border-mid';
-    const ms = mid.style;
-    ms.position = 'absolute';
-    ms.boxSizing = 'border-box';
-    ms.pointerEvents = 'none';
-    const tIn = midTop ? midTop.midOffset : 0;
-    const lIn = midLeft ? midLeft.midOffset : 0;
-    const bIn = midBottom ? midBottom.midOffset : 0;
-    const rIn = midRight ? midRight.midOffset : 0;
-    ms.left = `${x0 + lIn}px`;
-    ms.top = `${y0 + tIn}px`;
-    ms.width = `${x1 - x0 - lIn - rIn}px`;
-    ms.height = `${y1 - y0 - tIn - bIn}px`;
-    if (midTop) ms.borderTop = `${midTop.midRule}px solid ${midTop.color}`;
-    if (midBottom) ms.borderBottom = `${midBottom.midRule}px solid ${midBottom.color}`;
-    if (midLeft) ms.borderLeft = `${midLeft.midRule}px solid ${midLeft.color}`;
-    if (midRight) ms.borderRight = `${midRight.midRule}px solid ${midRight.color}`;
-    container.appendChild(mid);
-  }
-};
-
 export const renderTableRow = (deps: TableRowRenderDependencies): void => {
   const {
     doc,
@@ -534,8 +412,9 @@ export const renderTableRow = (deps: TableRowRenderDependencies): void => {
     prevRow,
     prevRowMeasure,
     nextRow,
+    nextRowMeasure,
     rowOccupiedRightCol,
-    separateBorders,
+    nextRowOccupiedRightCol,
     totalRows,
     tableBorders,
     columnWidths,
@@ -721,6 +600,32 @@ export const renderTableRow = (deps: TableRowRenderDependencies): void => {
     return undefined;
   };
 
+  // Right edge (exclusive grid column) of the cell occupying `gridCol` in `measureCells`.
+  const findCellRightEdgeAtColumn = (
+    measureCells: TableRowMeasure['cells'] | undefined,
+    gridCol: number,
+  ): number | undefined => {
+    if (!measureCells) return undefined;
+    for (let i = 0; i < measureCells.length; i++) {
+      const start = measureCells[i].gridColumnStart ?? i;
+      const span = measureCells[i].colSpan ?? 1;
+      if (gridCol >= start && gridCol < start + span) return start + span;
+    }
+    return undefined;
+  };
+
+  // Rightmost grid column (exclusive) covered by the next row's REAL cells. When a spanning
+  // cell's right edge exceeds this, the next row has a gridAfter spacer beneath it and can't
+  // own the shared bottom edge across the uncovered span. (SD-3345)
+  // Rowspan-aware occupied width of the next row (counts cells spanning into it); fall back to
+  // the next row's own cells. A covered column must not look like a gridAfter gap. (SD-1797)
+  const nextRowMaxCol =
+    nextRowOccupiedRightCol != null && nextRowOccupiedRightCol > 0
+      ? nextRowOccupiedRightCol
+      : nextRowMeasure?.cells?.length
+        ? Math.max(...nextRowMeasure.cells.map((c) => (c.gridColumnStart ?? 0) + (c.colSpan ?? 1)))
+        : Infinity;
+
   for (let cellIndex = 0; cellIndex < rowMeasure.cells.length; cellIndex += 1) {
     const cellMeasure = rowMeasure.cells[cellIndex];
     const cell = row?.cells?.[cellIndex];
@@ -756,6 +661,13 @@ export const renderTableRow = (deps: TableRowRenderDependencies): void => {
     // The cell to the right (same row, the column just past this cell's span) — used to keep
     // an asymmetric vertical edge on the owning cell instead of moving it to the neighbor.
     const rightCellBorders = findCellBordersAtColumn(row?.cells, rowMeasure.cells, gridColumnStart + colSpan);
+    // This cell spans past the next row's real cells (gridAfter spacer beneath its right edge).
+    const nextRowLeavesRightGap = gridColumnStart + colSpan > nextRowMaxCol;
+    // Conversely, the cell ABOVE spans past THIS row's right edge (this row has a gridAfter
+    // relative to it). The spanning cell then owns the full shared edge and draws its own
+    // bottom, so this cell must NOT also draw its top, or the edge doubles. (SD-3345)
+    const aboveCellRightEdge = findCellRightEdgeAtColumn(prevRowMeasure?.cells, gridColumnStart);
+    const deferTopToAboveCell = aboveCellRightEdge !== undefined && aboveCellRightEdge > rowRightEdgeCol;
 
     // Resolve borders using logical positions, then swap output for RTL.
     // The resolver uses touchesLeftEdge/touchesRightEdge which are LOGICAL edges.
@@ -772,23 +684,12 @@ export const renderTableRow = (deps: TableRowRenderDependencies): void => {
       aboveCellBorders,
       leftCellBorders,
       rightCellBorders,
-      separateBorders,
+      nextRowLeavesRightGap,
+      deferTopToAboveCell,
       nextRowSuppressesSharedTop,
     });
     // RTL: swap resolved left↔right so CSS properties match visual edges
     const finalBorders = isRtl && resolvedBorders ? swapCellBordersLR(resolvedBorders) : resolvedBorders;
-    // Separate-borders mode: outset/inset cells render sunken (the legacy HTML table look) —
-    // visual top/left dark, bottom/right light; inset mirrors. Toned after the RTL swap so the
-    // lighting follows VISUAL sides. Other styles pass through unchanged. (SD-3028, 300dpi probes)
-    const tonedBorders =
-      separateBorders && finalBorders
-        ? {
-            top: bevelToneSpec(finalBorders.top, 'top', 'cell'),
-            right: bevelToneSpec(finalBorders.right, 'right', 'cell'),
-            bottom: bevelToneSpec(finalBorders.bottom, 'bottom', 'cell'),
-            left: bevelToneSpec(finalBorders.left, 'left', 'cell'),
-          }
-        : finalBorders;
 
     // Calculate cell height - use rowspan height if cell spans multiple rows
     // For partial rows, use the partial height instead
@@ -816,68 +717,6 @@ export const renderTableRow = (deps: TableRowRenderDependencies): void => {
       x = tableContentWidth - x - computedCellWidth;
     }
 
-    const cellGridBounds = getTableCellGridBounds(cellPosition);
-    // A cell whose `borders` attribute is present but clears every side is intentionally
-    // borderless: `resolveRenderedCellBorders` returns undefined for it (no CSS border).
-    // The compound-rectangle path must honor that too, or `appendCompoundBorderRects` would
-    // draw the table's double/triple rules onto a cell that explicitly cleared its borders.
-    // Yield no effective sides so it paints nothing. (SD-3308 review)
-    const cellIsIntentionallyBorderless = hasBordersAttribute && !hasExplicitCellBorders(cellBordersAttr);
-    // Word's double model needs the EFFECTIVE border of every side of this cell,
-    // not the single-owner-suppressed set: ownership picks which band face the rule
-    // sits on, but every surrounding double edge contributes a side to this cell's
-    // rectangle. (SD-3308)
-    const cb = (cellBordersAttr ?? {}) as CellBorders;
-    const effectiveSideSpecs: CellBorders = cellIsIntentionallyBorderless
-      ? {}
-      : {
-          top:
-            cellGridBounds.touchesTopEdge || continuesFromPrev === true
-              ? resolveTableBorderValue(cb.top, effectiveTableBorders?.top)
-              : (resolveBorderConflict(cb.top, aboveCellBorders?.bottom) ??
-                borderValueToSpec(effectiveTableBorders?.insideH)),
-          bottom:
-            cellGridBounds.touchesBottomEdge || continuesOnNext === true
-              ? resolveTableBorderValue(cb.bottom, effectiveTableBorders?.bottom)
-              : (resolveBorderConflict(cb.bottom, undefined) ?? borderValueToSpec(effectiveTableBorders?.insideH)),
-          left: cellGridBounds.touchesLeftEdge
-            ? resolveTableBorderValue(cb.left, effectiveTableBorders?.left)
-            : (resolveBorderConflict(cb.left, leftCellBorders?.right) ??
-              borderValueToSpec(effectiveTableBorders?.insideV)),
-          right: cellGridBounds.touchesRightEdge
-            ? resolveTableBorderValue(cb.right, effectiveTableBorders?.right)
-            : (resolveBorderConflict(cb.right, rightCellBorders?.left) ??
-              borderValueToSpec(effectiveTableBorders?.insideV)),
-        };
-    const rectBorders = (isRtl ? swapCellBordersLR(effectiveSideSpecs) : effectiveSideSpecs) ?? effectiveSideSpecs;
-
-    // Visual (post-RTL-swap) boundary flags matching rectBorders sides.
-    const visualTouchesLeft = isRtl ? cellGridBounds.touchesRightEdge : cellGridBounds.touchesLeftEdge;
-    const visualTouchesRight = isRtl ? cellGridBounds.touchesLeftEdge : cellGridBounds.touchesRightEdge;
-
-    // Interior vertical compound bands straddle the gridline (Word model, measured
-    // from the triple probes: the divider spans gridline -band/2 .. +band/2 and both
-    // cells keep equal content widths). Each adjacent cell carries HALF the band as
-    // its transparent CSS border, so the painted geometry and the column's half-band
-    // allowance agree. Boundary bands stay fully inside the cell. (SD-3308)
-    const leftStraddleProfile = !visualTouchesLeft && rectBorders.left ? getBorderBandProfile(rectBorders.left) : null;
-    const rightStraddleProfile =
-      !visualTouchesRight && rectBorders.right ? getBorderBandProfile(rectBorders.right) : null;
-    let paintBorders = tonedBorders;
-    let borderBandOverridesPx: { left?: number; right?: number } | undefined;
-    if (leftStraddleProfile || rightStraddleProfile) {
-      paintBorders = { ...(tonedBorders ?? {}) };
-      borderBandOverridesPx = {};
-      if (leftStraddleProfile) {
-        paintBorders.left = rectBorders.left;
-        borderBandOverridesPx.left = leftStraddleProfile.band / 2;
-      }
-      if (rightStraddleProfile) {
-        paintBorders.right = rectBorders.right;
-        borderBandOverridesPx.right = rightStraddleProfile.band / 2;
-      }
-    }
-
     // Never use default borders - cells are either explicitly styled or borderless
     // This prevents gray borders on cells with borders={} (intentionally borderless)
     const { cellElement } = renderTableCell({
@@ -887,8 +726,7 @@ export const renderTableRow = (deps: TableRowRenderDependencies): void => {
       rowHeight: cellHeight,
       cellMeasure,
       cell,
-      borders: paintBorders,
-      borderBandOverridesPx,
+      borders: finalBorders,
       useDefaultBorder: false,
       renderLine,
       captureLineSnapshot,
@@ -911,62 +749,33 @@ export const renderTableRow = (deps: TableRowRenderDependencies): void => {
 
     // Paint the structural row-level tracked change onto each cell element of
     // the row (no <tr> exists in the painted DOM), reusing the inline helpers.
+    // Applied before any cell-level change so the row keeps precedence on the
+    // shared single-value datasets / color variables (SD-3481).
     if (rowTrackedChange && rowTrackedChangeConfig) {
       applyRowTrackedChangeToCell(cellElement, rowTrackedChange, rowTrackedChangeConfig);
     }
 
+    // Paint the structural cell-level tracked change (SD-3481 cell insertion /
+    // deletion / merge / split). The tracked-changes MODE is resolved the same
+    // way row/inline changes get it: from a representative paragraph in this
+    // cell, defaulting to review/enabled when the cell has no paragraph.
+    const cellTrackedChange = cell?.attrs?.trackedChange;
+    if (cellTrackedChange) {
+      const representativeCellParagraph =
+        cell?.paragraph ?? (cell?.blocks?.find((block) => block.kind === 'paragraph') as ParagraphBlock | undefined);
+      const cellTrackedChangeConfig: TrackedChangesRenderConfig = representativeCellParagraph
+        ? resolveTrackedChangesConfig(representativeCellParagraph)
+        : { mode: 'review', enabled: true };
+      applyCellTrackedChangeToCell(cellElement, cellTrackedChange, cellTrackedChangeConfig);
+    }
+
     container.appendChild(cellElement);
-
-    // Table-level 3-rule bands paint their middle layer as a continuous fragment
-    // grid (see renderTableFragment); suppress the per-cell middle rectangle there.
-    const tableProvidesMid = (value: unknown): boolean => {
-      const profile = value != null && typeof value === 'object' ? getBorderBandProfile(value as never) : null;
-      return profile != null && profile.segments.length === 5;
-    };
-    const suppressMid = {
-      top: tableProvidesMid(
-        cellGridBounds.touchesTopEdge || continuesFromPrev === true
-          ? effectiveTableBorders?.top
-          : effectiveTableBorders?.insideH,
-      ),
-      bottom: tableProvidesMid(
-        cellGridBounds.touchesBottomEdge || continuesOnNext === true
-          ? effectiveTableBorders?.bottom
-          : effectiveTableBorders?.insideH,
-      ),
-      left: tableProvidesMid(
-        visualTouchesLeft
-          ? isRtl
-            ? effectiveTableBorders?.right
-            : effectiveTableBorders?.left
-          : effectiveTableBorders?.insideV,
-      ),
-      right: tableProvidesMid(
-        visualTouchesRight
-          ? isRtl
-            ? effectiveTableBorders?.left
-            : effectiveTableBorders?.right
-          : effectiveTableBorders?.insideV,
-      ),
-    };
-
-    appendCompoundBorderRects(
-      doc,
-      container,
-      cellElement,
-      rectBorders,
-      {
-        x,
-        y,
-        width: computedCellWidth > 0 ? computedCellWidth : (cellMeasure.width ?? 0),
-        height: cellHeight,
-      },
-      {
-        ownsBottomBand: cellGridBounds.touchesBottomEdge || continuesOnNext === true,
-        rightIsBoundary: visualTouchesRight,
-        leftIsBoundary: visualTouchesLeft,
-        suppressMid,
-      },
-    );
+    const thinDoubleBorderOverlay = createThinDoubleBorderOverlay(doc, cellElement, {
+      left: cellElement.style.left,
+      top: cellElement.style.top,
+      width: cellElement.style.width,
+      height: cellElement.style.height,
+    });
+    if (thinDoubleBorderOverlay) container.appendChild(thinDoubleBorderOverlay);
   }
 };

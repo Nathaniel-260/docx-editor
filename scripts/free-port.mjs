@@ -14,7 +14,7 @@ if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
 
 const getPidsOnPort = () => {
   try {
-    const output = execSync(`lsof -ti tcp:${port}`, {
+    const output = execSync(`lsof -tiTCP:${port} -sTCP:LISTEN`, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();

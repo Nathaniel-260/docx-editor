@@ -2,15 +2,13 @@ import type { TextTarget, TrackedChangeAddress } from './address.js';
 import type { DiscoveryOutput } from './discovery.js';
 import type { StoryLocator } from './story.types.js';
 /**
- * Canonical tracked-change broad-type vocabulary defined by
- * `../labs/tests/requirements/specs/tracked-changes-comments/tracked-changes-spec.md`
- * §3 / §5.
+ * Canonical v2 tracked-change broad-type vocabulary.
  *
  * Public adapters MUST emit one of these values. Existing v1 emitters and
  * tests still produce the legacy `insert` / `delete` / `format` strings; both
  * sets are accepted by {@link TrackChangeType} during the vocabulary
- * transition. Legacy strings are documented compatibility aliases only — new
- * code must emit the canonical vocabulary.
+ * legacy strings are documented compatibility aliases only — new code must
+ * emit the canonical vocabulary.
  */
 export type TrackChangeBroadType = 'insertion' | 'deletion' | 'replacement' | 'formatting' | 'move' | 'structural';
 /**
@@ -19,9 +17,9 @@ export type TrackChangeBroadType = 'insertion' | 'deletion' | 'replacement' | 'f
  */
 export type LegacyTrackChangeType = 'insert' | 'delete' | 'format';
 /**
- * Tracked-change broad type accepted by the public API. Logical projections
- * emit {@link TrackChangeBroadType}; legacy v1 emitters may still produce
- * {@link LegacyTrackChangeType}. Filters accept either spelling.
+ * Tracked-change broad type accepted by the public API. The v2 logical
+ * projection emits {@link TrackChangeBroadType}; legacy v1 emitters may still
+ * produce {@link LegacyTrackChangeType}. Filters accept either spelling.
  */
 export type TrackChangeType = TrackChangeBroadType | LegacyTrackChangeType;
 /**
@@ -91,11 +89,44 @@ export interface TrackChangeReplacementSide {
 }
 /**
  * Tracked formatting subtype vocabulary per `tracked-changes-spec.md` §6.
- * Covers run, paragraph, list, table, row, cell, and section
- * formatting revisions. Image / drawing property revisions fail closed in
- * revisions. Image / drawing property revisions currently fail closed.
+ * Covers run, paragraph, list, table, row, cell, section, and content-control
+ * formatting revisions, plus image/drawing property revisions.
  */
-export type TrackChangeFormattingSubtype = 'run' | 'paragraph' | 'list' | 'table' | 'row' | 'cell' | 'section';
+export type TrackChangeFormattingSubtype =
+  | 'run'
+  | 'paragraph'
+  | 'list'
+  | 'table'
+  | 'row'
+  | 'cell'
+  | 'section'
+  | 'content-control'
+  | 'image';
+/**
+ * Coarse logical object a formatting revision applies to. Paragraph/list
+ * formatting-on-structural-target changes (indentation, line height, list
+ * level/style/membership) keep broad type `formatting`; this names the object
+ * the formatting targets so callers can route UI labels and later decisions
+ * without inferring it from raw OOXML.
+ */
+export type TrackChangeFormattingTargetKind =
+  | 'run'
+  | 'paragraph'
+  | 'list-item'
+  | 'table'
+  | 'row'
+  | 'cell'
+  | 'section'
+  | 'content-control';
+/**
+ * Fine-grained formatting-on-target semantic subtype. A richer detail string
+ * than {@link TrackChangeFormattingSubtype}; the broad subtype field stays the
+ * compatibility value while this names the specific formatting change
+ * (paragraph indentation vs line height vs style; list style vs level vs
+ * numbering vs add/remove membership). Open vocabulary so later plans can add
+ * subtypes without a breaking change.
+ */
+export type TrackChangeFormattingSemanticSubtype = string;
 /**
  * Per-side metadata for tracked moves. `id` is the SuperDoc-
  * internal side id, `excerpt` is a visible-text preview, and `wordId` carries
@@ -136,6 +167,59 @@ export interface TrackChangeMoveTarget {
   destination: TextTarget | null;
 }
 /**
+ * Semantic list-delta classification vocabulary for tracked list formatting
+ * changes (tracked-changes spec `TC-LIST-004`). Each member of a formatting
+ * review object is classified by diffing the live paragraph properties
+ * against the `pPrChange` snapshot, restricted to list-relevant properties.
+ */
+export type TrackChangeListDeltaKind =
+  | 'list-add'
+  | 'list-remove'
+  | 'list-level'
+  | 'list-style'
+  | 'list-restart'
+  | 'indent'
+  | 'other-format';
+/**
+ * Resolved visual style kind for one side of a list delta, derived from the
+ * numbering model's `numFmt` at the effective level. `null` when the side has
+ * no list membership or its numbering definition cannot be resolved
+ * (fail-closed: never guessed).
+ */
+export type TrackChangeListStyleKind = 'bullet' | 'number' | 'letter' | 'roman' | 'other';
+/** One side (before/after) of a member list delta. */
+export interface TrackChangeListDeltaSide {
+  /** Explicit `numPr` element present in the property block on this side. */
+  hasNumPr: boolean;
+  /** Effective list membership numId; non-positive numIds normalize to null. */
+  numId: string | null;
+  /** Explicit `ilvl` value; null when the source omitted it (effective level 0). */
+  ilvl: number | null;
+  /** Resolved visual style kind via the numbering model; null when unresolvable. */
+  styleKind: TrackChangeListStyleKind | null;
+}
+/**
+ * Structured semantic delta for one member of a (possibly grouped) tracked
+ * list formatting change. Facts only — presentation copy is derived by
+ * consumers.
+ */
+export interface TrackChangeListMemberDelta {
+  kind: TrackChangeListDeltaKind;
+  from: TrackChangeListDeltaSide;
+  to: TrackChangeListDeltaSide;
+  /** Direction of a `list-level` change. */
+  levelDirection?: 'indent' | 'outdent';
+  /** Restart value for a `list-restart` change (numbering-model derived). */
+  restartAt?: number;
+}
+/** Group roll-up of the member list deltas. */
+export interface TrackChangeListDeltaSummary {
+  /** The single kind shared by every member, or null for mixed groups. */
+  uniformKind: TrackChangeListDeltaKind | null;
+  /** Non-zero member counts per delta kind. */
+  counts: Partial<Record<TrackChangeListDeltaKind, number>>;
+}
+/**
  * Semantic snapshot for one side of a tracked formatting revision.
  * `xml` carries the raw OOXML preserved by import / native creation;
  * `properties` exposes a subtype-aware key→value view for the most commonly
@@ -149,10 +233,59 @@ export interface TrackChangeFormattingSnapshot {
 }
 /**
  * Logical structural target classes required by the tracked-changes spec's
- * structural contract. The target remains a logical document object, not raw
- * OOXML storage detail.
+ * first-class structural descriptor contract ("Semantic Type vs UI Label vs
+ * OOXML Carrier"). The target remains a logical document object, not raw OOXML
+ * storage detail. The vocabulary now covers the full structural surface
+ * (list items, images/drawings, fields, content controls, section breaks,
+ * footnotes/endnotes, and non-body note stories) so structural revisions on
+ * those objects are addressable instead of failing closed at the target lane.
  */
-export type TrackChangeStructuralTargetKind = 'paragraph' | 'table' | 'row' | 'column' | 'cell' | 'paragraph-mark';
+export type TrackChangeStructuralTargetKind =
+  | 'paragraph'
+  | 'paragraph-mark'
+  | 'list-item'
+  | 'table'
+  | 'row'
+  | 'column'
+  | 'cell'
+  | 'image'
+  | 'drawing'
+  | 'field'
+  | 'content-control'
+  | 'section-break'
+  | 'footnote'
+  | 'endnote'
+  | 'note-story';
+/**
+ * Structural operation for the first-class structural descriptor. A structural
+ * revision changes the reviewable identity/topology of a document object;
+ * property-only revisions keep broad type `formatting`.
+ */
+export type TrackChangeStructuralOperation =
+  | 'insert'
+  | 'delete'
+  | 'replace'
+  | 'split'
+  | 'merge'
+  | 'move'
+  | 'story-edit';
+/** Granularity of a structural revision per the descriptor contract. */
+export type TrackChangeStructuralGranularity = 'whole-object' | 'range' | 'story-part';
+/**
+ * Decision policy per the descriptor contract. `unsupported-fail-closed`
+ * requires a partial decision to fail closed rather than mutate.
+ */
+export type TrackChangeStructuralDecisionPolicy =
+  | 'atomic'
+  | 'range-divisible'
+  | 'child-addressable'
+  | 'unsupported-fail-closed';
+/**
+ * OOXML carrier inventory: the revision wrapper / property-change element names
+ * a structural or formatting change relies on (e.g. `w:ins`, `w:del`,
+ * `w:tblPrChange`, `w:cellIns`). Proof asserts these survive a no-op export.
+ */
+export type OoxmlCarrierInventory = readonly string[];
 /**
  * Semantic snapshot for one side of a structural tracked change.
  * `xml` is the raw OOXML snapshot needed to restore/apply the relevant
@@ -174,6 +307,47 @@ export interface TrackChangeStructuralSnapshot {
   innerXml?: string;
 }
 /**
+ * Whole-object child-ownership policy for a structural revision. When Word
+ * encodes contained inline edits under the same revision wrapper, the
+ * structural change owns them (`subsumed`) rather than surfacing them as
+ * separate review items, unless the subtype is explicitly child-addressable.
+ */
+export interface TrackChangeStructuralChildOwnership {
+  /** Whether contained inline changes are owned by this structural change. */
+  ownsContainedInlineChanges: boolean;
+  /** Logical ids of the owned contained inline changes. */
+  childChangeIds: readonly string[];
+  /** Whether owned children are hidden (`subsumed`) or independently decidable. */
+  duplicateDisplayPolicy: 'subsumed' | 'child-addressable';
+}
+/**
+ * First-class structural descriptor (spec "Structural descriptor shape").
+ * Exposed alongside {@link TrackChangeInfo.before}/`after` so a caller can
+ * inspect and decide a structural revision programmatically without parsing
+ * OOXML: it carries the operation, granularity, decision policy, affected
+ * stories, and the OOXML carrier inventory that must survive export.
+ */
+export interface TrackChangeStructuralDescriptor {
+  /** Topology operation the revision performs. */
+  operation: TrackChangeStructuralOperation;
+  /** Whether the change is whole-object, range-divisible, or story-part scoped. */
+  granularity: TrackChangeStructuralGranularity;
+  /** How partial accept/reject must behave; drives fail-closed safety. */
+  decisionPolicy: TrackChangeStructuralDecisionPolicy;
+  /** Structural state needed to reject the change. */
+  before: TrackChangeStructuralSnapshot;
+  /** Structural state needed to accept the change. */
+  after: TrackChangeStructuralSnapshot;
+  /** Stories touched by the change beyond the primary anchor (notes, parts). */
+  affectedStories: readonly StoryLocator[];
+  /** Raw source provenance ids contributing to this structural change. */
+  sourceIds: TrackChangeSourceIds;
+  /** OOXML carrier element names that must survive a no-op export. */
+  exportCarrier: OoxmlCarrierInventory;
+  /** Whole-object child-ownership policy when the change contains inline edits. */
+  childOwnership?: TrackChangeStructuralChildOwnership;
+}
+/**
  * Logical target description per spec §3. The model ships `text`,
  * `replacement`, and `formatting` target kinds;
  * structural target kinds land under the same field as they arrive.
@@ -192,12 +366,30 @@ export type TrackChangeTarget =
       address: TrackedChangeAddress;
       /** Which property class the revision affects. */
       subtype: TrackChangeFormattingSubtype;
+      /**
+       * Coarse logical object the formatting change targets (paragraph,
+       * list-item, run, …). Lets consumers treat list/paragraph property
+       * changes as target-aware formatting without a structural descriptor.
+       */
+      targetKind?: TrackChangeFormattingTargetKind;
+      /** Fine-grained formatting-on-target subtype (e.g. `paragraph-indentation`, `list-formatting-level`). */
+      semanticSubtype?: TrackChangeFormattingSemanticSubtype;
+      /** Property keys that changed between the before/after snapshots. */
+      changedKeys?: readonly string[];
+      /** OOXML carrier element names backing this formatting change. */
+      carriers?: OoxmlCarrierInventory;
     }
   | {
       kind: 'structural';
       address: TrackedChangeAddress;
       /** Which structural object/boundary the change targets. */
       targetKind: TrackChangeStructuralTargetKind;
+      /**
+       * More specific semantic kind when the structural target has one. For
+       * field targets this is the Word field classification (for example,
+       * `hyperlink`, `page`, or `ref`).
+       */
+      semanticSubtype?: string;
     }
   | TrackChangeMoveTarget;
 /**
@@ -214,8 +406,8 @@ export interface TrackChangeSnapshot {
   structural?: TrackChangeStructuralSnapshot;
 }
 /**
- * Source-platform provenance per spec §3. Imported Word DOCX revisions surface
- * as `word`; native edits surface `superdoc`.
+ * Source-platform provenance per spec §3. Imported Word DOCX revisions
+ * surface as `word`; v2 native edits surface `superdoc`.
  */
 export type TrackChangeProvenanceOrigin = 'word' | 'google-docs' | 'superdoc' | 'custom' | 'unknown';
 export type TrackChangeSourcePlatform = TrackChangeProvenanceOrigin;
@@ -255,7 +447,7 @@ export type TrackChangeOverlapRelationship = 'parent' | 'child' | 'standalone';
 export interface TrackChangeOverlapLayer {
   /** SuperDoc logical id of the contributing tracked change. */
   id: string;
-  /** Broad type of the layer (canonical spelling). */
+  /** Broad type of the layer (canonical v2 spelling). */
   type: TrackChangeType;
   /** Layer relationship to the parent overlap surface. */
   relationship: TrackChangeOverlapRelationship;
@@ -294,6 +486,46 @@ export interface TrackChangeLinkedComments {
   count: number;
   commentIds?: readonly string[];
 }
+export type TrackChangeMoveDirection = 'up' | 'down';
+export interface TrackChangeImagePreview {
+  /** Browser-renderable preview source for the image side represented by this change. */
+  src: string;
+  /** MIME type of the media part used in {@link src}. */
+  contentType: string;
+  /** Which revision side the preview represents. */
+  role: 'deleted' | 'inserted' | 'before' | 'after';
+  /** Source media part URI, when the preview came from an internal DOCX part. */
+  partUri?: string;
+  /** Owner-part-scoped relationship id used to resolve the media part. */
+  relationshipId?: string;
+  /** Intended display width in CSS pixels, when the source drawing extent is known. */
+  width?: number;
+  /** Intended display height in CSS pixels, when the source drawing extent is known. */
+  height?: number;
+  /** Accessible label for clients that render the preview. */
+  alt?: string;
+}
+/**
+ * Authoritative block address for review navigation. Consumers use this
+ * instead of interpreting the shape-specific {@link TrackChangeTarget}
+ * union. `role` records which semantic carrier supplied the address.
+ */
+export interface TrackChangeNavigationTarget {
+  kind: 'block';
+  story: StoryLocator;
+  blockId: string;
+  role: 'primary' | 'move-source' | 'move-destination' | 'formatting-carrier' | 'structural-carrier';
+}
+export interface TrackChangeCustomAttribute {
+  /** Source-qualified attribute name, preserving the prefix used by the carrier. */
+  name: string;
+  /** Resolved extension namespace URI. */
+  namespaceUri: string;
+  /** Attribute local name without its namespace prefix. */
+  localName: string;
+  /** Decoded XML attribute value. */
+  value: string;
+}
 export interface TrackChangeInfo {
   address: TrackedChangeAddress;
   /** Stable SuperDoc logical tracked-change id (spec §3 / §4). */
@@ -305,10 +537,20 @@ export interface TrackChangeInfo {
   state?: TrackChangeState;
   /** Logical target description. */
   target?: TrackChangeTarget;
+  /** Stable story/block address for focus and virtualized materialization. */
+  navigationTarget?: TrackChangeNavigationTarget;
   /** Semantic before-state needed to reject the change. */
   before?: TrackChangeSnapshot;
   /** Semantic after-state needed to accept the change. */
   after?: TrackChangeSnapshot;
+  /**
+   * First-class structural descriptor for `structural` / `move` changes
+   * (spec "Structural descriptor shape"). Present once the runtime ships the
+   * richer boundary payload; absent for changes that only carry the legacy
+   * `before`/`after` snapshot. A null descriptor on a structural change is an
+   * explicit closure gap, not authoritative closure.
+   */
+  structuralDescriptor?: TrackChangeStructuralDescriptor;
   /**
    * Canonical multi-side source provenance (spec §3 / §4). New consumers
    * MUST read provenance from this field. `wordRevisionIds` is preserved
@@ -329,6 +571,8 @@ export interface TrackChangeInfo {
   replacement?: TrackChangeReplacementSides;
   /** Move side metadata for paired tracked moves. */
   move?: TrackChangeMoveSides;
+  /** Direction of a paired move in document order, when source/destination order is known. */
+  moveDirection?: TrackChangeMoveDirection;
   author?: string;
   authorEmail?: string;
   authorImage?: string;
@@ -352,6 +596,28 @@ export interface TrackChangeInfo {
   deletedText?: string | null;
   /** Human-readable formatting delta summary for formatting changes; otherwise `null`. */
   formattingDeltaSummary?: string | null;
+  /**
+   * Structured per-member list semantic deltas for tracked list formatting
+   * changes (spec `TC-LIST-003`/`TC-LIST-004`). Index-aligned with the
+   * grouped members (length 1 for single-carrier changes); absent for
+   * non-list-formatting changes.
+   */
+  listDeltas?: readonly TrackChangeListMemberDelta[];
+  /** Group roll-up of {@link listDeltas}; present iff `listDeltas` is. */
+  listDeltaSummary?: TrackChangeListDeltaSummary;
+  /**
+   * Structural list-membership fact for paragraph-mark structural changes:
+   * true iff the target paragraph's live properties carry direct effective
+   * list membership; false when inspected and not a list item; absent when
+   * the target paragraph was not inspected.
+   */
+  targetIsListItem?: boolean;
+  /**
+   * Stable presentation fact on the merge-owner deletion change (the change
+   * owning a suppressed merge-companion property revision, spec
+   * `TC-LIST-005`).
+   */
+  listActionKind?: 'merge-items';
   /** Originating platform alias for consumers that read flat provenance fields. */
   origin?: TrackChangeSourcePlatform;
   /** Whether the change came from an imported source revision wrapper. */
@@ -364,12 +630,19 @@ export interface TrackChangeInfo {
   resolvableById?: boolean;
   /** Comments whose anchor is wholly associated with this tracked change. */
   linkedComments?: TrackChangeLinkedComments;
+  /** Visual preview for image-backed tracked changes when an internal browser-renderable image part is available. */
+  imagePreview?: TrackChangeImagePreview;
   excerpt?: string;
   /**
    * Overlap relationship metadata for Word-shape overlapping
    * tracked changes. Absent when the change is standalone.
    */
   overlap?: TrackChangeOverlapInfo;
+  /**
+   * Unknown extension attributes attached to contributing OOXML revision carriers.
+   * Exact duplicates are removed in document order; conflicting values are retained.
+   */
+  readonly customAttributes?: readonly TrackChangeCustomAttribute[];
 }
 export interface TrackChangesListQuery {
   limit?: number;
@@ -410,8 +683,17 @@ export interface TrackChangeDomain {
   state?: TrackChangeState;
   /** Logical target summary for list consumers when the compact projection can provide it safely. */
   target?: TrackChangeTarget;
+  /** Stable story/block address for focus and virtualized materialization. */
+  navigationTarget?: TrackChangeNavigationTarget;
   /** Move side metadata for paired tracked moves. */
   move?: TrackChangeMoveSides;
+  /** Direction of a paired move in document order, when source/destination order is known. */
+  moveDirection?: TrackChangeMoveDirection;
+  /**
+   * First-class structural descriptor for structural / move changes when the
+   * compact list projection can derive the full before/after boundary safely.
+   */
+  structuralDescriptor?: TrackChangeStructuralDescriptor;
   /** Stable revision-group id. */
   revisionGroupId?: string;
   /** Set to the retired source id when this list item is a partial-split fragment; otherwise `null`. */
@@ -444,6 +726,28 @@ export interface TrackChangeDomain {
   deletedText?: string | null;
   /** Human-readable formatting delta summary for formatting changes; otherwise `null`. */
   formattingDeltaSummary?: string | null;
+  /**
+   * Structured per-member list semantic deltas for tracked list formatting
+   * changes (spec `TC-LIST-003`/`TC-LIST-004`). Index-aligned with the
+   * grouped members (length 1 for single-carrier changes); absent for
+   * non-list-formatting changes.
+   */
+  listDeltas?: readonly TrackChangeListMemberDelta[];
+  /** Group roll-up of {@link listDeltas}; present iff `listDeltas` is. */
+  listDeltaSummary?: TrackChangeListDeltaSummary;
+  /**
+   * Structural list-membership fact for paragraph-mark structural changes:
+   * true iff the target paragraph's live properties carry direct effective
+   * list membership; false when inspected and not a list item; absent when
+   * the target paragraph was not inspected.
+   */
+  targetIsListItem?: boolean;
+  /**
+   * Stable presentation fact on the merge-owner deletion change (the change
+   * owning a suppressed merge-companion property revision, spec
+   * `TC-LIST-005`).
+   */
+  listActionKind?: 'merge-items';
   /** Originating platform alias for consumers that read flat provenance fields. */
   origin?: TrackChangeSourcePlatform;
   /** Whether the change came from an imported source revision wrapper. */
@@ -456,12 +760,16 @@ export interface TrackChangeDomain {
   resolvableById?: boolean;
   /** Comments whose anchor is wholly associated with this tracked change. */
   linkedComments?: TrackChangeLinkedComments;
+  /** Visual preview for image-backed tracked changes when an internal browser-renderable image part is available. */
+  imagePreview?: TrackChangeImagePreview;
   /**
    * Overlap relationship metadata for list consumers. When
    * present, `visualLayers` lets a list-only client render the overlap
    * stack without an extra `trackChanges.get` round trip.
    */
   overlap?: TrackChangeOverlapInfo;
+  /** Unknown extension attributes attached to the contributing OOXML revision carriers. */
+  readonly customAttributes?: readonly TrackChangeCustomAttribute[];
 }
 /**
  * Standardized discovery output for `trackChanges.list`.

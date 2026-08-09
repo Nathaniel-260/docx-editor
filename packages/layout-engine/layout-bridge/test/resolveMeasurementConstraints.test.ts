@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { resolveMeasurementConstraints } from '../src/incrementalLayout';
 import type { FlowBlock, SectionBreakBlock } from '@superdoc/contracts';
 import type { LayoutOptions } from '../../layout-engine/src/index';

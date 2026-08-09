@@ -5,6 +5,7 @@ import {
   sliceRunsForLine,
   SPACE_CHARS as SHARED_SPACE_CHARS,
 } from '@superdoc/contracts';
+import { DEFAULT_FONT_MEASURE_CONTEXT, type FaceKey, type FontMeasureContext } from '@superdoc/font-system';
 
 /**
  * Shared text measurement utility for accurate character positioning.
@@ -52,6 +53,10 @@ const isVisualOnlyRun = (run: Run | undefined): boolean => {
   return getRunDataAttrs(run)?.[FOOTNOTE_MARKER_DATA_ATTR] === 'true';
 };
 
+const isVanishedRun = (run: Run | undefined): boolean => {
+  return !!run && 'vanish' in run && run.vanish === true;
+};
+
 /**
  * Characters considered as spaces for justify alignment calculations.
  * Only includes regular space (U+0020) and non-breaking space (U+00A0).
@@ -66,6 +71,11 @@ const isVisualOnlyRun = (run: Run | undefined): boolean => {
 const SPACE_CHARS = SHARED_SPACE_CHARS;
 
 const isTabRun = (run: Run): run is TabRun => run?.kind === 'tab';
+
+const faceOf = (run: { bold?: boolean; italic?: boolean }): FaceKey => ({
+  weight: run.bold ? '700' : '400',
+  style: run.italic ? 'italic' : 'normal',
+});
 
 const isWordChar = (char: string): boolean => {
   if (!char) return false;
@@ -273,6 +283,7 @@ const getJustifyAdjustment = ({
     const runs = sliceRunsForLine(block, line);
     totalSpaces = runs.reduce((sum, run) => {
       if (
+        isVanishedRun(run) ||
         isTabRun(run) ||
         'src' in run ||
         run.kind === 'lineBreak' ||
@@ -312,8 +323,9 @@ const getJustifyAdjustment = ({
  * @param run - The text or tab run to generate font string for
  * @returns CSS font string (e.g., "italic bold 16px Arial")
  */
-export function getRunFontString(run: Run): string {
-  // TabRun, ImageRun, LineBreakRun, BreakRun, FieldAnnotationRun, and MathRun don't have full styling properties, use defaults
+export function getRunFontString(run: Run, fontContext: FontMeasureContext = DEFAULT_FONT_MEASURE_CONTEXT): string {
+  // TabRun, ImageRun, LineBreakRun, BreakRun, FieldAnnotationRun, and MathRun
+  // don't have full styling properties, use defaults.
   if (
     run.kind === 'tab' ||
     run.kind === 'lineBreak' ||
@@ -328,7 +340,7 @@ export function getRunFontString(run: Run): string {
   const style = run.italic ? 'italic' : 'normal';
   const weight = run.bold ? 'bold' : 'normal';
   const fontSize = run.fontSize ?? 16;
-  const fontFamily = run.fontFamily ?? 'Arial';
+  const fontFamily = fontContext.resolvePhysical(run.fontFamily ?? 'Arial', faceOf(run));
   return `${style} ${weight} ${fontSize}px ${fontFamily}`;
 }
 
@@ -344,12 +356,13 @@ export function getRunFontString(run: Run): string {
  *   which are always rendered left-aligned in the DOM regardless of paragraph alignment)
  * @returns The X coordinate (in pixels) from the start of the line
  */
-export function measureCharacterX(
+function measureCharacterXWithoutInlineBoxes(
   block: FlowBlock,
   line: Line,
   charOffset: number,
   availableWidthOverride?: number,
   alignmentOverride?: string,
+  fontContext: FontMeasureContext = DEFAULT_FONT_MEASURE_CONTEXT,
 ): number {
   const ctx = getMeasurementContext();
   const availableWidth =
@@ -380,7 +393,7 @@ export function measureCharacterX(
   // When segments have explicit X positions, we must use segment-based calculation
   // to match the actual DOM positioning
   if (hasExplicitPositioning && line.segments && ctx) {
-    return measureCharacterXSegmentBased(block, line, charOffset, ctx);
+    return measureCharacterXSegmentBased(block, line, charOffset, ctx, fontContext);
   }
 
   if (!ctx) {
@@ -431,6 +444,14 @@ export function measureCharacterX(
         ? ''
         : (run.text ?? '');
     const runLength = text.length;
+    if (isVanishedRun(run)) {
+      if (currentCharOffset + runLength >= charOffset) {
+        return alignmentOffset + currentX;
+      }
+      currentCharOffset += runLength;
+      continue;
+    }
+
     // Only TextRun and TabRun have textTransform (via RunMarks)
     const transform =
       isTabRun(run) ||
@@ -446,29 +467,31 @@ export function measureCharacterX(
     // If target character is within this run
     if (currentCharOffset + runLength >= charOffset) {
       const offsetInRun = charOffset - currentCharOffset;
-      ctx.font = getRunFontString(run);
+      const runFont = getRunFontString(run, fontContext);
+      ctx.font = runFont;
 
-      // Measure text up to the target character
-      const textUpToTarget = displayText.slice(0, offsetInRun);
-
-      const measured = ctx.measureText(textUpToTarget);
+      // Measure the target boundary in the context of the whole painted run so
+      // kerning/ligature shaping on the following glyph stays reflected in the
+      // caret position.
+      const measuredWidth = memoizedCaretWidth(ctx, runFont, displayText, offsetInRun);
       const spacingWidth = computeLetterSpacingWidth(run, offsetInRun, runLength);
+      const horizontalScale = getHorizontalScale(run);
       const spacesInPortion = justify.extraPerSpace !== 0 ? countSpaces(text.slice(0, offsetInRun)) : 0;
       return (
         alignmentOffset +
         currentX +
-        measured.width +
-        spacingWidth +
+        (measuredWidth + spacingWidth) * horizontalScale +
         justify.extraPerSpace * (spaceTally + spacesInPortion)
       );
     }
 
-    // Measure entire run and advance
-    ctx.font = getRunFontString(run);
-    const measured = ctx.measureText(displayText);
+    // Measure entire run and advance (memoized).
+    const wholeRunFont = getRunFontString(run, fontContext);
+    ctx.font = wholeRunFont;
+    const wholeRunWidth = memoizedCaretWidth(ctx, wholeRunFont, displayText, displayText.length);
     const runLetterSpacing = computeLetterSpacingWidth(run, runLength, runLength);
     const spacesInRun = justify.extraPerSpace !== 0 ? countSpaces(text) : 0;
-    currentX += measured.width + runLetterSpacing + justify.extraPerSpace * spacesInRun;
+    currentX += (wholeRunWidth + runLetterSpacing) * getHorizontalScale(run) + justify.extraPerSpace * spacesInRun;
     spaceTally += spacesInRun;
 
     currentCharOffset += runLength;
@@ -476,6 +499,74 @@ export function measureCharacterX(
 
   // If we're past the end, return the total width
   return alignmentOffset + currentX;
+}
+
+const inlineBoxAdvanceAtOffset = (line: Line, charOffset: number): number =>
+  (line.inlineBoxes ?? []).reduce((advance, box) => {
+    if (charOffset >= box.from) {
+      advance += box.style.paddingInlineStart + box.style.borderWidth + (box.startsRange ? box.style.gapBefore : 0);
+    }
+    if (charOffset >= box.to) {
+      advance += box.style.paddingInlineEnd + box.style.borderWidth + (box.endsRange ? box.style.gapAfter : 0);
+    }
+    return advance;
+  }, 0);
+
+const inlineBoxTextX = (block: FlowBlock, line: Line, charOffset: number): number | undefined => {
+  if (block.kind !== 'paragraph' || !line.inlineBoxes?.length || !line.segments?.length) return undefined;
+
+  const runStarts: number[] = [];
+  let paragraphOffset = 0;
+  for (const run of block.runs) {
+    runStarts.push(paragraphOffset);
+    paragraphOffset += getRunCharacterLength(run);
+  }
+
+  const lineStart = (runStarts[line.fromRun] ?? 0) + line.fromChar;
+  const target = lineStart + charOffset;
+  let x = 0;
+  for (const segment of line.segments) {
+    const segmentX = segment.x ?? x;
+    const segmentStart = (runStarts[segment.runIndex] ?? 0) + segment.fromChar;
+    const segmentEnd = (runStarts[segment.runIndex] ?? 0) + segment.toChar;
+    if (target >= segmentEnd) {
+      x = segmentX + segment.width;
+      continue;
+    }
+    if (target > segmentStart && segmentEnd > segmentStart) {
+      x = segmentX + segment.width * ((target - segmentStart) / (segmentEnd - segmentStart));
+    } else if (target === segmentStart) {
+      x = segmentX;
+    }
+    break;
+  }
+  return x;
+};
+
+export function measureCharacterX(
+  block: FlowBlock,
+  line: Line,
+  charOffset: number,
+  availableWidthOverride?: number,
+  alignmentOverride?: string,
+  fontContext: FontMeasureContext = DEFAULT_FONT_MEASURE_CONTEXT,
+): number {
+  const measuredTextX = measureCharacterXWithoutInlineBoxes(
+    block,
+    line,
+    charOffset,
+    availableWidthOverride,
+    alignmentOverride,
+    fontContext,
+  );
+  const inlineTextX = inlineBoxTextX(block, line, charOffset);
+  const textX =
+    inlineTextX === undefined
+      ? measuredTextX
+      : inlineTextX +
+        measuredTextX -
+        measureCharacterXWithoutInlineBoxes(block, line, charOffset, line.width, 'left', fontContext);
+  return textX + inlineBoxAdvanceAtOffset(line, charOffset);
 }
 
 /**
@@ -494,6 +585,7 @@ function measureCharacterXSegmentBased(
   line: Line,
   charOffset: number,
   ctx: CanvasRenderingContext2D,
+  fontContext: FontMeasureContext,
 ): number {
   if (block.kind !== 'paragraph' || !line.segments) return 0;
 
@@ -539,7 +631,8 @@ function measureCharacterXSegmentBased(
         return segmentBaseX + (offsetInSegment > 0 ? (segment.width ?? 0) : 0);
       }
 
-      // Handle ImageRun, LineBreakRun, BreakRun, and FieldAnnotationRun - these are atomic, use segment width
+      // Handle atomic inline objects (images, breaks, etc.) using the measured
+      // segment width instead of text slicing.
       if (
         'src' in run ||
         run.kind === 'lineBreak' ||
@@ -551,19 +644,23 @@ function measureCharacterXSegmentBased(
       }
 
       // For text runs, measure up to the target character
+      if (isVanishedRun(run)) {
+        return segmentBaseX;
+      }
+
       const text = run.text ?? '';
       // Only TextRun and TabRun have textTransform (via RunMarks)
       // At this point, we've already filtered out TabRun, ImageRun, etc., so run must be TextRun
       const transform = 'textTransform' in run ? run.textTransform : undefined;
       const displayText = applyTextTransform(text, transform);
       const displaySegmentText = displayText.slice(segment.fromChar, segment.toChar);
-      const textUpToTarget = displaySegmentText.slice(0, offsetInSegment);
 
-      ctx.font = getRunFontString(run);
-      const measured = ctx.measureText(textUpToTarget);
+      const segmentFont = getRunFontString(run, fontContext);
+      ctx.font = segmentFont;
+      const segmentPrefixWidth = memoizedCaretWidth(ctx, segmentFont, displaySegmentText, offsetInSegment);
       const spacingWidth = computeLetterSpacingWidth(run, offsetInSegment, segmentChars);
 
-      return segmentBaseX + measured.width + spacingWidth;
+      return segmentBaseX + (segmentPrefixWidth + spacingWidth) * getHorizontalScale(run);
     }
 
     lineCharCount += segmentChars;
@@ -744,6 +841,50 @@ const resolveVisualOnlyRunBoundary = (
  * @param alignmentOverride - Optional override for text alignment (e.g., 'left' for list items)
  * @returns Object with charOffset (0-based from line start) and pmPosition
  */
+/**
+ * Memoized shaped caret-boundary measurement. Caret/hit resolution probes the SAME
+ * (font, text, offset) triples many times per keystroke (binary-search
+ * probes × several callers × repeated caret paints) — raw ctx.measureText
+ * per probe was ~130ms/keystroke of canvas work on long lines. The boundary is
+ * `width(full run) - width(suffix)`, not `width(prefix)`: CSS shapes the entire
+ * painted run, so kerning across the boundary belongs to the prefix advance.
+ * Each distinct boundary is measured exactly once; the outer map is size-capped
+ * and cleared whole (fail-simple), and font changes key differently, so stale
+ * widths cannot serve.
+ */
+// Scoped PER CANVAS CONTEXT: two contexts can share a font string but carry
+// different transforms/scales, so a shared map would cross-contaminate
+// widths (mis-mapping caret x -> offset, i.e. corrupting typed positions).
+const caretWidthMemoByCtx = new WeakMap<CanvasRenderingContext2D, Map<string, Map<number, number>>>();
+const CARET_WIDTH_MEMO_MAX_TEXTS = 512;
+
+function memoizedCaretWidth(ctx: CanvasRenderingContext2D, fontKey: string, displayText: string, upTo: number): number {
+  let caretWidthMemo = caretWidthMemoByCtx.get(ctx);
+  if (!caretWidthMemo) {
+    caretWidthMemo = new Map();
+    caretWidthMemoByCtx.set(ctx, caretWidthMemo);
+  }
+  const key = `${fontKey}\u0000${displayText}`;
+  let perOffset = caretWidthMemo.get(key);
+  if (!perOffset) {
+    if (caretWidthMemo.size >= CARET_WIDTH_MEMO_MAX_TEXTS) caretWidthMemo.clear();
+    perOffset = new Map();
+    caretWidthMemo.set(key, perOffset);
+  }
+  const hit = perOffset.get(upTo);
+  if (hit != null) return hit;
+  const boundary = Math.max(0, Math.min(upTo, displayText.length));
+  let fullWidth = perOffset.get(displayText.length);
+  if (fullWidth == null) {
+    fullWidth = ctx.measureText(displayText).width;
+    perOffset.set(displayText.length, fullWidth);
+  }
+  const width =
+    boundary === displayText.length ? fullWidth : fullWidth - ctx.measureText(displayText.slice(boundary)).width;
+  perOffset.set(upTo, width);
+  return width;
+}
+
 export function findCharacterAtX(
   block: FlowBlock,
   line: Line,
@@ -751,168 +892,81 @@ export function findCharacterAtX(
   pmStart: number,
   availableWidthOverride?: number,
   alignmentOverride?: string,
+  fontContext: FontMeasureContext = DEFAULT_FONT_MEASURE_CONTEXT,
 ): { charOffset: number; pmPosition: number } {
-  const ctx = getMeasurementContext();
-  const availableWidth =
-    availableWidthOverride ??
-    line.maxWidth ??
-    // Fallback: approximate with line width when no maxWidth is present
-    line.width;
-  // Pass availableWidth to justify calculation to match painter's word-spacing
-  const justify = getJustifyAdjustment({
-    block,
-    line,
-    availableWidthOverride: availableWidth,
-    alignmentOverride,
-  });
-  const alignment = alignmentOverride ?? (block.kind === 'paragraph' ? block.attrs?.alignment : undefined);
-  // For justify alignment, the line is stretched to fill available width (slack distributed across spaces)
-  // For center/right alignment, the line keeps its natural width and is positioned within the available space
-  const renderedLineWidth =
-    alignment === 'justify' ? line.width + Math.max(0, availableWidth - line.width) : line.width;
-  const hasExplicitPositioning = line.segments?.some((seg) => seg.x !== undefined);
-  const alignmentOffset =
-    !hasExplicitPositioning && alignment === 'center'
-      ? Math.max(0, (availableWidth - renderedLineWidth) / 2)
-      : !hasExplicitPositioning && alignment === 'right'
-        ? Math.max(0, availableWidth - renderedLineWidth)
-        : 0;
-
-  if (!ctx) {
-    // Fallback to ratio-based calculation
-    const runs = sliceRunsForLine(block, line);
-    const charsInLine = Math.max(
-      1,
-      runs.reduce((sum, run) => {
-        if (isTabRun(run)) return sum + TAB_CHAR_LENGTH;
-        if (
-          'src' in run ||
-          run.kind === 'lineBreak' ||
-          run.kind === 'break' ||
-          run.kind === 'fieldAnnotation' ||
-          run.kind === 'math'
-        )
-          return sum;
-        return sum + (run.text ?? '').length;
-      }, 0),
-    );
-    const ratio = Math.max(0, Math.min(1, (x - alignmentOffset) / renderedLineWidth));
-    const charOffset = Math.round(ratio * charsInLine);
-    const pmPosition = charOffsetToPm(block, line, charOffset, pmStart);
-    return {
-      charOffset,
-      pmPosition,
-    };
+  for (const box of line.inlineBoxes ?? []) {
+    const leadingEdge = box.style.paddingInlineStart + box.style.borderWidth;
+    const leadingEnd = measureCharacterX(block, line, box.from, availableWidthOverride, alignmentOverride, fontContext);
+    if (x >= leadingEnd - leadingEdge && x <= leadingEnd) {
+      return { charOffset: box.from, pmPosition: charOffsetToPm(block, line, box.from, pmStart) };
+    }
+    const trailingEdge = box.style.paddingInlineEnd + box.style.borderWidth;
+    const trailingEnd =
+      measureCharacterX(block, line, box.to, availableWidthOverride, alignmentOverride, fontContext) -
+      (box.endsRange ? box.style.gapAfter : 0);
+    if (x >= trailingEnd - trailingEdge && x <= trailingEnd) {
+      return { charOffset: box.to, pmPosition: charOffsetToPm(block, line, box.to, pmStart) };
+    }
   }
 
-  const runs = sliceRunsForLine(block, line);
-  const safeX = Math.max(0, Math.min(renderedLineWidth, x - alignmentOffset));
+  // Defined as the exact inverse of measureCharacterX: search the caret-boundary
+  // x positions that measureCharacterX produces and return the nearest one.
+  // measureCharacterX is the single source of truth for offset -> x, so every mode
+  // (left, center, right, justify, tabs, and explicit per-segment x) is handled in
+  // one place and the forward/inverse pair cannot drift apart.
+  const maxOffset = lineCharLength(block, line);
+  const xAtOffset = (offset: number): number =>
+    measureCharacterX(block, line, offset, availableWidthOverride, alignmentOverride, fontContext);
+  const charOffset = nearestOffsetToX(x, maxOffset, xAtOffset);
+  return { charOffset, pmPosition: charOffsetToPm(block, line, charOffset, pmStart) };
+}
 
-  let currentX = 0;
-  let currentCharOffset = 0;
-  let spaceTally = 0;
-
-  for (const run of runs) {
+/**
+ * Number of addressable caret offsets on a line (its last caret offset). Mirrors
+ * how measureCharacterX advances charOffset: tab runs count as one character,
+ * atomic/break/field/math runs as zero, and text runs by their length.
+ */
+function lineCharLength(block: FlowBlock, line: Line): number {
+  let length = 0;
+  for (const run of sliceRunsForLine(block, line)) {
     if (isTabRun(run)) {
-      const tabWidth = run.width ?? 0;
-      const startX = currentX;
-      const endX = currentX + tabWidth;
-      if (safeX <= endX) {
-        const midpoint = startX + tabWidth / 2;
-        const offsetInRun = safeX < midpoint ? 0 : TAB_CHAR_LENGTH;
-        const charOffset = currentCharOffset + offsetInRun;
-        const pmPosition = charOffsetToPm(block, line, charOffset, pmStart);
-        return {
-          charOffset,
-          pmPosition,
-        };
-      }
-      currentX = endX;
-      currentCharOffset += TAB_CHAR_LENGTH;
+      length += TAB_CHAR_LENGTH;
       continue;
     }
-
-    const text =
+    if (
       'src' in run ||
       run.kind === 'lineBreak' ||
       run.kind === 'break' ||
       run.kind === 'fieldAnnotation' ||
       run.kind === 'math'
-        ? ''
-        : (run.text ?? '');
-    const runLength = text.length;
-    // Only TextRun and TabRun have textTransform (via RunMarks)
-    const transform =
-      isTabRun(run) ||
-      'src' in run ||
-      run.kind === 'lineBreak' ||
-      run.kind === 'break' ||
-      run.kind === 'fieldAnnotation' ||
-      run.kind === 'math'
-        ? undefined
-        : run.textTransform;
-    const displayText = applyTextTransform(text, transform);
-
-    if (runLength === 0) continue;
-
-    ctx.font = getRunFontString(run);
-
-    // Measure each character in the run to find the closest boundary
-    for (let i = 0; i <= runLength; i++) {
-      const textUpToChar = displayText.slice(0, i);
-      const measured = ctx.measureText(textUpToChar);
-      const spacesInPortion = justify.extraPerSpace > 0 ? countSpaces(text.slice(0, i)) : 0;
-      const charX =
-        currentX +
-        measured.width +
-        computeLetterSpacingWidth(run, i, runLength) +
-        justify.extraPerSpace * (spaceTally + spacesInPortion);
-
-      // If we've passed the target X, return the previous character
-      // or this one, whichever is closer
-      if (charX >= safeX) {
-        if (i === 0) {
-          // First character, return this position
-          const pmPosition = charOffsetToPm(block, line, currentCharOffset, pmStart);
-          return {
-            charOffset: currentCharOffset,
-            pmPosition,
-          };
-        }
-
-        // Check which boundary is closer
-        const prevText = displayText.slice(0, i - 1);
-        const prevMeasured = ctx.measureText(prevText);
-        const prevX = currentX + prevMeasured.width + computeLetterSpacingWidth(run, i - 1, runLength);
-
-        const distToPrev = Math.abs(safeX - prevX);
-        const distToCurrent = Math.abs(safeX - charX);
-
-        const charOffset = distToPrev < distToCurrent ? currentCharOffset + i - 1 : currentCharOffset + i;
-
-        const pmPosition = charOffsetToPm(block, line, charOffset, pmStart);
-        return {
-          charOffset,
-          pmPosition,
-        };
-      }
+    ) {
+      continue;
     }
-
-    // Advance past this run
-    const measured = ctx.measureText(displayText);
-    const runLetterSpacing = computeLetterSpacingWidth(run, runLength, runLength);
-    const spacesInRun = justify.extraPerSpace > 0 ? countSpaces(text) : 0;
-    currentX += measured.width + runLetterSpacing + justify.extraPerSpace * spacesInRun;
-    spaceTally += spacesInRun;
-    currentCharOffset += runLength;
+    length += (run.text ?? '').length;
   }
+  return length;
+}
 
-  // If we're past all characters, return the end of the line
-  const pmPosition = charOffsetToPm(block, line, currentCharOffset, pmStart);
-  return {
-    charOffset: currentCharOffset,
-    pmPosition,
-  };
+/**
+ * Nearest caret offset in [0, maxOffset] to `x`, given a non-decreasing
+ * offset -> x map. Ties (equal distance to both neighboring boundaries) resolve
+ * to the trailing offset, matching the historical char-by-char click behavior.
+ */
+function nearestOffsetToX(x: number, maxOffset: number, xAtOffset: (offset: number) => number): number {
+  if (maxOffset <= 0 || x <= xAtOffset(0)) return 0;
+  if (x >= xAtOffset(maxOffset)) return maxOffset;
+
+  // Largest `lo` whose boundary is still <= x. Binary search relies on the map
+  // being monotonic non-decreasing in the offset.
+  let lo = 0;
+  let hi = maxOffset;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (xAtOffset(mid) <= x) lo = mid;
+    else hi = mid - 1;
+  }
+  const upper = Math.min(lo + 1, maxOffset);
+  return x - xAtOffset(lo) < xAtOffset(upper) - x ? lo : upper;
 }
 
 const computeLetterSpacingWidth = (run: Run, precedingChars: number, runLength: number): number => {
@@ -932,4 +986,10 @@ const computeLetterSpacingWidth = (run: Run, precedingChars: number, runLength: 
   }
   const clamped = Math.min(Math.max(precedingChars, 0), maxGaps);
   return clamped * run.letterSpacing;
+};
+
+const getHorizontalScale = (run: Run): number => {
+  if (!('horizontalScale' in run)) return 1;
+  const value = run.horizontalScale;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 1;
 };

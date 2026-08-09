@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { getMeasuredTextWidth, setCacheSize, clearMeasurementCache } from './measurementCache.js';
 
 describe('measurementCache', () => {
@@ -69,6 +69,20 @@ describe('measurementCache', () => {
         expect(width1).toBeGreaterThan(0);
         expect(width2).toBeGreaterThan(0);
         expect(width2).toBeGreaterThan(width1); // Letter spacing should increase width
+      });
+
+      it('scopes identical text/font keys to the measuring context', () => {
+        const makeContext = (width: number): CanvasRenderingContext2D =>
+          ({
+            font: '',
+            measureText: () => ({ width }),
+          }) as unknown as CanvasRenderingContext2D;
+
+        const first = getMeasuredTextWidth('same text', '16px Arial', 0, makeContext(10));
+        const second = getMeasuredTextWidth('same text', '16px Arial', 0, makeContext(20));
+
+        expect(first).toBe(10);
+        expect(second).toBe(20);
       });
 
       it('should update LRU order on cache hit', () => {

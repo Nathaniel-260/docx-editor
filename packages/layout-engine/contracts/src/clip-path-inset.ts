@@ -1,6 +1,6 @@
 /**
  * Shared utilities for inset(top% right% bottom% left%) clip-path (e.g. from DOCX a:srcRect).
- * Used by both the layout-engine painters and super-editor image extension so the same
+ * Used by both the layout-engine painters and document-runtime image handling so the same
  * scale/translate math is applied everywhere.
  */
 

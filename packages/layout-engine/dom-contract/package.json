@@ -14,9 +14,10 @@
   },
   "scripts": {
     "build": "tsc --build tsconfig.json --emitDeclarationOnly",
-    "test": "vitest run"
+    "test": "vp test run"
   },
   "devDependencies": {
-    "vitest": "catalog:"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

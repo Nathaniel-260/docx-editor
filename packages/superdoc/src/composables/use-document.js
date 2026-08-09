@@ -15,7 +15,7 @@ export default function useDocument(params, superdocConfig) {
   const markdown = params.markdown;
   const password = params.password;
 
-  // Password retry — incrementing this forces SuperEditor to remount and re-run loadXmlData.
+  // Password retry — incrementing this forces SuperDoc editor to remount and re-run loadXmlData.
   const editorMountNonce = ref(0);
 
   // Placement
@@ -29,6 +29,7 @@ export default function useDocument(params, superdocConfig) {
   const provider = shallowRef(params.provider);
   const socket = shallowRef(params.socket);
   const isNewFile = ref(params.isNewFile);
+  const v2Collaboration = shallowRef(params.v2Collaboration || null);
 
   // For docx
   const editorRef = shallowRef(null);
@@ -40,14 +41,14 @@ export default function useDocument(params, superdocConfig) {
    */
   const getEditor = () => editorRef.value;
 
-  const presentationEditorRef = shallowRef(null);
-  const setPresentationEditor = (ref) => (presentationEditorRef.value = ref);
+  const documentRuntimeRef = shallowRef(null);
+  const setDocumentRuntime = (ref) => (documentRuntimeRef.value = ref);
 
   /**
    * @deprecated Direct editor access will be removed in a future version. Use the Document API (`editor.doc`) instead.
    * See https://docs.superdoc.dev/document-api/overview
    */
-  const getPresentationEditor = () => presentationEditorRef.value;
+  const getDocumentRuntime = () => documentRuntimeRef.value;
 
   /**
    * Initialize the mime type of the document.
@@ -113,6 +114,7 @@ export default function useDocument(params, superdocConfig) {
     provider,
     socket,
     isNewFile,
+    v2Collaboration,
 
     // Placement
     container,
@@ -130,8 +132,8 @@ export default function useDocument(params, superdocConfig) {
     // Actions
     setEditor,
     getEditor,
-    setPresentationEditor,
-    getPresentationEditor,
+    setDocumentRuntime,
+    getDocumentRuntime,
     removeComments,
     restoreComments,
     removeConversation,

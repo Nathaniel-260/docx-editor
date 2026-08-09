@@ -1,4 +1,4 @@
-import type { TextTarget } from '../types/address.js';
+import type { SelectionTarget, TextTarget } from '../types/address.js';
 
 /**
  * Input for `selection.current`: reads the editor's current selection.
@@ -39,6 +39,14 @@ export interface SelectionInfo {
    * full selection.
    */
   target: TextTarget | null;
+  /**
+   * Explicit selection envelope for the current live selection, or `null` when
+   * the runtime cannot project one truthfully.
+   *
+   * Unlike {@link target}, this preserves caret/range endpoints in the public
+   * selection-target model the write APIs consume directly.
+   */
+  selectionTarget?: SelectionTarget | null;
   /**
    * Active marks at the caret or across the selection. Names are
    * ProseMirror mark type names (e.g. `'bold'`, `'italic'`, `'link'`).

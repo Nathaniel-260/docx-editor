@@ -25,6 +25,12 @@ import type {
   BlocksListResult,
   BlocksDeleteRangeInput,
   BlocksDeleteRangeResult,
+  BlocksMergeInput,
+  BlocksMergeResult,
+  BlocksMoveInput,
+  BlocksMoveResult,
+  BlocksSplitInput,
+  BlocksSplitResult,
 } from '../types/blocks.types.js';
 import type { GetNodeByIdInput } from '../get-node/get-node.js';
 import type { GetTextInput } from '../get-text/get-text.js';
@@ -41,7 +47,13 @@ import type { DeleteInput } from '../delete/delete.js';
 import type { MutationOptions, RevisionGuardOptions } from '../write/write.js';
 import type { FormatInlineAliasInput, FormatRangeInput, StyleApplyInput } from '../format/format.js';
 import type { InlineRunPatchKey } from '../format/inline-run-patch.js';
-import type { StylesApplyInput, StylesApplyOptions, StylesApplyReceipt } from '../styles/index.js';
+import type {
+  StylesApplyInput,
+  StylesApplyOptions,
+  StylesApplyReceipt,
+  StylesGetCatalogInput,
+  StylesGetCatalogResult,
+} from '../styles/index.js';
 import type { TemplatesApplyInput, TemplatesApplyOptions, TemplatesApplyReceipt } from '../templates/index.js';
 import type {
   CommentsCreateReceipt,
@@ -63,6 +75,7 @@ import type {
   DiffApplyInput,
   DiffApplyOptions,
 } from '../diff/diff.types.js';
+import type { ExportToDocxInput, ExportToDocxResult } from '../export/export.types.js';
 import type {
   DocumentProtectionState,
   ProtectionGetInput,
@@ -136,10 +149,17 @@ import type {
   ListsSetLevelTextInput,
   ListsSetLevelStartInput,
   ListsSetLevelLayoutInput,
+  ListsGetStateInput,
+  ListsGetStateResult,
+  ListsApplyInput,
+  ListsContinueV2Input,
+  ListsRestartV2Input,
+  ListsRemoveV2Input,
 } from '../lists/lists.types.js';
 import type {
   ParagraphMutationResult,
   ParagraphsSetStyleInput,
+  ParagraphsSetStyleRefInput,
   ParagraphsClearStyleInput,
   ParagraphsResetDirectFormattingInput,
   ParagraphsSetAlignmentInput,
@@ -158,6 +178,7 @@ import type {
   ParagraphsClearBorderInput,
   ParagraphsSetShadingInput,
   ParagraphsClearShadingInput,
+  ParagraphsSetMarkRunPropsInput,
   ParagraphsSetDirectionInput,
   ParagraphsClearDirectionInput,
   ParagraphsSetNumberingInput,
@@ -299,6 +320,15 @@ import type {
   FootnoteConfigResult,
 } from '../footnotes/footnotes.types.js';
 import type {
+  ClipboardInsertInput,
+  ClipboardInsertResult,
+  ClipboardParseOptions,
+  ClipboardParseResult,
+  ClipboardPayload,
+  ClipboardSerializeInput,
+  ClipboardSerializeResult,
+} from '../types/clipboard.js';
+import type {
   CrossRefListInput,
   CrossRefsListResult,
   CrossRefGetInput,
@@ -404,6 +434,7 @@ import type {
   TablesSetLayoutInput,
   TablesInsertRowInput,
   TablesDeleteRowInput,
+  TablesMoveRowInput,
   TablesSetRowHeightInput,
   TablesDistributeRowsInput,
   TablesSetRowOptionsInput,
@@ -571,11 +602,19 @@ export interface OperationRegistry extends FormatInlineAliasOperationRegistry {
   'blocks.list': { input: BlocksListInput | undefined; options: never; output: BlocksListResult };
   'blocks.delete': { input: BlocksDeleteInput; options: MutationOptions; output: BlocksDeleteResult };
   'blocks.deleteRange': { input: BlocksDeleteRangeInput; options: MutationOptions; output: BlocksDeleteRangeResult };
+  'blocks.split': { input: BlocksSplitInput; options: MutationOptions; output: BlocksSplitResult };
+  'blocks.merge': { input: BlocksMergeInput; options: MutationOptions; output: BlocksMergeResult };
+  'blocks.move': { input: BlocksMoveInput; options: MutationOptions; output: BlocksMoveResult };
   // --- format.* ---
   'format.apply': { input: StyleApplyInput; options: MutationOptions; output: TextMutationReceipt };
   // --- styles.paragraph.* ---
   'styles.paragraph.setStyle': {
     input: ParagraphsSetStyleInput;
+    options: MutationOptions;
+    output: ParagraphMutationResult;
+  };
+  'styles.paragraph.setStyleRef': {
+    input: ParagraphsSetStyleRefInput;
     options: MutationOptions;
     output: ParagraphMutationResult;
   };
@@ -670,6 +709,11 @@ export interface OperationRegistry extends FormatInlineAliasOperationRegistry {
     options: MutationOptions;
     output: ParagraphMutationResult;
   };
+  'format.paragraph.setMarkRunProps': {
+    input: ParagraphsSetMarkRunPropsInput;
+    options: MutationOptions;
+    output: ParagraphMutationResult;
+  };
   'format.paragraph.setDirection': {
     input: ParagraphsSetDirectionInput;
     options: MutationOptions;
@@ -687,6 +731,11 @@ export interface OperationRegistry extends FormatInlineAliasOperationRegistry {
   };
   // --- styles.* ---
   'styles.apply': { input: StylesApplyInput; options: StylesApplyOptions; output: StylesApplyReceipt };
+  'styles.getCatalog': {
+    input: StylesGetCatalogInput | undefined;
+    options: never;
+    output: StylesGetCatalogResult;
+  };
   // --- templates.* ---
   // Async operation (SD-3247): output is Promise<TemplatesApplyReceipt>. The JSON
   // output schema still describes the resolved receipt, not the Promise.
@@ -785,6 +834,12 @@ export interface OperationRegistry extends FormatInlineAliasOperationRegistry {
   'lists.setLevelText': { input: ListsSetLevelTextInput; options: MutationOptions; output: ListsMutateItemResult };
   'lists.setLevelStart': { input: ListsSetLevelStartInput; options: MutationOptions; output: ListsMutateItemResult };
   'lists.setLevelLayout': { input: ListsSetLevelLayoutInput; options: MutationOptions; output: ListsMutateItemResult };
+  // --- lists.* (v2 numbering-aware) ---
+  'lists.getState': { input: ListsGetStateInput; options: never; output: ListsGetStateResult };
+  'lists.apply': { input: ListsApplyInput; options: MutationOptions; output: ListsMutateItemResult };
+  'lists.continue': { input: ListsContinueV2Input; options: MutationOptions; output: ListsMutateItemResult };
+  'lists.restart': { input: ListsRestartV2Input; options: MutationOptions; output: ListsMutateItemResult };
+  'lists.remove': { input: ListsRemoveV2Input; options: MutationOptions; output: ListsMutateItemResult };
   // --- sections.* ---
   'sections.list': { input: SectionsListQuery | undefined; options: never; output: SectionsListResult };
   'sections.get': { input: SectionsGetInput; options: never; output: SectionInfo };
@@ -907,6 +962,7 @@ export interface OperationRegistry extends FormatInlineAliasOperationRegistry {
   'tables.setLayout': { input: TablesSetLayoutInput; options: MutationOptions; output: TableMutationResult };
   'tables.insertRow': { input: TablesInsertRowInput; options: MutationOptions; output: TableMutationResult };
   'tables.deleteRow': { input: TablesDeleteRowInput; options: MutationOptions; output: TableMutationResult };
+  'tables.moveRow': { input: TablesMoveRowInput; options: MutationOptions; output: TableMutationResult };
   'tables.setRowHeight': { input: TablesSetRowHeightInput; options: MutationOptions; output: TableMutationResult };
   'tables.distributeRows': { input: TablesDistributeRowsInput; options: MutationOptions; output: TableMutationResult };
   'tables.setRowOptions': { input: TablesSetRowOptionsInput; options: MutationOptions; output: TableMutationResult };
@@ -1372,6 +1428,14 @@ export interface OperationRegistry extends FormatInlineAliasOperationRegistry {
   'footnotes.update': { input: FootnoteUpdateInput; options: MutationOptions; output: FootnoteMutationResult };
   'footnotes.remove': { input: FootnoteRemoveInput; options: MutationOptions; output: FootnoteMutationResult };
   'footnotes.configure': { input: FootnoteConfigureInput; options: MutationOptions; output: FootnoteConfigResult };
+  // --- clipboard.* ---
+  'clipboard.parse': { input: ClipboardPayload; options: ClipboardParseOptions; output: ClipboardParseResult };
+  'clipboard.insert': { input: ClipboardInsertInput; options: MutationOptions; output: ClipboardInsertResult };
+  'clipboard.serializeSelection': {
+    input: ClipboardSerializeInput | undefined;
+    options: never;
+    output: ClipboardSerializeResult;
+  };
   // --- crossRefs.* ---
   'crossRefs.list': { input: CrossRefListInput | undefined; options: never; output: CrossRefsListResult };
   'crossRefs.get': { input: CrossRefGetInput; options: never; output: CrossRefInfo };
@@ -1495,6 +1559,8 @@ export interface OperationRegistry extends FormatInlineAliasOperationRegistry {
   'diff.capture': { input: undefined; options: never; output: DiffSnapshot };
   'diff.compare': { input: DiffCompareInput; options: never; output: DiffPayload };
   'diff.apply': { input: DiffApplyInput; options: DiffApplyOptions; output: DiffApplyResult };
+  // --- export.* ---
+  'export.toDocx': { input: ExportToDocxInput; options: never; output: ExportToDocxResult };
   // --- protection.* ---
   'protection.get': { input: ProtectionGetInput; options: never; output: DocumentProtectionState };
   'protection.setEditingRestriction': {

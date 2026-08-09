@@ -5,8 +5,7 @@
  * and reports:
  *
  *  Rule 1 (FAIL in strict mode): private workspace specifier in an emitted
- *    declaration that is NOT in `RULE1_ALLOWLIST` (legacy public surfaces,
- *    currently only `@superdoc/super-editor`). After SD-2942 there is no
+ *    declaration that is NOT in `RULE1_ALLOWLIST`. After SD-2942 there is no
  *    `_internal-shims.d.ts` fallback, so any unrelocated `@superdoc/*`
  *    specifier on the public surface fails the build instead of riding
  *    through silently as `any`. If the file is present (a stale dist from
@@ -217,11 +216,11 @@ console.log();
 
 if (isStrict) {
   console.log('Exiting non-zero (strict mode is the default since SD-2859).');
-  console.log('See docs/architecture/package-boundaries.md for what each rule means.');
+  console.log('Review the findings above for the violated declaration-surface rules.');
   console.log('Pass --informational (or SUPERDOC_AUDIT_INFORMATIONAL=1) to opt out for local iteration on a known leak.');
   process.exit(1);
 }
 
 console.log('Exiting zero (informational mode).');
-console.log('See docs/architecture/package-boundaries.md for what each rule means.');
+console.log('Review the findings above for the violated declaration-surface rules.');
 process.exit(0);

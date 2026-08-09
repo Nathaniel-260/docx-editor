@@ -142,6 +142,7 @@ export interface IndexEntryInfo {
   crossReference?: string;
   pageRangeBookmark?: string;
   entryType?: string;
+  yomi?: string;
   instruction: string;
 }
 
@@ -151,6 +152,7 @@ export interface IndexEntryDomain {
   subEntry?: string;
   bold: boolean;
   italic: boolean;
+  yomi?: string;
   instruction: string;
 }
 

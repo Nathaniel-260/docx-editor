@@ -1,6 +1,0 @@
-**/Dockerfile
-**/dist
-**/*.tsbuildinfo
-**/node_modules
-packages/**/tests
-/.*

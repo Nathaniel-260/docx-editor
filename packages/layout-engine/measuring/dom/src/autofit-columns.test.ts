@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { AutoFitContentMetricsInput, ExplicitAutoFitInput } from './autofit-columns.js';
 import { computeAutoFitColumnWidths } from './autofit-columns.js';
 import type { WorkingTableGridInput } from './autofit-normalize.js';
@@ -44,39 +44,6 @@ describe('computeAutoFitColumnWidths', () => {
     expect(result.layoutMode).toBe('fixed');
     expect(result.columnWidths).toEqual([120, 180]);
     expect(result.totalWidth).toBe(300);
-  });
-
-  // SD-3309: when preserveExplicitAutoGrid fires for a pct-width table whose authored grid sum
-  // (640) exceeds the resolved table width (624), the solver must scale the grid PROPORTIONS to
-  // the table width, not let short content collapse the columns. 30/70 of 624 = ~187/437.
-  it('scales an explicit pct grid to the resolved table width while keeping its proportions', () => {
-    const result = computeAutoFitColumnWidths(
-      buildExplicitInput({
-        workingInput: buildWorkingInput({
-          preserveExplicitAutoGrid: true,
-          preferredTableWidth: 624,
-          maxTableWidth: 624,
-          preferredColumnWidths: [192, 448],
-        }),
-        fixedLayout: {
-          columnWidths: [192, 448],
-          totalWidth: 640,
-          gridColumnCount: 2,
-          preferredTableWidth: 624,
-        },
-        contentMetrics: buildContentMetrics([
-          [
-            { min: 40, max: 50 },
-            { min: 40, max: 50 },
-          ],
-        ]),
-      }),
-    );
-
-    expect(result.totalWidth).toBeCloseTo(624, 0);
-    const col1Pct = (result.columnWidths[0] / result.totalWidth) * 100;
-    expect(col1Pct).toBeGreaterThan(28);
-    expect(col1Pct).toBeLessThan(32);
   });
 
   it('does not keep authored grid widths as an autofit floor', () => {
@@ -164,6 +131,117 @@ describe('computeAutoFitColumnWidths', () => {
     expect(result.columnWidths[0]).toBeLessThanOrEqual(50);
     expect(result.columnWidths[1]).toBeGreaterThanOrEqual(180);
     expect(result.totalWidth).toBeGreaterThan(100);
+  });
+
+  it('keeps a stable imported AutoFit grid unchanged when edited content exceeds a column minimum', () => {
+    const columnWidths = Array.from({ length: 9 }, () => 1360 / 15);
+    const result = computeAutoFitColumnWidths(
+      buildExplicitInput({
+        workingInput: buildWorkingInput({
+          preferredTableWidth: undefined,
+          preserveAutoGrid: true,
+          stableAutoGrid: true,
+          maxTableWidth: 816,
+          preferredColumnWidths: columnWidths,
+          gridColumnCount: 9,
+          rows: [buildAutoGridRow(columnWidths)],
+        }),
+        fixedLayout: {
+          columnWidths,
+          totalWidth: 816,
+          gridColumnCount: 9,
+          preferredTableWidth: undefined,
+        },
+        contentMetrics: buildContentMetrics([
+          columnWidths.map((_, columnIndex) => ({
+            min: columnIndex === 0 ? 171.53 : 20,
+            max: columnIndex === 0 ? 240 : 40,
+          })),
+        ]),
+      }),
+    );
+
+    expect(result.layoutMode).toBe('autofit');
+    expect(result.columnWidths).toHaveLength(columnWidths.length);
+    result.columnWidths.forEach((width, index) => expect(width).toBeCloseTo(columnWidths[index], 12));
+    expect(result.totalWidth).toBe(816);
+  });
+
+  it('keeps tcW-shaped stable columns within the authored budget without using edited content metrics', () => {
+    const fixedWidths = [240, 76.8, 144, 288];
+    const fixedTotal = fixedWidths.reduce((sum, width) => sum + width, 0);
+    const result = computeAutoFitColumnWidths(
+      buildExplicitInput({
+        workingInput: buildWorkingInput({
+          preferredTableWidth: undefined,
+          stableAutoGrid: true,
+          autoGridWidthBudget: 576,
+          maxTableWidth: 576,
+          preferredColumnWidths: [144, 144, 144, 144],
+          gridColumnCount: 4,
+          rows: [buildAutoGridRow(fixedWidths)],
+        }),
+        fixedLayout: {
+          columnWidths: fixedWidths,
+          totalWidth: fixedTotal,
+          gridColumnCount: 4,
+          preferredTableWidth: undefined,
+        },
+        contentMetrics: buildContentMetrics([
+          fixedWidths.map((_, columnIndex) => ({
+            min: columnIndex === 0 ? 400 : 20,
+            max: columnIndex === 0 ? 500 : 40,
+          })),
+        ]),
+      }),
+    );
+
+    expect(result.totalWidth).toBe(576);
+    result.columnWidths.forEach((width, index) => {
+      expect(width / result.totalWidth).toBeCloseTo(fixedWidths[index] / fixedTotal, 12);
+    });
+  });
+
+  it('uses fully-specified row tcW widths as the omitted-width autofit target when no authored grid is usable', () => {
+    const result = computeAutoFitColumnWidths(
+      buildExplicitInput({
+        workingInput: buildWorkingInput({
+          preferredTableWidth: undefined,
+          maxTableWidth: 624,
+          preferredColumnWidths: [],
+          gridColumnCount: 2,
+          rows: [
+            {
+              skippedBefore: [],
+              skippedAfter: [],
+              skippedColumns: [],
+              logicalColumnCount: 2,
+              cells: [
+                { startColumn: 0, span: 1, preferredWidth: 259 },
+                { startColumn: 1, span: 1, preferredWidth: 260 },
+              ],
+            },
+          ],
+        }),
+        fixedLayout: {
+          columnWidths: [312, 312],
+          totalWidth: 624,
+          gridColumnCount: 2,
+          preferredTableWidth: undefined,
+        },
+        contentMetrics: buildContentMetrics([
+          [
+            { min: 180, max: 240, preferredWidth: 259 },
+            { min: 180, max: 240, preferredWidth: 260 },
+          ],
+        ]),
+      }),
+    );
+
+    expect(result.columnWidths.reduce((sum, width) => sum + width, 0)).toBe(519);
+    expect(result.columnWidths[0]).toBeLessThan(312);
+    expect(result.columnWidths[1]).toBeLessThan(312);
+    expect(result.totalWidth).toBe(519);
   });
 
   it('redistributes uniform tblW auto grids by content', () => {

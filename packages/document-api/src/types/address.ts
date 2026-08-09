@@ -9,6 +9,15 @@ export type Range = {
   end: number;
 };
 
+/**
+ * Paragraph-local coordinate space used by text offsets.
+ *
+ * `visible` is the default and counts rendered document text. `tracked` is
+ * additive metadata for ranges that intentionally include deletion-side tracked
+ * text such as `<w:delText>`.
+ */
+export type TextCoordinateSpace = 'visible' | 'tracked';
+
 export type TextAddress = {
   kind: 'text';
   blockId: string;
@@ -106,6 +115,12 @@ export type SelectionTarget = {
   end: SelectionPoint;
   /** Story containing this selection. Omit for body (backward compatible). */
   story?: StoryLocator;
+  /**
+   * Coordinate space for text endpoint offsets. Omitted means `visible`.
+   * Present as `tracked` for targets that include deletion-side tracked text,
+   * including additive search matches and live review selections.
+   */
+  coordinateSpace?: TextCoordinateSpace;
 };
 
 /** Discriminated input for direct operations: either an explicit target or a ref string. */

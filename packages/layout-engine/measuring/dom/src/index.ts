@@ -12,7 +12,8 @@
  * Typography Approximations (v0.1.0):
  * - ascent ≈ fontSize * 0.8 (baseline to top)
  * - descent ≈ fontSize * 0.2 (baseline to bottom)
- * - lineHeight = fontSize * 1.15 (Word 2007+ "single" line spacing)
+ * - automatic line height uses the font's Word-compatible natural line metric
+ * - explicit OOXML auto multipliers (for example 1.33) are honored as-projected
  * - empty paragraphs use fontSize as the base line height
  *
  * These are documented heuristics; we can swap in precise font metrics later
@@ -40,6 +41,9 @@ import {
   type ListBlock,
   type Measure,
   type Line,
+  type InlineBoxSpan,
+  type LineInlineBox,
+  type LineInlineImageAlignment,
   type ParagraphMeasure,
   type ImageMeasure,
   type TableBlock,
@@ -57,16 +61,20 @@ import {
   type DrawingBlock,
   type DrawingMeasure,
   type DrawingGeometry,
+  type TextboxContentMeasure,
   type DropCapDescriptor,
   type CellSpacing,
+  type CellBorders,
+  type BorderSpec,
   type TableBorders,
   type TableBorderValue,
-  type CellBorders,
   EMPTY_SDT_PLACEHOLDER_TEXT,
   effectiveTableCellSpacing,
   isEmptySdtPlaceholderRun,
   LeaderDecoration,
+  resolveAnchoredGraphicY,
   resolveBaseFontSizeForVerticalText,
+  resolveShapeTextContentMeasureWidth,
 } from '@superdoc/contracts';
 import type { WordParagraphLayoutOutput } from '@superdoc/word-layout';
 import {
@@ -77,13 +85,52 @@ import {
   DEFAULT_LIST_HANGING_PX as DEFAULT_LIST_HANGING,
 } from '@superdoc/common/layout-constants';
 import { resolveListTextStartPx, type MinimalMarker } from '@superdoc/common/list-marker-utils';
-import { getAtomicRunLayoutSize, type MeasureAtomicText } from '@superdoc/common/atomic-run-size';
 import { calculateRotatedBounds, normalizeRotation } from '@superdoc/geometry-utils';
 import { toCssFontFamily } from '@superdoc/font-utils';
 import { DEFAULT_FONT_MEASURE_CONTEXT, type FaceKey, type FontMeasureContext } from '@superdoc/font-system';
 export { installNodeCanvasPolyfill } from './setup.js';
-import { clearMeasurementCache, getMeasuredTextWidth, setCacheSize } from './measurementCache.js';
-import { getFontMetrics, clearFontMetricsCache, type FontInfo } from './fontMetricsCache.js';
+import {
+  clearMeasurementCache,
+  getMeasuredTextWidth,
+  setCacheSize,
+  type TextWidthCacheStats,
+} from './measurementCache.js';
+import {
+  firstBreakUnit,
+  hasCjkBreakOpportunity,
+  KINSOKU_FORBIDDEN_LINE_START,
+  nextCodePointBoundary,
+  resolveKinsokuBoundary,
+} from './cjk-line-break.js';
+import {
+  getCalibratedBodyEmptyLine,
+  getFontMetrics,
+  clearFontMetricsCache,
+  type FontInfo,
+  type FontMetricsResult,
+} from './fontMetricsCache.js';
+import {
+  composedNaturalLineHeight,
+  extendFontLineMetricEnvelope,
+  type FontLineMetricEnvelope,
+} from './line-metric-composition.js';
+import {
+  bindSurfaceMeasurementPass,
+  clearSurfaceMeasurementGeneration,
+  createSurfaceMeasurementRuntimeState,
+  disposeSurfaceMeasurementRuntime,
+  ensureSurfaceMeasurementCanvas,
+  getSurfaceMeasurementRuntime,
+  getSurfaceMeasurementRuntimeForCanvas,
+  surfaceMeasurementCheckpointIfDue,
+  unbindSurfaceMeasurementPass,
+  type SurfaceMeasurementExecutionControl,
+} from './measurement-runtime-context.js';
+import {
+  clearTableCellBlockMeasureCache,
+  measureTableCellBlocks,
+  type TableCellBlockMeasureCacheOutcome,
+} from './table-cell-block-measure-cache.js';
 import { computeAutoFitColumnWidths } from './autofit-columns.js';
 import { buildAutoFitWorkingGridInput, type WorkingTableGridInput } from './autofit-normalize.js';
 import { computeFixedTableColumnWidths } from './fixed-table-columns.js';
@@ -100,7 +147,24 @@ import {
 } from './table-autofit-metrics.js';
 
 export { clearFontMetricsCache };
+export { getCalibratedNaturalSingleLine } from './fontMetricsCache.js';
 export { clearTableAutoFitMeasurementCaches };
+/**
+ * CJK line-breaking rules. Re-exported so every width-constrained wrapper —
+ * including the layout-bridge remeasurement fallback — breaks CJK the same way
+ * this measurer does.
+ */
+export {
+  alignToCodePointBoundary,
+  codePointAt,
+  firstBreakUnit,
+  hasCjkBreakOpportunity,
+  isCjkBreakOpportunityChar,
+  KINSOKU_FORBIDDEN_LINE_END,
+  KINSOKU_FORBIDDEN_LINE_START,
+  nextCodePointBoundary,
+  resolveKinsokuBoundary,
+} from './cjk-line-break.js';
 
 /**
  * Clear every font-dependent text-measurement cache owned by `measuring/dom`:
@@ -116,6 +180,7 @@ export function clearTextMeasurementCaches(): void {
   clearMeasurementCache();
   clearFontMetricsCache();
   clearTableAutoFitMeasurementCaches();
+  clearTableCellBlockMeasureCache();
   // Drop the persistent measuring canvas. A 2D context caches its font resolution: once it
   // measured a family while the font was absent (falling back), it keeps using the fallback
   // even after the font loads. A fresh context re-resolves to the now-available font.
@@ -163,20 +228,165 @@ export function configureMeasurement(options: Partial<MeasurementConfig>): void 
 export { clearMeasurementCache };
 
 /**
- * Future: Font-specific calibration factors could be added here if Canvas measurements
- * consistently diverge from MS Word after all precision fixes (bounding box, fractional pt→px, etc.)
- * are applied. Currently not needed.
+ * With Word's default no-kerning behavior applied, its Aptos glyph advances
+ * remain 0.13–0.20% wider than the browser's installed face across the
+ * reviewed oracle lines. Spaces are already within measurement tolerance, so
+ * only non-whitespace glyph runs receive the residual calibration.
  */
+const WORD_GLYPH_ADVANCE_SCALE_BY_FAMILY = new Map<string, number>([
+  ['aptos', 1.0016],
+  ['aptos display', 1.0016],
+]);
 
-/**
- * Global canvas context cache for text measurement
- * Reused across calls to avoid repeated canvas creation
- */
+function resolveWordGlyphAdvanceScale(fontFamily: string | undefined, text: string): number {
+  if (!fontFamily || !/\S/u.test(text)) return 1;
+  const primaryFamily = fontFamily
+    .split(',')[0]
+    ?.trim()
+    .replace(/^['"]|['"]$/g, '')
+    .toLowerCase();
+  return WORD_GLYPH_ADVANCE_SCALE_BY_FAMILY.get(primaryFamily) ?? 1;
+}
+
+export type DomMeasurementExecutionControl = SurfaceMeasurementExecutionControl;
+
+export interface DomMeasurementPass {
+  measureBlock(block: FlowBlock, constraints: number | MeasureConstraints): Promise<Measure>;
+  snapshotStats(): TextWidthCacheStats;
+  finish(): TextWidthCacheStats;
+}
+
+export interface DomMeasurementRuntime {
+  beginPass(fontContext: FontMeasureContext, execution?: DomMeasurementExecutionControl): DomMeasurementPass;
+  clearForFontGeneration(fontSignature: string): void;
+  snapshotStats(): TextWidthCacheStats;
+  dispose(): void;
+}
+
+export interface DomMeasurementRuntimeOptions {
+  maxTextEntries?: number;
+  maxEstimatedTextBytes?: number;
+}
+
+function createCanvasContext(): CanvasRenderingContext2D {
+  const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  if (!canvas) throw new Error('Canvas not available. Ensure this runs in a DOM environment (browser or jsdom).');
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Failed to get 2D context from canvas');
+  return context;
+}
+
+function statsDelta(current: TextWidthCacheStats, baseline: TextWidthCacheStats): TextWidthCacheStats {
+  return {
+    requests: current.requests - baseline.requests,
+    hits: current.hits - baseline.hits,
+    misses: current.misses - baseline.misses,
+    evictions: current.evictions - baseline.evictions,
+    intrinsicMeasureCalls: current.intrinsicMeasureCalls - baseline.intrinsicMeasureCalls,
+    intrinsicMeasureMs: current.intrinsicMeasureMs - baseline.intrinsicMeasureMs,
+    lookupMs: current.lookupMs - baseline.lookupMs,
+    keyCharacters: current.keyCharacters - baseline.keyCharacters,
+    residentEntries: current.residentEntries,
+    estimatedResidentBytes: current.estimatedResidentBytes,
+  };
+}
+
+const measurementCheckpointIfDue = surfaceMeasurementCheckpointIfDue;
+
+export function createDomMeasurementRuntime(options: DomMeasurementRuntimeOptions = {}): DomMeasurementRuntime {
+  const state = createSurfaceMeasurementRuntimeState({
+    maxTextEntries: options.maxTextEntries ?? 50_000,
+    maxEstimatedTextBytes: options.maxEstimatedTextBytes ?? 16 * 1024 * 1024,
+  });
+
+  return {
+    beginPass(fontContext, execution) {
+      if (state.disposed) throw new Error('DomMeasurementRuntime has been disposed');
+      if (state.activePass) throw new Error('DomMeasurementRuntime already has an active pass');
+      if (state.fontSignature !== fontContext.fontSignature) {
+        clearSurfaceMeasurementGeneration(state, fontContext.fontSignature);
+      }
+      const passFontContext: FontMeasureContext = Object.freeze({
+        fontSignature: fontContext.fontSignature,
+        resolvePhysical: fontContext.resolvePhysical,
+      });
+      bindSurfaceMeasurementPass(state, passFontContext, execution);
+      const baseline = state.textWidths.snapshotStats();
+      let finished = false;
+      const snapshot = (): TextWidthCacheStats => statsDelta(state.textWidths.snapshotStats(), baseline);
+      return {
+        measureBlock: async (block, constraints) => {
+          if (finished) throw new Error('DomMeasurementPass has finished');
+          state.execution?.throwIfAborted?.();
+          const result = await measureBlock(block, constraints, passFontContext);
+          state.execution?.throwIfAborted?.();
+          return result;
+        },
+        snapshotStats: snapshot,
+        finish: () => {
+          if (finished) return snapshot();
+          finished = true;
+          unbindSurfaceMeasurementPass(state, passFontContext);
+          return snapshot();
+        },
+      };
+    },
+    clearForFontGeneration(fontSignature) {
+      if (state.disposed) throw new Error('DomMeasurementRuntime has been disposed');
+      if (state.activePass) throw new Error('Cannot change font generation during an active measurement pass');
+      if (state.fontSignature !== fontSignature) clearSurfaceMeasurementGeneration(state, fontSignature);
+    },
+    snapshotStats: () => state.textWidths.snapshotStats(),
+    dispose() {
+      disposeSurfaceMeasurementRuntime(state);
+    },
+  };
+}
+
+/** Compatibility canvas for callers using the exported singleton measureBlock. */
 let canvasContext: CanvasRenderingContext2D | null = null;
 
-type MeasureConstraints = {
+export const TABLE_MEASUREMENT_PHASES = [
+  'grid-normalization',
+  'fixed-column-resolution',
+  'autofit-content-metrics',
+  'autofit-column-solve',
+  'cell-block-measurement',
+  'row-measure-assembly',
+  'row-height-resolution',
+  'other',
+] as const;
+
+export type TableMeasurementPhase = (typeof TABLE_MEASUREMENT_PHASES)[number];
+export type TableMeasurementMode = 'fixed' | 'stable-auto-grid' | 'full-autofit';
+
+export interface TableMeasurementObservation {
+  depth: number;
+  cacheIdentity: 'strict' | 'content';
+  mode: TableMeasurementMode;
+  totalWallMs: number;
+  reconciliationDeltaMs: number;
+  phases: Record<TableMeasurementPhase, number>;
+  rowCount: number;
+  cellCount: number;
+  nestedBlockCount: number;
+  cellBlockCache: Record<TableCellBlockMeasureCacheOutcome, number>;
+  autoFitCellMetricCache: { hits: number; misses: number };
+  autoFitTableResultCache: { hits: number; misses: number };
+}
+
+export interface TableMeasurementTraceContext {
+  depth: number;
+  cacheIdentity: 'strict' | 'content';
+  observer: (observation: TableMeasurementObservation) => void;
+}
+
+export type MeasureConstraints = {
   maxWidth: number;
   maxHeight?: number;
+  tableMeasurementTrace?: TableMeasurementTraceContext;
+  /** Word uses the legacy font-size floor for empty header/footer story lines. */
+  emptyParagraphLineMetrics?: 'body' | 'headerFooter';
 };
 
 // List constants centralized in @superdoc/common/layout-constants
@@ -192,16 +402,18 @@ const pxToTwips = (px: number): number => Math.round(px * TWIPS_PER_PX);
 
 // Canonical implementation moved to @superdoc/contracts; re-imported for local use and re-exported.
 export { getCellSpacingPx } from '@superdoc/contracts';
-import { getCellSpacingPx, getBorderBandWidthPx } from '@superdoc/contracts';
+import { getCellSpacingPx, getRenderedTableBorderWidthPx } from '@superdoc/contracts';
 
 /**
- * Returns the border band width in pixels for a table border value.
- * Delegates to the shared contracts helper so this always matches the painter's
- * rendered width (thick = authored width min 1px, double = 3x per-rule width min 3px). Used for
- * outer table dimensions and per-row band reservation.
+ * Returns the border width in pixels for a table border value (matches painter border-utils logic).
+ * Used so total table dimensions include outer border sizes and there is enough space for last row/column spacing.
  */
 function getTableBorderWidthPx(value: TableBorderValue | null | undefined): number {
-  return getBorderBandWidthPx(value);
+  if (value == null) return 0;
+  if (typeof value === 'object' && 'none' in value && value.none) return 0;
+  const raw = value as { style?: BorderSpec['style']; width?: number; size?: number };
+  const w = typeof raw.width === 'number' ? raw.width : typeof raw.size === 'number' ? raw.size : 1;
+  return getRenderedTableBorderWidthPx({ style: raw.style, width: w }, 1);
 }
 
 /** Computes outer table border widths in px from table attrs (for total dimensions and content offset). */
@@ -218,16 +430,157 @@ function getTableBorderWidths(borders: TableBorders | null | undefined): {
   return { top, right, bottom, left };
 }
 
+type TableCellBorderInsets = { top: number; right: number; bottom: number; left: number };
+
+const borderSpecsMatch = (left?: BorderSpec, right?: BorderSpec): boolean =>
+  left?.style === right?.style && left?.width === right?.width && left?.color === right?.color;
+
+const uniformDoubleRing = (borders: CellBorders | undefined): BorderSpec | undefined => {
+  const first = borders?.top;
+  if (!first || first.style !== 'double') return undefined;
+  return [borders?.right, borders?.bottom, borders?.left].every((border) => borderSpecsMatch(first, border))
+    ? first
+    : undefined;
+};
+
+const cellBorderWidthPx = (border: BorderSpec | undefined): number =>
+  border ? getRenderedTableBorderWidthPx(border, 1) : 0;
+
+const hasExplicitCellBorders = (borders: CellBorders | undefined): borders is CellBorders =>
+  Boolean(
+    borders &&
+    (borders.top !== undefined ||
+      borders.right !== undefined ||
+      borders.bottom !== undefined ||
+      borders.left !== undefined),
+  );
+
+const inheritedBorderWidthPx = (border: BorderSpec | undefined, fallback: TableBorderValue | undefined): number =>
+  border !== undefined ? cellBorderWidthPx(border) : getTableBorderWidthPx(fallback);
+
+/**
+ * Resolves the border-box chrome that table measurement must reserve for a
+ * cell. The DOM painter uses a single-owner collapsed-border model: top/left
+ * own shared edges, while a uniform double cell ring keeps all four sides on
+ * the selected cell so its corners remain continuous.
+ */
+function getTableCellBorderInsets(params: {
+  cellBorders?: CellBorders;
+  aboveCellBorders?: CellBorders;
+  leftCellBorders?: CellBorders;
+  tableBorders?: TableBorders;
+  rowIndex: number;
+  rowSpan: number;
+  rowCount: number;
+  gridColumnStart: number;
+  colSpan: number;
+  gridColumnCount: number;
+  cellSpacingPx: number;
+}): TableCellBorderInsets {
+  const {
+    cellBorders,
+    aboveCellBorders,
+    leftCellBorders,
+    tableBorders,
+    rowIndex,
+    rowSpan,
+    rowCount,
+    gridColumnStart,
+    colSpan,
+    gridColumnCount,
+    cellSpacingPx,
+  } = params;
+  const touchesTop = rowIndex === 0;
+  const touchesBottom = rowIndex + rowSpan >= rowCount;
+  const touchesLeft = gridColumnStart === 0;
+  const touchesRight = gridColumnStart + colSpan >= gridColumnCount;
+  const ring = uniformDoubleRing(cellBorders);
+  const hasBordersAttribute = cellBorders !== undefined;
+  const hasExplicitBorders = hasExplicitCellBorders(cellBorders);
+
+  if (cellSpacingPx > 0) {
+    if (hasBordersAttribute && !hasExplicitBorders) {
+      return { top: 0, right: 0, bottom: 0, left: 0 };
+    }
+
+    if (!tableBorders) {
+      return {
+        top: cellBorderWidthPx(cellBorders?.top),
+        right: cellBorderWidthPx(cellBorders?.right),
+        bottom: cellBorderWidthPx(cellBorders?.bottom),
+        left: cellBorderWidthPx(cellBorders?.left),
+      };
+    }
+
+    if (!hasExplicitBorders) {
+      return {
+        top: touchesTop ? 0 : getTableBorderWidthPx(tableBorders.insideH),
+        right: touchesRight ? 0 : getTableBorderWidthPx(tableBorders.insideV),
+        bottom: touchesBottom ? 0 : getTableBorderWidthPx(tableBorders.insideH),
+        left: touchesLeft ? 0 : getTableBorderWidthPx(tableBorders.insideV),
+      };
+    }
+
+    return {
+      top: inheritedBorderWidthPx(cellBorders?.top, touchesTop ? tableBorders?.top : tableBorders?.insideH),
+      right: inheritedBorderWidthPx(cellBorders?.right, touchesRight ? tableBorders?.right : undefined),
+      bottom: inheritedBorderWidthPx(cellBorders?.bottom, touchesBottom ? tableBorders?.bottom : undefined),
+      left: inheritedBorderWidthPx(cellBorders?.left, touchesLeft ? tableBorders?.left : tableBorders?.insideV),
+    };
+  }
+
+  const aboveRing = uniformDoubleRing(aboveCellBorders);
+  const leftRing = uniformDoubleRing(leftCellBorders);
+  const top = touchesTop
+    ? inheritedBorderWidthPx(cellBorders?.top, tableBorders?.top)
+    : aboveRing && borderSpecsMatch(cellBorders?.top, aboveCellBorders?.bottom)
+      ? 0
+      : Math.max(
+          cellBorderWidthPx(cellBorders?.top),
+          cellBorderWidthPx(aboveCellBorders?.bottom),
+          cellBorders?.top === undefined && aboveCellBorders?.bottom === undefined
+            ? getTableBorderWidthPx(tableBorders?.insideH)
+            : 0,
+        );
+  const left = touchesLeft
+    ? inheritedBorderWidthPx(cellBorders?.left, tableBorders?.left)
+    : leftRing && borderSpecsMatch(cellBorders?.left, leftCellBorders?.right)
+      ? 0
+      : Math.max(
+          cellBorderWidthPx(cellBorders?.left),
+          cellBorderWidthPx(leftCellBorders?.right),
+          cellBorders?.left === undefined && leftCellBorders?.right === undefined
+            ? getTableBorderWidthPx(tableBorders?.insideV)
+            : 0,
+        );
+
+  return {
+    top,
+    left,
+    bottom: ring
+      ? cellBorderWidthPx(cellBorders?.bottom)
+      : touchesBottom
+        ? inheritedBorderWidthPx(cellBorders?.bottom, tableBorders?.bottom)
+        : 0,
+    right: ring
+      ? cellBorderWidthPx(cellBorders?.right)
+      : touchesRight
+        ? inheritedBorderWidthPx(cellBorders?.right, tableBorders?.right)
+        : cellBorderWidthPx(cellBorders?.right),
+  };
+}
+
 const DEFAULT_TAB_INTERVAL_PX = twipsToPx(DEFAULT_TAB_INTERVAL_TWIPS);
 const TAB_EPSILON = 0.1;
 const DEFAULT_CELL_PADDING = { top: 0, left: 4, right: 4, bottom: 0 };
 const DEFAULT_DECIMAL_SEPARATOR = '.';
 const ALLOWED_TAB_VALS = new Set<TabStop['val']>(['start', 'center', 'end', 'decimal', 'bar', 'clear']);
 
-// Field annotation pill styling constants are shared via @superdoc/common/layout-constants
-// (FIELD_ANNOTATION_PILL_PADDING, FIELD_ANNOTATION_VERTICAL_PADDING,
-// FIELD_ANNOTATION_LINE_HEIGHT_MULTIPLIER, DEFAULT_FIELD_ANNOTATION_FONT_SIZE) so the fast
-// remeasure path and this full measurer stay in lockstep.
+// Field annotation pill styling constants
+const FIELD_ANNOTATION_PILL_PADDING = 8; // Border (2px each side) + padding (2px each side)
+const FIELD_ANNOTATION_LINE_HEIGHT_MULTIPLIER = 1.2; // Line height multiplier for pill height
+const FIELD_ANNOTATION_VERTICAL_PADDING = 6; // Vertical padding/border for pill height
+const DEFAULT_FIELD_ANNOTATION_FONT_SIZE = 16; // Default font size for field annotations
 const DEFAULT_PARAGRAPH_FONT_SIZE = 12;
 const DEFAULT_PARAGRAPH_FONT_FAMILY = 'Arial';
 const isValidFontSize = (value: unknown): value is number =>
@@ -285,21 +638,37 @@ const roundValue = (value: number): number =>
  * @throws {Error} If canvas is not available (non-DOM environment without polyfill)
  * @throws {Error} If 2D context creation fails
  */
-function getCanvasContext(): CanvasRenderingContext2D {
-  if (!canvasContext) {
-    const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
-
-    if (!canvas) {
-      throw new Error('Canvas not available. Ensure this runs in a DOM environment (browser or jsdom).');
-    }
-
-    canvasContext = canvas.getContext('2d');
-    if (!canvasContext) {
-      throw new Error('Failed to get 2D context from canvas');
-    }
+function getCanvasContext(fontContext?: FontMeasureContext): CanvasRenderingContext2D {
+  const runtime = getSurfaceMeasurementRuntime(fontContext);
+  if (runtime) {
+    return ensureSurfaceMeasurementCanvas(runtime);
   }
-
+  canvasContext ??= createCanvasContext();
   return canvasContext;
+}
+
+function measuredTextWidth(text: string, font: string, letterSpacing: number, ctx: CanvasRenderingContext2D): number {
+  // Word does not kern a run unless w:kern explicitly enables it. The current
+  // projection does not surface that opt-in yet, so the fail-closed default is
+  // the Word default rather than Canvas' `auto` kerning.
+  ctx.fontKerning = 'none';
+  const runtime = getSurfaceMeasurementRuntimeForCanvas(ctx);
+  return runtime
+    ? runtime.textWidths.measure(text, font, letterSpacing, ctx)
+    : getMeasuredTextWidth(text, font, letterSpacing, ctx);
+}
+
+function measuredFontMetrics(ctx: CanvasRenderingContext2D, fontInfo: FontInfo): FontMetricsResult {
+  const runtime = getSurfaceMeasurementRuntimeForCanvas(ctx);
+  return runtime
+    ? runtime.fontMetrics.get(
+        ctx,
+        fontInfo,
+        measurementConfig.mode,
+        measurementConfig.fonts,
+        runtime.fontSignature ?? '',
+      )
+    : getFontMetrics(ctx, fontInfo, measurementConfig.mode, measurementConfig.fonts);
 }
 
 /** The face (weight/style) a run renders at, for face-aware resolution. */
@@ -392,17 +761,70 @@ function measureText(
  */
 
 /**
- * Word 2007+ default line spacing multiplier for "single" line spacing.
- *
- * Microsoft Word changed its line spacing algorithm in Word 2007 to use 1.15× font size
- * as the baseline for "single" line spacing, rather than just using ascent + descent.
- * This provides more breathing room and matches the industry standard for readability.
- *
- * For example, 12pt (16px) font: 16 × 1.15 = 18.4px line height.
- *
- * Reference: Word 2007+ line spacing behavior
+ * Frozen-main baseline used by the initial paragraph measurer when a paragraph
+ * does not carry explicit line spacing.
  */
-const WORD_SINGLE_LINE_SPACING_MULTIPLIER = 1.15;
+const V1_DEFAULT_PARAGRAPH_LINE_HEIGHT_MULTIPLIER = 1.15;
+
+/**
+ * Word permits a bounded amount of inter-word compression before wrapping a
+ * justified line. With the evidenced Aptos advance calibration applied, the
+ * reviewed Word oracle accepts 27.24% compression and wraps at 29.11%.
+ */
+const MAX_JUSTIFIED_SPACE_COMPRESSION_RATIO = 0.275;
+/** Word's Helvetica line fitter wraps before the 25.58% compression observed in the Select Management oracle. */
+const MAX_JUSTIFIED_SPACE_COMPRESSION_RATIO_BY_FAMILY = new Map<string, number>([['helvetica', 0.25]]);
+/** Tiny space adjustments do not need the larger-candidate fit guard. */
+const MINOR_JUSTIFIED_SPACE_COMPRESSION_RATIO = 0.14;
+const MAX_MINOR_CANDIDATE_OVERFLOW_RATIO = 0.6;
+/** Beyond micro-compression, Word normally requires at least 56% of the candidate to fit naturally. */
+const MAX_JUSTIFIED_CANDIDATE_OVERFLOW_RATIO = 0.44;
+/** Borderline candidates remain eligible only when their total overflow is also tightly bounded. */
+const MAX_BORDERLINE_CANDIDATE_OVERFLOW_RATIO = 0.46;
+const MAX_BORDERLINE_OVERFLOW_SPACE_EQUIVALENTS = 3.65;
+/** Word's evidenced Helvetica fitter allows a larger candidate fraction only for micro-compression. */
+const MAX_HELVETICA_MINOR_CANDIDATE_OVERFLOW_RATIO = 0.4;
+const MAX_HELVETICA_CANDIDATE_OVERFLOW_RATIO = 0.3;
+
+function fitsWordJustificationCompression(
+  overflow: number,
+  candidateWidth: number,
+  spaceCount: number,
+  baseSpaceWidth: number,
+  fontFamily?: string,
+  useTightHelveticaCandidateFit = false,
+): boolean {
+  if (overflow <= 0 || candidateWidth <= 0 || spaceCount <= 0 || baseSpaceWidth <= 0) return false;
+  const perSpaceCompressionRatio = overflow / spaceCount / baseSpaceWidth;
+  const candidateOverflowRatio = overflow / candidateWidth;
+  const primaryFamily = fontFamily
+    ?.split(',')[0]
+    ?.trim()
+    .replace(/^['"]|['"]$/g, '')
+    .toLowerCase();
+  const maxMinorCandidateOverflowRatio =
+    primaryFamily === 'helvetica' && useTightHelveticaCandidateFit
+      ? MAX_HELVETICA_MINOR_CANDIDATE_OVERFLOW_RATIO
+      : MAX_MINOR_CANDIDATE_OVERFLOW_RATIO;
+  if (
+    perSpaceCompressionRatio <= MINOR_JUSTIFIED_SPACE_COMPRESSION_RATIO &&
+    candidateOverflowRatio <= maxMinorCandidateOverflowRatio
+  ) {
+    return true;
+  }
+  const maxSpaceCompressionRatio = primaryFamily
+    ? (MAX_JUSTIFIED_SPACE_COMPRESSION_RATIO_BY_FAMILY.get(primaryFamily) ?? MAX_JUSTIFIED_SPACE_COMPRESSION_RATIO)
+    : MAX_JUSTIFIED_SPACE_COMPRESSION_RATIO;
+  if (perSpaceCompressionRatio > maxSpaceCompressionRatio) return false;
+  if (primaryFamily === 'helvetica' && useTightHelveticaCandidateFit) {
+    return candidateOverflowRatio <= MAX_HELVETICA_CANDIDATE_OVERFLOW_RATIO;
+  }
+  return (
+    candidateOverflowRatio <= MAX_JUSTIFIED_CANDIDATE_OVERFLOW_RATIO ||
+    (candidateOverflowRatio <= MAX_BORDERLINE_CANDIDATE_OVERFLOW_RATIO &&
+      overflow / baseSpaceWidth <= MAX_BORDERLINE_OVERFLOW_SPACE_EQUIVALENTS)
+  );
+}
 
 /**
  * Calculate typography metrics for a given font size.
@@ -420,13 +842,10 @@ const WORD_SINGLE_LINE_SPACING_MULTIPLIER = 1.15;
  * - Browser doesn't support actualBoundingBox* metrics (legacy browsers)
  *
  * **Line Height Calculation:**
- * Uses Word 2007+'s default "single" line spacing of fontSize × 1.15 as the base.
- * This base is then modified by paragraph spacing rules (lineRule: auto/exact/atLeast).
- * A minimum line height clamp is intentionally NOT enforced to match Word's behavior
- * for small font sizes and empty paragraphs.
- *
- * The 1.15 multiplier provides consistent spacing that matches Word's behavior and
- * accounts for the line gap that Canvas TextMetrics doesn't expose directly.
+ * Uses the frozen-main fallback baseline of fontSize × 1.15 only when a
+ * paragraph has no explicit line spacing. Explicit multipliers coming from
+ * projected OOXML spacing are honored as-is, while `atLeast` spacing still
+ * clamps against that baseline.
  *
  * @param fontSize - The font size in pixels
  * @param spacing - Optional paragraph spacing configuration (lineRule, line value)
@@ -439,9 +858,9 @@ const WORD_SINGLE_LINE_SPACING_MULTIPLIER = 1.15;
  * // Returns: { ascent: ~12.8, descent: ~3.2, lineHeight: 18.4 }
  *
  * @example
- * // With 1.5 line spacing multiplier
+ * // With an explicit 1.5 line spacing multiplier
  * const metrics = calculateTypographyMetrics(16, { line: 1.5, lineRule: 'auto' });
- * // Returns: { ascent: ~12.8, descent: ~3.2, lineHeight: 27.6 } // 16 × 1.15 × 1.5
+ * // Returns: { ascent: ~12.8, descent: ~3.2, lineHeight: 24 } // 16 × 1.5
  *
  * @example
  * // With exact line height override
@@ -452,6 +871,7 @@ function calculateTypographyMetrics(
   fontSize: number,
   spacing?: ParagraphSpacing,
   fontInfo?: FontInfo,
+  fontContext?: FontMeasureContext,
 ): {
   ascent: number;
   descent: number;
@@ -460,6 +880,7 @@ function calculateTypographyMetrics(
   const resolvedFontSize = normalizeFontSize(fontSize);
   let ascent: number;
   let descent: number;
+  let naturalSingleLine: number | undefined;
 
   if (
     fontInfo &&
@@ -468,17 +889,18 @@ function calculateTypographyMetrics(
     fontInfo.fontFamily.trim().length > 0
   ) {
     // Use actual font metrics from Canvas API for accurate measurements
-    const ctx = getCanvasContext();
-    const metrics = getFontMetrics(ctx, fontInfo, measurementConfig.mode, measurementConfig.fonts);
+    const ctx = getCanvasContext(fontContext);
+    const metrics = measuredFontMetrics(ctx, fontInfo);
     ascent = roundValue(metrics.ascent);
     descent = roundValue(metrics.descent);
+    naturalSingleLine = metrics.naturalSingleLine;
   } else {
     // Fallback approximations for empty paragraphs or missing font info
     ascent = roundValue(resolvedFontSize * 0.8);
     descent = roundValue(resolvedFontSize * 0.2);
   }
 
-  const lineHeight = resolveLineHeight(spacing, fontSize, ascent + descent);
+  const lineHeight = resolveLineHeight(spacing, fontSize, naturalSingleLine ?? ascent + descent);
 
   return {
     ascent,
@@ -496,22 +918,130 @@ function calculateTypographyMetrics(
  * the text baseline stays fixed and the image occupies exactly its own height.
  */
 function finalizeLineMetrics(
-  line: { maxFontSize: number; maxFontInfo?: FontInfo; maxImageHeight?: number },
+  line: {
+    maxFontSize: number;
+    maxFontInfo?: FontInfo;
+    fontMetricEnvelope?: FontLineMetricEnvelope;
+    maxImageHeight?: number;
+    structuralFallbackFontSize?: number;
+    structuralFallbackFontInfo?: FontInfo;
+  },
   spacing?: ParagraphSpacing,
-): { ascent: number; descent: number; lineHeight: number } {
-  const metrics = calculateTypographyMetrics(line.maxFontSize, spacing, line.maxFontInfo);
+  fontContext?: FontMeasureContext,
+  emptyParagraphLineMetrics?: MeasureConstraints['emptyParagraphLineMetrics'],
+): { ascent: number; descent: number; lineHeight: number; textLineHeight: number } {
+  const metricFontSize =
+    line.maxFontSize > 0 ? line.maxFontSize : (line.structuralFallbackFontSize ?? line.maxFontSize);
+  const metricFontInfo =
+    line.maxFontSize > 0 ? line.maxFontInfo : (line.structuralFallbackFontInfo ?? line.maxFontInfo);
+  const metrics =
+    line.maxFontSize > 0
+      ? calculateTypographyMetrics(metricFontSize, spacing, metricFontInfo, fontContext)
+      : calculateEmptyParagraphMetrics(metricFontSize, spacing, metricFontInfo, fontContext, emptyParagraphLineMetrics);
+  if (line.maxFontSize > 0 && line.fontMetricEnvelope) {
+    metrics.ascent = Math.max(metrics.ascent, line.fontMetricEnvelope.glyphAscent);
+    metrics.descent = Math.max(metrics.descent, line.fontMetricEnvelope.glyphDescent);
+    metrics.lineHeight = resolveLineHeight(spacing, metricFontSize, composedNaturalLineHeight(line.fontMetricEnvelope));
+  }
+  // Capture the text-derived line height BEFORE the inline-image expansion so the
+  // glyph-vs-line-expanding decision can compare each image against the text box.
+  const textLineHeight = metrics.lineHeight;
   const imageH = line.maxImageHeight ?? 0;
   if (imageH > metrics.lineHeight) {
     metrics.lineHeight = imageH;
   }
-  return metrics;
+  return { ...metrics, textLineHeight };
+}
+
+/**
+ * Tolerance (px) for the "image fits inside the text line box" decision.
+ *
+ * Canvas-derived text metrics and projected image heights both carry sub-pixel
+ * rounding, so an image essentially equal to the text line height should still
+ * be treated as a glyph. Kept small so a genuinely taller, line-expanding image
+ * stays `top`. The exact Word equality boundary is verified with a generated
+ * fixture; see the inline-image glyph baseline alignment plan.
+ */
+const INLINE_IMAGE_BASELINE_TOLERANCE_PX = 0.5;
+
+/** One inline-image candidate tracked on the current line for alignment resolution. */
+type InlineImageCandidate = {
+  /** Index into `runsToProcess` (remapped to block.runs space with the line at the end). */
+  runIndex: number;
+  /** Image width including authored horizontal spacing (distLeft + distRight). */
+  imageWidth: number;
+  /** Image height including authored vertical spacing (distTop + distBottom). */
+  imageHeight: number;
+  /** True when the source run carries an explicit `verticalAlign`. */
+  hasExplicitVerticalAlign: boolean;
+  /** True when the image has authored vertical margins to preserve as line spacing. */
+  hasVerticalMargins: boolean;
+};
+
+/**
+ * Inline DrawingML rotation changes the visual line box even though the source
+ * `wp:extent` remains unrotated. Keep this calculation shared with drawing
+ * measurement so line breaking and paint use the same axis-aligned bounds.
+ */
+function resolveInlineImageVisualSize(run: ImageRun): { width: number; height: number } {
+  return calculateRotatedBounds({
+    width: run.width,
+    height: run.height,
+    rotation: run.rotation,
+    flipH: run.flipH,
+    flipV: run.flipV,
+  });
+}
+
+/** Build an inline-image alignment candidate from an image run on the current line. */
+function makeInlineImageCandidate(
+  runIndex: number,
+  run: ImageRun,
+  imageWidth: number,
+  imageHeight: number,
+): InlineImageCandidate {
+  return {
+    runIndex,
+    imageWidth,
+    imageHeight,
+    hasExplicitVerticalAlign: run.verticalAlign != null,
+    hasVerticalMargins: (run.distTop ?? 0) !== 0 || (run.distBottom ?? 0) !== 0,
+  };
+}
+
+/**
+ * Resolve measured per-image vertical alignment for one completed line.
+ *
+ * An inline image is treated as a baseline-aligned glyph only when it fits
+ * inside the text-derived line box and the line has real text to align to.
+ * Line-expanding images, images with authored vertical margins, and images on
+ * text-less lines keep the legacy `top` default (no entry emitted). Images with
+ * an explicit source `verticalAlign` are owned by the source and skipped here.
+ */
+function resolveInlineImageAlignments(
+  candidates: InlineImageCandidate[] | undefined,
+  hasVisibleText: boolean,
+  textLineHeight: number,
+): LineInlineImageAlignment[] | undefined {
+  if (!candidates || candidates.length === 0) return undefined;
+  const alignments: LineInlineImageAlignment[] = [];
+  for (const candidate of candidates) {
+    if (candidate.hasExplicitVerticalAlign) continue;
+    if (candidate.imageWidth <= 0) continue;
+    if (candidate.imageHeight <= 0) continue;
+    if (!hasVisibleText) continue;
+    if (candidate.hasVerticalMargins) continue;
+    if (candidate.imageHeight > textLineHeight + INLINE_IMAGE_BASELINE_TOLERANCE_PX) continue;
+    alignments.push({ runIndex: candidate.runIndex, verticalAlign: 'baseline' });
+  }
+  return alignments.length > 0 ? alignments : undefined;
 }
 
 /**
  * Calculates typography metrics for empty paragraphs.
  *
  * Empty paragraphs in Word use the font size as the base line height rather than
- * the standard 1.15x multiplier used for paragraphs with content. This matches
+ * the standard 1.15x fallback baseline used for populated paragraphs. This matches
  * Word's behavior where empty paragraphs appear shorter than their populated counterparts.
  *
  * @param fontSize - The font size in pixels
@@ -531,6 +1061,8 @@ function calculateEmptyParagraphMetrics(
   fontSize: number,
   spacing?: ParagraphSpacing,
   fontInfo?: FontInfo,
+  fontContext?: FontMeasureContext,
+  emptyParagraphLineMetrics?: MeasureConstraints['emptyParagraphLineMetrics'],
 ): {
   ascent: number;
   descent: number;
@@ -539,6 +1071,7 @@ function calculateEmptyParagraphMetrics(
   const resolvedFontSize = normalizeFontSize(fontSize);
   let ascent: number;
   let descent: number;
+  let naturalSingleLine: number | undefined;
 
   if (
     fontInfo &&
@@ -546,18 +1079,26 @@ function calculateEmptyParagraphMetrics(
     typeof fontInfo.fontFamily === 'string' &&
     fontInfo.fontFamily.trim().length > 0
   ) {
-    const ctx = getCanvasContext();
-    const metrics = getFontMetrics(ctx, fontInfo, measurementConfig.mode, measurementConfig.fonts);
+    const ctx = getCanvasContext(fontContext);
+    const metrics = measuredFontMetrics(ctx, fontInfo);
     ascent = roundValue(metrics.ascent);
     descent = roundValue(metrics.descent);
+    naturalSingleLine = metrics.naturalSingleLine;
   } else {
     ascent = roundValue(resolvedFontSize * 0.8);
     descent = roundValue(resolvedFontSize * 0.2);
   }
 
+  const bodyNaturalLine =
+    emptyParagraphLineMetrics === 'body' && fontInfo
+      ? getCalibratedBodyEmptyLine(fontInfo.fontFamily, fontInfo.fontSize)
+      : undefined;
+  const maxLineHeight = Math.max(resolvedFontSize, bodyNaturalLine ?? naturalSingleLine ?? ascent + descent);
   // Word treats empty paragraphs as a single font-sized line unless line spacing is explicitly set.
-  const maxLineHeight = Math.max(resolvedFontSize, ascent + descent);
-  const lineHeight = roundValue(resolveLineHeight(spacing, resolvedFontSize, maxLineHeight));
+  const lineHeight =
+    !spacing || spacing.line == null
+      ? roundValue(maxLineHeight)
+      : roundValue(resolveLineHeight(spacing, resolvedFontSize, maxLineHeight));
 
   return {
     ascent,
@@ -589,20 +1130,46 @@ function getFontInfoFromRun(run: TextRun, fontContext: FontMeasureContext): Font
   };
 }
 
-/**
- * Update maxFontInfo when a new run has a larger effective font size for line height.
- * Returns the updated FontInfo if this run has the max font size, otherwise returns the existing info.
- */
-function updateMaxFontInfo(
-  currentMaxSize: number,
-  currentMaxInfo: FontInfo | undefined,
+type MutableLineFontMetricState = {
+  maxFontSize: number;
+  maxFontInfo?: FontInfo;
+  fontMetricEnvelope?: FontLineMetricEnvelope;
+};
+
+function addFontInfoToLineMetricEnvelope(
+  line: MutableLineFontMetricState,
+  fontInfo: FontInfo,
+  fontContext: FontMeasureContext,
+): void {
+  const metrics = measuredFontMetrics(getCanvasContext(fontContext), fontInfo);
+  const glyphHeight = metrics.ascent + metrics.descent;
+  const naturalLineHeight = Math.max(
+    metrics.naturalSingleLine ?? glyphHeight,
+    V1_DEFAULT_PARAGRAPH_LINE_HEIGHT_MULTIPLIER * fontInfo.fontSize,
+  );
+  line.fontMetricEnvelope = extendFontLineMetricEnvelope(line.fontMetricEnvelope, {
+    ascent: metrics.ascent,
+    descent: metrics.descent,
+    naturalLineHeight,
+  });
+}
+
+/** Include one rendered face in the line's shared Word baseline envelope. */
+function updateLineFontMetrics(
+  line: MutableLineFontMetricState,
   newRun: TextRun,
   fontContext: FontMeasureContext,
-): FontInfo | undefined {
-  if (lineHeightFontSize(newRun) >= currentMaxSize) {
-    return getFontInfoFromRun(newRun, fontContext);
+): void {
+  if (!line.fontMetricEnvelope && line.maxFontInfo) {
+    addFontInfoToLineMetricEnvelope(line, line.maxFontInfo, fontContext);
   }
-  return currentMaxInfo;
+  const newFontInfo = getFontInfoFromRun(newRun, fontContext);
+  addFontInfoToLineMetricEnvelope(line, newFontInfo, fontContext);
+  const newFontSize = lineHeightFontSize(newRun);
+  if (newFontSize > line.maxFontSize || !line.maxFontInfo) {
+    line.maxFontInfo = newFontInfo;
+  }
+  line.maxFontSize = Math.max(line.maxFontSize, newFontSize);
 }
 
 /**
@@ -612,11 +1179,220 @@ function isTextRun(run: Run): run is TextRun {
   return run.kind === 'text' || run.kind === undefined;
 }
 
+const inlineBoxInlineStart = (box: InlineBoxSpan, startsRange: boolean): number =>
+  box.layout.paddingInlineStart + box.layout.borderWidth + (startsRange ? box.layout.gapBefore : 0);
+
+const inlineBoxInlineEnd = (box: InlineBoxSpan, endsRange: boolean): number =>
+  box.layout.paddingInlineEnd + box.layout.borderWidth + (endsRange ? box.layout.gapAfter : 0);
+
+const paragraphRunVisibleStarts = (block: ParagraphBlock): number[] => {
+  const starts: number[] = [];
+  let offset = 0;
+  for (const run of block.runs) {
+    starts.push(offset);
+    offset += isTextRun(run) ? run.text.length : 1;
+  }
+  return starts;
+};
+
+const inlineBoxLineBudgets = (block: ParagraphBlock, lines: Line[], boxes: InlineBoxSpan[]): number[] => {
+  const runStarts = paragraphRunVisibleStarts(block);
+  return lines.map((line) => {
+    const lineStart = (runStarts[line.fromRun] ?? 0) + line.fromChar;
+    const lineEnd = (runStarts[line.toRun] ?? 0) + line.toChar;
+    return boxes.reduce((budget, box) => {
+      if (box.from >= lineEnd || box.to <= lineStart) return budget;
+      return budget + inlineBoxInlineStart(box, box.from >= lineStart) + inlineBoxInlineEnd(box, box.to <= lineEnd);
+    }, 0);
+  });
+};
+
+const sameLineRanges = (first: Line[], second: Line[]): boolean =>
+  first.length === second.length &&
+  first.every(
+    (line, index) =>
+      line.fromRun === second[index]?.fromRun &&
+      line.fromChar === second[index]?.fromChar &&
+      line.toRun === second[index]?.toRun &&
+      line.toChar === second[index]?.toChar,
+  );
+
+const visibleLineRange = (block: ParagraphBlock, line: Line): { from: number; to: number } => {
+  const runStarts = paragraphRunVisibleStarts(block);
+  return {
+    from: (runStarts[line.fromRun] ?? 0) + line.fromChar,
+    to: (runStarts[line.toRun] ?? 0) + line.toChar,
+  };
+};
+
+const lineIndexAtVisibleOffset = (block: ParagraphBlock, lines: Line[], offset: number): number => {
+  for (let index = 0; index < lines.length; index += 1) {
+    const range = visibleLineRange(block, lines[index]!);
+    if (offset >= range.from && offset < range.to) return index;
+  }
+  return Math.max(0, lines.length - 1);
+};
+
+const measuredWidthToVisibleOffset = (line: Line, runStarts: number[], visibleOffset: number): number => {
+  let width = 0;
+  for (const segment of line.segments ?? []) {
+    const segmentX = segment.x ?? width;
+    const segmentStart = (runStarts[segment.runIndex] ?? 0) + segment.fromChar;
+    const segmentEnd = (runStarts[segment.runIndex] ?? 0) + segment.toChar;
+    if (visibleOffset >= segmentEnd) {
+      width = segmentX + segment.width;
+      continue;
+    }
+    if (visibleOffset > segmentStart && segmentEnd > segmentStart) {
+      width = segmentX + segment.width * ((visibleOffset - segmentStart) / (segmentEnd - segmentStart));
+    } else if (visibleOffset === segmentStart) {
+      width = segmentX;
+    }
+    break;
+  }
+  return width;
+};
+
+const splitSegmentsAtInlineBoxEdges = (
+  block: ParagraphBlock,
+  line: Line,
+  runStarts: number[],
+  boxes: InlineBoxSpan[],
+  ctx: CanvasRenderingContext2D,
+  fontContext: FontMeasureContext,
+): void => {
+  if (!line.segments?.length) return;
+  const splitSegments: NonNullable<Line['segments']> = [];
+  for (const segment of line.segments) {
+    const runStart = runStarts[segment.runIndex] ?? 0;
+    const segmentStart = runStart + segment.fromChar;
+    const segmentEnd = runStart + segment.toChar;
+    const boundaryBefore = boxes.some((box) => box.from === segmentStart || box.to === segmentStart);
+    const boundaries = boxes
+      .flatMap((box) => [box.from, box.to])
+      .filter((boundary) => boundary > segmentStart && boundary < segmentEnd)
+      .sort((a, b) => a - b);
+    if (boundaries.length === 0) {
+      appendSegment(
+        splitSegments,
+        segment.runIndex,
+        segment.fromChar,
+        segment.toChar,
+        segment.width,
+        segment.x,
+        segment.precedingTabEndX,
+        boundaryBefore,
+      );
+      continue;
+    }
+
+    const offsets = [segmentStart, ...new Set(boundaries), segmentEnd];
+    const segmentLength = segmentEnd - segmentStart;
+    const run = block.runs[segment.runIndex];
+    offsets.slice(0, -1).forEach((from, index) => {
+      const to = offsets[index + 1]!;
+      const runFrom = from - runStart;
+      const runTo = to - runStart;
+      const width =
+        run && isTextRun(run)
+          ? measureRunWidth(run.text.slice(runFrom, runTo), buildFontString(run, fontContext).font, ctx, run, runFrom)
+          : segmentLength > 0
+            ? segment.width * ((to - from) / segmentLength)
+            : 0;
+      appendSegment(
+        splitSegments,
+        segment.runIndex,
+        runFrom,
+        runTo,
+        width,
+        index === 0 ? segment.x : undefined,
+        index === 0 ? segment.precedingTabEndX : undefined,
+        boundaryBefore || index > 0,
+      );
+    });
+  }
+  line.segments = splitSegments;
+};
+
+/** Applies paint-ready geometry after the canonical breaker has reserved box edges. */
+const applyInlineBoxes = (
+  block: ParagraphBlock,
+  measure: ParagraphMeasure,
+  boxes: InlineBoxSpan[],
+  measuredAtMaxWidth: number,
+  fontContext: FontMeasureContext,
+): ParagraphMeasure => {
+  const runStarts = paragraphRunVisibleStarts(block);
+  const ctx = getCanvasContext(fontContext);
+
+  for (const line of measure.lines) {
+    const lineStart = (runStarts[line.fromRun] ?? 0) + line.fromChar;
+    const lineEnd = (runStarts[line.toRun] ?? 0) + line.toChar;
+    const slices = boxes.filter((box) => box.from < lineEnd && box.to > lineStart).sort((a, b) => a.from - b.from);
+    if (slices.length === 0) {
+      line.maxWidth = measuredAtMaxWidth;
+      continue;
+    }
+
+    splitSegmentsAtInlineBoxEdges(block, line, runStarts, slices, ctx, fontContext);
+    let precedingInlineAdvance = 0;
+    let blockExpansion = 0;
+    const inlineBoxes: LineInlineBox[] = [];
+    for (const box of slices) {
+      const sliceStart = Math.max(box.from, lineStart);
+      const sliceEnd = Math.min(box.to, lineEnd);
+      const startsRange = sliceStart === box.from;
+      const endsRange = sliceEnd === box.to;
+      const leadingAdvance = inlineBoxInlineStart(box, startsRange);
+      const trailingAdvance = inlineBoxInlineEnd(box, endsRange);
+      const leadingGap = startsRange ? box.layout.gapBefore : 0;
+      const textStartX = measuredWidthToVisibleOffset(line, runStarts, sliceStart);
+      const textEndX = measuredWidthToVisibleOffset(line, runStarts, sliceEnd);
+      const boxWidth =
+        box.layout.paddingInlineStart +
+        box.layout.borderWidth +
+        (textEndX - textStartX) +
+        box.layout.paddingInlineEnd +
+        box.layout.borderWidth;
+      const verticalExpansion = box.layout.paddingBlockStart + box.layout.paddingBlockEnd + box.layout.borderWidth * 2;
+      blockExpansion = Math.max(blockExpansion, verticalExpansion);
+      inlineBoxes.push({
+        id: box.id,
+        from: sliceStart - lineStart,
+        to: sliceEnd - lineStart,
+        x: textStartX + precedingInlineAdvance + leadingGap,
+        width: boxWidth,
+        top: 0,
+        height: line.lineHeight + verticalExpansion,
+        startsRange,
+        endsRange,
+        style: { ...box.layout, ...box.appearance },
+        ...(box.className ? { className: box.className } : {}),
+        ...(box.data ? { data: { ...box.data } } : {}),
+        ...(box.cursor ? { cursor: box.cursor } : {}),
+      });
+      precedingInlineAdvance += leadingAdvance + trailingAdvance;
+    }
+    line.inlineBoxes = inlineBoxes;
+    line.width += precedingInlineAdvance;
+    line.lineHeight += blockExpansion;
+    line.maxWidth = measuredAtMaxWidth;
+  }
+
+  measure.totalHeight = measure.lines.reduce((sum, line) => sum + line.lineHeight, 0);
+  measure.measuredAtMaxWidth = measuredAtMaxWidth;
+  return measure;
+};
+
 /**
  * Type guard to check if a run is a tab run
  */
 function isTabRun(run: Run): run is TabRun {
   return run.kind === 'tab';
+}
+
+function isVanishedRun(run: Run): boolean {
+  return 'vanish' in run && run.vanish === true;
 }
 
 /**
@@ -648,6 +1424,15 @@ const isEmptyTextRun = (run: Run): run is TextRun => {
   return typeof (run as TextRun).text === 'string' && (run as TextRun).text.length === 0;
 };
 
+// The predicate type must be narrower than TextRun (the marker attribute is required here but
+// optional on TextRun) so that a failed check does not remove TextRun from the union entirely,
+// which would collapse later narrowing to `never`. Same pattern as isEmptySdtPlaceholderRun in
+// contracts/run-helpers.
+const isBookmarkMarkerRun = (run: Run): run is TextRun & { dataAttrs: Record<string, string> } => {
+  if (run.kind && run.kind !== 'text') return false;
+  return typeof (run as TextRun).dataAttrs?.['data-bookmark-marker'] === 'string';
+};
+
 /**
  * Type guard to check if a run is a field annotation run
  */
@@ -657,6 +1442,7 @@ function isFieldAnnotationRun(run: Run): run is FieldAnnotationRun {
 
 const normalizeRunsForMeasurement = (runs: Run[], fallbackFontSize: number, fallbackFontFamily: string): Run[] =>
   runs.map((run) => {
+    if (isTabRun(run) && !Object.isExtensible(run)) return { ...run };
     if (run.kind && run.kind !== 'text') return run;
     if (!('text' in run)) return run;
     const textRun = run as TextRun;
@@ -723,26 +1509,14 @@ function measureTabAlignmentGroup(
 
   let foundDecimal = false;
 
-  // Field annotation label measurement for the shared atomic-run sizer, using this
-  // group measurer's existing font resolution (buildFontString + measureRunWidth).
-  const measureAtomicText: MeasureAtomicText = (text, atomicRun, fontSize) => {
-    const { font } = buildFontString(
-      {
-        fontFamily: ((atomicRun as { fontFamily?: string }).fontFamily as string) ?? 'Arial',
-        fontSize,
-        bold: (atomicRun as { bold?: boolean }).bold,
-        italic: (atomicRun as { italic?: boolean }).italic,
-      },
-      fontContext,
-    );
-    return measureRunWidth(text, font, ctx, atomicRun as unknown as TextRun, 0);
-  };
-
   for (let i = startRunIndex; i < runs.length; i++) {
     const run = runs[i];
 
     // Stop at the next tab - it marks the end of this alignment group
     if (isTabRun(run)) {
+      if (isVanishedRun(run)) {
+        continue;
+      }
       result.endRunIndex = i;
       break;
     }
@@ -756,6 +1530,9 @@ function measureTabAlignmentGroup(
     // Measure text runs
     if (run.kind === 'text' || run.kind === undefined) {
       const textRun = run as TextRun;
+      if (textRun.vanish === true) {
+        continue;
+      }
       const text = textRun.text || '';
 
       if (text.length > 0) {
@@ -789,12 +1566,43 @@ function measureTabAlignmentGroup(
       continue;
     }
 
-    // Measure atomic runs (image / math / field annotation) via the shared sizer so
-    // alignment-group widths match the canonical line-pass sizing.
-    if (isImageRun(run) || run.kind === 'math' || isFieldAnnotationRun(run)) {
-      const { width } = getAtomicRunLayoutSize(run, measureAtomicText);
-      result.runs.push({ runIndex: i, width });
-      result.totalWidth += width;
+    // Measure image runs
+    if (isImageRun(run)) {
+      const visualSize = resolveInlineImageVisualSize(run);
+      const leftSpace = run.distLeft ?? 0;
+      const rightSpace = run.distRight ?? 0;
+      const imageWidth = visualSize.width + leftSpace + rightSpace;
+
+      result.runs.push({ runIndex: i, width: imageWidth });
+      result.totalWidth += imageWidth;
+      continue;
+    }
+
+    // Measure math runs (atomic, pre-computed dimensions like images)
+    if (run.kind === 'math') {
+      const mathWidth = (run as { width: number }).width ?? 20;
+      result.runs.push({ runIndex: i, width: mathWidth });
+      result.totalWidth += mathWidth;
+      continue;
+    }
+
+    // Measure field annotation runs
+    if (isFieldAnnotationRun(run)) {
+      const fontSize = (run as { fontSize?: number }).fontSize ?? DEFAULT_FIELD_ANNOTATION_FONT_SIZE;
+      const { font } = buildFontString(
+        {
+          fontFamily: (run as { fontFamily?: string }).fontFamily ?? 'Arial',
+          fontSize,
+          bold: (run as { bold?: boolean }).bold,
+          italic: (run as { italic?: boolean }).italic,
+        },
+        fontContext,
+      );
+      const textWidth = run.displayLabel ? measureRunWidth(run.displayLabel, font, ctx, run, 0) : 0;
+      const pillWidth = textWidth + FIELD_ANNOTATION_PILL_PADDING;
+
+      result.runs.push({ runIndex: i, width: pillWidth });
+      result.totalWidth += pillWidth;
       continue;
     }
 
@@ -835,10 +1643,12 @@ export async function measureBlock(
   constraints: number | MeasureConstraints,
   fontContext: FontMeasureContext = DEFAULT_FONT_MEASURE_CONTEXT,
 ): Promise<Measure> {
+  const entryCheckpoint = measurementCheckpointIfDue(fontContext);
+  if (entryCheckpoint) await entryCheckpoint;
   const normalized = normalizeConstraints(constraints);
 
   if (block.kind === 'drawing') {
-    return measureDrawingBlock(block as DrawingBlock, normalized);
+    return measureDrawingBlock(block as DrawingBlock, normalized, fontContext);
   }
 
   if (block.kind === 'image') {
@@ -866,28 +1676,251 @@ export async function measureBlock(
   }
 
   // Paragraph/default
-  return measureParagraphBlock(block as ParagraphBlock, normalized.maxWidth, fontContext);
+  return measureParagraphBlock(
+    block as ParagraphBlock,
+    normalized.maxWidth,
+    fontContext,
+    undefined,
+    normalized.emptyParagraphLineMetrics,
+  );
 }
 
 async function measureParagraphBlock(
   block: ParagraphBlock,
   maxWidth: number,
   fontContext: FontMeasureContext,
+  inlineLineBudgets?: readonly number[],
+  emptyParagraphLineMetrics?: MeasureConstraints['emptyParagraphLineMetrics'],
 ): Promise<ParagraphMeasure> {
-  const ctx = getCanvasContext();
-  // Field annotation label measurement for the shared atomic-run sizer. Resolves the
-  // physical render family (the family the pill actually paints) and applies the run's
-  // text-transform so the measured width matches the glyphs on screen.
-  const measureAtomicText: MeasureAtomicText = (text, run, fontSize) => {
-    const family = fontContext.resolvePhysical(
-      ((run as { fontFamily?: string }).fontFamily as string) || 'Arial, sans-serif',
-      faceOf(run as { bold?: boolean; italic?: boolean }),
+  const visibleTextLength = block.runs.reduce((length, run) => length + (isTextRun(run) ? run.text.length : 1), 0);
+  const inlineBoxes = block.inlineBoxes?.filter(
+    (box) =>
+      Number.isFinite(box.from) &&
+      Number.isFinite(box.to) &&
+      box.from >= 0 &&
+      box.to > box.from &&
+      box.to <= visibleTextLength &&
+      block.attrs?.directionContext?.inlineDirection !== 'rtl' &&
+      block.runs.every((run) => !isTextRun(run) || run.bidi?.rtl !== true),
+  );
+  if (inlineBoxes?.length && inlineLineBudgets === undefined) {
+    const unboxedBlock = { ...block, inlineBoxes: undefined };
+    let baseMeasure = await measureParagraphBlock(unboxedBlock, maxWidth, fontContext, [], emptyParagraphLineMetrics);
+    let reservedBudgets: number[] = [];
+
+    // Boundary edges alter the line ranges that determine which continuation
+    // edges exist. Re-run the canonical breaker until those ranges stabilize;
+    // all of its independent fit branches then consume the same per-line
+    // maxWidth through getEffectiveWidth.
+    for (let pass = 0; pass < 8; pass += 1) {
+      const candidateBudgets = inlineBoxLineBudgets(block, baseMeasure.lines, inlineBoxes);
+      reservedBudgets = candidateBudgets.map((budget, index) => Math.max(budget, reservedBudgets[index] ?? 0));
+      const nextMeasure = await measureParagraphBlock(
+        unboxedBlock,
+        maxWidth,
+        fontContext,
+        reservedBudgets,
+        emptyParagraphLineMetrics,
+      );
+      if (sameLineRanges(baseMeasure.lines, nextMeasure.lines)) {
+        baseMeasure = nextMeasure;
+        break;
+      }
+      baseMeasure = nextMeasure;
+    }
+
+    // The monotonic edge budgets above guarantee termination, but a box that
+    // moves forward can leave its old line over-reserved. Replacing them with
+    // the final slice budgets directly would make that box jump backward and
+    // create a two-state cycle. In that case, retain only the smallest guard
+    // that preserves the boundary before the moved box. Box edge budgets still
+    // belong exclusively to the lines that contain the final box slices.
+    const finalEdgeBudgets = inlineBoxLineBudgets(block, baseMeasure.lines, inlineBoxes);
+    const boundaryGuards: number[] = [];
+    const targetLineIndices = inlineBoxes.map((box) => lineIndexAtVisibleOffset(block, baseMeasure.lines, box.from));
+    const fitsInlineBoxBudgets = (measure: ParagraphMeasure, appliedBudgets: readonly number[]): boolean => {
+      const edgeBudgets = inlineBoxLineBudgets(block, measure.lines, inlineBoxes);
+      // line.maxWidth retains first-line, indent, and drop-cap reductions, but already
+      // excludes the reservation used to measure that line. Add only that reservation back.
+      return measure.lines.every(
+        (line, index) =>
+          line.width + (edgeBudgets[index] ?? 0) <= (line.maxWidth ?? maxWidth) + (appliedBudgets[index] ?? 0),
+      );
+    };
+    const convergeCandidate = async (
+      initialMeasure: ParagraphMeasure,
+      guards: readonly number[],
+    ): Promise<ParagraphMeasure | undefined> => {
+      let candidate = initialMeasure;
+      const seenLineRanges: Line[][] = [];
+
+      for (let pass = 0; pass < 8; pass += 1) {
+        if (seenLineRanges.some((lines) => sameLineRanges(lines, candidate.lines))) return undefined;
+        seenLineRanges.push(candidate.lines);
+
+        const edgeBudgets = inlineBoxLineBudgets(block, candidate.lines, inlineBoxes);
+        const candidateBudgets = edgeBudgets.map((budget, index) => budget + (guards[index] ?? 0));
+        const nextMeasure = await measureParagraphBlock(
+          unboxedBlock,
+          maxWidth,
+          fontContext,
+          candidateBudgets,
+          emptyParagraphLineMetrics,
+        );
+        if (sameLineRanges(candidate.lines, nextMeasure.lines))
+          return fitsInlineBoxBudgets(nextMeasure, candidateBudgets) ? nextMeasure : undefined;
+        candidate = nextMeasure;
+      }
+
+      return undefined;
+    };
+    const preservesTargetLines = (measure: ParagraphMeasure): boolean =>
+      inlineBoxes.every(
+        (box, index) => lineIndexAtVisibleOffset(block, measure.lines, box.from) >= targetLineIndices[index]!,
+      );
+    let cleanedMeasure = await measureParagraphBlock(
+      unboxedBlock,
+      maxWidth,
+      fontContext,
+      finalEdgeBudgets,
+      emptyParagraphLineMetrics,
     );
-    const weight = (run as { bold?: boolean }).bold ? 'bold' : 'normal';
-    const style = (run as { italic?: boolean }).italic ? 'italic' : 'normal';
-    ctx.font = `${style} ${weight} ${fontSize}px ${family}`;
-    const displayText = applyTextTransform(text, run as Run);
-    return displayText ? ctx.measureText(displayText).width : 0;
+
+    for (const [boxIndex, box] of inlineBoxes.entries()) {
+      const targetLineIndex = targetLineIndices[boxIndex]!;
+      if (lineIndexAtVisibleOffset(block, cleanedMeasure.lines, box.from) >= targetLineIndex) continue;
+
+      const guardLineIndex = Math.max(0, targetLineIndex - 1);
+      let lowerGuard = boundaryGuards[guardLineIndex] ?? 0;
+      let upperGuard = Math.max(
+        lowerGuard,
+        (reservedBudgets[guardLineIndex] ?? 0) - (finalEdgeBudgets[guardLineIndex] ?? 0),
+      );
+      let guardedMeasure = baseMeasure;
+
+      for (let pass = 0; pass < 12; pass += 1) {
+        const candidateGuard = (lowerGuard + upperGuard) / 2;
+        const candidateBudgets = finalEdgeBudgets.map(
+          (budget, index) => budget + (index === guardLineIndex ? candidateGuard : (boundaryGuards[index] ?? 0)),
+        );
+        const candidateMeasure = await measureParagraphBlock(
+          unboxedBlock,
+          maxWidth,
+          fontContext,
+          candidateBudgets,
+          emptyParagraphLineMetrics,
+        );
+        const candidateGuards = [...boundaryGuards];
+        candidateGuards[guardLineIndex] = candidateGuard;
+        const convergedCandidate = await convergeCandidate(candidateMeasure, candidateGuards);
+        if (convergedCandidate && preservesTargetLines(convergedCandidate)) {
+          upperGuard = candidateGuard;
+          guardedMeasure = convergedCandidate;
+        } else {
+          lowerGuard = candidateGuard;
+        }
+      }
+
+      boundaryGuards[guardLineIndex] = upperGuard;
+      cleanedMeasure = guardedMeasure;
+    }
+
+    const convergedCleanedMeasure = await convergeCandidate(cleanedMeasure, boundaryGuards);
+    if (convergedCleanedMeasure && preservesTargetLines(convergedCleanedMeasure)) {
+      cleanedMeasure = convergedCleanedMeasure;
+    } else {
+      // A stable range can still carry a word that was tested against the
+      // preceding line's budget before wrapping. Fall back to the maximum edge
+      // reservation that can occur if every box shares a line rather than
+      // accepting an overflow or re-entering a boundary cycle. Lines before or
+      // after those candidates must retain their ordinary paragraph width.
+      const cleanedEdgeBudgets = inlineBoxLineBudgets(block, cleanedMeasure.lines, inlineBoxes);
+      const maximumInlineBoxBudget = inlineBoxes.reduce(
+        (budget, box) => budget + inlineBoxInlineStart(box, true) + inlineBoxInlineEnd(box, true),
+        0,
+      );
+      let safeBudget = Math.max(maximumInlineBoxBudget, ...reservedBudgets, ...finalEdgeBudgets, ...cleanedEdgeBudgets);
+      let fallbackMeasure = cleanedMeasure;
+      let fallbackFits = false;
+      const seenFallbackRanges: Line[][] = [];
+
+      for (let pass = 0; pass < 8; pass += 1) {
+        if (seenFallbackRanges.some((lines) => sameLineRanges(lines, fallbackMeasure.lines))) break;
+        seenFallbackRanges.push(fallbackMeasure.lines);
+
+        const observedEdgeBudgets = inlineBoxLineBudgets(block, fallbackMeasure.lines, inlineBoxes);
+        safeBudget = Math.max(safeBudget, ...observedEdgeBudgets);
+        const fallbackBudgets = observedEdgeBudgets.map((budget) => (budget > 0 ? safeBudget : 0));
+        for (const box of inlineBoxes) {
+          const boxLineIndex = lineIndexAtVisibleOffset(block, fallbackMeasure.lines, box.from);
+          fallbackBudgets[Math.max(0, boxLineIndex - 1)] = safeBudget;
+        }
+
+        const nextMeasure = await measureParagraphBlock(
+          unboxedBlock,
+          maxWidth,
+          fontContext,
+          fallbackBudgets,
+          emptyParagraphLineMetrics,
+        );
+        fallbackMeasure = nextMeasure;
+        fallbackFits = fitsInlineBoxBudgets(nextMeasure, fallbackBudgets);
+        if (fallbackFits) break;
+      }
+
+      if (!fallbackFits) {
+        fallbackMeasure = await measureParagraphBlock(
+          unboxedBlock,
+          maxWidth,
+          fontContext,
+          Array.from({ length: visibleTextLength + 1 }, () => safeBudget),
+          emptyParagraphLineMetrics,
+        );
+      }
+
+      cleanedMeasure = fallbackMeasure;
+    }
+
+    baseMeasure = cleanedMeasure;
+    return applyInlineBoxes(block, baseMeasure, inlineBoxes, maxWidth, fontContext);
+  }
+
+  const ctx = getCanvasContext(fontContext);
+  // A paragraph repeatedly asks for the same exact word/delimiter widths while
+  // evaluating fit, wrap, and segment geometry. Keep that pass-local reuse in
+  // run/font-indexed maps so the common hit avoids even the surface CLOCK
+  // lookup. Values still originate from the canonical exact runtime cache.
+  const paragraphWidths = new WeakMap<Run, Map<string, Map<string, number>>>();
+  const resolveParagraphRunWidth = (
+    text: string,
+    font: string,
+    _ctx: CanvasRenderingContext2D,
+    run: Run,
+    startOffset?: number,
+  ): number => {
+    const displayText = applyTextTransform(text, run, startOffset);
+    let widthsByFont = paragraphWidths.get(run);
+    if (!widthsByFont) {
+      widthsByFont = new Map();
+      paragraphWidths.set(run, widthsByFont);
+    }
+    let widths = widthsByFont.get(font);
+    if (!widths) {
+      widths = new Map();
+      widthsByFont.set(font, widths);
+    }
+    const cached = widths.get(displayText);
+    if (cached !== undefined) return cached;
+    const letterSpacing = run.kind === 'text' || run.kind === undefined ? (run as TextRun).letterSpacing || 0 : 0;
+    const wordGlyphAdvanceScale =
+      run.kind === 'text' || run.kind === undefined
+        ? resolveWordGlyphAdvanceScale((run as TextRun).fontFamily, displayText)
+        : 1;
+    const width = roundValue(
+      measuredTextWidth(displayText, font, letterSpacing, ctx) * wordGlyphAdvanceScale * getRunHorizontalScale(run),
+    );
+    widths.set(displayText, width);
+    return width;
   };
   const wordLayout: WordParagraphLayoutOutput | undefined = block.attrs?.wordLayout as
     | WordParagraphLayoutOutput
@@ -895,9 +1928,10 @@ async function measureParagraphBlock(
 
   // Compute fallback font size from the first text run BEFORE marker measurement.
   // This ensures the marker uses the paragraph's actual font context when its own fontSize is missing.
-  const firstTextRunWithSize = block.runs.find(
-    (run): run is TextRun => isTextRun(run) && 'fontSize' in run && run.fontSize != null,
-  );
+  const firstTextRunWithSize = block.runs.find((run) => {
+    if (!isTextRun(run) || isBookmarkMarkerRun(run) || isVanishedRun(run)) return false;
+    return typeof (run as TextRun).fontSize === 'number';
+  }) as TextRun | undefined;
   // Prefer a text run's size, but fall back to any run (e.g. a tab) carrying a font
   // size when the paragraph has no sized text run. Otherwise a tab-only line is
   // measured at the 12px default and renders shorter than a text or empty line in the
@@ -906,32 +1940,52 @@ async function measureParagraphBlock(
     firstTextRunWithSize ??
     block.runs.find(
       (run): run is Run & { fontSize: number } =>
-        typeof (run as { fontSize?: unknown }).fontSize === 'number' && (run as { fontSize: number }).fontSize > 0,
+        !isVanishedRun(run) &&
+        typeof (run as { fontSize?: unknown }).fontSize === 'number' &&
+        (run as { fontSize: number }).fontSize > 0,
     );
   const fallbackFontSize = normalizeFontSize(firstRunWithSize?.fontSize, DEFAULT_PARAGRAPH_FONT_SIZE);
-  const firstTextRunWithFont = block.runs.find(
-    (run): run is TextRun => isTextRun(run) && typeof run.fontFamily === 'string' && run.fontFamily.trim().length > 0,
-  );
+  const firstTextRunWithFont = block.runs.find((run) => {
+    if (!isTextRun(run) || isBookmarkMarkerRun(run) || isVanishedRun(run)) return false;
+    const textRun = run as TextRun;
+    return typeof textRun.fontFamily === 'string' && textRun.fontFamily.trim().length > 0;
+  }) as TextRun | undefined;
   const firstRunWithFont =
     firstTextRunWithFont ??
     block.runs.find(
       (run): run is Run & { fontFamily: string } =>
+        !isVanishedRun(run) &&
         typeof (run as { fontFamily?: unknown }).fontFamily === 'string' &&
         (run as { fontFamily: string }).fontFamily.trim().length > 0,
     );
   const fallbackFontFamily = firstRunWithFont?.fontFamily ?? DEFAULT_PARAGRAPH_FONT_FAMILY;
   const normalizedRuns = normalizeRunsForMeasurement(block.runs as Run[], fallbackFontSize, fallbackFontFamily);
+  const hasRenderableParagraphContent = normalizedRuns.some((run) => {
+    if (isBookmarkMarkerRun(run)) return false;
+    if (isVanishedRun(run)) return false;
+    if (isTextRun(run)) return run.text.length > 0;
+    return (
+      isTabRun(run) ||
+      isImageRun(run) ||
+      isLineBreakRun(run) ||
+      run.kind === 'break' ||
+      (run as { kind?: string }).kind === 'placeholder'
+    );
+  });
 
+  let markerLineFontInfo: FontInfo | undefined;
   const markerInfo: ParagraphMeasure['marker'] | undefined = wordLayout?.marker
     ? (() => {
-        const markerRun = {
+        const markerText = wordLayout.marker.markerText ?? '';
+        const markerRun: TextRun = {
+          text: markerText,
           fontFamily: toCssFontFamily(wordLayout.marker.run.fontFamily) ?? wordLayout.marker.run.fontFamily,
           fontSize: wordLayout.marker.run.fontSize ?? fallbackFontSize,
           bold: wordLayout.marker.run.bold,
           italic: wordLayout.marker.run.italic,
         };
         const { font: markerFont } = buildFontString(markerRun, fontContext);
-        const markerText = wordLayout.marker.markerText ?? '';
+        if (markerText.length > 0) markerLineFontInfo = getFontInfoFromRun(markerRun, fontContext);
         const glyphWidth = markerText ? measureText(markerText, markerFont, ctx) : 0;
         const gutter =
           typeof wordLayout.marker.gutterWidthPx === 'number' &&
@@ -1114,6 +2168,8 @@ async function measureParagraphBlock(
       fontSize,
       spacing,
       getFontInfoFromRun(emptyParagraphRun, fontContext),
+      fontContext,
+      emptyParagraphLineMetrics,
     );
     const emptyLine: Line = {
       fromRun: 0,
@@ -1130,12 +2186,19 @@ async function measureParagraphBlock(
       kind: 'paragraph',
       lines,
       totalHeight: metrics.lineHeight,
+      measuredAtMaxWidth: maxWidth,
       ...(markerInfo ? { marker: markerInfo } : {}),
     };
   }
 
   if (normalizedRuns.length === 0) {
-    const metrics = calculateEmptyParagraphMetrics(DEFAULT_PARAGRAPH_FONT_SIZE, spacing);
+    const metrics = calculateEmptyParagraphMetrics(
+      DEFAULT_PARAGRAPH_FONT_SIZE,
+      spacing,
+      undefined,
+      fontContext,
+      emptyParagraphLineMetrics,
+    );
     const emptyLine: Line = {
       fromRun: 0,
       fromChar: 0,
@@ -1151,6 +2214,7 @@ async function measureParagraphBlock(
       kind: 'paragraph',
       lines,
       totalHeight: metrics.lineHeight,
+      measuredAtMaxWidth: maxWidth,
       ...(markerInfo ? { marker: markerInfo } : {}),
     };
   }
@@ -1164,28 +2228,85 @@ async function measureParagraphBlock(
     toRun: number;
     toChar: number;
     width: number;
+    /** Uncompressed width retained when a justified line fits by compressing spaces. */
+    naturalWidth?: number;
     maxFontSize: number;
     /** Font info for the run with maxFontSize, used for accurate typography metrics */
     maxFontInfo?: FontInfo;
+    /** Aggregate Word line-box extents for every physical face on this baseline. */
+    fontMetricEnvelope?: FontLineMetricEnvelope;
     /** Tallest inline image on this line (pixels) */
     maxImageHeight?: number;
+    /** Font fallback for structural-only text runs such as bookmark markers. */
+    structuralFallbackFontSize?: number;
+    structuralFallbackFontInfo?: FontInfo;
     maxWidth: number;
     hasExplicitTabStops?: boolean;
-    segments: Line['segments'];
+    /** Every in-progress line owns a concrete segment collection. */
+    segments: NonNullable<Line['segments']>;
     leaders?: Line['leaders'];
     /** Count of breakable spaces already included on this line (for justify-aware fitting) */
     spaceCount: number;
+    /** Measured tab widths keyed by tab run pmStart (mirrors Line.tabWidths). */
+    tabWidths?: Record<number, number>;
     /** Internal marker for an empty line seeded by an explicit line break. */
     isLineBreakPlaceholder?: boolean;
+    /** Inline image runs on this line, tracked for measured baseline-vs-top resolution. */
+    imageRunCandidates?: InlineImageCandidate[];
   } | null = null;
+
+  /**
+   * Single line-finalization helper shared by every line-close path (initial
+   * close, wrap-before-image, explicit break, and final close). It computes
+   * typography metrics, applies bar tabs, and attaches the measured
+   * `inlineImageAlignments` so the glyph-vs-line-expanding decision lives in one
+   * place instead of being duplicated per branch. Transient bookkeeping fields
+   * (`imageRunCandidates`, `textLineHeight`) are stripped from the emitted
+   * {@link Line}.
+   */
+  const closeLineWithMetrics = (lineState: NonNullable<typeof currentLine>): Line => {
+    // Word composes the hanging-indent marker into the first line's physical
+    // font envelope. Measuring its width separately is not enough: Symbol and
+    // other marker faces can have taller ascent/descent than the body font,
+    // moving the baseline and increasing the line box. Later wrapped lines do
+    // not contain the marker and retain the body envelope.
+    if (lines.length === 0 && markerLineFontInfo) {
+      if (!lineState.fontMetricEnvelope && lineState.maxFontInfo) {
+        addFontInfoToLineMetricEnvelope(lineState, lineState.maxFontInfo, fontContext);
+      }
+      addFontInfoToLineMetricEnvelope(lineState, markerLineFontInfo, fontContext);
+      if (markerLineFontInfo.fontSize > lineState.maxFontSize || !lineState.maxFontInfo) {
+        lineState.maxFontInfo = markerLineFontInfo;
+      }
+      lineState.maxFontSize = Math.max(lineState.maxFontSize, markerLineFontInfo.fontSize);
+    }
+    const metrics = finalizeLineMetrics(lineState, spacing, fontContext, emptyParagraphLineMetrics);
+    const { textLineHeight, ...lineMetrics } = metrics;
+    const { imageRunCandidates, fontMetricEnvelope: _fontMetricEnvelope, ...rest } = lineState;
+    const completedLine: Line = { ...rest, ...lineMetrics };
+    // A small inline image on an otherwise textless OOXML run still composes
+    // against that run's font baseline. Callers that do not provide run
+    // typography retain the legacy top-aligned fallback.
+    const alignments = resolveInlineImageAlignments(
+      imageRunCandidates,
+      lineState.maxFontSize > 0 || (lineState.structuralFallbackFontSize ?? 0) > 0,
+      textLineHeight,
+    );
+    if (alignments) {
+      completedLine.inlineImageAlignments = alignments;
+    }
+    addBarTabsToLine(completedLine);
+    return completedLine;
+  };
 
   // Helper to calculate effective available width based on current line count.
   // When drop cap is present in 'drop' mode, reduce width for the first N lines.
   const getEffectiveWidth = (baseWidth: number): number => {
+    const boxAdjustedWidth = Math.max(1, baseWidth - (inlineLineBudgets?.[lines.length] ?? 0));
     if (dropCapMeasure && lines.length < dropCapMeasure.lines && dropCapMeasure.mode === 'drop') {
-      return Math.max(1, baseWidth - dropCapMeasure.width);
+      return Math.max(1, boxAdjustedWidth - dropCapMeasure.width);
     }
-    return baseWidth;
+    return boxAdjustedWidth;
   };
 
   let lastFontSize = fallbackFontSize;
@@ -1241,7 +2362,7 @@ async function measureParagraphBlock(
 
   const resolveBoundarySpacing = (lineWidth: number, isRunStart: boolean, run: TextRun): number => {
     if (lineWidth <= 0) return 0;
-    return isRunStart ? pendingRunSpacing : (run.letterSpacing ?? 0);
+    return isRunStart ? pendingRunSpacing : getScaledLetterSpacing(run);
   };
 
   /**
@@ -1335,11 +2456,13 @@ async function measureParagraphBlock(
       if (idx >= 0) {
         const beforeText = segmentText.slice(0, idx);
         beforeDecimalWidth =
-          beforeText.length > 0 ? measureRunWidth(beforeText, font, ctx, runContext, segmentStartChar) : 0;
+          beforeText.length > 0 ? resolveParagraphRunWidth(beforeText, font, ctx, runContext, segmentStartChar) : 0;
       }
-      segmentWidth = segmentText.length > 0 ? measureRunWidth(segmentText, font, ctx, runContext, segmentStartChar) : 0;
+      segmentWidth =
+        segmentText.length > 0 ? resolveParagraphRunWidth(segmentText, font, ctx, runContext, segmentStartChar) : 0;
     } else if (val === 'end' || val === 'center') {
-      segmentWidth = segmentText.length > 0 ? measureRunWidth(segmentText, font, ctx, runContext, segmentStartChar) : 0;
+      segmentWidth =
+        segmentText.length > 0 ? resolveParagraphRunWidth(segmentText, font, ctx, runContext, segmentStartChar) : 0;
     }
 
     return alignPendingTabForWidth(segmentWidth, beforeDecimalWidth);
@@ -1375,11 +2498,16 @@ async function measureParagraphBlock(
       runsToProcess.push(run as Run);
     }
   }
+  let runIndexMap = runsToProcess.map((_, index) => index);
   if (runsToProcess.some((run) => isTextRun(run) && typeof run.text === 'string' && run.text.includes('\t'))) {
     const expandedRuns: Run[] = [];
-    for (const run of runsToProcess) {
+    const expandedRunIndexMap: number[] = [];
+    for (let runIndex = 0; runIndex < runsToProcess.length; runIndex += 1) {
+      const run = runsToProcess[runIndex];
+      const originalRunIndex = runIndexMap[runIndex] ?? runIndex;
       if (!isTextRun(run) || typeof run.text !== 'string' || !run.text.includes('\t')) {
         expandedRuns.push(run);
+        expandedRunIndexMap.push(originalRunIndex);
         continue;
       }
       const textRun = run as TextRun;
@@ -1396,6 +2524,7 @@ async function measureParagraphBlock(
               pmStart: cursor - buffer.length,
               pmEnd: cursor,
             });
+            expandedRunIndexMap.push(originalRunIndex);
             buffer = '';
           }
           const tabRun: TabRun = {
@@ -1403,12 +2532,14 @@ async function measureParagraphBlock(
             text: '\t',
             pmStart: cursor,
             pmEnd: cursor + 1,
+            vanish: textRun.vanish,
             tabStops: block.attrs?.tabs as TabStop[] | undefined,
             indent,
             leader: (textRun as unknown as TabRun)?.leader ?? null,
             sdt: textRun.sdt,
           };
           expandedRuns.push(tabRun);
+          expandedRunIndexMap.push(originalRunIndex);
           cursor += 1;
           continue;
         }
@@ -1422,11 +2553,34 @@ async function measureParagraphBlock(
           pmStart: cursor - buffer.length,
           pmEnd: cursor,
         });
+        expandedRunIndexMap.push(originalRunIndex);
       }
     }
     runsToProcess = expandedRuns;
+    runIndexMap = expandedRunIndexMap;
   }
-  const totalTabRuns = runsToProcess.reduce((count, run) => (isTabRun(run) ? count + 1 : count), 0);
+  if (hasRenderableParagraphContent) {
+    const filteredRuns: Run[] = [];
+    const filteredRunIndexMap: number[] = [];
+    for (let runIndex = 0; runIndex < runsToProcess.length; runIndex += 1) {
+      const run = runsToProcess[runIndex];
+      if (isBookmarkMarkerRun(run)) continue;
+      filteredRuns.push(run);
+      filteredRunIndexMap.push(runIndexMap[runIndex] ?? runIndex);
+    }
+    if (filteredRuns.length > 0) {
+      runsToProcess = filteredRuns;
+      runIndexMap = filteredRunIndexMap;
+    }
+  }
+  const totalTabRuns = runsToProcess.reduce(
+    (count, run) => (isTabRun(run) && !isVanishedRun(run) ? count + 1 : count),
+    0,
+  );
+  const paragraphEndsWithTerminalTabBreak =
+    runsToProcess.length >= 2 &&
+    isLineBreakRun(runsToProcess[runsToProcess.length - 1]) &&
+    isTabRun(runsToProcess[runsToProcess.length - 2]);
 
   /**
    * Trims trailing regular spaces from a line when it is finalized.
@@ -1463,15 +2617,15 @@ async function measureParagraphBlock(
       lastRun as { fontFamily: string; fontSize: number; bold?: boolean; italic?: boolean },
       fontContext,
     );
-    const fullWidth = measureRunWidth(sliceText, font, ctx, lastRun, sliceStart);
-    const keptWidth = keptText.length > 0 ? measureRunWidth(keptText, font, ctx, lastRun, sliceStart) : 0;
+    const fullWidth = resolveParagraphRunWidth(sliceText, font, ctx, lastRun, sliceStart);
+    const keptWidth = keptText.length > 0 ? resolveParagraphRunWidth(keptText, font, ctx, lastRun, sliceStart) : 0;
     const delta = Math.max(0, fullWidth - keptWidth);
 
     lineToTrim.width = roundValue(Math.max(0, lineToTrim.width - delta));
     lineToTrim.spaceCount = Math.max(0, lineToTrim.spaceCount - trimCount);
 
-    if ((lineToTrim as any).naturalWidth != null && typeof (lineToTrim as any).naturalWidth === 'number') {
-      (lineToTrim as any).naturalWidth = roundValue(Math.max(0, (lineToTrim as any).naturalWidth - delta));
+    if (lineToTrim.naturalWidth != null) {
+      lineToTrim.naturalWidth = roundValue(Math.max(0, lineToTrim.naturalWidth - delta));
     }
   };
 
@@ -1494,7 +2648,7 @@ async function measureParagraphBlock(
       const r = runsToProcess[i];
       if (isLineBreakRun(r) || (r.kind === 'break' && (r as { breakType?: string }).breakType === 'line')) {
         closeSegment();
-      } else if (isTabRun(r)) {
+      } else if (isTabRun(r) && !isVanishedRun(r)) {
         segmentTabRunIndices.push(i);
       }
     }
@@ -1528,18 +2682,17 @@ async function measureParagraphBlock(
 
   let sequentialTabIndex = 0;
   for (let runIndex = 0; runIndex < runsToProcess.length; runIndex++) {
+    const runCheckpoint = measurementCheckpointIfDue(fontContext);
+    if (runCheckpoint) await runCheckpoint;
     const run = runsToProcess[runIndex];
 
     if ((run as Run).kind === 'break') {
       if (currentLine) {
-        const metrics = finalizeLineMetrics(currentLine, spacing);
-        const lineBase = currentLine;
-        const completedLine: Line = { ...lineBase, ...metrics };
-        addBarTabsToLine(completedLine);
+        const completedLine: Line = closeLineWithMetrics(currentLine);
         lines.push(completedLine);
         currentLine = null;
       } else {
-        const metrics = calculateTypographyMetrics(fallbackFontSize, spacing, fallbackFontInfo);
+        const metrics = calculateTypographyMetrics(fallbackFontSize, spacing, fallbackFontInfo, fontContext);
         const emptyLine: Line = {
           fromRun: runIndex,
           fromChar: 0,
@@ -1565,17 +2718,12 @@ async function measureParagraphBlock(
       // For leading line breaks (before any text), use fallback font info for accurate height calculation
       const lineBreakFontInfo = hasSeenTextRun ? undefined : fallbackFontInfo;
       if (currentLine) {
-        const metrics = finalizeLineMetrics(currentLine, spacing);
-        const completedLine: Line = {
-          ...currentLine,
-          ...metrics,
-        };
-        addBarTabsToLine(completedLine);
+        const completedLine: Line = closeLineWithMetrics(currentLine);
         lines.push(completedLine);
       } else {
         // Line break at the start of paragraph (no currentLine yet):
         // Create an empty line to represent the leading line break
-        const metrics = calculateTypographyMetrics(lastFontSize, spacing, lineBreakFontInfo);
+        const metrics = calculateTypographyMetrics(lastFontSize, spacing, lineBreakFontInfo, fontContext);
         const emptyLine: Line = {
           fromRun: runIndex,
           fromChar: 0,
@@ -1627,6 +2775,41 @@ async function measureParagraphBlock(
       currentLine.isLineBreakPlaceholder = false;
     }
 
+    if (isTabRun(run) && isVanishedRun(run)) {
+      // A vanished tab is transparent to tab alignment; keep activeTabGroup/pendingLeader intact.
+      const hiddenLength = run.text.length;
+      if (!currentLine) {
+        currentLine = {
+          fromRun: runIndex,
+          fromChar: 0,
+          toRun: runIndex,
+          toChar: hiddenLength,
+          width: 0,
+          maxFontSize: 0,
+          maxWidth: getEffectiveWidth(lines.length === 0 ? initialAvailableWidth : bodyContentWidth),
+          segments: [{ runIndex, fromChar: 0, toChar: hiddenLength, width: 0 }],
+          spaceCount: 0,
+          structuralFallbackFontSize: lineHeightFontSize(run as unknown as TextRun),
+          structuralFallbackFontInfo: getFontInfoFromRun(run as unknown as TextRun, fontContext),
+        };
+      } else {
+        currentLine.toRun = runIndex;
+        currentLine.toChar = hiddenLength;
+        appendSegment(currentLine.segments, runIndex, 0, hiddenLength, 0);
+        if (currentLine.maxFontSize <= 0) {
+          currentLine.structuralFallbackFontSize ??= lineHeightFontSize(run as unknown as TextRun);
+          currentLine.structuralFallbackFontInfo ??= getFontInfoFromRun(run as unknown as TextRun, fontContext);
+        }
+      }
+
+      run.width = 0;
+      const blockRunIndex = runIndexMap[runIndex] ?? runIndex;
+      if (!currentLine.tabWidths) currentLine.tabWidths = {};
+      currentLine.tabWidths[blockRunIndex] = 0;
+      pendingRunSpacing = 0;
+      continue;
+    }
+
     // Handle tab runs specially
     if (isTabRun(run)) {
       // Clear any previous tab group when we encounter a new tab
@@ -1635,6 +2818,8 @@ async function measureParagraphBlock(
 
       // Initialize line if needed
       if (!currentLine) {
+        const imageRunFontSize =
+          typeof run.fontSize === 'number' && run.fontSize > 0 ? normalizeFontSize(run.fontSize) : undefined;
         currentLine = {
           fromRun: runIndex,
           fromChar: 0,
@@ -1701,7 +2886,19 @@ async function measureParagraphBlock(
       }
       // Persist measured tab width on the TabRun for downstream consumers/tests
       (run as TabRun & { width?: number }).width = tabAdvance;
+      // Also record in Line.tabWidths so the painter has a cache-hit-safe fallback
+      // when FlowBlock re-projection creates fresh run objects (run.width not re-set).
+      // Key by the original block.runs index (runIndexMap[runIndex]) so the entry
+      // remains valid even when annotateParagraphSyntheticPm assigns new pmStart
+      // values after edits shift PM positions upstream.
+      const blockRunIndex = runIndexMap[runIndex] ?? runIndex;
+      if (!currentLine.tabWidths) currentLine.tabWidths = {};
+      currentLine.tabWidths[blockRunIndex] = tabAdvance;
 
+      // A visible tab can be the first visible metric contributor after vanished content.
+      if (currentLine.maxFontSize <= 0) {
+        currentLine.maxFontInfo = getFontInfoFromRun(run as unknown as TextRun, fontContext);
+      }
       currentLine.maxFontSize = Math.max(currentLine.maxFontSize, lastFontSize);
       currentLine.toRun = runIndex;
       currentLine.toChar = 1; // tab is a single character
@@ -1790,8 +2987,17 @@ async function measureParagraphBlock(
 
     // Handle image runs
     if (isImageRun(run)) {
-      // Width/height (including dist* spacing) come from the shared atomic-run sizer.
-      const { width: imageWidth, height: imageHeight } = getAtomicRunLayoutSize(run, measureAtomicText);
+      const visualSize = resolveInlineImageVisualSize(run);
+      const imageRunFontSize = isValidFontSize(run.fontSize) ? run.fontSize : undefined;
+      // Calculate image width including spacing
+      const leftSpace = run.distLeft ?? 0;
+      const rightSpace = run.distRight ?? 0;
+      const imageWidth = visualSize.width + leftSpace + rightSpace;
+
+      // Calculate image height including spacing (for line height)
+      const topSpace = run.distTop ?? 0;
+      const bottomSpace = run.distBottom ?? 0;
+      const imageHeight = visualSize.height + topSpace + bottomSpace;
 
       // Determine image position - check active tab group first, then pending alignment
       let imageStartX: number | undefined;
@@ -1817,6 +3023,13 @@ async function measureParagraphBlock(
           maxImageHeight: imageHeight,
           maxWidth: getEffectiveWidth(lines.length === 0 ? initialAvailableWidth : bodyContentWidth),
           spaceCount: 0,
+          ...(imageRunFontSize != null
+            ? {
+                structuralFallbackFontSize: imageRunFontSize,
+                structuralFallbackFontInfo: getFontInfoFromRun(run as unknown as TextRun, fontContext),
+              }
+            : {}),
+          imageRunCandidates: [makeInlineImageCandidate(runIndex, run, imageWidth, imageHeight)],
           segments: [
             {
               runIndex,
@@ -1844,13 +3057,7 @@ async function measureParagraphBlock(
       if (!skipFitCheck && currentLine.width + imageWidth > currentLine.maxWidth && currentLine.width > 0) {
         // Image doesn't fit - finish current line and start new line with image
         trimTrailingWrapSpaces(currentLine);
-        const metrics = finalizeLineMetrics(currentLine, spacing);
-        const lineBase = currentLine;
-        const completedLine: Line = {
-          ...lineBase,
-          ...metrics,
-        };
-        addBarTabsToLine(completedLine);
+        const completedLine: Line = closeLineWithMetrics(currentLine);
         lines.push(completedLine);
         tabStopCursor = 0;
         pendingTabAlignment = null;
@@ -1869,6 +3076,7 @@ async function measureParagraphBlock(
           maxImageHeight: imageHeight,
           maxWidth: getEffectiveWidth(bodyContentWidth),
           spaceCount: 0,
+          imageRunCandidates: [makeInlineImageCandidate(runIndex, run, imageWidth, imageHeight)],
           segments: [
             {
               runIndex,
@@ -1884,6 +3092,7 @@ async function measureParagraphBlock(
         currentLine.toChar = 1;
         currentLine.width = roundValue(currentLine.width + imageWidth);
         currentLine.maxImageHeight = Math.max(currentLine.maxImageHeight ?? 0, imageHeight);
+        (currentLine.imageRunCandidates ??= []).push(makeInlineImageCandidate(runIndex, run, imageWidth, imageHeight));
         if (!currentLine.segments) currentLine.segments = [];
         currentLine.segments.push({
           runIndex,
@@ -1915,7 +3124,9 @@ async function measureParagraphBlock(
 
     // Handle math runs (atomic, pre-computed dimensions like images)
     if (run.kind === 'math') {
-      const { width: mathWidth, height: mathHeight } = getAtomicRunLayoutSize(run, measureAtomicText);
+      const mathRun = run as { width: number; height: number };
+      const mathWidth = mathRun.width ?? 20;
+      const mathHeight = mathRun.height ?? 24;
 
       if (!currentLine) {
         currentLine = {
@@ -1944,10 +3155,54 @@ async function measureParagraphBlock(
 
     // Handle field annotation runs (pill-styled form fields)
     if (isFieldAnnotationRun(run)) {
-      // Pill width/height come from the shared atomic-run sizer (single source of
-      // truth with the fast remeasure path); `measureAtomicText` resolves the font
-      // and applies the text-transform exactly as the pill paints.
-      const { width: annotationWidth, height: annotationHeight } = getAtomicRunLayoutSize(run, measureAtomicText);
+      // Use displayLabel for text measurement, with fallback defaults
+      const rawDisplayText = run.displayLabel || '';
+      const displayText = applyTextTransform(rawDisplayText, run);
+
+      // Use annotation's typography or fallback to defaults (16px Arial is standard)
+      const annotationFontSize =
+        typeof run.fontSize === 'number'
+          ? run.fontSize
+          : typeof run.fontSize === 'string'
+            ? parseFloat(run.fontSize) || DEFAULT_FIELD_ANNOTATION_FONT_SIZE
+            : DEFAULT_FIELD_ANNOTATION_FONT_SIZE;
+      // Resolve to the physical render family (a per-document fonts.map or the bundled substitute),
+      // the same family the pill paints, so the measured pill width matches the painted glyphs.
+      const annotationFontFamily = fontContext.resolvePhysical(run.fontFamily || 'Arial, sans-serif', faceOf(run));
+
+      // Build font string for measurement
+      const fontWeight = run.bold ? 'bold' : 'normal';
+      const fontStyle = run.italic ? 'italic' : 'normal';
+      const annotationFont = `${fontStyle} ${fontWeight} ${annotationFontSize}px ${annotationFontFamily}`;
+      ctx.font = annotationFont;
+
+      // Measure text width
+      const textWidth = displayText ? measuredTextWidth(displayText, annotationFont, 0, ctx) : 0;
+
+      const annotationHorizontalPadding = run.highlighted === false ? 0 : FIELD_ANNOTATION_PILL_PADDING;
+      const annotationVerticalPadding = run.highlighted === false ? 0 : FIELD_ANNOTATION_VERTICAL_PADDING;
+
+      // Add pill styling overhead: border (2px each side) + padding (2px each side) = 8px total
+      const annotationWidth = textWidth + annotationHorizontalPadding;
+
+      // Calculate height including pill styling
+      let annotationHeight = annotationFontSize * FIELD_ANNOTATION_LINE_HEIGHT_MULTIPLIER + annotationVerticalPadding;
+
+      // Signature images are capped to 28px in the renderer; reflect that in measurement.
+      if (run.variant === 'signature' && run.imageSrc) {
+        const signatureHeight = 28 + annotationVerticalPadding;
+        annotationHeight = Math.max(annotationHeight, signatureHeight);
+      }
+
+      // Image annotations use explicit size when provided.
+      if (run.variant === 'image' && run.imageSrc && run.size?.height) {
+        const imageHeight = run.size.height + annotationVerticalPadding;
+        annotationHeight = Math.max(annotationHeight, imageHeight);
+      }
+
+      if (run.variant === 'html' && run.size?.height) {
+        annotationHeight = Math.max(annotationHeight, run.size.height);
+      }
 
       // If a tab alignment is pending, apply it
       let annotationStartX: number | undefined;
@@ -1986,13 +3241,7 @@ async function measureParagraphBlock(
       if (currentLine.width + annotationWidth > currentLine.maxWidth && currentLine.width > 0) {
         // Doesn't fit - finish current line and start new one
         trimTrailingWrapSpaces(currentLine);
-        const metrics = finalizeLineMetrics(currentLine, spacing);
-        const lineBase = currentLine;
-        const completedLine: Line = {
-          ...lineBase,
-          ...metrics,
-        };
-        addBarTabsToLine(completedLine);
+        const completedLine: Line = closeLineWithMetrics(currentLine);
         lines.push(completedLine);
         tabStopCursor = 0;
         pendingTabAlignment = null;
@@ -2046,26 +3295,25 @@ async function measureParagraphBlock(
       continue;
     }
 
-    // At this point, we've filtered out break, lineBreak, tab, image, and fieldAnnotation runs.
-    // The remaining run must be TextRun (which has text, fontSize, etc.)
+    // At this point, we've filtered out break, lineBreak, tab, image, math,
+    // and fieldAnnotation runs. The remaining run must be TextRun.
     if (!('text' in run) || !('fontSize' in run)) {
       // Safety check - skip if this isn't a TextRun
       pendingRunSpacing = 0;
       continue;
     }
+    const textRun = run as TextRun;
 
-    if (isEmptySdtPlaceholderRun(run)) {
-      const placeholderFont = buildFontString(run, fontContext).font;
-      const placeholderText = applyTextTransform(EMPTY_SDT_PLACEHOLDER_TEXT, run);
-      const measuredPlaceholderWidth = getMeasuredTextWidth(
-        placeholderText,
-        placeholderFont,
-        run.letterSpacing ?? 0,
-        ctx,
-      );
-      const fallbackPlaceholderWidth = placeholderText.length * run.fontSize * 0.45;
+    if (isEmptySdtPlaceholderRun(textRun)) {
+      const placeholderFont = buildFontString(textRun, fontContext).font;
+      const placeholderText = applyTextTransform(EMPTY_SDT_PLACEHOLDER_TEXT, textRun);
+      const measuredPlaceholderWidth =
+        measuredTextWidth(placeholderText, placeholderFont, textRun.letterSpacing ?? 0, ctx) *
+        getRunHorizontalScale(textRun);
+      const fallbackPlaceholderWidth =
+        placeholderText.length * textRun.fontSize * 0.45 * getRunHorizontalScale(textRun);
       const placeholderWidth =
-        run.sdt?.type === 'structuredContent' && run.sdt.appearance === 'hidden'
+        textRun.sdt?.type === 'structuredContent' && textRun.sdt.appearance === 'hidden'
           ? 0
           : measuredPlaceholderWidth > 0
             ? measuredPlaceholderWidth
@@ -2078,25 +3326,20 @@ async function measureParagraphBlock(
           toRun: runIndex,
           toChar: 0,
           width: placeholderWidth,
-          maxFontSize: lineHeightFontSize(run),
-          maxFontInfo: getFontInfoFromRun(run, fontContext),
+          maxFontSize: lineHeightFontSize(textRun),
+          maxFontInfo: getFontInfoFromRun(textRun, fontContext),
           maxWidth: getEffectiveWidth(lines.length === 0 ? initialAvailableWidth : bodyContentWidth),
           segments: [{ runIndex, fromChar: 0, toChar: 0, width: placeholderWidth }],
           spaceCount: 0,
         };
       } else {
-        const boundarySpacing = resolveBoundarySpacing(currentLine.width, true, run);
+        const boundarySpacing = resolveBoundarySpacing(currentLine.width, true, textRun);
         if (
           currentLine.width + boundarySpacing + placeholderWidth > currentLine.maxWidth - WIDTH_FUDGE_PX &&
           currentLine.width > 0
         ) {
           trimTrailingWrapSpaces(currentLine);
-          const metrics = finalizeLineMetrics(currentLine, spacing);
-          const completedLine: Line = {
-            ...currentLine,
-            ...metrics,
-          };
-          addBarTabsToLine(completedLine);
+          const completedLine: Line = closeLineWithMetrics(currentLine);
           lines.push(completedLine);
           tabStopCursor = 0;
           pendingTabAlignment = null;
@@ -2110,8 +3353,8 @@ async function measureParagraphBlock(
             toRun: runIndex,
             toChar: 0,
             width: placeholderWidth,
-            maxFontSize: lineHeightFontSize(run),
-            maxFontInfo: getFontInfoFromRun(run, fontContext),
+            maxFontSize: lineHeightFontSize(textRun),
+            maxFontInfo: getFontInfoFromRun(textRun, fontContext),
             maxWidth: getEffectiveWidth(bodyContentWidth),
             segments: [{ runIndex, fromChar: 0, toChar: 0, width: placeholderWidth }],
             spaceCount: 0,
@@ -2120,32 +3363,95 @@ async function measureParagraphBlock(
           currentLine.toRun = runIndex;
           currentLine.toChar = 0;
           currentLine.width = roundValue(currentLine.width + boundarySpacing + placeholderWidth);
-          currentLine.maxFontInfo = updateMaxFontInfo(
-            currentLine.maxFontSize,
-            currentLine.maxFontInfo,
-            run,
-            fontContext,
-          );
-          currentLine.maxFontSize = Math.max(currentLine.maxFontSize, lineHeightFontSize(run));
+          updateLineFontMetrics(currentLine, textRun, fontContext);
           appendSegment(currentLine.segments, runIndex, 0, 0, placeholderWidth);
         }
       }
 
-      lastFontSize = run.fontSize;
+      lastFontSize = textRun.fontSize;
       hasSeenTextRun = true;
       pendingRunSpacing = 0;
       continue;
     }
 
-    // Handle text runs
-    lastFontSize = run.fontSize;
-    hasSeenTextRun = true;
-    if (run.text === '') {
+    if (isBookmarkMarkerRun(textRun)) {
+      if (hasRenderableParagraphContent) {
+        continue;
+      }
+
+      const markerLength = textRun.text.length;
+      const markerFallbackFontSize = fallbackFontSize;
+      const markerFallbackFontInfo = fallbackFontInfo;
+
+      if (!currentLine) {
+        currentLine = {
+          fromRun: runIndex,
+          fromChar: 0,
+          toRun: runIndex,
+          toChar: markerLength,
+          width: 0,
+          maxFontSize: 0,
+          maxWidth: getEffectiveWidth(lines.length === 0 ? initialAvailableWidth : bodyContentWidth),
+          segments: [{ runIndex, fromChar: 0, toChar: markerLength, width: 0 }],
+          spaceCount: 0,
+          structuralFallbackFontSize: markerFallbackFontSize,
+          ...(markerFallbackFontInfo ? { structuralFallbackFontInfo: markerFallbackFontInfo } : {}),
+        };
+      } else {
+        currentLine.toRun = runIndex;
+        currentLine.toChar = markerLength;
+        appendSegment(currentLine.segments, runIndex, 0, markerLength, 0);
+        if (currentLine.maxFontSize <= 0) {
+          currentLine.structuralFallbackFontSize ??= markerFallbackFontSize;
+          if (markerFallbackFontInfo) currentLine.structuralFallbackFontInfo ??= markerFallbackFontInfo;
+        }
+      }
+
       pendingRunSpacing = 0;
       continue;
     }
-    const { font } = buildFontString(run, fontContext);
-    const tabSegments = run.text.split('\t');
+
+    // Handle text runs
+    if (textRun.text === '') {
+      pendingRunSpacing = 0;
+      continue;
+    }
+
+    if (textRun.vanish === true) {
+      const hiddenLength = textRun.text.length;
+      if (!currentLine) {
+        currentLine = {
+          fromRun: runIndex,
+          fromChar: 0,
+          toRun: runIndex,
+          toChar: hiddenLength,
+          width: 0,
+          maxFontSize: 0,
+          maxWidth: getEffectiveWidth(lines.length === 0 ? initialAvailableWidth : bodyContentWidth),
+          segments: [{ runIndex, fromChar: 0, toChar: hiddenLength, width: 0 }],
+          spaceCount: 0,
+          structuralFallbackFontSize: lineHeightFontSize(textRun),
+          structuralFallbackFontInfo: getFontInfoFromRun(textRun, fontContext),
+        };
+      } else {
+        currentLine.toRun = runIndex;
+        currentLine.toChar = hiddenLength;
+        appendSegment(currentLine.segments, runIndex, 0, hiddenLength, 0);
+        if (currentLine.maxFontSize <= 0) {
+          currentLine.structuralFallbackFontSize ??= lineHeightFontSize(textRun);
+          currentLine.structuralFallbackFontInfo ??= getFontInfoFromRun(textRun, fontContext);
+        }
+      }
+
+      pendingRunSpacing = 0;
+      continue;
+    }
+
+    lastFontSize = textRun.fontSize;
+    hasSeenTextRun = true;
+
+    const { font } = buildFontString(textRun, fontContext);
+    const tabSegments = textRun.text.split('\t');
 
     let charPosInRun = 0;
 
@@ -2157,7 +3463,7 @@ async function measureParagraphBlock(
         const spacesLength = segment.length;
         const spacesStartChar = charPosInRun;
         const spacesEndChar = charPosInRun + spacesLength;
-        const spacesWidth = measureRunWidth(segment, font, ctx, run, spacesStartChar);
+        const spacesWidth = resolveParagraphRunWidth(segment, font, ctx, run, spacesStartChar);
 
         if (!currentLine) {
           currentLine = {
@@ -2179,13 +3485,7 @@ async function measureParagraphBlock(
             currentLine.width > 0
           ) {
             trimTrailingWrapSpaces(currentLine);
-            const metrics = finalizeLineMetrics(currentLine, spacing);
-            const lineBase = currentLine;
-            const completedLine: Line = {
-              ...lineBase,
-              ...metrics,
-            };
-            addBarTabsToLine(completedLine);
+            const completedLine: Line = closeLineWithMetrics(currentLine);
             lines.push(completedLine);
             tabStopCursor = 0;
             pendingTabAlignment = null;
@@ -2209,13 +3509,7 @@ async function measureParagraphBlock(
             currentLine.toRun = runIndex;
             currentLine.toChar = spacesEndChar;
             currentLine.width = roundValue(currentLine.width + boundarySpacing + spacesWidth);
-            currentLine.maxFontInfo = updateMaxFontInfo(
-              currentLine.maxFontSize,
-              currentLine.maxFontInfo,
-              run,
-              fontContext,
-            );
-            currentLine.maxFontSize = Math.max(currentLine.maxFontSize, lineHeightFontSize(run));
+            updateLineFontMetrics(currentLine, run, fontContext);
             appendSegment(currentLine.segments, runIndex, spacesStartChar, spacesEndChar, spacesWidth);
             currentLine.spaceCount += spacesLength;
           }
@@ -2267,6 +3561,8 @@ async function measureParagraphBlock(
       };
 
       for (let wordIndex = 0; wordIndex < words.length; wordIndex++) {
+        const wordCheckpoint = measurementCheckpointIfDue(fontContext);
+        if (wordCheckpoint) await wordCheckpoint;
         const word = words[wordIndex];
         /**
          * Handle empty strings from split(' ') representing space characters.
@@ -2283,7 +3579,7 @@ async function measureParagraphBlock(
           // We must add the space width to the line, not just skip it.
           const spaceStartChar = charPosInRun;
           const spaceEndChar = charPosInRun + 1;
-          const singleSpaceWidth = measureRunWidth(' ', font, ctx, run, spaceStartChar);
+          const singleSpaceWidth = resolveParagraphRunWidth(' ', font, ctx, run, spaceStartChar);
           const isRunStart = charPosInRun === 0 && segmentIndex === 0 && wordIndex === 0;
 
           if (!currentLine) {
@@ -2310,13 +3606,7 @@ async function measureParagraphBlock(
             ) {
               // Space doesn't fit - finish current line and start new one with the space
               trimTrailingWrapSpaces(currentLine);
-              const metrics = finalizeLineMetrics(currentLine, spacing);
-              const lineBase = currentLine;
-              const completedLine: Line = {
-                ...lineBase,
-                ...metrics,
-              };
-              addBarTabsToLine(completedLine);
+              const completedLine: Line = closeLineWithMetrics(currentLine);
               lines.push(completedLine);
               tabStopCursor = 0;
               pendingTabAlignment = null;
@@ -2343,13 +3633,7 @@ async function measureParagraphBlock(
               currentLine.toRun = runIndex;
               currentLine.toChar = spaceEndChar;
               currentLine.width = roundValue(currentLine.width + boundarySpacing + singleSpaceWidth);
-              currentLine.maxFontInfo = updateMaxFontInfo(
-                currentLine.maxFontSize,
-                currentLine.maxFontInfo,
-                run,
-                fontContext,
-              );
-              currentLine.maxFontSize = Math.max(currentLine.maxFontSize, lineHeightFontSize(run));
+              updateLineFontMetrics(currentLine, run, fontContext);
               // If in an active tab alignment group, use explicit X positioning
               let spaceExplicitX: number | undefined;
               let spacePrecedingTabEndX: number | undefined;
@@ -2377,15 +3661,71 @@ async function measureParagraphBlock(
           continue;
         }
         const wordStartChar = charPosInRun;
-        const wordOnlyWidth = measureRunWidth(word, font, ctx, run, wordStartChar);
+        const wordOnlyWidth = resolveParagraphRunWidth(word, font, ctx, run, wordStartChar);
         // Only include the implicit single delimiter space when there is a later non-empty word
         // in this same segment (i.e., before the next word). Do NOT include one before tabs or
         // at the end of the segment; those spaces are represented explicitly by "" tokens.
         const shouldIncludeDelimiterSpace = wordIndex < lastNonEmptyWordIndex;
         const wordEndNoSpace = charPosInRun + word.length;
-        const spaceWidth = shouldIncludeDelimiterSpace ? measureRunWidth(' ', font, ctx, run, wordEndNoSpace) : 0;
+        const spaceWidth = shouldIncludeDelimiterSpace
+          ? resolveParagraphRunWidth(' ', font, ctx, run, wordEndNoSpace)
+          : 0;
         const wordCommitWidth = wordOnlyWidth + spaceWidth;
         const wordEndWithSpace = wordEndNoSpace + (shouldIncludeDelimiterSpace ? 1 : 0);
+
+        // Hoisted above the break paths so the CJK line-fill decision consults
+        // exactly the boundary spacing / TOC posture the fit check below uses.
+        const isRunStart = charPosInRun === 0 && segmentIndex === 0 && wordIndex === 0;
+        // Safe cast: only TextRuns produce word segments from split(), other run types are handled earlier
+        const boundarySpacing = currentLine ? resolveBoundarySpacing(currentLine.width, isRunStart, run as TextRun) : 0;
+        // For TOC entries, never break lines - allow them to extend beyond maxWidth
+        const isTocEntry = block.attrs?.isTocEntry;
+
+        /**
+         * CJK clauses arrive as ONE "word" because `split(' ')` only
+         * sees ASCII spaces. Wrapping such a word whole strands the preceding
+         * run alone on a short line and opens the next line with the clause's
+         * leading punctuation. Word (and CSS `line-break: normal`) breaks CJK
+         * between ideographs instead, so when the word does not fit the current
+         * line's remainder we route it through the character chunker and give
+         * the first chunk that remainder as its budget. Requires at least one
+         * character to fit; otherwise the plain wrap below is already correct.
+         */
+        let cjkLineFillWidth = 0;
+        let useCjkLineFill = false;
+        if (
+          currentLine &&
+          currentLine.width > 0 &&
+          !inActiveTabGroup &&
+          !isTocEntry &&
+          // Drop caps narrow the available width by line index, but the chunker
+          // budgets every continuation chunk before any of them is pushed, so the
+          // two would disagree. Keep drop-cap paragraphs on the plain wrap path.
+          !(dropCapMeasure && dropCapMeasure.mode === 'drop') &&
+          // A lone closer is eligible too: OOXML routinely fragments punctuation
+          // into its own run, and such a word has no CJK neighbour to make
+          // `hasCjkBreakOpportunity` true, yet it still may not open a line.
+          (hasCjkBreakOpportunity(word) || KINSOKU_FORBIDDEN_LINE_START.has(word)) &&
+          currentLine.width + boundarySpacing + wordOnlyWidth > currentLine.maxWidth - WIDTH_FUDGE_PX
+        ) {
+          const remainingWidth = currentLine.maxWidth - WIDTH_FUDGE_PX - currentLine.width - boundarySpacing;
+          // The first *break unit*, not the first character: a token like
+          // `SuperDoc中文` may be chunked between its ideographs, but its Latin
+          // head has to move as a whole, so filling the line with part of it
+          // would split the word.
+          const leadUnit = firstBreakUnit(word);
+          // Take the chunker whenever that unit fits, and also when the clause
+          // opens with a forbidden closer: hanging it here is the whole point of
+          // the line-start rule, and the plain wrap below would open the next
+          // line with it instead.
+          if (
+            remainingWidth >= resolveParagraphRunWidth(leadUnit, font, ctx, run, wordStartChar) ||
+            KINSOKU_FORBIDDEN_LINE_START.has(leadUnit)
+          ) {
+            useCjkLineFill = true;
+            cjkLineFillWidth = remainingWidth;
+          }
+        }
 
         // Determine the effective maxWidth for character-level breaking
         const effectiveMaxWidth = currentLine
@@ -2398,47 +3738,14 @@ async function measureParagraphBlock(
         // - WIDTH_FUDGE_PX is meant to give leeway for fitting text that's very close
         // - We only want to break mid-word when the word truly exceeds available width
         // - Breaking words that exactly fit would cause unnecessary fragmentation
-        if (wordOnlyWidth > effectiveMaxWidth + WIDTH_FUDGE_PX && word.length > 1) {
-          // Track the remaining portion of the oversized word. If the current line
-          // already has content, we may be able to place an initial chunk into the
-          // remaining width before finalizing the line.
-          let wordToBreak = word;
-          let wordToBreakStart = wordStartChar;
-
+        if (!useCjkLineFill && wordOnlyWidth > effectiveMaxWidth + WIDTH_FUDGE_PX && word.length > 1) {
           // First, finish any existing currentLine before processing the long word
           // Only push the line if it has actual text content (segments), not just tab positioning.
           // If the line only has width from tab advances but no text, we should keep it so the
           // long word can use the pending tab alignment.
           if (currentLine && currentLine.width > 0 && currentLine.segments && currentLine.segments.length > 0) {
-            const remainingWidth = currentLine.maxWidth - currentLine.width;
-            if (remainingWidth > WIDTH_FUDGE_PX) {
-              const firstChunks = breakWordIntoChunks(wordToBreak, remainingWidth, font, ctx, run, wordToBreakStart);
-              const firstChunk = firstChunks[0];
-              if (firstChunk && firstChunk.text.length > 0 && firstChunk.text.length < wordToBreak.length) {
-                const firstChunkEnd = wordToBreakStart + firstChunk.text.length;
-                currentLine.toRun = runIndex;
-                currentLine.toChar = firstChunkEnd;
-                currentLine.width = roundValue(currentLine.width + firstChunk.width);
-                currentLine.maxFontSize = Math.max(currentLine.maxFontSize, lineHeightFontSize(run));
-                currentLine.maxFontInfo = getFontInfoFromRun(run, fontContext);
-                currentLine.segments.push({
-                  runIndex,
-                  fromChar: wordToBreakStart,
-                  toChar: firstChunkEnd,
-                  width: firstChunk.width,
-                });
-                wordToBreakStart = firstChunkEnd;
-                wordToBreak = wordToBreak.slice(firstChunk.text.length);
-              }
-            }
             trimTrailingWrapSpaces(currentLine);
-            const metrics = finalizeLineMetrics(currentLine, spacing);
-            const lineBase = currentLine;
-            const completedLine: Line = {
-              ...lineBase,
-              ...metrics,
-            };
-            addBarTabsToLine(completedLine);
+            const completedLine: Line = closeLineWithMetrics(currentLine);
             lines.push(completedLine);
             tabStopCursor = 0;
             pendingTabAlignment = null;
@@ -2458,10 +3765,20 @@ async function measureParagraphBlock(
 
           // Use remaining width for chunking if we have a tab-only line, otherwise use full line width
           const chunkWidth = hasTabOnlyLine ? Math.max(remainingWidthAfterTab, lineMaxWidth * 0.25) : lineMaxWidth;
-          const chunks = breakWordIntoChunks(wordToBreak, chunkWidth, font, ctx, run, wordToBreakStart);
+          const chunks = await breakWordIntoChunks(
+            word,
+            chunkWidth,
+            font,
+            ctx,
+            run,
+            wordStartChar,
+            { applyKinsoku: hasCjkBreakOpportunity(word) },
+            fontContext,
+            resolveParagraphRunWidth,
+          );
 
           // Process all chunks except the last one as complete lines
-          let chunkCharOffset = wordToBreakStart;
+          let chunkCharOffset = wordStartChar;
           for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
             const chunk = chunks[chunkIndex];
             const chunkStartChar = chunkCharOffset;
@@ -2486,7 +3803,7 @@ async function measureParagraphBlock(
 
               if (isLastChunk) {
                 // If this is also the last chunk, keep currentLine open for more content
-                const ls = (run as TextRun).letterSpacing ?? 0;
+                const ls = getScaledLetterSpacing(run as TextRun);
                 if (
                   shouldIncludeDelimiterSpace &&
                   currentLine.width + spaceWidth <= currentLine.maxWidth - WIDTH_FUDGE_PX
@@ -2501,13 +3818,7 @@ async function measureParagraphBlock(
               } else {
                 // More chunks to come - finish this line and push it
                 trimTrailingWrapSpaces(currentLine);
-                const metrics = finalizeLineMetrics(currentLine, spacing);
-                const lineBase = currentLine;
-                const completedLine: Line = {
-                  ...lineBase,
-                  ...metrics,
-                };
-                addBarTabsToLine(completedLine);
+                const completedLine: Line = closeLineWithMetrics(currentLine);
                 lines.push(completedLine);
                 tabStopCursor = 0;
                 pendingTabAlignment = null;
@@ -2530,7 +3841,7 @@ async function measureParagraphBlock(
                 spaceCount: 0,
               };
               // If trailing space fits, include it
-              const ls = (run as TextRun).letterSpacing ?? 0;
+              const ls = getScaledLetterSpacing(run as TextRun);
               if (
                 shouldIncludeDelimiterSpace &&
                 currentLine.width + spaceWidth <= currentLine.maxWidth - WIDTH_FUDGE_PX
@@ -2545,7 +3856,12 @@ async function measureParagraphBlock(
             } else {
               // Not the last chunk - create a complete line
               const chunkLineMaxWidth = getEffectiveWidth(lines.length === 0 ? initialAvailableWidth : contentWidth);
-              const metrics = calculateTypographyMetrics(run.fontSize, spacing, getFontInfoFromRun(run, fontContext));
+              const metrics = calculateTypographyMetrics(
+                textRun.fontSize,
+                spacing,
+                getFontInfoFromRun(textRun, fontContext),
+                fontContext,
+              );
               const chunkLine: Line = {
                 fromRun: runIndex,
                 fromChar: chunkStartChar,
@@ -2580,7 +3896,7 @@ async function measureParagraphBlock(
           };
           // If a trailing space exists and fits safely, include it on this line
           // Safe cast: only TextRuns produce word segments from split(), other run types are handled earlier
-          const ls = (run as TextRun).letterSpacing ?? 0;
+          const ls = getScaledLetterSpacing(run as TextRun);
           if (shouldIncludeDelimiterSpace && currentLine.width + spaceWidth <= currentLine.maxWidth - WIDTH_FUDGE_PX) {
             currentLine.toChar = wordEndWithSpace;
             currentLine.width = roundValue(currentLine.width + spaceWidth + ls);
@@ -2601,21 +3917,28 @@ async function measureParagraphBlock(
           continue;
         }
 
-        // For TOC entries, never break lines - allow them to extend beyond maxWidth
-        const isTocEntry = block.attrs?.isTocEntry;
-        // Fit check uses word-only width and includes boundary letterSpacing when line is non-empty
-        // Safe cast: only TextRuns produce word segments from split(), other run types are handled earlier
-        const isRunStart = charPosInRun === 0 && segmentIndex === 0 && wordIndex === 0;
-        const boundarySpacing = resolveBoundarySpacing(currentLine.width, isRunStart, run as TextRun);
+        // Fit check uses word-only width and includes boundary letterSpacing when line is
+        // non-empty; `isRunStart` / `boundarySpacing` / `isTocEntry` are hoisted above.
         // Check if paragraph has justified alignment
         const justifyAlignment = block.attrs?.alignment === 'justify';
-        const totalWidthWithWord =
-          currentLine.width +
-          boundarySpacing +
-          wordCommitWidth +
-          // Safe cast: only TextRuns produce word segments from split(), other run types are handled earlier
-          (shouldIncludeDelimiterSpace ? ((run as TextRun).letterSpacing ?? 0) : 0);
-        const availableWidth = currentLine.maxWidth - WIDTH_FUDGE_PX;
+        // A candidate's delimiter belongs between it and the *next* word. Word
+        // decides whether this word fits without charging that trailing space
+        // to the current line or treating it as another elastic gap.
+        const totalWidthWithWord = currentLine.width + boundarySpacing + wordOnlyWidth;
+        // Word rounds a visually mixed line at run boundaries. Preserve the
+        // existing safety margin for uniform and justified text (which has its
+        // own compression model), but accept the reciprocal sub-pixel tolerance
+        // for non-justified content spanning more than one run.
+        const firstLineRunIndex = currentLine.segments[0]?.runIndex;
+        const spansRunBoundary =
+          firstLineRunIndex != null && currentLine.segments.some((segment) => segment.runIndex !== firstLineRunIndex);
+        // An authored tab is also a run boundary even though tab geometry is
+        // carried separately from text segments. Word accepts a trailing glyph
+        // that lands within the reciprocal sub-pixel tolerance after that stop.
+        // Reserving the tolerance instead falsely wraps narrow engineering-form
+        // labels and compounds the extra line at every continuous section.
+        const acceptsSubpixelOverflow = !justifyAlignment && (spansRunBoundary || currentLine.hasExplicitTabStops);
+        const availableWidth = currentLine.maxWidth + (acceptsSubpixelOverflow ? WIDTH_FUDGE_PX : -WIDTH_FUDGE_PX);
         // Skip line break check if we're in an active tab alignment group - content was pre-measured
         let shouldBreak =
           !inActiveTabGroup &&
@@ -2624,27 +3947,187 @@ async function measureParagraphBlock(
           !isTocEntry;
         let compressedWidth: number | null = null;
 
-        // Justify-aware fit: allow minor per-space compression (non-last paragraph line) to keep the word.
+        // Justify-aware fit: allow Word-compatible per-space compression to keep the word.
         if (shouldBreak && justifyAlignment) {
-          const isLastNonEmptyWordInSegment = wordIndex === lastNonEmptyWordIndex;
-          const isParagraphLastWord =
-            isLastSegment && isLastNonEmptyWordInSegment && runIndex === runsToProcess.length - 1;
-          if (!isParagraphLastWord) {
-            const existingSpaces = currentLine.spaceCount ?? 0;
-            const candidateSpaces = existingSpaces + (shouldIncludeDelimiterSpace ? 1 : 0);
-            if (candidateSpaces > 0) {
-              const overflow = totalWidthWithWord - availableWidth;
-              if (overflow > 0) {
-                const baseSpaceWidth =
-                  spaceWidth || measureRunWidth(' ', font, ctx, run, wordEndNoSpace) || Math.max(1, boundarySpacing);
-                const perSpaceCompression = overflow / candidateSpaces;
-                const maxPerSpaceCompression = baseSpaceWidth * 0.25; // ~25% squeeze permitted
-                if (perSpaceCompression <= maxPerSpaceCompression) {
-                  shouldBreak = false;
-                  compressedWidth = availableWidth;
-                }
+          const candidateSpaces = currentLine.spaceCount ?? 0;
+          if (candidateSpaces > 0) {
+            const overflow = totalWidthWithWord - availableWidth;
+            if (overflow > 0) {
+              const baseSpaceWidth =
+                spaceWidth ||
+                resolveParagraphRunWidth(' ', font, ctx, run, wordEndNoSpace) ||
+                Math.max(1, boundarySpacing);
+              if (
+                fitsWordJustificationCompression(
+                  overflow,
+                  wordOnlyWidth,
+                  candidateSpaces,
+                  baseSpaceWidth,
+                  (run as TextRun).fontFamily,
+                  (isWordLayoutList && wordLayout?.indentLeftPx === 0 && (wordLayout.tabsPx?.length ?? 0) > 0) ||
+                    paragraphEndsWithTerminalTabBreak,
+                )
+              ) {
+                shouldBreak = false;
+                compressedWidth = availableWidth;
               }
             }
+          }
+        }
+
+        // Fill the rest of this line with as many ideographs
+        // as fit, then continue the clause on the following lines, instead of
+        // wrapping the whole clause and stranding whatever opened the line.
+        // Runs after the justify-aware fit above so justified paragraphs keep
+        // their per-space compression escape hatch.
+        if (shouldBreak && useCjkLineFill) {
+          const chunks = await breakWordIntoChunks(
+            word,
+            getEffectiveWidth(bodyContentWidth),
+            font,
+            ctx,
+            run,
+            wordStartChar,
+            { firstChunkWidth: cjkLineFillWidth, applyKinsoku: true },
+            fontContext,
+            resolveParagraphRunWidth,
+          );
+
+          // Non-null: `shouldBreak` requires a line with committed width.
+          let activeLine: NonNullable<typeof currentLine> = currentLine;
+          let chunkCharOffset = wordStartChar;
+
+          for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+            const chunk = chunks[chunkIndex];
+            const chunkStartChar = chunkCharOffset;
+            const chunkEndChar = chunkCharOffset + chunk.text.length;
+            const isLastChunk = chunkIndex === chunks.length - 1;
+
+            if (chunkIndex === 0) {
+              activeLine.toRun = runIndex;
+              activeLine.toChar = chunkEndChar;
+              activeLine.width = roundValue(activeLine.width + boundarySpacing + chunk.width);
+              updateLineFontMetrics(activeLine, run, fontContext);
+              appendSegment(
+                activeLine.segments,
+                runIndex,
+                chunkStartChar,
+                chunkEndChar,
+                chunk.width,
+                wordIndex === 0 ? segmentStartX : undefined,
+                wordIndex === 0 ? consumeSegmentPrecedingTabEndX() : undefined,
+              );
+            } else {
+              activeLine = {
+                fromRun: runIndex,
+                fromChar: chunkStartChar,
+                toRun: runIndex,
+                toChar: chunkEndChar,
+                width: chunk.width,
+                maxFontSize: lineHeightFontSize(run),
+                maxFontInfo: getFontInfoFromRun(run, fontContext),
+                maxWidth: getEffectiveWidth(bodyContentWidth),
+                segments: [{ runIndex, fromChar: chunkStartChar, toChar: chunkEndChar, width: chunk.width }],
+                spaceCount: 0,
+              };
+            }
+
+            if (!isLastChunk) {
+              trimTrailingWrapSpaces(activeLine);
+              lines.push(closeLineWithMetrics(activeLine));
+              tabStopCursor = 0;
+              pendingTabAlignment = null;
+              pendingLeader = null;
+              clearWrapState();
+            }
+
+            chunkCharOffset = chunkEndChar;
+          }
+
+          // Last chunk stays open so following runs continue on the same line.
+          currentLine = activeLine;
+          if (shouldIncludeDelimiterSpace && currentLine.width + spaceWidth <= currentLine.maxWidth - WIDTH_FUDGE_PX) {
+            currentLine.toChar = wordEndWithSpace;
+            currentLine.width = roundValue(currentLine.width + spaceWidth + getScaledLetterSpacing(run as TextRun));
+            currentLine.spaceCount += 1;
+            const lastSegment = currentLine.segments?.[currentLine.segments.length - 1];
+            if (lastSegment) {
+              lastSegment.toChar = wordEndWithSpace;
+              lastSegment.width += spaceWidth;
+            }
+          }
+          charPosInRun = wordEndWithSpace;
+          continue;
+        }
+
+        if (shouldBreak) {
+          let breakableHyphenEnd = -1;
+          let breakableHyphenWidth = 0;
+          for (
+            let hyphenIndex = word.indexOf('-');
+            hyphenIndex >= 0;
+            hyphenIndex = word.indexOf('-', hyphenIndex + 1)
+          ) {
+            const prefixEnd = hyphenIndex + 1;
+            if (prefixEnd >= word.length) continue;
+            const prefixWidth = resolveParagraphRunWidth(word.slice(0, prefixEnd), font, ctx, run, wordStartChar);
+            const prefixTotalWidth = currentLine.width + boundarySpacing + prefixWidth;
+            let prefixFits = prefixTotalWidth <= availableWidth;
+            if (!prefixFits && justifyAlignment && currentLine.spaceCount > 0) {
+              const prefixOverflow = prefixTotalWidth - availableWidth;
+              const baseSpaceWidth =
+                spaceWidth ||
+                resolveParagraphRunWidth(' ', font, ctx, run, wordStartChar) ||
+                Math.max(1, boundarySpacing);
+              prefixFits = fitsWordJustificationCompression(
+                prefixOverflow,
+                prefixWidth,
+                currentLine.spaceCount,
+                baseSpaceWidth,
+                (run as TextRun).fontFamily,
+                (isWordLayoutList && wordLayout?.indentLeftPx === 0 && (wordLayout.tabsPx?.length ?? 0) > 0) ||
+                  paragraphEndsWithTerminalTabBreak,
+              );
+            }
+            if (prefixFits) {
+              breakableHyphenEnd = prefixEnd;
+              breakableHyphenWidth = prefixWidth;
+            }
+          }
+
+          if (breakableHyphenEnd > 0) {
+            const prefixEndChar = wordStartChar + breakableHyphenEnd;
+            currentLine.toRun = runIndex;
+            currentLine.toChar = prefixEndChar;
+            const naturalWidth = roundValue(currentLine.width + boundarySpacing + breakableHyphenWidth);
+            if (naturalWidth > availableWidth) {
+              currentLine.naturalWidth = naturalWidth;
+              currentLine.width = availableWidth;
+            } else {
+              currentLine.width = naturalWidth;
+            }
+            updateLineFontMetrics(currentLine, run, fontContext);
+            appendSegment(
+              currentLine.segments,
+              runIndex,
+              wordStartChar,
+              prefixEndChar,
+              breakableHyphenWidth,
+              wordIndex === 0 ? segmentStartX : undefined,
+              wordIndex === 0 ? consumeSegmentPrecedingTabEndX() : undefined,
+            );
+            trimTrailingWrapSpaces(currentLine);
+            lines.push(closeLineWithMetrics(currentLine));
+            tabStopCursor = 0;
+            pendingTabAlignment = null;
+            pendingLeader = null;
+            currentLine = null;
+            clearWrapState();
+
+            words[wordIndex] = word.slice(breakableHyphenEnd);
+            charPosInRun = prefixEndChar;
+            wordIndex -= 1;
+            continue;
           }
         }
 
@@ -2653,13 +4136,7 @@ async function measureParagraphBlock(
             clearWrapState();
           }
           trimTrailingWrapSpaces(currentLine);
-          const metrics = finalizeLineMetrics(currentLine, spacing);
-          const lineBase = currentLine;
-          const completedLine: Line = {
-            ...lineBase,
-            ...metrics,
-          };
-          addBarTabsToLine(completedLine);
+          const completedLine: Line = closeLineWithMetrics(currentLine);
           lines.push(completedLine);
           tabStopCursor = 0;
           pendingTabAlignment = null;
@@ -2681,7 +4158,7 @@ async function measureParagraphBlock(
           // If trailing space would fit on the new line, consume it here; otherwise skip it
           if (shouldIncludeDelimiterSpace && currentLine.width + spaceWidth <= currentLine.maxWidth - WIDTH_FUDGE_PX) {
             currentLine.toChar = wordEndWithSpace;
-            currentLine.width = roundValue(currentLine.width + spaceWidth + ((run as TextRun).letterSpacing ?? 0));
+            currentLine.width = roundValue(currentLine.width + spaceWidth + getScaledLetterSpacing(run as TextRun));
             charPosInRun = wordEndWithSpace;
             currentLine.spaceCount += 1;
             // Fix: Also update the segment to include the trailing space character.
@@ -2704,13 +4181,7 @@ async function measureParagraphBlock(
           ) {
             currentLine.toChar = wordEndNoSpace;
             currentLine.width = roundValue(currentLine.width + boundarySpacing + wordOnlyWidth);
-            currentLine.maxFontInfo = updateMaxFontInfo(
-              currentLine.maxFontSize,
-              currentLine.maxFontInfo,
-              run,
-              fontContext,
-            );
-            currentLine.maxFontSize = Math.max(currentLine.maxFontSize, lineHeightFontSize(run));
+            updateLineFontMetrics(currentLine, run, fontContext);
             // Determine explicit X position:
             // - If in active tab group, use currentX from the group (for ALL words in group)
             // - Otherwise, only use segmentStartX for first word after a tab
@@ -2732,10 +4203,7 @@ async function measureParagraphBlock(
             );
             // finish current line and start a new one on next iteration
             trimTrailingWrapSpaces(currentLine);
-            const metrics = finalizeLineMetrics(currentLine, spacing);
-            const lineBase = currentLine;
-            const completedLine: Line = { ...lineBase, ...metrics };
-            addBarTabsToLine(completedLine);
+            const completedLine: Line = closeLineWithMetrics(currentLine);
             lines.push(completedLine);
             tabStopCursor = 0;
             pendingTabAlignment = null;
@@ -2763,19 +4231,13 @@ async function measureParagraphBlock(
               : currentLine.width +
                 boundarySpacing +
                 wordCommitWidth +
-                (shouldIncludeDelimiterSpace ? ((run as TextRun).letterSpacing ?? 0) : 0);
+                (shouldIncludeDelimiterSpace ? getScaledLetterSpacing(run as TextRun) : 0);
           // Preserve natural width when compression is applied for justify calculations
           if (compressedWidth != null) {
-            (currentLine as any).naturalWidth = roundValue(totalWidthWithWord);
+            currentLine.naturalWidth = roundValue(totalWidthWithWord);
           }
           currentLine.width = roundValue(targetWidth);
-          currentLine.maxFontInfo = updateMaxFontInfo(
-            currentLine.maxFontSize,
-            currentLine.maxFontInfo,
-            run,
-            fontContext,
-          );
-          currentLine.maxFontSize = Math.max(currentLine.maxFontSize, lineHeightFontSize(run));
+          updateLineFontMetrics(currentLine, run, fontContext);
           appendSegment(
             currentLine.segments,
             runIndex,
@@ -2844,8 +4306,7 @@ async function measureParagraphBlock(
           currentLine.hasExplicitTabStops = true;
         }
 
-        currentLine.maxFontInfo = updateMaxFontInfo(currentLine.maxFontSize, currentLine.maxFontInfo, run, fontContext);
-        currentLine.maxFontSize = Math.max(currentLine.maxFontSize, lineHeightFontSize(run));
+        updateLineFontMetrics(currentLine, run, fontContext);
         currentLine.toRun = runIndex;
         currentLine.toChar = charPosInRun;
         charPosInRun += 1;
@@ -2876,14 +4337,14 @@ async function measureParagraphBlock(
       }
     }
 
-    pendingRunSpacing = (run as TextRun).letterSpacing ?? 0;
+    pendingRunSpacing = getScaledLetterSpacing(run as TextRun);
   }
 
   if (!currentLine && lines.length === 0) {
     const uiDisplayFallbackFontSize =
       (normalizedRuns[0]?.kind === 'text' ? (normalizedRuns[0] as TextRun).fontSize : undefined) ??
       DEFAULT_PARAGRAPH_FONT_SIZE;
-    const metrics = calculateTypographyMetrics(uiDisplayFallbackFontSize, spacing);
+    const metrics = calculateTypographyMetrics(uiDisplayFallbackFontSize, spacing, undefined, fontContext);
     const fallbackLine: Line = {
       fromRun: 0,
       fromChar: 0,
@@ -2898,14 +4359,27 @@ async function measureParagraphBlock(
   }
 
   if (currentLine) {
-    const metrics = finalizeLineMetrics(currentLine, spacing);
-    const lineBase = currentLine;
-    const finalLine: Line = {
-      ...lineBase,
-      ...metrics,
-    };
-    addBarTabsToLine(finalLine);
+    const finalLine: Line = closeLineWithMetrics(currentLine);
     lines.push(finalLine);
+  }
+
+  if (runIndexMap.some((value, index) => value !== index)) {
+    for (const line of lines) {
+      line.fromRun = runIndexMap[line.fromRun] ?? line.fromRun;
+      line.toRun = runIndexMap[line.toRun] ?? line.toRun;
+      if (line.segments) {
+        line.segments = line.segments.map((segment) => ({
+          ...segment,
+          runIndex: runIndexMap[segment.runIndex] ?? segment.runIndex,
+        }));
+      }
+      if (line.inlineImageAlignments) {
+        line.inlineImageAlignments = line.inlineImageAlignments.map((alignment) => ({
+          ...alignment,
+          runIndex: runIndexMap[alignment.runIndex] ?? alignment.runIndex,
+        }));
+      }
+    }
   }
 
   const totalHeight = lines.reduce((sum, line) => sum + line.lineHeight, 0);
@@ -2914,9 +4388,57 @@ async function measureParagraphBlock(
     kind: 'paragraph',
     lines,
     totalHeight,
+    measuredAtMaxWidth: maxWidth,
     ...(markerInfo ? { marker: markerInfo } : {}),
     ...(dropCapMeasure ? { dropCap: dropCapMeasure } : {}),
   };
+}
+
+interface MutableTableMeasurementObservation {
+  phases: Record<TableMeasurementPhase, number>;
+  cellBlockCache: Record<TableCellBlockMeasureCacheOutcome, number>;
+  autoFitCellMetricCache: { hits: number; misses: number };
+  autoFitTableResultCache: { hits: number; misses: number };
+}
+
+const tableMeasurementNow = (): number => globalThis.performance?.now?.() ?? Date.now();
+
+function createMutableTableMeasurementObservation(): MutableTableMeasurementObservation {
+  return {
+    phases: Object.fromEntries(TABLE_MEASUREMENT_PHASES.map((phase) => [phase, 0])) as Record<
+      TableMeasurementPhase,
+      number
+    >,
+    cellBlockCache: { 'exact-hit': 0, 'adopted-hit': 0, miss: 0 },
+    autoFitCellMetricCache: { hits: 0, misses: 0 },
+    autoFitTableResultCache: { hits: 0, misses: 0 },
+  };
+}
+
+function recordTableMeasurementPhase<T>(
+  observation: MutableTableMeasurementObservation,
+  phase: TableMeasurementPhase,
+  work: () => T,
+): T {
+  const startedAt = tableMeasurementNow();
+  try {
+    return work();
+  } finally {
+    observation.phases[phase] += tableMeasurementNow() - startedAt;
+  }
+}
+
+async function recordAsyncTableMeasurementPhase<T>(
+  observation: MutableTableMeasurementObservation,
+  phase: TableMeasurementPhase,
+  work: () => Promise<T>,
+): Promise<T> {
+  const startedAt = tableMeasurementNow();
+  try {
+    return await work();
+  } finally {
+    observation.phases[phase] += tableMeasurementNow() - startedAt;
+  }
 }
 
 async function measureTableBlock(
@@ -2924,12 +4446,31 @@ async function measureTableBlock(
   constraints: MeasureConstraints,
   fontContext: FontMeasureContext,
 ): Promise<TableMeasure> {
+  const measurementStartedAt = tableMeasurementNow();
+  const tableObservation = createMutableTableMeasurementObservation();
   const maxWidth = typeof constraints === 'number' ? constraints : constraints.maxWidth;
-  const workingInput = buildAutoFitWorkingGridInput(block, { maxWidth });
-  const columnWidths = await resolveRuntimeTableColumnWidths(block, workingInput, fontContext);
+  const measurementRuntimeSignature = JSON.stringify({
+    mode: measurementConfig.mode,
+    deterministicFamily: measurementConfig.fonts.deterministicFamily,
+    fallbackStack: measurementConfig.fonts.fallbackStack,
+    fontSignature: fontContext.fontSignature,
+  });
+  const workingInput = recordTableMeasurementPhase(tableObservation, 'grid-normalization', () =>
+    buildAutoFitWorkingGridInput(block, { maxWidth }),
+  );
+  const { columnWidths, mode } = await resolveRuntimeTableColumnWidths(
+    block,
+    workingInput,
+    fontContext,
+    tableObservation,
+    constraints.tableMeasurementTrace,
+  );
 
   // Derive grid column count from computed columnWidths (handles both explicit tblGrid and fallback cases)
   const gridColumnCount = columnWidths.length;
+  const cellSpacingPx = getCellSpacingPx(block.attrs?.cellSpacing);
+  const borderCollapse = block.attrs?.borderCollapse ?? (block.attrs?.cellSpacing != null ? 'separate' : 'collapse');
+  const tableBorders = block.attrs?.borders;
 
   /**
    * Calculate the width for a cell by summing the grid column widths it spans.
@@ -2952,8 +4493,14 @@ async function measureTableBlock(
   // Measure each cell paragraph with appropriate column width based on colspan
   const rows: TableRowMeasure[] = [];
   const rowBaseHeights: number[] = new Array(block.rows.length).fill(0);
-  const spanConstraints: Array<{ startRow: number; rowSpan: number; requiredHeight: number; minRowHeight: number }> =
-    [];
+  // `w:trHeight` describes the row's authored inner height. In Word's
+  // collapsed-border model each row also owns the horizontal grid edge at its
+  // top. Keep that chrome separate from automatic cell measurement so an
+  // `atLeast` value cannot replace (and therefore erase) the owned border.
+  const rowAuthoredHeightChrome: number[] = new Array(block.rows.length).fill(0);
+  const spanConstraints: Array<{ startRow: number; rowSpan: number; requiredHeight: number }> = [];
+  const rowAssemblyStartedAt = tableMeasurementNow();
+  const cellMeasurementBeforeRows = tableObservation.phases['cell-block-measurement'];
   for (let rowIndex = 0; rowIndex < block.rows.length; rowIndex++) {
     const row = block.rows[rowIndex];
     const normalizedRow = workingInput.rows[rowIndex];
@@ -2987,6 +4534,34 @@ async function measureTableBlock(
       }
 
       const cellWidth = calculateCellWidth(gridColIndex, colspan);
+      const previousRowMeasure = rows[rowIndex - 1];
+      const aboveCellIndex = previousRowMeasure?.cells.findIndex((candidate) => {
+        const start = candidate.gridColumnStart ?? 0;
+        return start <= gridColIndex && gridColIndex < start + (candidate.colSpan ?? 1);
+      });
+      const leftCellIndex = cellMeasures.findIndex(
+        (candidate) => (candidate.gridColumnStart ?? 0) + (candidate.colSpan ?? 1) === gridColIndex,
+      );
+      const borderInsets = getTableCellBorderInsets({
+        cellBorders: cell.attrs?.borders,
+        aboveCellBorders:
+          aboveCellIndex !== undefined && aboveCellIndex >= 0
+            ? block.rows[rowIndex - 1]?.cells[aboveCellIndex]?.attrs?.borders
+            : undefined,
+        leftCellBorders: leftCellIndex >= 0 ? row.cells[leftCellIndex]?.attrs?.borders : undefined,
+        tableBorders,
+        rowIndex,
+        rowSpan: rowspan,
+        rowCount: block.rows.length,
+        gridColumnStart: gridColIndex,
+        colSpan: colspan,
+        gridColumnCount,
+        cellSpacingPx,
+      });
+      rowAuthoredHeightChrome[rowIndex] = Math.max(
+        rowAuthoredHeightChrome[rowIndex],
+        borderCollapse === 'collapse' ? borderInsets.top : borderInsets.top + borderInsets.bottom,
+      );
 
       // Mark grid columns as occupied for future rows if rowspan > 1
       if (rowspan > 1) {
@@ -3002,8 +4577,9 @@ async function measureTableBlock(
       const paddingLeft = cellPadding.left ?? 4;
       const paddingRight = cellPadding.right ?? 4;
 
-      // Content width accounts for horizontal padding
-      const contentWidth = Math.max(1, cellWidth - paddingLeft - paddingRight);
+      // The painter uses border-box cells, so nested content is constrained by
+      // both horizontal padding and the resolved painted border insets.
+      const contentWidth = Math.max(1, cellWidth - paddingLeft - paddingRight - borderInsets.left - borderInsets.right);
 
       /**
        * Measure all blocks in the cell and accumulate total content height.
@@ -3029,15 +4605,39 @@ async function measureTableBlock(
        * totalCellHeight = contentHeight;
        * ```
        */
-      const blockMeasures: Measure[] = [];
       let contentHeight = 0;
+      const paragraphFlowTops = new Map<string, { top: number; firstLineHeight: number }>();
+      const layoutInCellAnchors: Array<{
+        block: ImageBlock | DrawingBlock;
+        height: number;
+      }> = [];
 
-      const cellBlocks = cell.blocks ?? (cell.paragraph ? [cell.paragraph] : []);
+      const cellBlocks = (cell.blocks ?? (cell.paragraph ? [cell.paragraph] : [])) as FlowBlock[];
+      const nestedTrace = constraints.tableMeasurementTrace
+        ? { ...constraints.tableMeasurementTrace, depth: constraints.tableMeasurementTrace.depth + 1 }
+        : undefined;
+      const blockMeasures = await recordAsyncTableMeasurementPhase(tableObservation, 'cell-block-measurement', () =>
+        measureTableCellBlocks(
+          cellBlocks,
+          contentWidth,
+          fontContext,
+          measurementRuntimeSignature,
+          (nestedBlock, nestedConstraints) =>
+            measureBlock(
+              nestedBlock,
+              nestedTrace ? { ...nestedConstraints, tableMeasurementTrace: nestedTrace } : nestedConstraints,
+              fontContext,
+            ),
+          (outcome) => {
+            tableObservation.cellBlockCache[outcome] += 1;
+          },
+          nestedTrace?.cacheIdentity === 'content',
+        ),
+      );
 
       for (let blockIndex = 0; blockIndex < cellBlocks.length; blockIndex++) {
         const block = cellBlocks[blockIndex];
-        const measure = await measureBlock(block, { maxWidth: contentWidth, maxHeight: Infinity }, fontContext);
-        blockMeasures.push(measure);
+        const measure = blockMeasures[blockIndex]!;
         // Get height from different measure types
         const blockHeight = 'totalHeight' in measure ? measure.totalHeight : 'height' in measure ? measure.height : 0;
         const isAnchoredOutOfFlow =
@@ -3045,8 +4645,19 @@ async function measureTableBlock(
           (block as ImageBlock | DrawingBlock).anchor?.isAnchored === true &&
           ((block as ImageBlock | DrawingBlock).wrap?.type ?? 'Inline') !== 'Inline';
 
+        if (block.kind === 'paragraph') {
+          paragraphFlowTops.set(block.id, {
+            top: contentHeight,
+            firstLineHeight: measure.kind === 'paragraph' ? (measure.lines[0]?.lineHeight ?? 0) : 0,
+          });
+        }
+
         // Anchored/floating objects inside table cells do not contribute to cell height.
         if (isAnchoredOutOfFlow) {
+          const anchoredBlock = block as ImageBlock | DrawingBlock;
+          if (anchoredBlock.anchor?.layoutInCell === true) {
+            layoutInCellAnchors.push({ block: anchoredBlock, height: blockHeight });
+          }
           continue;
         }
 
@@ -3064,8 +4675,32 @@ async function measureTableBlock(
         }
       }
 
-      // Total cell height includes vertical padding
-      const totalCellHeight = contentHeight + paddingTop + paddingBottom;
+      for (const entry of layoutInCellAnchors) {
+        const anchor = entry.block.anchor;
+        if (!anchor || (anchor.vRelativeFrom != null && anchor.vRelativeFrom !== 'paragraph')) continue;
+        const anchorParagraphId =
+          typeof entry.block.attrs?.anchorParagraphId === 'string' ? entry.block.attrs.anchorParagraphId : undefined;
+        const paragraph = anchorParagraphId ? paragraphFlowTops.get(anchorParagraphId) : undefined;
+        const top = paragraph
+          ? resolveAnchoredGraphicY({
+              anchor,
+              objectHeight: entry.height,
+              contentTop: 0,
+              contentBottom: 0,
+              anchorParagraphY: paragraph.top,
+              firstLineHeight: paragraph.firstLineHeight,
+            })
+          : (anchor.offsetV ?? 0);
+        // Word probes for Square, TopAndBottom, and None wrapping all resize the
+        // cell when layoutInCell is true. Both authored vertical wrap distances
+        // participate in that reserved cell-height budget.
+        const wrapDistance = (entry.block.wrap?.distTop ?? 0) + (entry.block.wrap?.distBottom ?? 0);
+        contentHeight = Math.max(contentHeight, Math.max(0, top + entry.height + wrapDistance));
+      }
+
+      // The painter uses border-box cells. Reserve padding and painted border
+      // chrome after layout-in-cell anchors expand the content-height budget.
+      const totalCellHeight = contentHeight + paddingTop + paddingBottom + borderInsets.top + borderInsets.bottom;
 
       cellMeasures.push({
         blocks: blockMeasures,
@@ -3081,23 +4716,7 @@ async function measureTableBlock(
       if (rowspan === 1) {
         rowBaseHeights[rowIndex] = Math.max(rowBaseHeights[rowIndex], totalCellHeight);
       } else {
-        // A row whose cells are ALL row-spanning would otherwise measure 0: the
-        // OOXML vMerge continuation cells are real <w:tc> elements holding an empty
-        // paragraph and Word sizes rows from them, but the import merges those
-        // cells away. Approximate the lost empty-cell height with the spanning
-        // cell's first text line; non-text spans (e.g. a logo image) fall back to
-        // an even share so a spanning picture never doubles. Applied only to rows
-        // with no height of their own (see pass 1 below). (SD-3028)
-        const firstBlockMeasure = blockMeasures[0];
-        const firstLineHeight =
-          firstBlockMeasure?.kind === 'paragraph' && firstBlockMeasure.lines.length > 0
-            ? firstBlockMeasure.lines[0].lineHeight
-            : undefined;
-        const minRowHeight = Math.min(
-          totalCellHeight,
-          firstLineHeight != null ? firstLineHeight + paddingTop + paddingBottom : totalCellHeight / rowspan,
-        );
-        spanConstraints.push({ startRow: rowIndex, rowSpan: rowspan, requiredHeight: totalCellHeight, minRowHeight });
+        spanConstraints.push({ startRow: rowIndex, rowSpan: rowspan, requiredHeight: totalCellHeight });
       }
 
       // Advance grid column position by colspan
@@ -3113,93 +4732,44 @@ async function measureTableBlock(
 
     rows.push({ cells: cellMeasures, height: 0 });
   }
+  const rowAssemblyWallMs = tableMeasurementNow() - rowAssemblyStartedAt;
+  const cellMeasurementInsideRows = tableObservation.phases['cell-block-measurement'] - cellMeasurementBeforeRows;
+  tableObservation.phases['row-measure-assembly'] += Math.max(0, rowAssemblyWallMs - cellMeasurementInsideRows);
 
-  const rowHeights = [...rowBaseHeights];
-  // Pass 1: a spanned row with NO height of its own (all of its cells are vMerge
-  // starts/continuations) gets the spanning cell's one-line minimum instead of
-  // collapsing to zero. Rows that already have height from their own cells are
-  // left alone; Word sizes those from their own content.
-  for (const constraint of spanConstraints) {
-    const spanLength = Math.min(constraint.rowSpan, rowHeights.length - constraint.startRow);
-    for (let i = 0; i < spanLength; i++) {
-      if (rowBaseHeights[constraint.startRow + i] === 0) {
-        rowHeights[constraint.startRow + i] = Math.max(rowHeights[constraint.startRow + i], constraint.minRowHeight);
+  const rowHeights = recordTableMeasurementPhase(tableObservation, 'row-height-resolution', () => {
+    const resolvedRowHeights = [...rowBaseHeights];
+    for (const constraint of spanConstraints) {
+      const { startRow, rowSpan, requiredHeight } = constraint;
+      if (rowSpan <= 0) continue;
+
+      let currentHeight = 0;
+      for (let i = 0; i < rowSpan && startRow + i < resolvedRowHeights.length; i++) {
+        currentHeight += resolvedRowHeights[startRow + i];
+      }
+
+      if (currentHeight < requiredHeight) {
+        const spanLength = Math.min(rowSpan, resolvedRowHeights.length - startRow);
+        const increment = spanLength > 0 ? (requiredHeight - currentHeight) / spanLength : 0;
+        for (let i = 0; i < spanLength; i++) {
+          resolvedRowHeights[startRow + i] += increment;
+        }
       }
     }
-  }
-  // Pass 2: the spanned rows together must fit the spanning cell's full content.
-  for (const constraint of spanConstraints) {
-    const { startRow, rowSpan, requiredHeight } = constraint;
-    if (rowSpan <= 0) continue;
 
-    let currentHeight = 0;
-    for (let i = 0; i < rowSpan && startRow + i < rowHeights.length; i++) {
-      currentHeight += rowHeights[startRow + i];
-    }
+    // Apply explicit row heights (exact / atLeast) from row attributes
+    block.rows.forEach((row, index) => {
+      const spec = row.attrs?.rowHeight as { value?: number; rule?: string } | undefined;
+      if (spec?.value != null && Number.isFinite(spec.value)) {
+        const rule = spec.rule ?? 'atLeast';
+        if (rule === 'exact') {
+          resolvedRowHeights[index] = spec.value;
+        } else if (rule === 'atLeast') {
+          resolvedRowHeights[index] = Math.max(resolvedRowHeights[index], spec.value + rowAuthoredHeightChrome[index]);
+        }
+      }
+    });
 
-    if (currentHeight < requiredHeight) {
-      const spanLength = Math.min(rowSpan, rowHeights.length - startRow);
-      const increment = spanLength > 0 ? (requiredHeight - currentHeight) / spanLength : 0;
-      for (let i = 0; i < spanLength; i++) {
-        rowHeights[startRow + i] += increment;
-      }
-    }
-  }
-
-  // Reserve row height for fat border bands (collapsed mode). Word adds the full border
-  // band to the table's vertical extent: measured against Word output, the dotted sz12
-  // (2px band) and double sz12 (6px band) tables have IDENTICAL content regions and their
-  // row pitch differs by exactly the band delta. The legacy model absorbed hairline bands
-  // (<= 2px) in line-height slack, so to keep thin-border geometry byte-stable we only
-  // reserve bands above that hairline class, minus the same 1px nibble every bordered
-  // table already absorbs. Painter cells are border-box, so reserved height lets the band
-  // and the content coexist exactly like Word. Attribution follows the single-owner paint
-  // model: each row reserves its TOP gridline, the last row also reserves the bottom edge.
-  // (SD-3308)
-  const isCollapsedForBands =
-    (block.attrs?.borderCollapse ?? (block.attrs?.cellSpacing != null ? 'separate' : 'collapse')) !== 'separate';
-  if (isCollapsedForBands && block.rows.length > 0) {
-    const tableBordersForBands = block.attrs?.borders as TableBorders | null | undefined;
-    const bandReservation = (band: number): number => (band > 2 ? band - 1 : 0);
-    const gridlineBand = (gridline: number): number => {
-      let band = 0;
-      const rowAbove = gridline > 0 ? block.rows[gridline - 1] : undefined;
-      const rowBelow = gridline < block.rows.length ? block.rows[gridline] : undefined;
-      for (const row of [rowAbove, rowBelow]) {
-        if (!row) continue;
-        // Row-level tblPrEx overrides merge per edge onto the table borders (§17.4.61).
-        const override = row.attrs?.borders as TableBorders | null | undefined;
-        const eff = override ? { ...(tableBordersForBands ?? {}), ...override } : tableBordersForBands;
-        const value = gridline === 0 ? eff?.top : gridline === block.rows.length ? eff?.bottom : eff?.insideH;
-        band = Math.max(band, getBorderBandWidthPx(value));
-      }
-      // Cell-level tcBorders on either side of the gridline; the §17.4.66 winner is the
-      // heavier border, so the max band across candidates is the painted band width.
-      for (const cell of rowAbove?.cells ?? []) {
-        band = Math.max(band, getBorderBandWidthPx((cell.attrs?.borders as CellBorders | undefined)?.bottom));
-      }
-      for (const cell of rowBelow?.cells ?? []) {
-        band = Math.max(band, getBorderBandWidthPx((cell.attrs?.borders as CellBorders | undefined)?.top));
-      }
-      return band;
-    };
-    for (let i = 0; i < block.rows.length; i++) {
-      rowHeights[i] += bandReservation(gridlineBand(i));
-    }
-    rowHeights[block.rows.length - 1] += bandReservation(gridlineBand(block.rows.length));
-  }
-
-  // Apply explicit row heights (exact / atLeast) from row attributes
-  block.rows.forEach((row, index) => {
-    const spec = row.attrs?.rowHeight as { value?: number; rule?: string } | undefined;
-    if (spec?.value != null && Number.isFinite(spec.value)) {
-      const rule = spec.rule ?? 'atLeast';
-      if (rule === 'exact') {
-        rowHeights[index] = spec.value;
-      } else {
-        rowHeights[index] = Math.max(rowHeights[index], spec.value);
-      }
-    }
+    return resolvedRowHeights;
   });
 
   for (let i = 0; i < rows.length; i++) {
@@ -3214,7 +4784,6 @@ async function measureTableBlock(
   // and content width per cell = cellWidth - paddingLeft - paddingRight.
 
   // Cell spacing (border-spacing): gaps between cells plus space before first and after last row/column
-  const cellSpacingPx = getCellSpacingPx(block.attrs?.cellSpacing);
   const numRows = block.rows.length;
   const horizontalGaps = gridColumnCount > 0 ? (gridColumnCount + 1) * cellSpacingPx : 0;
   const verticalGaps = numRows > 0 ? (numRows + 1) * cellSpacingPx : 0;
@@ -3223,15 +4792,14 @@ async function measureTableBlock(
   // since the DOM renderer only paints container-level outer borders in that path. For collapsed
   // (default), borders are on cells and don't grow the table container, so including them would
   // overstate size and cause premature wrapping/page breaks or alignment drift.
-  const tableBorderWidths = getTableBorderWidths(block.attrs?.borders);
+  const tableBorderWidths = getTableBorderWidths(tableBorders);
   const borderWidthH = tableBorderWidths.left + tableBorderWidths.right;
   const borderWidthV = tableBorderWidths.top + tableBorderWidths.bottom;
-  const borderCollapse = block.attrs?.borderCollapse ?? (block.attrs?.cellSpacing != null ? 'separate' : 'collapse');
   const includeOuterBordersInTotal = borderCollapse === 'separate';
   const totalWidth = contentWidth + horizontalGaps + (includeOuterBordersInTotal ? borderWidthH : 0);
   const totalHeight = contentHeight + verticalGaps + (includeOuterBordersInTotal ? borderWidthV : 0);
 
-  return {
+  const measure: TableMeasure = {
     kind: 'table',
     rows,
     columnWidths,
@@ -3240,6 +4808,32 @@ async function measureTableBlock(
     cellSpacingPx: cellSpacingPx > 0 ? cellSpacingPx : undefined,
     tableBorderWidths: borderWidthH > 0 || borderWidthV > 0 ? tableBorderWidths : undefined,
   };
+  const totalWallMs = tableMeasurementNow() - measurementStartedAt;
+  const attributedBeforeOther = TABLE_MEASUREMENT_PHASES.filter((phase) => phase !== 'other').reduce(
+    (sum, phase) => sum + tableObservation.phases[phase],
+    0,
+  );
+  tableObservation.phases.other += Math.max(0, totalWallMs - attributedBeforeOther);
+  const attributedWallMs = TABLE_MEASUREMENT_PHASES.reduce((sum, phase) => sum + tableObservation.phases[phase], 0);
+  constraints.tableMeasurementTrace?.observer({
+    depth: constraints.tableMeasurementTrace.depth,
+    cacheIdentity: constraints.tableMeasurementTrace.cacheIdentity,
+    mode,
+    totalWallMs,
+    reconciliationDeltaMs: Math.abs(totalWallMs - attributedWallMs),
+    phases: tableObservation.phases,
+    rowCount: block.rows.length,
+    cellCount: block.rows.reduce((sum, row) => sum + row.cells.length, 0),
+    nestedBlockCount: block.rows.reduce(
+      (rowSum, row) =>
+        rowSum + row.cells.reduce((cellSum, cell) => cellSum + (cell.blocks?.length ?? (cell.paragraph ? 1 : 0)), 0),
+      0,
+    ),
+    cellBlockCache: tableObservation.cellBlockCache,
+    autoFitCellMetricCache: tableObservation.autoFitCellMetricCache,
+    autoFitTableResultCache: tableObservation.autoFitTableResultCache,
+  });
+  return measure;
 }
 
 /**
@@ -3254,17 +4848,35 @@ async function resolveRuntimeTableColumnWidths(
   block: TableBlock,
   workingInput: WorkingTableGridInput,
   fontContext: FontMeasureContext,
-): Promise<number[]> {
-  const fixedLayout = computeFixedTableColumnWidths(workingInput);
+  observation: MutableTableMeasurementObservation,
+  trace: TableMeasurementTraceContext | undefined,
+): Promise<{ columnWidths: number[]; mode: TableMeasurementMode }> {
+  const fixedLayout = recordTableMeasurementPhase(observation, 'fixed-column-resolution', () =>
+    computeFixedTableColumnWidths(workingInput),
+  );
+  // Stable imported grids are content-independent, so skip the intrinsic
+  // measurement pass that would otherwise scan every cell after each edit.
   if (workingInput.layoutMode === 'fixed') {
-    return fixedLayout.columnWidths;
+    return { columnWidths: fixedLayout.columnWidths, mode: 'fixed' };
+  }
+  if (workingInput.stableAutoGrid === true) {
+    const columnWidths = recordTableMeasurementPhase(
+      observation,
+      'autofit-column-solve',
+      () =>
+        computeAutoFitColumnWidths({
+          workingInput,
+          fixedLayout,
+          contentMetrics: { rowMetrics: [] },
+        }).columnWidths,
+    );
+    return { columnWidths, mode: 'stable-auto-grid' };
   }
 
-  const { contentMetrics, cellMetricKeys } = await buildMeasuredAutoFitContentMetrics(
-    block,
-    workingInput,
-    fixedLayout,
-    fontContext,
+  const { contentMetrics, cellMetricKeys } = await recordAsyncTableMeasurementPhase(
+    observation,
+    'autofit-content-metrics',
+    () => buildMeasuredAutoFitContentMetrics(block, workingInput, fixedLayout, fontContext, observation, trace),
   );
   const cacheKey = buildAutoFitTableResultCacheKey(block, {
     maxWidth: workingInput.maxTableWidth,
@@ -3272,25 +4884,30 @@ async function resolveRuntimeTableColumnWidths(
     fontSignature: fontContext.fontSignature,
     workingInput,
     fixedLayout,
+    identityNeutralCache: trace?.cacheIdentity === 'content',
   });
   const cached = getCachedAutoFitTableResult(cacheKey);
   if (cached) {
-    return cached.columnWidths;
+    observation.autoFitTableResultCache.hits += 1;
+    return { columnWidths: cached.columnWidths, mode: 'full-autofit' };
   }
+  observation.autoFitTableResultCache.misses += 1;
 
-  const result = computeAutoFitColumnWidths({
-    workingInput,
-    fixedLayout,
-    contentMetrics: {
-      rowMetrics: contentMetrics.rowMetrics,
-    },
-  });
+  const result = recordTableMeasurementPhase(observation, 'autofit-column-solve', () =>
+    computeAutoFitColumnWidths({
+      workingInput,
+      fixedLayout,
+      contentMetrics: {
+        rowMetrics: contentMetrics.rowMetrics,
+      },
+    }),
+  );
 
   setCachedAutoFitTableResult(cacheKey, {
     columnWidths: result.columnWidths,
     totalWidth: result.totalWidth,
   });
-  return result.columnWidths;
+  return { columnWidths: result.columnWidths, mode: 'full-autofit' };
 }
 
 /**
@@ -3305,6 +4922,8 @@ async function buildMeasuredAutoFitContentMetrics(
   workingInput: WorkingTableGridInput,
   fixedLayout: FixedLayoutResult,
   fontContext: FontMeasureContext,
+  observation: MutableTableMeasurementObservation,
+  trace: TableMeasurementTraceContext | undefined,
 ): Promise<{
   contentMetrics: TableAutoFitContentMetricsResult;
   cellMetricKeys: string[];
@@ -3312,14 +4931,23 @@ async function buildMeasuredAutoFitContentMetrics(
   // Forward this document's font context into every sub-measurement (paragraph
   // max-line width, nested tables) so AutoFit honors a per-document `fonts.map`
   // throughout, not only in the token min-width path.
+  const nestedTrace = trace ? { ...trace, depth: trace.depth + 1 } : undefined;
   const measureBlockWithFontContext: AutoFitMeasureBlock = (childBlock, childConstraints) =>
-    measureBlock(childBlock, childConstraints, fontContext);
+    measureBlock(
+      childBlock,
+      nestedTrace ? { ...childConstraints, tableMeasurementTrace: nestedTrace } : childConstraints,
+      fontContext,
+    );
   const contentMetrics = await measureTableAutoFitContentMetrics(
     block,
     workingInput,
     fixedLayout,
     measureBlockWithFontContext,
     fontContext,
+    (outcome) => {
+      observation.autoFitCellMetricCache[outcome === 'hit' ? 'hits' : 'misses'] += 1;
+    },
+    trace?.cacheIdentity === 'content',
   );
   return {
     contentMetrics,
@@ -3327,34 +4955,29 @@ async function buildMeasuredAutoFitContentMetrics(
   };
 }
 
-function isBehindDocOverlay(block: ImageBlock | DrawingBlock): boolean {
-  return block.anchor?.behindDoc === true || (block.wrap?.type === 'None' && block.wrap?.behindDoc === true);
-}
-
-function hasNegativeVerticalPosition(block: ImageBlock | DrawingBlock): boolean {
-  return (
-    block.anchor?.isAnchored === true &&
-    ((typeof block.anchor?.offsetV === 'number' && block.anchor.offsetV < 0) ||
-      (typeof block.margin?.top === 'number' && block.margin.top < 0))
-  );
-}
-
 async function measureImageBlock(block: ImageBlock, constraints: MeasureConstraints): Promise<ImageMeasure> {
   const intrinsic = getIntrinsicImageSize(block, constraints.maxWidth);
 
-  const isPageRelativeAnchor =
-    block.anchor?.isAnchored && (block.anchor?.hRelativeFrom === 'page' || block.anchor?.hRelativeFrom === 'margin');
-  const bypassWidthConstraint = isBehindDocOverlay(block) || isPageRelativeAnchor;
+  const isBlockBehindDoc = block.anchor?.behindDoc;
+  const isBlockWrapBehindDoc = block.wrap?.type === 'None' && block.wrap?.behindDoc;
+  const isAnchoredImage = block.anchor?.isAnchored;
+  const bypassWidthConstraint = isBlockBehindDoc || isBlockWrapBehindDoc || isAnchoredImage;
   const isWidthConstraintBypassed = bypassWidthConstraint || constraints.maxWidth <= 0;
 
   const maxWidth = isWidthConstraintBypassed ? intrinsic.width : constraints.maxWidth;
 
+  // For anchored images with negative vertical positioning (designed to overflow their container),
+  // bypass the height constraint. This matches MS Word behavior where images in headers/footers
+  // with negative offsets are rendered at their full size regardless of region constraints.
+  const hasNegativeVerticalPosition =
+    block.anchor?.isAnchored &&
+    ((typeof block.anchor?.offsetV === 'number' && block.anchor.offsetV < 0) ||
+      (typeof block.margin?.top === 'number' && block.margin.top < 0));
+
   // Bypass height constraint when:
-  // - Image is a behind-doc overlay (positioned independently of the content region)
   // - Image has negative vertical positioning (designed to overflow container)
   // - objectFit is 'cover' (image should render at exact extent dimensions, CSS handles content scaling/clipping)
-  const shouldBypassHeightConstraint =
-    isBehindDocOverlay(block) || hasNegativeVerticalPosition(block) || block.objectFit === 'cover';
+  const shouldBypassHeightConstraint = hasNegativeVerticalPosition || block.objectFit === 'cover';
 
   const maxHeight =
     shouldBypassHeightConstraint || !constraints.maxHeight || constraints.maxHeight <= 0
@@ -3382,13 +5005,7 @@ async function measureImageBlock(block: ImageBlock, constraints: MeasureConstrai
  * This function handles:
  * - Rotation transformations and their effect on bounding box dimensions
  * - Proportional scaling to fit within maxWidth/maxHeight constraints
- * - Behind-doc overlay and negative vertical positioning bypasses for anchored drawings
- *
- * Overlay Bypass:
- * Behind-doc wrapNone drawings, including image drawings, are absolute overlays and preserve
- * their authored extents. Anchored drawings with negative vertical positioning also bypass
- * maxHeight for legacy header/footer graphics designed to overflow their nominal container.
- * Normal foreground anchored drawings continue to respect measurement constraints.
+ * - Floating drawings preserve their authored dimensions independently of story constraints
  *
  * @param block - The drawing block to measure, containing geometry, anchor, and margin data
  * @param constraints - Measurement constraints with maxWidth and optional maxHeight
@@ -3400,29 +5017,24 @@ async function measureImageBlock(block: ImageBlock, constraints: MeasureConstrai
  *   kind: 'drawing',
  *   drawingKind: 'vectorShape',
  *   geometry: { width: 200, height: 100, rotation: 0 },
- *   anchor: { isAnchored: true, behindDoc: true },
- *   wrap: { type: 'None', behindDoc: true },
+ *   anchor: { isAnchored: true, offsetV: 0 },
  * };
  *
  * const measure = await measureDrawingBlock(block, { maxWidth: 500, maxHeight: 80 });
  * // Result: { width: 200, height: 100, scale: 1 }
- * // (maxHeight bypassed because this is a behind-doc overlay)
+ * // (story constraints do not resize anchored drawings)
  * ```
  */
-async function measureDrawingBlock(block: DrawingBlock, constraints: MeasureConstraints): Promise<DrawingMeasure> {
+async function measureDrawingBlock(
+  block: DrawingBlock,
+  constraints: MeasureConstraints,
+  fontContext: FontMeasureContext,
+): Promise<DrawingMeasure> {
   if (block.drawingKind === 'image') {
     const intrinsic = getIntrinsicSizeFromDims(block.width, block.height, constraints.maxWidth);
 
-    const isPageRelativeAnchor =
-      block.anchor?.isAnchored === true &&
-      (block.anchor.hRelativeFrom === 'page' || block.anchor.hRelativeFrom === 'margin');
-    const bypassWidthConstraint = isBehindDocOverlay(block) || isPageRelativeAnchor;
-    const maxWidth = bypassWidthConstraint || constraints.maxWidth <= 0 ? intrinsic.width : constraints.maxWidth;
-    const shouldBypassHeightConstraint = isBehindDocOverlay(block) || hasNegativeVerticalPosition(block);
-    const maxHeight =
-      shouldBypassHeightConstraint || !constraints.maxHeight || constraints.maxHeight <= 0
-        ? Infinity
-        : constraints.maxHeight;
+    const maxWidth = constraints.maxWidth > 0 ? constraints.maxWidth : intrinsic.width;
+    const maxHeight = constraints.maxHeight && constraints.maxHeight > 0 ? constraints.maxHeight : Infinity;
 
     const widthScale = maxWidth / intrinsic.width;
     const heightScale = maxHeight / intrinsic.height;
@@ -3450,16 +5062,6 @@ async function measureDrawingBlock(block: DrawingBlock, constraints: MeasureCons
   }
 
   const geometry = ensureDrawingGeometry(block.geometry);
-  if (block.drawingKind === 'shapeGroup' && block.groupTransform) {
-    const effectExtent = block.effectExtent ?? { left: 0, top: 0, right: 0, bottom: 0 };
-    const groupWidth = block.groupTransform.width ?? geometry.width;
-    const groupHeight = block.groupTransform.height ?? geometry.height;
-    geometry.width = Math.max(1, geometry.width, groupWidth + effectExtent.left + effectExtent.right);
-    geometry.height = Math.max(1, geometry.height, groupHeight + effectExtent.top + effectExtent.bottom);
-    geometry.rotation = normalizeRotation(block.groupTransform.rotation ?? geometry.rotation ?? 0);
-    geometry.flipH = Boolean(block.groupTransform.flipH ?? geometry.flipH);
-    geometry.flipV = Boolean(block.groupTransform.flipV ?? geometry.flipV);
-  }
   const attrs = block.attrs as Record<string, unknown> | undefined;
   const indentLeft = typeof attrs?.hrIndentLeft === 'number' ? attrs.hrIndentLeft : 0;
   const indentRight = typeof attrs?.hrIndentRight === 'number' ? attrs.hrIndentRight : 0;
@@ -3468,6 +5070,52 @@ async function measureDrawingBlock(block: DrawingBlock, constraints: MeasureCons
   if (fullWidthMax != null) {
     geometry.width = fullWidthMax;
   }
+  let contentMeasures: TextboxContentMeasure[] | undefined;
+  if (block.drawingKind === 'textboxShape' && Array.isArray(block.contentBlocks)) {
+    const insets = block.textInsets ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    const autoFitBoundaryWidth =
+      block.autoFit && block.textLayout?.wrap === 'none' && constraints.maxWidth > 0 ? constraints.maxWidth : undefined;
+    // Text is laid out inside the untransformed shape and the drawing wrapper
+    // applies rotation/scale afterwards, so use the geometry's local width.
+    const contentWidth = resolveShapeTextContentMeasureWidth(
+      geometry.width,
+      insets,
+      block.textLayout,
+      autoFitBoundaryWidth,
+    );
+    contentMeasures = await Promise.all(
+      block.contentBlocks.map(async (contentBlock) => {
+        const contentMeasure = await measureBlock(contentBlock, { maxWidth: contentWidth }, fontContext);
+        if (contentMeasure.kind !== 'paragraph' && contentMeasure.kind !== 'table') {
+          throw new Error(`Unsupported textbox content measurement: ${contentMeasure.kind}`);
+        }
+        return contentMeasure;
+      }),
+    );
+    if (block.autoFit) {
+      if (block.textLayout?.wrap === 'none' && autoFitBoundaryWidth != null) {
+        // Word expands an unwrapped `a:spAutoFit` textbox to the available
+        // layout boundary. This is observable even when the authored extent is
+        // much narrower: a visible shape outline spans the whole column and a
+        // centered paragraph is centered in that expanded box.
+        geometry.width = autoFitBoundaryWidth;
+      }
+      const contentHeight = block.contentBlocks.reduce((height, contentBlock, index) => {
+        const contentMeasure = contentMeasures?.[index];
+        if (contentBlock.kind === 'table' && contentMeasure?.kind === 'table') {
+          return height + contentMeasure.totalHeight;
+        }
+        if (contentBlock.kind === 'paragraph' && contentMeasure?.kind === 'paragraph') {
+          const spacing = contentBlock.attrs?.spacing;
+          return (
+            height + contentMeasure.totalHeight + Math.max(0, spacing?.before ?? 0) + Math.max(0, spacing?.after ?? 0)
+          );
+        }
+        return height;
+      }, 0);
+      geometry.height = Math.max(1, insets.top + contentHeight + insets.bottom);
+    }
+  }
   const rotatedBounds = calculateRotatedBounds(geometry);
   const naturalWidth = Math.max(1, rotatedBounds.width);
   const naturalHeight = Math.max(1, rotatedBounds.height);
@@ -3475,13 +5123,21 @@ async function measureDrawingBlock(block: DrawingBlock, constraints: MeasureCons
   // Anchored and floating drawings are positioned independently — don't constrain
   // to the content area width (they can extend past margins/page edges).
   const isFloating = block.wrap?.type === 'None' || block.anchor?.isAnchored === true;
-  const maxWidth = fullWidthMax ?? (constraints.maxWidth > 0 && !isFloating ? constraints.maxWidth : naturalWidth);
+  // `wp:effectExtent` lies outside the authored `wp:extent`. Word constrains the
+  // authored box to the text region but allows strokes/effects to paint past it;
+  // include those outer pixels in the measurement budget so they do not shrink
+  // the shape itself (notably zero-height footer connectors).
+  const effectExtent =
+    block.drawingKind === 'vectorShape' || block.drawingKind === 'textboxShape' ? block.effectExtent : undefined;
+  const effectExtentWidth = (effectExtent?.left ?? 0) + (effectExtent?.right ?? 0);
+  const effectExtentHeight = (effectExtent?.top ?? 0) + (effectExtent?.bottom ?? 0);
+  const maxWidth =
+    fullWidthMax ?? (constraints.maxWidth > 0 && !isFloating ? constraints.maxWidth + effectExtentWidth : naturalWidth);
 
-  const shouldBypassHeightConstraint = isBehindDocOverlay(block) || hasNegativeVerticalPosition(block);
   const maxHeight =
-    shouldBypassHeightConstraint || !constraints.maxHeight || constraints.maxHeight <= 0
+    isFloating || !constraints.maxHeight || constraints.maxHeight <= 0
       ? Infinity
-      : constraints.maxHeight;
+      : constraints.maxHeight + effectExtentHeight;
 
   const widthScale = maxWidth / naturalWidth;
   const heightScale = maxHeight / naturalHeight;
@@ -3490,7 +5146,6 @@ async function measureDrawingBlock(block: DrawingBlock, constraints: MeasureCons
 
   const width = naturalWidth * scale;
   const height = naturalHeight * scale;
-
   return {
     kind: 'drawing',
     drawingKind: block.drawingKind,
@@ -3500,6 +5155,7 @@ async function measureDrawingBlock(block: DrawingBlock, constraints: MeasureCons
     naturalWidth,
     naturalHeight,
     geometry: { ...geometry },
+    ...(contentMeasures ? { contentMeasures } : {}),
     ...(block.drawingKind === 'shapeGroup' && block.groupTransform
       ? { groupTransform: { ...block.groupTransform } }
       : {}),
@@ -3558,8 +5214,8 @@ async function measureListBlock(
   constraints: MeasureConstraints,
   fontContext: FontMeasureContext,
 ): Promise<ListMeasure> {
-  const ctx = getCanvasContext();
-  const items = [];
+  const ctx = getCanvasContext(fontContext);
+  const items: ListMeasure['items'] = [];
   let totalHeight = 0;
 
   for (const item of block.items) {
@@ -3677,9 +5333,17 @@ const measureRunWidth = (
   // TextRun.kind is optional and defaults to 'text', so check for undefined or 'text'
   const letterSpacing = run.kind === 'text' || run.kind === undefined ? (run as TextRun).letterSpacing || 0 : 0;
   const displayText = applyTextTransform(text, run, startOffset);
-  const width = getMeasuredTextWidth(displayText, font, letterSpacing, ctx);
-  return roundValue(width);
+  const width = measuredTextWidth(displayText, font, letterSpacing, ctx);
+  return roundValue(width * getRunHorizontalScale(run));
 };
+
+const getRunHorizontalScale = (run: Run | undefined): number => {
+  if (!run || !('horizontalScale' in run)) return 1;
+  const value = run.horizontalScale;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 1;
+};
+
+const getScaledLetterSpacing = (run: TextRun): number => (run.letterSpacing ?? 0) * getRunHorizontalScale(run);
 
 /**
  * Breaks a word that exceeds maxWidth into character-level chunks that fit within the constraint.
@@ -3687,11 +5351,13 @@ const measureRunWidth = (
  * This function handles the case where a single word is wider than the available line width,
  * which commonly occurs in table cells with narrow columns. Instead of letting the word overflow
  * and get clipped, this function determines where to break the word across multiple lines.
+ * It also owns CJK wrapping, where the whole clause arrives as one space-free "word".
  *
  * The algorithm uses a greedy approach:
  * 1. Start with an empty chunk
  * 2. Add characters one by one, measuring the accumulated width
- * 3. When adding a character would exceed maxWidth, finalize the current chunk
+ * 3. When adding a character would exceed the current chunk's budget, finalize the chunk
+ *    (adjusting the boundary for kinsoku when requested)
  * 4. Start a new chunk with the remaining characters
  * 5. Repeat until all characters are processed
  *
@@ -3700,6 +5366,10 @@ const measureRunWidth = (
  * @param font - CSS font string for measurement
  * @param ctx - Canvas context for text measurement
  * @param run - The Run object containing styling (for letterSpacing)
+ * @param startOffset - Index of the word within its run (text-transform context)
+ * @param options - `firstChunkWidth` budgets the first chunk separately so it can
+ *   fill the remainder of an already-started line; `applyKinsoku` enables the
+ *   fullwidth line-start/line-end rules.
  * @returns Array of chunks, each containing the text and its measured width
  *
  * @example
@@ -3712,51 +5382,74 @@ const measureRunWidth = (
  * //   ...
  * // ]
  */
-const breakWordIntoChunks = (
+const breakWordIntoChunks = async (
   word: string,
   maxWidth: number,
   font: string,
   ctx: CanvasRenderingContext2D,
   run: Run,
   startOffset?: number,
-): Array<{ text: string; width: number }> => {
+  options?: { firstChunkWidth?: number; applyKinsoku?: boolean },
+  fontContext?: FontMeasureContext,
+  measureWidth: typeof measureRunWidth = measureRunWidth,
+): Promise<Array<{ text: string; width: number }>> => {
   const chunks: Array<{ text: string; width: number }> = [];
   const baseOffset = typeof startOffset === 'number' ? startOffset : 0;
+  const applyKinsoku = options?.applyKinsoku === true;
+  const firstChunkWidth = options?.firstChunkWidth;
+  const budgetForChunk = (chunkIndex: number): number =>
+    chunkIndex === 0 && typeof firstChunkWidth === 'number' ? firstChunkWidth : maxWidth;
 
   // Edge case: maxWidth is too small for even a single character
   // In this case, put one character per line as a fallback
   if (maxWidth <= 0) {
-    for (let i = 0; i < word.length; i++) {
-      const char = word[i];
-      const charWidth = measureRunWidth(char, font, ctx, run, baseOffset + i);
+    for (let i = 0; i < word.length; i = nextCodePointBoundary(word, i)) {
+      const end = nextCodePointBoundary(word, i);
+      const char = word.slice(i, end);
+      const charWidth = measureWidth(char, font, ctx, run, baseOffset + i);
       chunks.push({ text: char, width: charWidth });
     }
     return chunks;
   }
 
-  let currentChunk = '';
-  let currentWidth = 0;
+  // Each chunk is measured from its own offset. The previous implementation
+  // measured every chunk from the word's start offset, which mis-capitalized
+  // later chunks under `textTransform: 'capitalize'` and so mis-measured them.
+  const pushChunk = (from: number, to: number): void => {
+    const text = word.slice(from, to);
+    chunks.push({ text, width: measureWidth(text, font, ctx, run, baseOffset + from) });
+  };
 
-  for (let i = 0; i < word.length; i++) {
-    const char = word[i];
-    const testChunk = currentChunk + char;
-    const testWidth = measureRunWidth(testChunk, font, ctx, run, baseOffset);
-
-    if (testWidth > maxWidth && currentChunk.length > 0) {
-      // Current chunk is full, save it and start a new one
-      chunks.push({ text: currentChunk, width: currentWidth });
-      currentChunk = char;
-      currentWidth = measureRunWidth(char, font, ctx, run, baseOffset + i);
-    } else {
-      // Character fits (or it's the first character and we must include it)
-      currentChunk = testChunk;
-      currentWidth = testWidth;
+  let chunkStart = 0;
+  let index = 0;
+  // `index` always advances a whole code point, so a boundary can never land
+  // between the halves of a surrogate pair (astral CJK, e.g. U+20000). Splitting
+  // there would emit lone surrogates and desync the pm offsets derived from
+  // line fromChar/toChar.
+  while (index < word.length) {
+    if (fontContext) {
+      const checkpoint = measurementCheckpointIfDue(fontContext);
+      if (checkpoint) await checkpoint;
     }
+    const candidateEnd = nextCodePointBoundary(word, index);
+    const candidateWidth = measureWidth(word.slice(chunkStart, candidateEnd), font, ctx, run, baseOffset + chunkStart);
+
+    if (candidateWidth > budgetForChunk(chunks.length) && index > chunkStart) {
+      // Current chunk is full. resolveKinsokuBoundary always returns > chunkStart,
+      // so the loop keeps making progress.
+      const boundary = applyKinsoku ? resolveKinsokuBoundary(word, chunkStart, index) : index;
+      pushChunk(chunkStart, boundary);
+      chunkStart = boundary;
+      index = boundary;
+      continue;
+    }
+
+    index = candidateEnd;
   }
 
   // Don't forget the last chunk
-  if (currentChunk.length > 0) {
-    chunks.push({ text: currentChunk, width: currentWidth });
+  if (chunkStart < word.length) {
+    pushChunk(chunkStart, word.length);
   }
 
   return chunks;
@@ -3806,6 +5499,7 @@ const appendSegment = (
   width: number,
   x?: number,
   precedingTabEndX?: number,
+  inlineBoxBoundaryBefore = false,
 ): void => {
   if (!segments) return;
   const last = segments[segments.length - 1];
@@ -3818,7 +5512,8 @@ const appendSegment = (
     last.x === undefined &&
     last.precedingTabEndX === undefined &&
     x === undefined &&
-    precedingTabEndX === undefined
+    precedingTabEndX === undefined &&
+    !inlineBoxBoundaryBefore
   ) {
     last.toChar = toChar;
     last.width += width;
@@ -3834,15 +5529,26 @@ const appendSegment = (
   });
 };
 
-const resolveLineHeight = (spacing: ParagraphSpacing | undefined, fontSize: number, maxHeight: number = -1): number => {
-  let computedHeight = spacing?.line ?? WORD_SINGLE_LINE_SPACING_MULTIPLIER;
-  if (spacing?.lineUnit === 'multiplier') {
-    computedHeight = computedHeight * fontSize;
+const resolveLineHeight = (
+  spacing: ParagraphSpacing | undefined,
+  fontSize: number,
+  naturalSingleLine: number = -1,
+): number => {
+  const fallbackFloor = V1_DEFAULT_PARAGRAPH_LINE_HEIGHT_MULTIPLIER * fontSize;
+  const naturalSingle = naturalSingleLine > 0 ? Math.max(naturalSingleLine, fallbackFloor) : fallbackFloor;
+
+  if (!spacing || spacing.line == null) {
+    return naturalSingle;
   }
 
-  const lineRule = spacing?.lineRule ?? 'auto';
-  if (['atLeast', 'auto'].includes(lineRule)) {
-    return Math.max(computedHeight, maxHeight, WORD_SINGLE_LINE_SPACING_MULTIPLIER * fontSize);
+  const computedHeight = spacing.lineUnit === 'multiplier' ? spacing.line * naturalSingle : spacing.line;
+
+  const lineRule = spacing.lineRule ?? 'auto';
+  if (lineRule === 'exact') {
+    return computedHeight;
+  }
+  if (lineRule === 'atLeast') {
+    return Math.max(computedHeight, naturalSingle);
   }
   return computedHeight;
 };

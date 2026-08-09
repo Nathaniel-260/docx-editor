@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * SD-673 / type-hygiene-ts: gate for type-bearing JSDoc in `.ts`
- * source under `packages/superdoc/src/` and `packages/super-editor/src/`.
+ * source under `packages/superdoc/src/`.
  *
  * Policy: TypeScript syntax is the only source of truth for shape on
  * the public contract surface. Type-bearing JSDoc in `.ts` files is
@@ -43,7 +43,7 @@ const repoRoot = path.resolve(scriptDir, '..', '..', '..');
 
 const POLICY_RELATIVE = 'packages/superdoc/scripts/type-hygiene.md';
 
-const SCAN_ROOTS = ['packages/superdoc/src', 'packages/super-editor/src'];
+const SCAN_ROOTS = ['packages/superdoc/src'];
 
 const EXCLUDED_DIRS = new Set(['node_modules', 'dist', '__mocks__', '__fixtures__', 'dev']);
 const EXCLUDED_FILE_SUFFIXES = ['.d.ts', '.test.ts', '.spec.ts', '.test.tsx', '.spec.tsx'];
@@ -269,8 +269,8 @@ function main() {
     }
     console.log('');
     console.log(
-      'Type-bearing JSDoc is not allowed in .ts source under packages/superdoc/src\n' +
-        'or packages/super-editor/src. Use TypeScript for shape (signatures, interfaces,\n' +
+      'Type-bearing JSDoc is not allowed in .ts source under packages/superdoc/src.\n' +
+        'Use TypeScript for shape (signatures, interfaces,\n' +
         '`as Type` casts) and prose-only JSDoc for documentation. Zero allowed — fix\n' +
         'each violation in place. See ' +
         POLICY_RELATIVE +

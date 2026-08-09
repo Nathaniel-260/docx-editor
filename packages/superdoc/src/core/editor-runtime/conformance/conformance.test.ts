@@ -1,13 +1,13 @@
 // Public runtime conformance tests.
 //
-// Proves the fake v1 runtime satisfies the contract and that the load-bearing
+// Proves the fake v2 runtime satisfies the contract and that the load-bearing
 // discipline holds: async mutation results, synchronous read snapshots, named
 // rejection codes, opaque-token round-trip, staleness, and wrong-runtime
 // rejection.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { EditorRuntimeCommand, EditorRuntimeCommandKind } from '../index.js';
-import { createFakeV1Runtime } from './fake-v1-runtime.js';
+import { createFakeV2Runtime } from './fake-v2-runtime.js';
 
 const commandFixtureByKind = {
   'text.insert': { kind: 'text.insert', text: 'x' },
@@ -35,11 +35,11 @@ const commandFixtureByKind = {
   'trackedChanges.setAuthoringMode': { kind: 'trackedChanges.setAuthoringMode', mode: 'tracked' },
 } satisfies Record<EditorRuntimeCommandKind, EditorRuntimeCommand>;
 
-describe('editor-runtime conformance  -  v1', () => {
+describe('editor-runtime conformance  -  v2', () => {
   it('exposes stable identity + capabilities', () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     expect(typeof rt.id).toBe('string');
-    expect(rt.kind).toBe('v1');
+    expect(rt.kind).toBe('v2');
     const caps = rt.getCapabilities();
     expect(caps.lifecycle).toBeDefined();
     expect(caps.commands).toBeDefined();
@@ -47,7 +47,7 @@ describe('editor-runtime conformance  -  v1', () => {
   });
 
   it('returns a Promise from mutating dispatch (callers always await)', async () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const result = rt.dispatch({ kind: 'text.insert', text: 'x' });
     expect(result).toBeInstanceOf(Promise);
     const awaited = await result;
@@ -55,7 +55,7 @@ describe('editor-runtime conformance  -  v1', () => {
   });
 
   it('reads selected text + selection snapshot synchronously', () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     expect(typeof rt.getSelectedText()).toBe('string');
     // Not a thenable  -  synchronous read.
     const snap = rt.getSelectionSnapshot();
@@ -63,13 +63,13 @@ describe('editor-runtime conformance  -  v1', () => {
   });
 
   it('exposes a synchronous layout snapshot', () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const layout = rt.getLayoutSnapshot();
     expect(layout === null || typeof layout.pageCount === 'number').toBe(true);
   });
 
   it('tracks explicit document-mode transitions without remounting the runtime', async () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
 
     expect(rt.getSnapshot().documentMode).toBe(rt.getDocumentMode());
 
@@ -90,7 +90,7 @@ describe('editor-runtime conformance  -  v1', () => {
   });
 
   it('history.undo with nothing to undo is a named noop, not a rejection', async () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const result = await rt.dispatch({ kind: 'history.undo' });
     expect(['history-noop', 'noop']).toContain(result.status);
     if (result.status === 'history-noop' || result.status === 'noop') {
@@ -99,8 +99,8 @@ describe('editor-runtime conformance  -  v1', () => {
   });
 
   it('rejects a token minted by another runtime with wrong-runtime-token', async () => {
-    const a = createFakeV1Runtime({ id: 'runtime-a' });
-    const b = createFakeV1Runtime({ id: 'runtime-b' });
+    const a = createFakeV2Runtime({ id: 'runtime-a' });
+    const b = createFakeV2Runtime({ id: 'runtime-b' });
     const snapB = b.getSelectionSnapshot();
     expect(snapB?.anchor).toBeDefined();
     const result = await a.dispatch({ kind: 'text.insert', text: 'x', at: snapB!.anchor });
@@ -109,7 +109,7 @@ describe('editor-runtime conformance  -  v1', () => {
   });
 
   it('rejects a stale token after the document revision advances', async () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const snap = rt.getSelectionSnapshot();
     expect(snap?.anchor).toBeDefined();
     const token = snap!.anchor!;
@@ -121,7 +121,7 @@ describe('editor-runtime conformance  -  v1', () => {
   });
 
   it('opaque tokens are structured-clone safe', () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const snap = rt.getSelectionSnapshot();
     expect(snap?.anchor).toBeDefined();
     const cloned = structuredClone(snap!.anchor);
@@ -129,7 +129,7 @@ describe('editor-runtime conformance  -  v1', () => {
   });
 
   it('emits disposed and stops notifying after dispose', async () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const events = [];
     const unsubscribe = rt.subscribe((e) => events.push(e));
     await rt.dispose();
@@ -140,21 +140,21 @@ describe('editor-runtime conformance  -  v1', () => {
   });
 
   it('rejects out-of-range zoom with a named target code', async () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const result = await rt.setZoom(5000);
     expect(result.status).toBe('rejected');
   });
 
   it('setZoom updates the synchronous layout snapshot', async () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const result = await rt.setZoom(175);
     expect(result).toEqual({ status: 'committed' });
     expect(rt.getLayoutSnapshot()).toMatchObject({ zoom: 175 });
   });
 });
 
-describe('editor-runtime conformance  -  v1-specific posture', () => {
-  it('advertises every command kind the fake v1 dispatch accepts', async () => {
+describe('editor-runtime conformance  -  v2-specific posture', () => {
+  it('advertises every command kind the fake v2 dispatch accepts', async () => {
     const expectedSupportedKinds: readonly EditorRuntimeCommandKind[] = [
       'text.insert',
       'text.replace',
@@ -180,7 +180,7 @@ describe('editor-runtime conformance  -  v1-specific posture', () => {
       'trackedChanges.rejectAll',
       'trackedChanges.setAuthoringMode',
     ];
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
 
     expect(rt.getCapabilities().commands.supportedCommands).toEqual(expectedSupportedKinds);
 
@@ -193,7 +193,7 @@ describe('editor-runtime conformance  -  v1-specific posture', () => {
   });
 
   it('reports find/replace as supported with a sync session snapshot', () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const caps = rt.getCapabilities();
     expect(caps.findReplace?.supported).toBe(true);
     expect(caps.findReplace?.hasSyncSessionSnapshot).toBe(true);
@@ -205,19 +205,19 @@ describe('editor-runtime conformance  -  v1-specific posture', () => {
     });
   });
 
-  it('exposes a legacy editor projection for activeEditor compatibility', () => {
-    const rt = createFakeV1Runtime();
+  it('exposes a compatibility projection for activeEditor compatibility', () => {
+    const rt = createFakeV2Runtime();
     expect(rt.getLegacyEditorProjection?.()).toBeDefined();
   });
 
   it('rejects dispatch while the host is saving', async () => {
-    const rt = createFakeV1Runtime({ initialState: 'saving' });
+    const rt = createFakeV2Runtime({ initialState: 'saving' });
     const result = await rt.dispatch({ kind: 'text.insert', text: 'x' });
     expect(result).toEqual({ status: 'rejected', reason: 'host-saving' });
   });
 
   it('rejects an unknown command with command-unsupported', async () => {
-    const rt = createFakeV1Runtime();
+    const rt = createFakeV2Runtime();
     const result = await rt.dispatch({ kind: 'debug.unknown' } as unknown as EditorRuntimeCommand);
     expect(result).toEqual({ status: 'rejected', reason: 'command-unsupported' });
   });

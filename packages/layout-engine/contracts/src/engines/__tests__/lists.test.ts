@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { computeListIndent, formatListLabel } from '../lists.js';
 
 describe('engines-lists formatListLabel', () => {

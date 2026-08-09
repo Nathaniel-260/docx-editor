@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run",
-    "test:memory": "NODE_OPTIONS=--expose-gc vitest run src/memory-profile.test.ts --pool forks --poolOptions.forks.singleFork",
-    "test:parity": "vitest run --grep 'Parity'",
-    "test:integration": "vitest run --grep 'Integration'"
+    "test": "vp test run",
+    "test:memory": "NODE_OPTIONS=--expose-gc vp test run src/memory-profile.test.ts --pool forks --no-file-parallelism",
+    "test:parity": "vp test run --grep 'Parity'",
+    "test:integration": "vp test run --grep 'Integration'"
   },
   "dependencies": {
     "@superdoc/layout-engine": "workspace:*",
@@ -18,7 +18,9 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "catalog:",
+    "jsdom": "catalog:",
     "tsx": "catalog:",
-    "jsdom": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   }
 }

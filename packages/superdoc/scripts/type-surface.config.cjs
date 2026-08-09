@@ -33,11 +33,10 @@
  *     mechanism re-introduces shim generation, must not be auto-shimmed.
  *     They should fail audit Rule 1 instead.
  *   - `rule1Allowlist`: bare `@superdoc/*` specifiers permitted in
- *     published d.ts. Currently only the legacy public super-editor
- *     surface per RFC Decision 1.
+ *     published d.ts. Empty for the v2 public package surface.
  *   - `publicContract`: SD-3256 Phase 2. Tier metadata for every
  *     `package.json#exports` subpath. Describes what each subpath is
- *     (supported / legacy / asset / deprecated), not yet enforced.
+ *     (supported / asset / deprecated), not yet enforced.
  *     `scripts/report-public-contract.mjs` prints this for review.
  *
  * Adding a new relocation: append one entry to `relocations` with the
@@ -52,28 +51,32 @@
 const requiredEntryPoints = [
   'superdoc/src/index.d.ts',
   'superdoc/src/index.d.cts',
-  'superdoc/src/super-editor.d.ts',
-  'superdoc/src/super-editor.d.cts',
-  'super-editor/src/index.d.ts',
-  'super-editor/src/types.d.ts',
-  'super-editor/src/types.d.cts',
+  // v2-native public UI facade entries (`./ui`, `./ui/react`). Both the ESM
+  // `.d.ts` (emitted by vite-plugin-dts) and the CJS `.d.cts` shim (emitted by
+  // ensure-types) must exist after build so the conditional `types` targets
+  // resolve.
+  'superdoc/src/public/ui.d.ts',
+  'superdoc/src/public/ui.d.cts',
+  'superdoc/src/public/ui-react.d.ts',
+  'superdoc/src/public/ui-react.d.cts',
+  'superdoc/src/public/collaboration-upgrade-engine.d.ts',
+  'superdoc/src/public/collaboration-upgrade-engine.d.cts',
 ];
 
 /**
  * Foundational source roots tsconfig.json must include but `relocations`
  * does not own. These are the public-package sources themselves
- * (`superdoc/src`, `super-editor/src`, `document-api/src`), distinct from
- * the workspace-internal packages relocated via `relocations`. The
+ * (`superdoc/src`, `document-api/src`), distinct from the workspace-internal
+ * packages relocated via `relocations`. The
  * tsconfig parity check expects exactly this base set plus the union of
  * `relocations[*].tsconfigIncludes`.
  */
-const baseTsconfigIncludes = ['src', '../super-editor/src', '../document-api/src'];
+const baseTsconfigIncludes = ['src', '../document-api/src'];
 
 const handwrittenDtsBlocklist = [
-  // Ambient module declarations for internal `@superdoc/super-editor/converter/internal/...`
-  // subpaths. Nothing in superdoc's shipped surface imports those subpaths,
-  // so the declarations would only leak the bare specifiers into published d.ts.
-  // Keep the file in source for super-editor's own typecheck; just don't ship it. (SD-2859)
+  // Ambient module declarations for internal converter subpaths. Nothing in
+  // superdoc@2's shipped surface imports those subpaths, so the declarations
+  // would only leak the bare specifiers into published d.ts.
   'converter-internal.d.ts',
 ];
 
@@ -133,10 +136,6 @@ const relocations = [
     viteIncludes: ['../layout-engine/painters/dom/src/**/*'],
     tsconfigIncludes: ['../layout-engine/painters/dom/src'],
   },
-  // SD-3222: the v1 ProseMirror adapter (converter-context, sections/types)
-  // moved into @superdoc/super-editor (../super-editor/src), so its
-  // declarations are emitted as part of the super-editor source root in
-  // `baseTsconfigIncludes`. No standalone pm-adapter relocation is needed.
   // style-engine/ooxml: subpath-only. Includes the ooxml subtree plus the
   // sibling cascade.ts dependency it imports.
   {
@@ -146,15 +145,9 @@ const relocations = [
     viteIncludes: ['../layout-engine/style-engine/src/ooxml/**/*', '../layout-engine/style-engine/src/cascade.ts'],
     tsconfigIncludes: ['../layout-engine/style-engine/src/ooxml', '../layout-engine/style-engine/src/cascade.ts'],
   },
-  // SD-3222: the v1 layout-adapter (now under super-editor/src) surfaces a few
-  // bare type imports — `StyleContext`/`ComputedParagraphStyle` from
-  // `@superdoc/style-engine`, `ResolvedRunProperties` from
-  // `@superdoc/word-layout` — that the old narrow pm-adapter relocation kept off
-  // superdoc's emitted surface. Relocate the packages those types come from so
-  // the published d.ts point at bundled dist paths instead of leaking bare,
-  // unpublished `@superdoc/*` specifiers. Both have a bounded dependency
-  // closure: word-layout imports no `@superdoc/*`, and style-engine only pulls
-  // in already-relocated `@superdoc/contracts` and `@superdoc/style-engine/ooxml`.
+  // Layout/style declaration leaves reachable from the v2 root facade are
+  // relocated into superdoc's dist tree so the package does not publish bare,
+  // unpublished `@superdoc/*` specifiers.
   {
     pkg: '@superdoc/style-engine',
     distEntry: 'layout-engine/style-engine/src/index.d.ts',
@@ -188,8 +181,8 @@ const relocations = [
     viteIncludes: [], // emitted via sharedCommonDtsTargets tsc-postbuild
     tsconfigIncludes: [],
   },
-  // SD-3222: the v1 layout-adapter's list-helpers re-exports list-numbering
-  // utilities. Emit the leaf module via tsc-postbuild like list-marker-utils.
+  // Emit the leaf list-numbering module via tsc-postbuild like
+  // list-marker-utils.
   {
     pkg: '@superdoc/common/list-numbering',
     distEntry: 'shared/common/list-numbering/index.d.ts',
@@ -256,35 +249,20 @@ const unshimmedPrivateSpecifiers = [
 
 /**
  * Bare `@superdoc/*` specifiers permitted in published d.ts beyond the
- * relocation rules. Currently only the legacy public super-editor surface
- * per RFC Decision 1; consumers resolve it through the `superdoc/super-editor`
- * subpath export at runtime.
+ * relocation rules. Empty for `superdoc@2`: removed v1 package surfaces are
+ * no longer customer package surfaces.
  */
-const rule1Allowlist = {
-  '@superdoc/super-editor': 'legacy public surface (RFC Decision 1)',
-};
+const rule1Allowlist = {};
 
 /**
- * SD-3256 Phase 2: tier metadata for every `package.json#exports`
- * subpath. Describes what each entry is, not what CI enforces. No
- * enforcement is wired up in this phase; the metadata exists so the
- * team can review the classification before Phase 3 (./super-editor
- * facade curation) and Phase 4 (ratchet against the tiers).
+ * Tier metadata for every `package.json#exports` subpath. Describes what each
+ * entry is, not what CI enforces.
  *
  * Tier policies (target end state, not all enforced today):
  *
  *   - `supported`: fully typed, no `any`, no accidental internals;
  *     supported-root strict gate hard-fails regressions. Routes
  *     through `src/public/**`.
- *   - `legacy`: must not grow accidentally; typed where supported;
- *     can be deprecated or migrated over time; new APIs should not
- *     be added here. Routes through `src/public/legacy/**`.
- *   - `legacy-raw`: legacy public surface that does NOT yet route
- *     through `src/public/legacy/**` (the export resolves directly
- *     to a non-curated dist path). Only `./super-editor` today.
- *     SD-3256 Phase 3 will curate this through
- *     `src/public/legacy/super-editor.ts` after team alignment on
- *     which exports stay public.
  *   - `asset`: non-type asset (e.g. CSS). Not covered by the type
  *     contract.
  *   - `deprecated`: scheduled for removal. None today.
@@ -294,29 +272,33 @@ const rule1Allowlist = {
  *
  * Sync rule: keep this list aligned with `package.json#exports`.
  * Adding a new export means adding an entry here too.
+ *
+ * Headless-toolbar migration posture (migration-only): the v1
+ * `superdoc/headless-toolbar`, `superdoc/headless-toolbar/react`, and
+ * `superdoc/headless-toolbar/vue` subpaths are intentionally NOT exported and
+ * carry NO `deprecated`-tier entry here. Custom UI migrates to the canonical
+ * `./ui` / `./ui/react` surfaces. Adding a headless-toolbar compatibility tier
+ * is a reviewed package-contract change paired with the absence gates
+ * (`tests/consumer-typecheck/snapshot/v2-only-resolution.mjs`,
+ * `scripts/check-private-core.cjs`).
  */
 const publicContract = {
   supported: [
     { subpath: '.', tier: 'supported', note: 'root facade; routes through src/public/index.ts' },
-    { subpath: './types', tier: 'supported', note: 'type-only facade; src/public/types.ts' },
-    { subpath: './ui', tier: 'supported', note: 'UI primitives; src/public/ui.ts' },
-    { subpath: './ui/react', tier: 'supported', note: 'React adapter; src/public/ui-react.ts' },
-  ],
-  legacy: [
-    { subpath: './converter', tier: 'legacy', note: 'src/public/legacy/converter.ts' },
-    { subpath: './docx-zipper', tier: 'legacy', note: 'src/public/legacy/docx-zipper.ts' },
-    { subpath: './file-zipper', tier: 'legacy', note: 'src/public/legacy/file-zipper.ts' },
-    { subpath: './headless-toolbar', tier: 'legacy', note: 'src/public/legacy/headless-toolbar.ts' },
-    { subpath: './headless-toolbar/react', tier: 'legacy', note: 'src/public/legacy/headless-toolbar-react.ts' },
-    { subpath: './headless-toolbar/vue', tier: 'legacy', note: 'src/public/legacy/headless-toolbar-vue.ts' },
-  ],
-  legacyRaw: [
+    { subpath: './ui', tier: 'supported', note: 'v2-native UI controller; routes through src/public/ui.ts' },
     {
-      subpath: './super-editor',
-      tier: 'legacy-raw',
-      note: 'resolves to dist/superdoc/src/super-editor.d.ts (not src/public/legacy/). SD-3256 Phase 3 will curate.',
+      subpath: './ui/react',
+      tier: 'supported',
+      note: 'v2-native UI React bindings; routes through src/public/ui-react.ts',
+    },
+    {
+      subpath: './collaboration-upgrade-engine',
+      tier: 'supported',
+      note: 'Node-only collaboration upgrade builder and validator; routes through src/public/collaboration-upgrade-engine.ts',
     },
   ],
+  legacy: [],
+  legacyRaw: [],
   asset: [
     { subpath: './style.css', tier: 'asset', note: 'CSS bundle; no types' },
     { subpath: './style.layered.css', tier: 'asset', note: 'Layered CSS bundle; no types' },

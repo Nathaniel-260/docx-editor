@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 
 // Test the telemetry config transformation logic used in SuperDoc.vue
 // This mirrors the getEditorOptions function's telemetry handling

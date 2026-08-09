@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure, FootnotePageLedger } from '@superdoc/contracts';
 import { incrementalLayout } from '../src/incrementalLayout';
 
@@ -163,7 +163,7 @@ describe('SD-2656 Phase 7: preferred-reserve body acceptance', () => {
     // invariant: regardless of how much of the footnote actually fits on page 0,
     // the body anchor must remain there (no migration to a later page).
     //
-    // SD-2656 (post-Vivienne+Carlsbad p43): under the +1-page-if-eliminates-split
+    // SD-2656: under the +1-page-if-eliminates-split
     // relaxation, the scorer may accept a one-page growth that fully fits the
     // 30-line footnote on the anchor page, eliminating the continuation. So
     // continuationOut may be empty under V1 (full fit) or non-empty under

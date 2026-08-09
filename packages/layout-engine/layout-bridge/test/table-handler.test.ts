@@ -2,7 +2,7 @@
  * Tests for TableHandler
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vite-plus/test';
 import { TableHandler } from '../src/table-handler';
 
 describe('TableHandler', () => {

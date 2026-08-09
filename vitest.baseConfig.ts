@@ -1,4 +1,4 @@
-import { ViteUserConfig } from 'vitest/config.js';
+import { ViteUserConfig } from 'vite-plus/test/config.js';
 import sourceResolve from './vite.sourceResolve';
 
 const baseConfig: ViteUserConfig = {

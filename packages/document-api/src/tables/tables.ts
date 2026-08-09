@@ -5,6 +5,7 @@ import { TABLE_COLOR_PATTERN as TABLE_BORDER_COLOR_PATTERN } from './color-forma
 import type {
   TablesApplyStyleInput,
   TablesSetBordersInput,
+  TablesSetCellPaddingInput,
   TablesSetLayoutInput,
   TablesSetTableOptionsInput,
   TableBorderSpec,
@@ -570,6 +571,49 @@ export function executeTablesSetTableOptions<TResult>(
         { field: 'cellSpacingPt' },
       );
     }
+  }
+
+  return adapter(input, normalizeMutationOptions(options));
+}
+
+/**
+ * Validate and execute `tables.setCellPadding`.
+ *
+ * Partial side updates are accepted and preserve omitted sides, but at least
+ * one of `topPt`, `rightPt`, `bottomPt`, or `leftPt` must be present. An
+ * all-omitted call is rejected so the direct typed API agrees with the schema's
+ * any-of side requirement (and the adapter never authors an empty `w:tcMar`).
+ */
+export function executeTablesSetCellPadding<TResult>(
+  operationName: string,
+  adapter: (input: TablesSetCellPaddingInput, options?: MutationOptions) => TResult,
+  input: TablesSetCellPaddingInput,
+  options?: MutationOptions,
+): TResult {
+  validateTableLocator(input, operationName);
+
+  const paddingSides = ['topPt', 'rightPt', 'bottomPt', 'leftPt'] as const;
+  let hasAnySide = false;
+
+  for (const side of paddingSides) {
+    const value = input[side] as unknown;
+    if (value === undefined) continue;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new DocumentApiValidationError(
+        'INVALID_ARGUMENT',
+        `${operationName}: ${side} must be a non-negative finite number.`,
+        { field: side, value },
+      );
+    }
+    hasAnySide = true;
+  }
+
+  if (!hasAnySide) {
+    throw new DocumentApiValidationError(
+      'INVALID_ARGUMENT',
+      `${operationName} requires at least one of topPt, rightPt, bottomPt, or leftPt.`,
+      { fields: ['topPt', 'rightPt', 'bottomPt', 'leftPt'] },
+    );
   }
 
   return adapter(input, normalizeMutationOptions(options));

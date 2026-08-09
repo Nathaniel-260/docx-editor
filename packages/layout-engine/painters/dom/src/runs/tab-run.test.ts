@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import type { Line, TabRun } from '@superdoc/contracts';
 import {
   canPaintUnderlineAsBorder,
@@ -75,8 +75,49 @@ describe('tab underline alignment (SD-3330)', () => {
 
   it('keeps a plain positioned tab invisible with no border', () => {
     const { element } = renderPositionedTabRun(plainTab(), LINE, document, 0, 0, 0);
+    expect(element.classList.contains('superdoc-tab')).toBe(true);
     expect(element.style.visibility).toBe('hidden');
     expect(element.style.borderBottom).toBe('');
+  });
+});
+
+describe('vanished tab rendering', () => {
+  it('renders hidden tabs as zero-width addressable spans with no underline', () => {
+    const tab = {
+      ...underlinedTab(),
+      vanish: true,
+      pmStart: 10,
+      pmEnd: 11,
+    } as TabRun;
+
+    const el = renderInlineTabRun(tab, LINE, document, 0, undefined, true, 200);
+
+    expect(el.style.width).toBe('0px');
+    expect(el.style.height).toBe('0px');
+    expect(el.style.borderBottom).toBe('');
+    expect(el.getAttribute('aria-hidden')).toBe('true');
+    expect(el.dataset.pmStart).toBe('10');
+    expect(el.dataset.pmEnd).toBe('11');
+  });
+
+  it('renders positioned hidden tabs without advancing the tab boundary', () => {
+    const tab = {
+      ...underlinedTab(),
+      vanish: true,
+      pmStart: 10,
+      pmEnd: 11,
+    } as TabRun;
+
+    const result = renderPositionedTabRun(tab, LINE, document, 0, 20, 5);
+
+    expect(result.actualTabWidth).toBe(0);
+    expect(result.tabEndX).toBe(20);
+    expect(result.element.style.left).toBe('25px');
+    expect(result.element.style.width).toBe('0px');
+    expect(result.element.style.borderBottom).toBe('');
+    expect(result.element.getAttribute('aria-hidden')).toBe('true');
+    expect(result.element.dataset.pmStart).toBe('10');
+    expect(result.element.dataset.pmEnd).toBe('11');
   });
 });
 
@@ -124,6 +165,44 @@ describe('canPaintUnderlineOverlay - overlay scope', () => {
     expect(canPaintUnderlineOverlay(withStyle('wave'))).toBe(false);
     expect(canPaintUnderlineAsBorder(withStyle('words'))).toBe(false);
     expect(canPaintUnderlineAsBorder(withStyle('none'))).toBe(false);
+  });
+});
+
+// SD-3347: tab width must be reliable on initial render, before any re-render triggered by
+// editing. run.width is set as a side-effect mutation during measuring, but when FlowBlock
+// re-projection creates fresh run objects and the measuring cache returns a hit, run.width is
+// never re-set. The caller pre-resolves the width from Line.tabWidths (keyed by block.runs
+// index, which is stable across pmStart shifts) and passes it as tabWidthFromCache.
+describe('tab width source priority (SD-3347)', () => {
+  it('uses tabWidthFromCache when run.width is absent (cache-hit scenario)', () => {
+    const tab = { kind: 'tab', text: '\t' } as TabRun;
+    const el = renderInlineTabRun(tab, LINE, document, 0, undefined, true, 200);
+    expect(el.style.width).toBe('200px');
+  });
+
+  it('prefers tabWidthFromCache over run.width when both are present', () => {
+    const tab = { kind: 'tab', text: '\t', width: 48 } as TabRun;
+    const el = renderInlineTabRun(tab, LINE, document, 0, undefined, true, 200);
+    expect(el.style.width).toBe('200px');
+  });
+
+  it('falls back to run.width when tabWidthFromCache is absent', () => {
+    const tab = { kind: 'tab', text: '\t', width: 150 } as TabRun;
+    const el = renderInlineTabRun(tab, LINE, document, 0);
+    expect(el.style.width).toBe('150px');
+  });
+
+  it('falls back to 48px when neither tabWidthFromCache nor run.width is set', () => {
+    const tab = { kind: 'tab', text: '\t' } as TabRun;
+    const el = renderInlineTabRun(tab, LINE, document, 0);
+    expect(el.style.width).toBe('48px');
+  });
+
+  it('renders an underlined tab with correct width and border when tabWidthFromCache is supplied', () => {
+    const tab = { kind: 'tab', text: '\t', underline: { style: 'single' } } as TabRun;
+    const el = renderInlineTabRun(tab, LINE, document, 0, undefined, true, 300);
+    expect(el.style.width).toBe('300px');
+    expect(el.style.borderBottom).toContain('solid');
   });
 });
 

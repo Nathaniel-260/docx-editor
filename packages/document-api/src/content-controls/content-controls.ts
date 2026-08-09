@@ -2,13 +2,13 @@
  * Content Controls API: interface, adapter, and execute functions.
  *
  * Each public method delegates to an `execute*` function that validates input
- * before calling the adapter. The adapter is implemented by the engine layer
- * (super-editor).
+ * before calling the adapter. The adapter is implemented by the engine layer.
  */
 
 import type { MutationOptions } from '../write/write.js';
 import { DocumentApiValidationError } from '../errors.js';
 import { isRecord, isInteger } from '../validation-primitives.js';
+import { validateDocumentFragment } from '../validation/fragment-validator.js';
 import { isSelectionTarget } from '../validation/selection-target-validator.js';
 import { LOCK_MODES, CONTENT_CONTROL_TYPES, CONTENT_CONTROL_APPEARANCES } from './content-controls.types.js';
 import type { NodeKind } from '../types/base.js';
@@ -268,6 +268,43 @@ function validateCCTarget(target: unknown, operationName: string): asserts targe
   }
 }
 
+function validateCCMoveDestination(destination: unknown): void {
+  if (!isRecord(destination)) {
+    throw new DocumentApiValidationError(
+      'INVALID_TARGET',
+      "contentControls.move (destination) requires a valid destination: an SDT target, { kind: 'documentStart' }, { kind: 'documentEnd' }, { kind: 'before', target }, or { kind: 'after', target }.",
+      { field: 'destination', value: destination },
+    );
+  }
+  if (destination.kind === 'documentStart' || destination.kind === 'documentEnd') return;
+  if (destination.kind === 'before' || destination.kind === 'after') {
+    validateCCTarget(destination.target, `contentControls.move (destination.${destination.kind})`);
+    return;
+  }
+  if (destination.kind === 'inParagraph') {
+    const target = destination.target;
+    if (!isRecord(target) || typeof target.nodeId !== 'string' || target.nodeId === '') {
+      throw new DocumentApiValidationError(
+        'INVALID_TARGET',
+        'contentControls.move (destination.inParagraph) requires a target with a non-empty nodeId.',
+        { field: 'destination.target', value: target },
+      );
+    }
+    if (
+      destination.offset !== undefined &&
+      (typeof destination.offset !== 'number' || !Number.isInteger(destination.offset) || destination.offset < 0)
+    ) {
+      throw new DocumentApiValidationError(
+        'INVALID_TARGET',
+        'contentControls.move (destination.inParagraph) offset must be a non-negative integer.',
+        { field: 'destination.offset', value: destination.offset },
+      );
+    }
+    return;
+  }
+  validateCCTarget(destination, 'contentControls.move (destination)');
+}
+
 function requireString(value: unknown, field: string, operationName: string): void {
   if (typeof value !== 'string' || value.length === 0) {
     throw new DocumentApiValidationError('INVALID_INPUT', `${operationName} ${field} must be a non-empty string.`, {
@@ -454,7 +491,7 @@ export function executeContentControlsMove(
 ): ContentControlMutationResult {
   validateCCInput(input, 'contentControls.move');
   validateCCTarget(input.target, 'contentControls.move');
-  validateCCTarget(input.destination, 'contentControls.move (destination)');
+  validateCCMoveDestination(input.destination);
   return adapter.move(input, options);
 }
 
@@ -1057,6 +1094,53 @@ export function executeCreateContentControl(
       `create.contentControl content must be a string, got ${typeof input.content}.`,
       { field: 'content', value: input.content },
     );
+  }
+  if (input.html !== undefined && typeof input.html !== 'string') {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      `create.contentControl html must be a string, got ${typeof input.html}.`,
+      { field: 'html', value: input.html },
+    );
+  }
+  if (input.content !== undefined && input.html !== undefined) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      `create.contentControl content and html are mutually exclusive.`,
+      { fields: ['content', 'html'] },
+    );
+  }
+  if (input.content !== undefined && input.json !== undefined) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      `create.contentControl content and json are mutually exclusive.`,
+      { fields: ['content', 'json'] },
+    );
+  }
+  if (input.html !== undefined && input.json !== undefined) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      `create.contentControl html and json are mutually exclusive.`,
+      { fields: ['html', 'json'] },
+    );
+  }
+  if ((input.html !== undefined || input.json !== undefined) && input.kind !== 'block') {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      `create.contentControl html/json presets are supported only for block content controls.`,
+      { field: 'kind', value: input.kind },
+    );
+  }
+  if (input.json !== undefined) {
+    try {
+      validateDocumentFragment(input.json);
+    } catch (error) {
+      if (error instanceof DocumentApiValidationError) throw error;
+      throw new DocumentApiValidationError(
+        'INVALID_PAYLOAD',
+        `create.contentControl json must be a valid document fragment.`,
+        { field: 'json', value: input.json },
+      );
+    }
   }
   return adapter.create(input, options);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { createFloatingObjectManager } from './floating-objects.js';
-import type { ImageBlock, ImageMeasure } from '@superdoc/contracts';
+import type { ImageBlock, ImageMeasure, TableBlock, TableMeasure } from '@superdoc/contracts';
 
 describe('FloatingObjectManager', () => {
   const mockColumns = { width: 600, gap: 20, count: 1 };
@@ -147,6 +147,75 @@ describe('FloatingObjectManager', () => {
       const zones = manager.getAllFloatsForPage(1);
       expect(zones[0].bounds.y).toBe(150);
     });
+
+    it('uses the physical page number for logical inside alignment', () => {
+      const manager = createFloatingObjectManager(mockColumns, { left: 72, right: 72 }, 600);
+      const imageBlock = createMockImageBlock({
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'margin',
+          alignH: 'inside',
+        },
+      });
+
+      manager.registerDrawing(imageBlock, createMockMeasure({ width: 100 }), 100, 0, 2);
+
+      expect(manager.getAllFloatsForPage(2)[0]?.bounds.x).toBe(428);
+    });
+  });
+
+  describe('registerTable', () => {
+    it('uses the shared physical-page placement contract for logical table alignment', () => {
+      const manager = createFloatingObjectManager(mockColumns, { left: 72, right: 72 }, 600);
+      const table: TableBlock = {
+        kind: 'table',
+        id: 'logical-table',
+        rows: [],
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'margin',
+          alignH: 'inside',
+          vRelativeFrom: 'paragraph',
+        },
+        wrap: { type: 'Square' },
+      };
+      const measure: TableMeasure = {
+        kind: 'table',
+        rows: [],
+        columnWidths: [100],
+        totalWidth: 100,
+        totalHeight: 30,
+      };
+
+      manager.registerTable(table, measure, 80, 0, 2);
+
+      expect(manager.getAllFloatsForPage(2)[0]?.bounds.x).toBe(428);
+    });
+
+    it('replaces the stale exclusion when a table follows its anchor to another page', () => {
+      const manager = createFloatingObjectManager(mockColumns, { left: 0, right: 0 }, 600);
+      const table: TableBlock = {
+        kind: 'table',
+        id: 'moving-table',
+        rows: [],
+        anchor: { isAnchored: true, vRelativeFrom: 'paragraph' },
+        wrap: { type: 'Square' },
+      };
+      const measure: TableMeasure = {
+        kind: 'table',
+        rows: [],
+        columnWidths: [100],
+        totalWidth: 100,
+        totalHeight: 30,
+      };
+
+      manager.registerTable(table, measure, 80, 0, 1);
+      manager.registerTable(table, measure, 20, 0, 2);
+
+      expect(manager.getAllFloatsForPage(1)).toHaveLength(0);
+      expect(manager.getAllFloatsForPage(2)).toHaveLength(1);
+      expect(manager.getAllFloatsForPage(2)[0].bounds.y).toBe(20);
+    });
   });
 
   describe('getExclusionsForLine', () => {
@@ -292,6 +361,105 @@ describe('FloatingObjectManager', () => {
 
       const result = manager.computeAvailableWidth(120, 20, 600, 0, 1);
       expect(result.width).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('computeAvailableRegions', () => {
+    it('preserves both regions around a centered bothSides float', () => {
+      const manager = createFloatingObjectManager(mockColumns, { left: 0, right: 0 }, 600);
+      const imageBlock = createMockImageBlock({
+        width: 200,
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'column',
+          vRelativeFrom: 'paragraph',
+          alignH: 'center',
+        },
+        wrap: {
+          type: 'Square',
+          wrapText: 'bothSides',
+          distLeft: 10,
+          distRight: 10,
+        },
+      });
+
+      manager.registerDrawing(imageBlock, createMockMeasure({ width: 200 }), 100, 0, 1);
+
+      expect(manager.computeAvailableRegions(120, 20, 600, 0, 1)).toEqual([
+        { offsetX: 0, width: 190 },
+        { offsetX: 410, width: 190 },
+      ]);
+    });
+
+    it('returns a minimal constraint when a float consumes the whole column', () => {
+      const manager = createFloatingObjectManager(mockColumns, { left: 0, right: 0 }, 600);
+      const imageBlock = createMockImageBlock({
+        width: 700,
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'column',
+          vRelativeFrom: 'paragraph',
+          alignH: 'left',
+        },
+        wrap: { type: 'Square', wrapText: 'bothSides' },
+      });
+
+      manager.registerDrawing(imageBlock, createMockMeasure({ width: 700 }), 100, 0, 1);
+
+      expect(manager.computeAvailableRegions(120, 20, 600, 0, 1)).toEqual([{ offsetX: 0, width: 1 }]);
+    });
+
+    it('returns the whole column outside the float band', () => {
+      const manager = createFloatingObjectManager(mockColumns, { left: 0, right: 0 }, 600);
+      manager.registerDrawing(createMockImageBlock(), createMockMeasure(), 100, 0, 1);
+
+      expect(manager.computeAvailableRegions(300, 20, 600, 0, 1)).toEqual([{ offsetX: 0, width: 600 }]);
+    });
+  });
+
+  describe('computeVerticalClearance', () => {
+    it('clears a TopAndBottom float including its bottom text distance', () => {
+      const manager = createFloatingObjectManager(mockColumns, { left: 0, right: 0 }, 600);
+      const imageBlock = createMockImageBlock({
+        wrap: {
+          type: 'TopAndBottom',
+          distBottom: 12,
+        },
+      });
+
+      manager.registerDrawing(imageBlock, createMockMeasure({ height: 150 }), 100, 0, 1);
+
+      expect(manager.computeVerticalClearance(120, 20, 0, 1)).toBe(262);
+      expect(manager.computeVerticalClearance(300, 20, 0, 1)).toBeNull();
+    });
+
+    it('clears a Square float when it leaves no usable horizontal region', () => {
+      const manager = createFloatingObjectManager(mockColumns, { left: 0, right: 0 }, 600);
+      const imageBlock = createMockImageBlock({
+        width: 700,
+        wrap: {
+          type: 'Square',
+          wrapText: 'bothSides',
+          distBottom: 12,
+        },
+      });
+
+      manager.registerDrawing(imageBlock, createMockMeasure({ width: 700, height: 150 }), 100, 0, 1);
+
+      expect(manager.computeVerticalClearance(120, 20, 0, 1)).toBe(262);
+      expect(manager.computeVerticalClearance(300, 20, 0, 1)).toBeNull();
+    });
+
+    it('does not clear a Square float while a usable side region remains', () => {
+      const manager = createFloatingObjectManager(mockColumns, { left: 0, right: 0 }, 600);
+      const imageBlock = createMockImageBlock({
+        width: 300,
+        wrap: { type: 'Square', wrapText: 'bothSides' },
+      });
+
+      manager.registerDrawing(imageBlock, createMockMeasure({ width: 300, height: 150 }), 100, 0, 1);
+
+      expect(manager.computeVerticalClearance(120, 20, 0, 1)).toBeNull();
     });
   });
 

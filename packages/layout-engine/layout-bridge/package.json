@@ -1,6 +1,7 @@
 {
   "name": "@superdoc/layout-bridge",
   "version": "0.0.0",
+  "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,8 +17,8 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean --tsconfig tsconfig.build.json",
-    "test": "vitest run",
-    "lint": "eslint src --ext .ts",
+    "test": "vp test run",
+    "lint": "pnpm -w exec vp lint packages/layout-engine/layout-bridge/src",
     "dev": "tsup src/index.ts --format esm --watch"
   },
   "dependencies": {
@@ -35,6 +36,8 @@
     "@types/node": "catalog:",
     "tsup": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

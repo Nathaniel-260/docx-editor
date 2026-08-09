@@ -6,5 +6,9 @@
     "composite": true,
     "declaration": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [
+    { "path": "../../../shared/common/tsconfig.json" },
+    { "path": "../../../shared/font-system/tsconfig.json" }
+  ]
 }

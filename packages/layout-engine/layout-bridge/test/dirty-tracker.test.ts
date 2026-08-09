@@ -2,7 +2,7 @@
  * Tests for DirtyTracker
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { DirtyTracker, type DirtyRange } from '../src/dirty-tracker';
 
 describe('DirtyTracker', () => {

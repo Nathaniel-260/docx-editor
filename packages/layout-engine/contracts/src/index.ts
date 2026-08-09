@@ -1,5 +1,7 @@
 import type { TabStop } from './engines/tabs.js';
 import type { PageNumberChapterSeparator, PageNumberFieldFormat, PageNumberFormat } from './page-number-formatting.js';
+import type { TrackedChangeSemanticColorKey } from './semantic-colors.js';
+import type { AnchorAlignH, AnchorAlignV, AnchorHRelative, AnchorVRelative } from './graphic-placement.js';
 export { computeTabStops, layoutWithTabs, calculateTabWidth } from './engines/tabs.js';
 
 // Re-export TabStop for external consumers
@@ -53,10 +55,6 @@ export { rescaleColumnWidths } from './table-column-rescale.js';
 // Cell spacing resolution (moved from measuring-dom for cross-stage use)
 export { getCellSpacingPx } from './cell-spacing.js';
 
-// Border band width (single source of truth for painter CSS width + measuring row reservation)
-export { getBorderBandWidthPx, getBorderBandProfile, isNativeCssDoubleStyle } from './border-band.js';
-export type { BorderBandProfile } from './border-band.js';
-
 // OOXML z-index normalization (moved from pm-adapter for cross-stage use)
 export {
   normalizeZIndex,
@@ -66,14 +64,6 @@ export {
   resolveFloatingZIndex,
   getFragmentZIndex,
 } from './ooxml-z-index.js';
-
-export {
-  resolveOuterShadowOffset,
-  getOuterShadowStdDeviation,
-  getOuterShadowPaintExtent,
-  type OuterShadowPaintEffect,
-  type PaintEffectExtent,
-} from './shape-effects.js';
 
 // Export justify utilities
 export {
@@ -107,8 +97,24 @@ export { computeFragmentPmRange, computeLinePmRange, type LinePmRange } from './
 export {
   resolveAnchoredGraphicY,
   resolveAnchoredGraphicX,
+  resolveFooterPageFrameOriginY,
+  isPositionedParagraphFrame,
+  isPagePositionedParagraphFrame,
+  isAnchorHRelative,
+  isAnchorVRelative,
+  isAnchorAlignH,
+  isAnchorAlignV,
+  ANCHOR_H_RELATIVE_VALUES,
+  ANCHOR_V_RELATIVE_VALUES,
+  ANCHOR_H_ALIGN_VALUES,
+  ANCHOR_V_ALIGN_VALUES,
   type ColumnLayoutForAnchor,
   type ResolveAnchoredGraphicYInput,
+  type ResolveAnchoredGraphicXContext,
+  type AnchorHRelative,
+  type AnchorVRelative,
+  type AnchorAlignH,
+  type AnchorAlignV,
 } from './graphic-placement.js';
 
 // Editor-neutral layout identity primitives (prep-001).
@@ -131,6 +137,21 @@ export type {
   LayoutStoryLocator,
 } from './layout-identity.js';
 import type { LayoutSourceIdentity } from './layout-identity.js';
+
+// Editor-neutral measured segment-geometry substrate (Phase 1 / 001).
+// Additive only — promotes per-line / per-segment geometry the measure/layout
+// pipeline already computes to a first-class neutral output. See
+// `segment-geometry.ts`.
+export { LAYOUT_SEGMENT_GEOMETRY_SCHEMA } from './segment-geometry.js';
+export type {
+  NeutralTextDirection,
+  NeutralSegmentGeometry,
+  NeutralLineGeometryFlags,
+  NeutralLineGeometry,
+  NeutralGeometryDiagnostic,
+  NeutralFragmentGeometry,
+  NeutralSegmentGeometryReadback,
+} from './segment-geometry.js';
 export {
   cloneColumnLayout,
   columnLayoutsEqual,
@@ -156,6 +177,30 @@ export {
   stampTrackedChangeColors,
 } from './author-colors.js';
 export type { AuthorColorsConfig, TrackChangeAuthorColorResolver } from './author-colors.js';
+export {
+  DEFAULT_TRACKED_CHANGE_SEMANTIC_COLORS,
+  TRACKED_CHANGE_AFFECTED_RANGE_KEYS,
+  TRACKED_CHANGE_CONFIGURABLE_SEMANTIC_COLOR_KEYS,
+  TRACKED_CHANGE_SEMANTIC_COLOR_KEYS,
+  TRACKED_CHANGE_SEMANTIC_TARGET_KINDS,
+  composeSemanticColorResolver,
+  defaultSemanticColor,
+  isConfigurableSemanticColorKey,
+  semanticColorAnchorScope,
+  semanticColorTargetKind,
+  stampTrackedChangeSemanticColors,
+  structuralSemanticColorKey,
+  trackedChangeLayersSignature,
+  trackedChangeMetaSignature,
+} from './semantic-colors.js';
+export type {
+  SemanticColorsConfig,
+  TrackChangeSemanticColorResolver,
+  TrackedChangeConfigurableSemanticColorKey,
+  TrackedChangeSemanticColorKey,
+  TrackedChangeSemanticColorResolverInput,
+  TrackedChangeSemanticTargetKind,
+} from './semantic-colors.js';
 export {
   getSdtContainerKey,
   getSdtContainerKeyForBlock,
@@ -296,7 +341,7 @@ export type SdtMetadata =
   | DocumentSectionMetadata
   | DocPartMetadata;
 
-export const CONTRACTS_VERSION = '1.1.0';
+export const CONTRACTS_VERSION = '1.2.0';
 
 /** Unique identifier for a block in the document. Format: `${pos}-${type}`. */
 export type BlockId = string;
@@ -391,12 +436,66 @@ export type TrackedChangeMeta = {
    * case the static default tracked-change palette applies.
    */
   color?: string;
+  /**
+   * Semantic visual color category for this change, e.g. `insertion`,
+   * `deletion`, `move-from`, `table-cell-insertion`, `cell-merge`.
+   * Independent of the author identity, so the same author can receive
+   * different colors for different review roles.
+   */
+  semanticColorKey?: TrackedChangeSemanticColorKey;
+  /**
+   * Paint-ready semantic color, resolved upstream from
+   * {@link semanticColorKey}. Additive to and independent of the per-author
+   * `color`. DomPainter uses author color for plain insertion/deletion
+   * highlights when present, while side/structural semantic categories
+   * (`move-from`, `table-cell-insertion`, `cell-merge`, etc.) keep semantic
+   * visual precedence. Undefined when semantic colors are disabled or this layer
+   * carries no semantic category.
+   */
+  semanticColor?: string;
+  /** Raw tracked-change type carried for semantic resolution/projection. */
+  type?: string;
+  /** Logical subtype carried for semantic resolution/projection. */
+  subtype?: string;
+  /** Target kind (e.g. text/cell/row/table) for semantic resolution. */
+  targetKind?: string;
+  /**
+   * Scope of the semantic paint anchor when paint applies to an affected range
+   * rather than a single direct marker (e.g. `'affected-range'` for a derived
+   * cell split).
+   */
+  semanticAnchorScope?: string;
   date?: string;
   before?: RunMark[];
   after?: RunMark[];
 };
 
-export type FlowRunLinkTarget = '_blank' | '_self' | '_parent' | '_top';
+/**
+ * Tracked-change review metadata attached to a list marker glyph (Plan 5).
+ *
+ * A list marker is generated chrome, not a text run, so run-level tracked-change
+ * decorations never reach it automatically. When a paragraph's visible marker is
+ * affected by a guide-relevant tracked change (list add/remove, numbering/level
+ * change, list item insert/delete, paragraph-mark insert/delete, or a moved list
+ * item), the projection attaches this metadata so the painter can stamp the same
+ * review identity/classes/CSS variables the run path uses and paint Word-like
+ * marker glyph color + underline.
+ *
+ * It reuses the canonical {@link TrackedChangeMeta} so marker and run review
+ * metadata never drift, plus an optional `groupedIds` for the
+ * `data-track-change-ids` attribute when more than one change affects one marker.
+ */
+export type MarkerTrackedChange = TrackedChangeMeta & {
+  /** All tracked-change ids affecting this marker, for `data-track-change-ids`. */
+  groupedIds?: readonly string[];
+};
+
+/**
+ * HTML anchor target. DOCX `w:tgtFrame` may be one of the reserved browsing
+ * context names (`_blank`, `_self`, `_parent`, `_top`) or an arbitrary named
+ * frame/window such as `report-frame`.
+ */
+export type FlowRunLinkTarget = string;
 
 export type FlowRunLink = {
   version?: 1 | 2;
@@ -426,6 +525,8 @@ export type RunMarks = {
   italic?: boolean;
   /** Additional letter spacing in pixels (positive for expanded, negative for condensed). */
   letterSpacing?: number;
+  /** Horizontal glyph scale as a unitless multiplier (`1` = 100%, `0.9` = 90%). */
+  horizontalScale?: number;
   /** Text color as hex string (e.g., "#FF0000"). */
   color?: string;
   /** Underline decoration with optional style and color. */
@@ -441,6 +542,8 @@ export type RunMarks = {
   highlight?: string;
   /** Text transformation (case modification). */
   textTransform?: 'uppercase' | 'lowercase' | 'capitalize' | 'none';
+  /** Word hidden-text formatting (`w:vanish`): styleable runs remain addressable but do not paint or measure. */
+  vanish?: boolean;
   /** Vertical alignment for superscript/subscript text. */
   vertAlign?: 'superscript' | 'subscript' | 'baseline';
   /**
@@ -448,6 +551,8 @@ export type RunMarks = {
    * Rendering normalizes a shift of zero to "no explicit shift".
    */
   baselineShift?: number;
+  /** Paint-only Word 2010+ text effects (`w14:textFill`, outline, shadow, reflection). */
+  textEffects?: TextEffects;
 };
 
 export type PageReferenceRelativePositionText = 'above' | 'below';
@@ -481,6 +586,7 @@ export type TextRun = RunMarks & {
     importedId?: string;
     internal?: boolean;
     trackedChange?: boolean;
+    trackedChangeThreadParentId?: string;
   }>;
   /**
    * Custom data attributes propagated from ProseMirror marks (keys must be data-*).
@@ -511,7 +617,7 @@ export type TextRun = RunMarks & {
     /** CHARFORMAT / MERGEFORMAT, if present. */
     fieldResultFormat?: FieldResultFormat;
   };
-  /** Metadata for SEQ tokens (resolved by super-editor before layout measurement). */
+  /** Metadata for SEQ tokens (resolved by the document runtime before layout measurement). */
   seqMetadata?: {
     identifier: string;
     instruction?: string;
@@ -597,8 +703,32 @@ export type ImageAlphaModFix = {
 /** Hyperlink metadata from OOXML a:hlinkClick on a DrawingML image. */
 export type ImageHyperlink = { url: string; tooltip?: string };
 
-/** CSS object-fit values supported by SuperDoc image rendering paths. */
-export type ObjectFit = 'contain' | 'cover' | 'fill' | 'scale-down';
+/**
+ * Vertical alignment mode for an inline {@link ImageRun}.
+ *
+ * - `'top'`: the image box top aligns to the top of the line box. This is the
+ *   legacy default and the behavior for inline images that are taller than the
+ *   text-derived line height (they expand the line).
+ * - `'bottom'`: legacy baseline-ish alignment preserved for existing callers.
+ * - `'baseline'`: the image box bottom aligns to the text baseline. Intended for
+ *   small, glyph-like inline images (for example tiny PNG section numbers used
+ *   as text) that fit inside the text-derived line box and should sit on the
+ *   baseline next to the surrounding text instead of floating above it.
+ */
+export type ImageRunVerticalAlign = 'top' | 'bottom' | 'baseline';
+
+/**
+ * Explicit fail-closed rendering metadata for content that keeps its authored
+ * layout box but cannot be painted faithfully.
+ *
+ * The producer owns the diagnostic identity; painters only expose it on the
+ * visible, accessible placeholder. This keeps support decisions out of the DOM
+ * layer and makes degraded output observable in browser regression proofs.
+ */
+export type RenderPlaceholder = {
+  diagnosticIds: string[];
+  accessibleName: string;
+};
 
 /**
  * Inline image run for images that flow with text on the same line.
@@ -626,16 +756,20 @@ export type ImageRun = {
   width: number;
   /** Image height in pixels. */
   height: number;
+  /** Font family of the owning OOXML run, used to compose an image-only line box. */
+  fontFamily?: string;
+  /** Font size of the owning OOXML run, used to compose an image-only line box. */
+  fontSize?: number;
   /** Alternative text for accessibility. */
   alt?: string;
   /** Image title (tooltip). */
   title?: string;
+  /** Visible fail-closed replacement when the image source cannot be painted. */
+  placeholder?: RenderPlaceholder;
+  /** DrawingML docPr/@id of the picture (used to target the Document API for interactive resize). */
+  imageId?: string;
   /** Clip-path value for cropped images. */
   clipPath?: string;
-  /** Clip-path value for preset shape masks applied around the image box. */
-  shapeClipPath?: string;
-  /** CSS object-fit behavior for the painted image inside its layout box. */
-  objectFit?: ObjectFit;
 
   /**
    * Spacing around the image (from DOCX distT/distB/distL/distR attributes).
@@ -648,11 +782,14 @@ export type ImageRun = {
   distRight?: number;
 
   /**
-   * Vertical alignment of image relative to text baseline.
-   * 'top' keeps the image box inside the measured line height; 'bottom'
-   * preserves legacy baseline alignment for existing callers.
+   * Vertical alignment of image relative to the line box / text baseline.
+   *
+   * When omitted, the painter falls back to legacy `'top'`. See
+   * {@link ImageRunVerticalAlign} for the semantics of each mode. An authored
+   * value here is treated as the source of truth and always wins over the
+   * measured per-line alignment in {@link Line.inlineImageAlignments}.
    */
-  verticalAlign?: 'top' | 'bottom';
+  verticalAlign?: ImageRunVerticalAlign;
 
   /** Absolute ProseMirror position (inclusive) of this image run. */
   pmStart?: number;
@@ -661,6 +798,10 @@ export type ImageRun = {
 
   /** SDT metadata if image is wrapped in a structured document tag. */
   sdt?: SdtMetadata;
+  /** Tracked-change metadata from OOXML wrappers that own this inline image. */
+  trackedChange?: TrackedChangeMeta;
+  /** All tracked-change layers on this inline image, preserving overlap order. */
+  trackedChanges?: TrackedChangeMeta[];
 
   /**
    * Custom data attributes propagated from ProseMirror marks (keys must be data-*).
@@ -683,10 +824,20 @@ export type ImageRun = {
   hyperlink?: ImageHyperlink;
 };
 
-export type BreakRun = {
+export type BreakRun = RunMarks & {
   kind: 'break';
   /** Optional break type (e.g., 'line', 'page', 'column') */
   breakType?: 'line' | 'page' | 'column' | string;
+  /**
+   * Font metrics inherited from the run carrying the break.
+   *
+   * Block-level break runs do not paint text directly, but the v2 exact
+   * composition path may split a break-only paragraph into a page/column break
+   * plus a synthetic empty paragraph. That synthetic paragraph must keep the
+   * source paragraph mark's metrics so blank-line height matches Word/V1.
+   */
+  fontFamily?: string;
+  fontSize?: number;
   pmStart?: number;
   pmEnd?: number;
   sdt?: SdtMetadata;
@@ -698,7 +849,7 @@ export type BreakRun = {
  * Inline field annotation run for interactive form fields displayed as styled "pills".
  * Renders as a bordered, rounded inline element with displayLabel or type-specific content.
  *
- * Corresponds to super-editor's FieldAnnotation node which renders via FieldAnnotationView.
+ * Corresponds to a field-annotation document node rendered as a styled inline element.
  *
  * @example
  * // A paragraph with text and field annotation:
@@ -791,12 +942,62 @@ export type MathRun = {
 
 export type Run = TextRun | TabRun | ImageRun | LineBreakRun | BreakRun | FieldAnnotationRun | MathRun;
 
+/** Layout-affecting inline-box values, resolved to logical CSS pixel sides. */
+export type ResolvedInlineBoxLayout = {
+  paddingInlineStart: number;
+  paddingInlineEnd: number;
+  paddingBlockStart: number;
+  paddingBlockEnd: number;
+  gapBefore: number;
+  gapAfter: number;
+  borderWidth: number;
+};
+
+/** Sanitized, paint-only inline-box appearance. */
+export type ResolvedInlineBoxAppearance = {
+  backgroundColor?: string;
+  borderColor?: string;
+  borderStyle?: 'solid' | 'dashed' | 'dotted';
+  borderRadius?: number;
+  color?: string;
+};
+
+/** Paint-ready inline-box style emitted on measured line slices. */
+export type ResolvedInlineBoxStyle = ResolvedInlineBoxLayout & ResolvedInlineBoxAppearance;
+
+/**
+ * An internal, layout-aware presentation over a paragraph-visible text range.
+ *
+ * The proof uses leaf styling (D1): measurement creates box-edge segment
+ * boundaries and the painter styles the canonical text leaves. The fallback
+ * sibling layer was not needed. Extension-authored boxes reach this internal
+ * layout contract through the v2 host bridge. RTL input is ignored (D12), and
+ * the synchronous paragraph remeasurer does not consume this field (D14).
+ */
+export type InlineBoxSpan = {
+  id: string;
+  /**
+   * UTF-16 offsets over the paragraph's flattened visible text. Every
+   * non-text run contributes one placeholder character. These offsets never
+   * alter run PM ranges, run indices, source anchors, or document identity.
+   */
+  from: number;
+  to: number;
+  layout: ResolvedInlineBoxLayout;
+  appearance: ResolvedInlineBoxAppearance;
+  className?: string;
+  data?: Record<string, string>;
+  cursor?: 'default' | 'pointer' | 'text' | 'help';
+};
+
 export type ParagraphBlock = {
   kind: 'paragraph';
   id: BlockId;
   runs: Run[];
   attrs?: ParagraphAttrs;
   sourceAnchor?: SourceAnchor;
+  /** @internal Layout-aware presentation projected from the extension API by the v2 host. */
+  inlineBoxes?: InlineBoxSpan[];
 };
 
 /** Border style (subset of OOXML ST_Border). */
@@ -805,28 +1006,13 @@ export type BorderStyle =
   | 'single'
   | 'double'
   | 'dashed'
-  | 'dashSmallGap'
   | 'dotted'
   | 'thick'
   | 'triple'
   | 'dotDash'
   | 'dotDotDash'
-  | 'thinThickSmallGap'
-  | 'thickThinSmallGap'
-  | 'thinThickThinSmallGap'
-  | 'thinThickMediumGap'
-  | 'thickThinMediumGap'
-  | 'thinThickThinMediumGap'
-  | 'thinThickLargeGap'
-  | 'thickThinLargeGap'
-  | 'thinThickThinLargeGap'
   | 'wave'
-  | 'doubleWave'
-  | 'dashDotStroked'
-  | 'threeDEmboss'
-  | 'threeDEngrave'
-  | 'outset'
-  | 'inset';
+  | 'doubleWave';
 
 /** Border specification for table and cell borders. */
 export type BorderSpec = {
@@ -834,6 +1020,21 @@ export type BorderSpec = {
   width?: number;
   color?: string;
   space?: number;
+};
+
+/**
+ * Returns the complete painted width of an OOXML table border in CSS pixels.
+ * `w:sz` is the width of the complete border, including compound styles such
+ * as double. `thick` retains the existing table-painter minimum used in V2.
+ */
+export const getRenderedTableBorderWidthPx = (
+  border: Pick<BorderSpec, 'style' | 'width'> | undefined,
+  defaultWidth = 0,
+): number => {
+  if (!border || border.style === 'none') return 0;
+  const authoredWidth = Math.max(0, typeof border.width === 'number' ? border.width : defaultWidth);
+  if (border.style === 'thick') return Math.max(authoredWidth * 2, 3);
+  return authoredWidth;
 };
 
 /**
@@ -862,12 +1063,104 @@ export type CellBorders = {
   left?: BorderSpec;
 };
 
+const TABLE_BORDER_STYLE_NUMBER: Partial<Record<BorderStyle, number>> = {
+  single: 1,
+  thick: 2,
+  double: 3,
+  dotted: 4,
+  dashed: 5,
+  dotDash: 6,
+  dotDotDash: 7,
+  triple: 8,
+  wave: 18,
+  doubleWave: 19,
+};
+
+const TABLE_BORDER_STYLE_LINES: Partial<Record<BorderStyle, number>> = {
+  single: 1,
+  thick: 1,
+  double: 2,
+  dotted: 1,
+  dashed: 1,
+  dotDash: 1,
+  dotDotDash: 1,
+  triple: 3,
+  wave: 1,
+  doubleWave: 2,
+};
+
+/** True when a normalized border contributes a visible edge. */
+export const isPresentBorder = (border?: BorderSpec): border is BorderSpec =>
+  !!border && border.style !== undefined && border.style !== 'none' && (border.width === undefined || border.width > 0);
+
+/** True when the source explicitly suppresses an edge rather than omitting it. */
+export const isExplicitNoneBorder = (border?: unknown): boolean => {
+  if (!border || typeof border !== 'object') return false;
+  const value = border as Record<string, unknown>;
+  return value.style === 'none' || value.none === true;
+};
+
+const tableBorderWeight = (border: BorderSpec): number =>
+  (TABLE_BORDER_STYLE_LINES[border.style as BorderStyle] ?? 1) *
+  (TABLE_BORDER_STYLE_NUMBER[border.style as BorderStyle] ?? 1);
+
+const tableBorderColorBrightness = (
+  color: string | undefined,
+  formula: (red: number, green: number, blue: number) => number,
+): number => {
+  const hex = (color ?? '#000000').replace('#', '');
+  if (hex.length < 6) return 0;
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return formula(red, green, blue);
+};
+
+/**
+ * Resolve the single visible edge shared by two cells according to
+ * ECMA-376 Part 1 §17.4.66. Kept in the editor-neutral contract package so
+ * import and DOM paint use one conflict algorithm.
+ */
+export const resolveBorderConflict = (first?: BorderSpec, second?: BorderSpec): BorderSpec | undefined => {
+  const firstPresent = isPresentBorder(first);
+  const secondPresent = isPresentBorder(second);
+  if (!firstPresent && !secondPresent) return undefined;
+  if (!firstPresent) return second;
+  if (!secondPresent) return first;
+  const firstWeight = tableBorderWeight(first);
+  const secondWeight = tableBorderWeight(second);
+  if (firstWeight !== secondWeight) return firstWeight > secondWeight ? first : second;
+  const firstNumber = TABLE_BORDER_STYLE_NUMBER[first.style as BorderStyle] ?? 99;
+  const secondNumber = TABLE_BORDER_STYLE_NUMBER[second.style as BorderStyle] ?? 99;
+  if (firstNumber !== secondNumber) return firstNumber < secondNumber ? first : second;
+  const formulas: Array<(red: number, green: number, blue: number) => number> = [
+    (red, green, blue) => red + blue + 2 * green,
+    (_red, green, blue) => blue + 2 * green,
+    (_red, green) => green,
+  ];
+  for (const formula of formulas) {
+    const firstBrightness = tableBorderColorBrightness(first.color, formula);
+    const secondBrightness = tableBorderColorBrightness(second.color, formula);
+    if (firstBrightness !== secondBrightness) return firstBrightness < secondBrightness ? first : second;
+  }
+  return first;
+};
+
 export type TableCellAttrs = {
   borders?: CellBorders;
   padding?: BoxSpacing;
   verticalAlign?: 'top' | 'middle' | 'center' | 'bottom';
   background?: string;
   tableCellProperties?: Record<string, unknown>;
+  /**
+   * Cell-level structural tracked change (SD-3481), e.g. a cell insertion,
+   * deletion, merge, or split. Reuses the shared {@link TrackedChangeMeta}
+   * shape, mirroring {@link TableRowAttrs.trackedChange} at row level, so one
+   * painter + color-stamping system handles inline, row-level, and cell-level
+   * tracked changes. This is paint-ready metadata: `semanticColor` is stamped
+   * downstream by {@link stampTrackedChangeSemanticColors}.
+   */
+  trackedChange?: TrackedChangeMeta;
 };
 
 export type TablePropertiesAttrs = {
@@ -900,7 +1193,15 @@ export type TableAttrs = {
 export type TableCell = {
   id: BlockId;
   /** Multi-block cell content (new feature) */
-  blocks?: (ParagraphBlock | ImageBlock | DrawingBlock | TableBlock)[];
+  blocks?: (
+    | ParagraphBlock
+    | ImageBlock
+    | DrawingBlock
+    | TableBlock
+    | SectionBreakBlock
+    | PageBreakBlock
+    | ColumnBreakBlock
+  )[];
   /** Single paragraph (backward compatibility) */
   paragraph?: ParagraphBlock;
   rowSpan?: number;
@@ -997,7 +1298,11 @@ export type ImageBlock = {
   height?: number;
   alt?: string;
   title?: string;
-  objectFit?: ObjectFit;
+  /** Visible fail-closed replacement when the image source cannot be painted. */
+  placeholder?: RenderPlaceholder;
+  /** DrawingML docPr/@id of the picture (used to target the Document API for interactive resize). */
+  imageId?: string;
+  objectFit?: 'contain' | 'cover' | 'fill' | 'scale-down';
   display?: 'inline' | 'block';
   padding?: BoxSpacing;
   margin?: BoxSpacing;
@@ -1005,6 +1310,10 @@ export type ImageBlock = {
   wrap?: ImageWrap;
   /** Stacking order from OOXML relativeHeight (same formula as editor: Math.max(0, relativeHeight - OOXML_Z_INDEX_BASE)) */
   zIndex?: number;
+  /** Tracked-change metadata from OOXML wrappers that own this block image. */
+  trackedChange?: TrackedChangeMeta;
+  /** All tracked-change layers on this block image, preserving overlap order. */
+  trackedChanges?: TrackedChangeMeta[];
   attrs?: ImageBlockAttrs;
   // VML image adjustments for watermark effects
   gain?: string | number; // Brightness/washout (VML hex string or number)
@@ -1099,12 +1408,70 @@ export type TextFormatting = {
   fontSize?: number;
   fontFamily?: string;
   letterSpacing?: number;
+  /** Paint-only Word 2010+ text effects shared with ordinary text runs. */
+  textEffects?: TextEffects;
+};
+
+/** Solid color used by a text effect, with optional opacity. */
+export type TextEffectColor = {
+  color: string;
+  alpha?: number;
+};
+
+/** Word 2010+ text outline (`w14:textOutline`). */
+export type TextOutlineEffect = {
+  /** Outline width converted from EMU to CSS pixels. */
+  width: number;
+  fill: FillColor;
+};
+
+/** Word 2010+ outer text shadow (`w14:shadow`). */
+export type TextShadowEffect = {
+  color: TextEffectColor;
+  /** Blur radius converted from EMU to CSS pixels. */
+  blurRadius: number;
+  /** Shadow distance converted from EMU to CSS pixels. */
+  distance: number;
+  /** Direction in DrawingML degrees (`0` points right, `90` points down). */
+  direction: number;
+};
+
+/** Word 2010+ reflected-text mask (`w14:reflection`). */
+export type TextReflectionEffect = {
+  blurRadius: number;
+  distance: number;
+  direction: number;
+  startAlpha: number;
+  startPosition: number;
+  endAlpha: number;
+  endPosition: number;
+  scaleX: number;
+  scaleY: number;
+};
+
+/**
+ * Paint-only text effects shared by paragraph runs and flattened shape text.
+ * These effects do not change glyph advances, so layout measurement continues
+ * to use the run's ordinary typography contract.
+ */
+export type TextEffects = {
+  fill?: FillColor;
+  outline?: TextOutlineEffect;
+  shadow?: TextShadowEffect;
+  reflection?: TextReflectionEffect;
 };
 
 /** A single text part with optional formatting. */
 export type TextPart = {
   text: string;
   formatting?: TextFormatting;
+  /**
+   * Paragraph properties carried by the first visible part of a shape-text
+   * paragraph. Shape text is intentionally flattened into `parts`, so this
+   * marker preserves the authored block geometry without introducing a second
+   * competing text model.
+   */
+  paragraphProperties?: ShapeTextParagraphProperties;
   /** Optional field token (e.g., PAGE/NUMPAGES/SECTIONPAGES) resolved at render time. */
   fieldType?: 'PAGE' | 'NUMPAGES' | 'SECTIONPAGES';
   /** PAGE/SECTIONPAGES field-local value formatting override. */
@@ -1113,11 +1480,6 @@ export type TextPart = {
   isLineBreak?: boolean;
   /** Indicates this line break follows an empty paragraph (creates extra spacing). */
   isEmptyParagraph?: boolean;
-  /**
-   * True only on the line-break part that separates two logical paragraphs.
-   * Intra-paragraph <w:br> line breaks do not set this flag.
-   */
-  isParagraphBoundary?: boolean;
   /**
    * SD-2804: ECMA-376 §20.4.2.38 lets a textbox hold full body-level
    * content, including paragraphs whose runs carry inline w:drawing
@@ -1136,13 +1498,16 @@ export type TextPart = {
   alt?: string;
 };
 
-export type ShapeTextParagraph = {
-  spacing?: {
-    /** CSS pixels. */
-    before?: number;
-    /** CSS pixels. */
-    after?: number;
-  };
+/** Paragraph geometry used by flattened DrawingML/VML shape text. */
+export type ShapeTextParagraphProperties = {
+  horizontalAlign?: 'left' | 'center' | 'right' | 'justify';
+  spacingBefore?: number;
+  spacingAfter?: number;
+  line?: number;
+  lineUnit?: 'px' | 'multiplier';
+  leftIndent?: number;
+  rightIndent?: number;
+  firstLineIndent?: number;
 };
 
 /** Text content configuration for shapes. */
@@ -1151,9 +1516,38 @@ export type ShapeTextContent = {
   parts: TextPart[];
   /** Horizontal text alignment within the shape. */
   horizontalAlign?: 'left' | 'center' | 'right';
-  /** Paragraph metadata aligned to the logical paragraphs in `parts`. */
-  paragraphs?: ShapeTextParagraph[];
 };
+
+/** DrawingML textbox flow/overflow semantics from `a:bodyPr`. */
+export type ShapeTextLayout = {
+  /** `a:bodyPr/@wrap`; `none` keeps authored paragraphs on explicit lines only. */
+  wrap?: 'square' | 'none';
+  /** `a:bodyPr/@horzOverflow`. */
+  horizontalOverflow?: 'overflow' | 'clip';
+  /** `a:bodyPr/@vertOverflow`. */
+  verticalOverflow?: 'overflow' | 'clip' | 'ellipsis';
+};
+
+/** Resolve the line-breaking width for DrawingML textbox content. */
+export function resolveShapeTextContentMeasureWidth(
+  shapeWidth: number,
+  insets: { left: number; right: number },
+  layout: ShapeTextLayout | undefined,
+  autoFitBoundaryWidth?: number,
+): number {
+  // `wrap="none"` ordinarily means only explicit paragraph/line breaks may
+  // split text. `a:spAutoFit` is different: the shape grows to contain text,
+  // but a word processor still has to cap that growth at the available layout
+  // boundary. Passing that boundary lets measurement wrap only after the
+  // auto-grown shape reaches its container; omitting it preserves true
+  // horizontal overflow for non-autofit shapes.
+  if (layout?.wrap === 'none') {
+    return autoFitBoundaryWidth == null
+      ? Number.POSITIVE_INFINITY
+      : Math.max(1, autoFitBoundaryWidth - insets.left - insets.right);
+  }
+  return Math.max(1, shapeWidth - insets.left - insets.right);
+}
 
 export type LineEnd = {
   type?: string;
@@ -1173,28 +1567,56 @@ export type EffectExtent = {
   bottom: number;
 };
 
-export type ShapeOuterShadowEffect = {
-  type: 'outerShadow';
-  blurRadius: number;
-  distance: number;
-  direction: number;
-  color: string;
-  opacity: number;
+/**
+ * DrawingML relative rectangle in the source 1000ths-of-a-percent units.
+ * Values may be negative: ECMA-376 allows an outset as well as an inset.
+ */
+export type ShapeImageFillRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 };
 
-export type ShapeEffects = {
-  outerShadow?: ShapeOuterShadowEffect;
+/** DrawingML `a:tile` parameters, preserved without painter-specific conversion. */
+export type ShapeImageFillTile = {
+  offsetX?: number;
+  offsetY?: number;
+  scaleX?: number;
+  scaleY?: number;
+  flip?: string;
+  alignment?: string;
+};
+
+/** Resolved bitmap used as the fill paint for vector geometry. */
+export type ShapeImageFill = {
+  src: string;
+  mode: 'stretch' | 'tile';
+  sourceRect?: ShapeImageFillRect;
+  fillRect?: ShapeImageFillRect;
+  tile?: ShapeImageFillTile;
+  dpi?: number;
+  rotateWithShape?: boolean;
 };
 
 export type VectorShapeStyle = {
   fillColor?: FillColor;
+  imageFill?: ShapeImageFill;
   strokeColor?: StrokeColor;
   strokeWidth?: number;
+  /** Physical CSS-pixel dash/gap lengths resolved from the source stroke. */
+  strokeDashArray?: number[];
+  strokeLineJoin?: 'round' | 'bevel' | 'miter';
+  strokeLineCap?: 'round' | 'square' | 'butt';
+  /** Optional per-edge frame used by render-only table cells inside legacy shape groups. */
+  borders?: CellBorders;
   lineEnds?: LineEnds;
-  effects?: ShapeEffects;
   textContent?: ShapeTextContent;
+  textLayout?: ShapeTextLayout;
   textAlign?: string;
   textVerticalAlign?: 'top' | 'center' | 'bottom';
+  /** Legacy VML textbox text-flow semantics. */
+  textFlow?: 'horizontal' | 'vertical' | 'vertical-ideographic' | 'horizontal-ideographic' | 'bottom-to-top';
   textInsets?: {
     top: number;
     right: number;
@@ -1214,9 +1636,6 @@ export type ShapeGroupTransform = {
   childHeight?: number;
   childOriginXEmu?: number;
   childOriginYEmu?: number;
-  rotation?: number;
-  flipH?: boolean;
-  flipV?: boolean;
 };
 
 export type ShapeGroupVectorChild = {
@@ -1237,8 +1656,6 @@ export type ShapeGroupImageChild = {
     alt?: string;
     clipPath?: string;
     alphaModFix?: ImageAlphaModFix;
-    shapeClipPath?: string;
-    objectFit?: ObjectFit;
     imageId?: string;
     imageName?: string;
   };
@@ -1264,6 +1681,8 @@ export type DrawingBlockBase = {
   drawingContent?: DrawingContentSnapshot;
   attrs?: Record<string, unknown>;
   sourceAnchor?: SourceAnchor;
+  /** Visible fail-closed replacement metadata owned by the projection layer. */
+  placeholder?: RenderPlaceholder;
 };
 
 /**
@@ -1287,14 +1706,19 @@ export type VectorShapeDrawing = DrawingBlockBase & {
   shapeKind?: string;
   customGeometry?: CustomGeometryData;
   fillColor?: FillColor;
+  imageFill?: ShapeImageFill;
   strokeColor?: StrokeColor;
   strokeWidth?: number;
+  strokeDashArray?: number[];
+  strokeLineJoin?: 'round' | 'bevel' | 'miter';
+  strokeLineCap?: 'round' | 'square' | 'butt';
   lineEnds?: LineEnds;
-  effects?: ShapeEffects;
   effectExtent?: EffectExtent;
   textContent?: ShapeTextContent;
+  textLayout?: ShapeTextLayout;
   textAlign?: string;
   textVerticalAlign?: 'top' | 'center' | 'bottom';
+  textFlow?: 'horizontal' | 'vertical' | 'vertical-ideographic' | 'horizontal-ideographic' | 'bottom-to-top';
   textInsets?: {
     top: number;
     right: number;
@@ -1306,32 +1730,49 @@ export type VectorShapeDrawing = DrawingBlockBase & {
 export type TextboxDrawing = DrawingBlockBase & {
   drawingKind: 'textboxShape';
   geometry: DrawingGeometry;
+  /** `a:spAutoFit`: resize the shape height to its measured text content. */
+  autoFit?: boolean;
   shapeKind?: string;
   customGeometry?: CustomGeometryData;
   fillColor?: FillColor;
+  imageFill?: ShapeImageFill;
   strokeColor?: StrokeColor;
   strokeWidth?: number;
+  strokeDashArray?: number[];
+  strokeLineJoin?: 'round' | 'bevel' | 'miter';
+  strokeLineCap?: 'round' | 'square' | 'butt';
   lineEnds?: LineEnds;
-  effects?: ShapeEffects;
   effectExtent?: EffectExtent;
   textContent?: ShapeTextContent;
+  textLayout?: ShapeTextLayout;
   textAlign?: string;
   textVerticalAlign?: 'top' | 'center' | 'bottom';
+  textFlow?: 'horizontal' | 'vertical' | 'vertical-ideographic' | 'horizontal-ideographic' | 'bottom-to-top';
   textInsets?: {
     top: number;
     right: number;
     bottom: number;
     left: number;
   };
-  contentBlocks: ParagraphBlock[];
-  /** Paragraph layout results for table-cell textboxes; populated by the layout bridge, read by the painter. */
-  contentMeasures?: ParagraphMeasure[];
+  /**
+   * Canonical block content owned by the textbox story.
+   *
+   * ECMA-376 permits general block-level WordprocessingML in `w:txbxContent`.
+   * V2 currently supports paragraphs and tables explicitly; keeping this as a
+   * named subset makes later block-family additions additive instead of
+   * flattening rich content into drawing primitives.
+   */
+  contentBlocks: TextboxContentBlock[];
+  /** Canonical layout results for textbox content; populated by measurement or the layout bridge. */
+  contentMeasures?: TextboxContentMeasure[];
 };
+
+export type TextboxContentBlock = ParagraphBlock | TableBlock;
+export type TextboxContentMeasure = ParagraphMeasure | TableMeasure;
 
 export type ShapeGroupDrawing = DrawingBlockBase & {
   drawingKind: 'shapeGroup';
   geometry: DrawingGeometry;
-  effectExtent?: EffectExtent;
   groupTransform?: ShapeGroupTransform;
   shapes: ShapeGroupChild[];
   size?: {
@@ -1413,6 +1854,13 @@ export type SectionBreakBlock = {
   kind: 'sectionBreak';
   id: BlockId;
   type?: 'continuous' | 'nextPage' | 'evenPage' | 'oddPage';
+  /**
+   * Physical page parity required for a `nextPage` break. Word derives this
+   * when distinct odd/even headers are enabled and the new section explicitly
+   * restarts page numbering; authored `evenPage`/`oddPage` breaks express the
+   * same constraint through `type` instead.
+   */
+  requiredPageParity?: 'even' | 'odd';
   pageSize?: { w: number; h: number };
   orientation?: 'portrait' | 'landscape';
   margins: {
@@ -1511,16 +1959,79 @@ export type ColumnBreakBlock = {
 /** Positioning for anchored images (offsets in CSS px). */
 export type ImageAnchor = {
   isAnchored?: boolean;
-  hRelativeFrom?: 'column' | 'page' | 'margin';
-  vRelativeFrom?: 'paragraph' | 'page' | 'margin';
-  alignH?: 'left' | 'center' | 'right';
-  alignV?: 'top' | 'center' | 'bottom';
+  /**
+   * Page-space coordinates from `wp:simplePos` in CSS px.
+   * ECMA-376 Part 1 §20.4.2.13: when present because `wp:anchor/@simplePos`
+   * is true, these coordinates override positionH/positionV.
+   */
+  simplePos?: { x: number; y: number };
+  /** Keep the anchored object inside its table cell and resize the cell as needed. */
+  layoutInCell?: boolean;
+  hRelativeFrom?: AnchorHRelative;
+  vRelativeFrom?: AnchorVRelative;
+  alignH?: AnchorAlignH;
+  alignV?: AnchorAlignV;
   offsetH?: number;
   offsetV?: number;
   behindDoc?: boolean;
   padding?: BoxSpacing | undefined;
   margin?: BoxSpacing | undefined;
 };
+
+/**
+ * Shared vertical page-relative anchor predicate.
+ *
+ * Layout-engine uses this to decide which floating drawing anchors must be
+ * pre-registered before body flow. Host dependency scanning uses the same
+ * predicate so retained-layout admission cannot drift from engine semantics.
+ */
+export function isPageRelativeAnchor(
+  input: { anchor?: { simplePos?: unknown; vRelativeFrom?: unknown } | null } | null | undefined,
+): boolean {
+  if (input?.anchor?.simplePos != null) return true;
+  const vRelativeFrom = input?.anchor?.vRelativeFrom;
+  return (
+    vRelativeFrom === 'margin' ||
+    vRelativeFrom === 'page' ||
+    vRelativeFrom === 'topMargin' ||
+    vRelativeFrom === 'bottomMargin' ||
+    vRelativeFrom === 'insideMargin' ||
+    vRelativeFrom === 'outsideMargin'
+  );
+}
+
+/** Sub-pixel tolerance under which explicit column widths count as equal (SD-2324). */
+export const COLUMN_WIDTH_EQUALITY_TOLERANCE_PX = 0.5;
+
+/** True when every explicit column width is equal within the shared sub-pixel tolerance. */
+export function allExplicitColumnWidthsEqual(widths: readonly number[]): boolean {
+  if (widths.length <= 1) return true;
+  const first = widths[0]!;
+  return widths.every((w) => Math.abs(w - first) <= COLUMN_WIDTH_EQUALITY_TOLERANCE_PX);
+}
+
+/**
+ * Shared "genuinely unequal explicit column widths" predicate (SD-2324).
+ *
+ * The layout engine skips end-of-section column balancing exactly when this
+ * is true: Word fills genuinely-unequal explicit columns column-by-column
+ * rather than rebalancing them. Host retained-layout dependency scanning
+ * (SD-3772) consumes the same predicate so checkpoint admission can never
+ * drift from the engine's balancing semantics. Explicit widths that are all
+ * EQUAL (`equalWidth="0"` with every `<w:col w:w>` equal) still balance like
+ * implicit equal columns and are NOT genuinely unequal.
+ */
+export function hasGenuinelyUnequalExplicitColumnWidths(
+  columns: { equalWidth?: boolean | undefined; widths?: readonly number[] | undefined } | null | undefined,
+): boolean {
+  return (
+    columns != null &&
+    columns.equalWidth === false &&
+    Array.isArray(columns.widths) &&
+    columns.widths.length > 0 &&
+    !allExplicitColumnWidthsEqual(columns.widths)
+  );
+}
 
 /** Text wrapping for floating images (distances in px). */
 export type ImageWrap = {
@@ -1590,7 +2101,7 @@ export type ExclusionZone = {
     left: number;
     right: number;
   };
-  wrapMode: 'left' | 'right' | 'both' | 'none' | 'largest';
+  wrapMode: 'left' | 'right' | 'both' | 'none' | 'largest' | 'topBottom';
   polygon?: number[][];
 };
 
@@ -1732,6 +2243,12 @@ export type WordLayoutMarker = {
     letterSpacing?: number;
     vanish?: boolean;
   };
+  /**
+   * Optional tracked-change review metadata for the marker glyph (Plan 5).
+   * Projected onto the marker when the paragraph's visible marker is affected
+   * by a guide-relevant tracked change; absent for normal markers.
+   */
+  trackedChange?: MarkerTrackedChange;
 };
 
 /**
@@ -1864,9 +2381,24 @@ export type ParagraphAttrs = {
   tabIntervalTwips?: number;
   keepNext?: boolean;
   keepLines?: boolean;
+  /** Prevent a single first or last paragraph line from appearing alone on a page. Defaults to true. */
+  widowControl?: boolean;
   pageBreakBefore?: boolean;
   trackedChangesMode?: TrackedChangesMode;
   trackedChangesEnabled?: boolean;
+  /**
+   * Review anchor for a paragraph-mark tracked change when there is no list
+   * marker glyph to carry the review identity. The DOM painter stamps this on
+   * the paragraph frame so geometry/focus/sidebar paths can resolve normal and
+   * empty paragraph splits.
+   */
+  paragraphMarkTrackedChange?: MarkerTrackedChange;
+  /**
+   * Review anchor for a paragraph-property formatting revision such as
+   * `w:pPrChange` alignment. Used when the change has no inline text or list
+   * marker glyph that can carry review geometry.
+   */
+  paragraphPropertyTrackedChange?: MarkerTrackedChange;
   /** Marks an empty paragraph that only exists to carry section properties. */
   sectPrMarker?: boolean;
   /**
@@ -1901,6 +2433,13 @@ export type ParagraphAttrs = {
   tocId?: string;
   /** Floating alignment for positioned paragraphs (from w:framePr/@w:xAlign). */
   floatAlignment?: 'left' | 'right' | 'center';
+  /**
+   * Identity of the editable textbox story (`w:txbxContent`) this paragraph
+   * was projected from, part-global per host part (e.g. `tb0`, `header1-tb0`).
+   * Stamped by the projection adapter; the DOM painter forwards it so hosts
+   * can bind textbox content elements back to their story.
+   */
+  textboxId?: string;
   /**
    * Word paragraph layout output from @superdoc/word-layout.
    * Contains metadata about list marker positioning and text alignment for word-layout lists.
@@ -1962,6 +2501,236 @@ export type FlowBlock =
   | PageBreakBlock
   | ColumnBreakBlock;
 
+const sectionBreakForcesPage = (block: SectionBreakBlock): boolean => {
+  const breakType = block.type ?? (block.attrs?.source === 'sectPr' ? 'nextPage' : undefined);
+  return (
+    breakType === 'nextPage' ||
+    breakType === 'evenPage' ||
+    breakType === 'oddPage' ||
+    block.attrs?.requirePageBoundary === true
+  );
+};
+
+export const isReviewableSectionBoundaryMarkerBlock = (block: FlowBlock | null | undefined): boolean => {
+  if (block?.kind !== 'paragraph' || block.attrs?.sectPrMarker !== true) return false;
+  const trackedChange = block.attrs.paragraphMarkTrackedChange;
+  return trackedChange != null && trackedChange.targetKind === 'section-break';
+};
+
+export const isInvisibleSectionBoundaryMarkerBlock = (block: FlowBlock | null | undefined): boolean =>
+  block?.kind === 'paragraph' && block.attrs?.sectPrMarker === true && !isReviewableSectionBoundaryMarkerBlock(block);
+
+const isExplicitEmptyTextParagraphBlock = (block: FlowBlock | undefined): boolean => {
+  if (block?.kind !== 'paragraph' || isReviewableSectionBoundaryMarkerBlock(block)) return false;
+  if (block.attrs?.numberingProperties || block.attrs?.wordLayout?.marker) return false;
+  const runs = block.runs ?? [];
+  return (
+    runs.length > 0 &&
+    runs.every(
+      (run) => (run.kind === undefined || run.kind === 'text') && ((run as { text?: string }).text ?? '') === '',
+    )
+  );
+};
+
+const isBoundaryFillerParagraphBlock = (block: FlowBlock | undefined): boolean =>
+  isInvisibleSectionBoundaryMarkerBlock(block) || isExplicitEmptyTextParagraphBlock(block);
+
+export const isForcedSectPrSectionBreak = (block: FlowBlock | undefined): block is SectionBreakBlock =>
+  block?.kind === 'sectionBreak' && block.attrs?.source === 'sectPr' && sectionBreakForcesPage(block);
+
+const isSectPrSectionBreak = (block: FlowBlock | undefined): block is SectionBreakBlock =>
+  block?.kind === 'sectionBreak' && block.attrs?.source === 'sectPr';
+
+const hasUnequalExplicitColumnWidths = (block: SectionBreakBlock): boolean => {
+  const widths = block.columns?.widths;
+  if (block.columns?.equalWidth !== false || !Array.isArray(widths) || widths.length <= 1) return false;
+  const first = widths[0];
+  return Number.isFinite(first) && widths.some((width) => Number.isFinite(width) && Math.abs(width - first!) > 0.01);
+};
+
+const drawingAnchorParagraphId = (block: FlowBlock | undefined): string | null => {
+  if (block?.kind !== 'drawing') return null;
+  const anchorParagraphId = block.attrs?.anchorParagraphId;
+  return typeof anchorParagraphId === 'string' && anchorParagraphId.length > 0 ? anchorParagraphId : null;
+};
+
+const sourceParagraphRootKey = (block: FlowBlock | undefined): string | null => {
+  const sourceRef = (block as { sourceAnchor?: { sourceRef?: { partUri?: unknown; xpathLikePath?: unknown } } })
+    ?.sourceAnchor?.sourceRef;
+  if (typeof sourceRef?.partUri !== 'string' || typeof sourceRef?.xpathLikePath !== 'string') return null;
+  const paragraphRoot = sourceRef.xpathLikePath.match(/^(.*body\/w:p\[ordinal=\d+\])/);
+  return `${sourceRef.partUri}::${paragraphRoot?.[1] ?? sourceRef.xpathLikePath}`;
+};
+
+/**
+ * Collect blocks the paginator deliberately collapses before a forcing sectPr.
+ *
+ * The paragraph-only rule is source-complete and shared with consumers that
+ * need to prove whether a source child owns a layout fragment. The layout
+ * engine may additionally identify measured, tiny inline drawings; those are
+ * accepted only when their source/anchor proves they belong to the same filler
+ * run.
+ */
+export type SectionBoundaryFillerScanCheckpoint = {
+  index: number;
+  total: number;
+};
+
+export function* collectSectionBoundaryFillerBlockIdsSteps(
+  blocks: readonly FlowBlock[],
+  options: {
+    isTinyInlineBoundaryDrawing?: (block: DrawingBlock, index: number) => boolean;
+  } = {},
+  checkpointEveryBlocks: number | null = null,
+): Generator<SectionBoundaryFillerScanCheckpoint, ReadonlySet<string>, void> {
+  const suppressed = new Set<string>();
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    if (checkpointEveryBlocks != null && index % checkpointEveryBlocks === 0) {
+      yield { index, total: blocks.length };
+    }
+    if (!isForcedSectPrSectionBreak(blocks[index])) continue;
+
+    const candidateIndexes: number[] = [];
+    let cursor = index - 1;
+    while (cursor >= 0) {
+      if (checkpointEveryBlocks != null && cursor % checkpointEveryBlocks === 0) {
+        yield { index: cursor, total: blocks.length };
+      }
+      const candidate = blocks[cursor];
+      if (
+        isBoundaryFillerParagraphBlock(candidate) ||
+        (candidate?.kind === 'drawing' && options.isTinyInlineBoundaryDrawing?.(candidate, cursor) === true)
+      ) {
+        candidateIndexes.push(cursor);
+        cursor -= 1;
+        continue;
+      }
+      break;
+    }
+    if (candidateIndexes.length === 0) continue;
+
+    const leftBoundary = cursor >= 0 ? blocks[cursor] : undefined;
+    let hasSectionBoundaryContext = isSectPrSectionBreak(leftBoundary);
+    for (
+      let candidateOrdinal = 0;
+      !hasSectionBoundaryContext && candidateOrdinal < candidateIndexes.length;
+      candidateOrdinal += 1
+    ) {
+      if (checkpointEveryBlocks != null && candidateOrdinal % checkpointEveryBlocks === 0) {
+        yield { index: candidateOrdinal, total: candidateIndexes.length };
+      }
+      const candidateIndex = candidateIndexes[candidateOrdinal]!;
+      hasSectionBoundaryContext =
+        blocks[candidateIndex]?.kind === 'paragraph' && blocks[candidateIndex]?.attrs?.sectPrMarker === true;
+    }
+    if (!hasSectionBoundaryContext) continue;
+
+    const emptyParagraphIds = new Set<string>();
+    const emptyParagraphSourceRoots = new Set<string>();
+    for (let candidateOrdinal = 0; candidateOrdinal < candidateIndexes.length; candidateOrdinal += 1) {
+      if (checkpointEveryBlocks != null && candidateOrdinal % checkpointEveryBlocks === 0) {
+        yield { index: candidateOrdinal, total: candidateIndexes.length };
+      }
+      const candidateIndex = candidateIndexes[candidateOrdinal]!;
+      const candidate = blocks[candidateIndex];
+      if (!isBoundaryFillerParagraphBlock(candidate)) continue;
+      emptyParagraphIds.add(candidate.id);
+      const sourceRoot = sourceParagraphRootKey(candidate);
+      if (sourceRoot) emptyParagraphSourceRoots.add(sourceRoot);
+    }
+
+    let drawingsBelongToRun = true;
+    for (
+      let candidateOrdinal = 0;
+      drawingsBelongToRun && candidateOrdinal < candidateIndexes.length;
+      candidateOrdinal += 1
+    ) {
+      if (checkpointEveryBlocks != null && candidateOrdinal % checkpointEveryBlocks === 0) {
+        yield { index: candidateOrdinal, total: candidateIndexes.length };
+      }
+      const candidateIndex = candidateIndexes[candidateOrdinal]!;
+      const candidate = blocks[candidateIndex];
+      if (candidate?.kind !== 'drawing') continue;
+      const anchorParagraphId = drawingAnchorParagraphId(candidate);
+      const sourceRoot = sourceParagraphRootKey(candidate);
+      drawingsBelongToRun =
+        (anchorParagraphId != null && emptyParagraphIds.has(anchorParagraphId)) ||
+        (sourceRoot != null && emptyParagraphSourceRoots.has(sourceRoot));
+    }
+    if (!drawingsBelongToRun) continue;
+
+    for (let candidateOrdinal = 0; candidateOrdinal < candidateIndexes.length; candidateOrdinal += 1) {
+      if (checkpointEveryBlocks != null && candidateOrdinal % checkpointEveryBlocks === 0) {
+        yield { index: candidateOrdinal, total: candidateIndexes.length };
+      }
+      const candidateIndex = candidateIndexes[candidateOrdinal]!;
+      suppressed.add(blocks[candidateIndex]!.id);
+    }
+  }
+
+  return suppressed;
+}
+
+export const collectSectionBoundaryFillerBlockIds = (
+  blocks: readonly FlowBlock[],
+  options: {
+    isTinyInlineBoundaryDrawing?: (block: DrawingBlock, index: number) => boolean;
+  } = {},
+): ReadonlySet<string> => {
+  const steps = collectSectionBoundaryFillerBlockIdsSteps(blocks, options);
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+};
+
+const isEmptyParagraphSkippedAtBoundary = (block: ParagraphBlock): boolean => {
+  const runs = block.runs ?? [];
+  return (
+    runs.length === 0 ||
+    (runs.length === 1 &&
+      (!runs[0]?.kind || runs[0].kind === 'text') &&
+      (!(runs[0] as { text?: string }).text || (runs[0] as { text?: string }).text === ''))
+  );
+};
+
+/** Shared eligibility for paragraphs the layout loop deliberately omits. */
+export const shouldSkipParagraphDuringLayout = (blocks: FlowBlock[], index: number): boolean => {
+  const block = blocks[index];
+  if (block?.kind !== 'paragraph' || !isEmptyParagraphSkippedAtBoundary(block)) return false;
+  if (isReviewableSectionBoundaryMarkerBlock(block)) return false;
+
+  const previous = index > 0 ? blocks[index - 1] : null;
+  const next = index < blocks.length - 1 ? blocks[index + 1] : null;
+  if (block.attrs?.sectPrMarker === true && next?.kind === 'sectionBreak') {
+    // A paragraph-level sectPr is carried by the paragraph mark. Word folds
+    // that empty carrier into forcing boundaries, the authored empty line
+    // immediately before it, and explicit unequal-width continuous-column
+    // compositions. Other continuous carriers retain their line; mutation
+    // probes show that collapsing every sectPr marker over-compacts ordinary
+    // long documents. Reviewable section marks are excluded above so tracked
+    // insertion/deletion geometry remains addressable.
+    if (sectionBreakForcesPage(next)) return true;
+    if (next.attrs?.source === 'sectPr' && hasUnequalExplicitColumnWidths(next)) return true;
+    if (next.attrs?.source === 'sectPr' && isExplicitEmptyTextParagraphBlock(previous ?? undefined)) return true;
+  }
+  return previous?.kind === 'pageBreak' && next?.kind === 'sectionBreak';
+};
+
+/** True only for block kinds that produce an addressable layout fragment. */
+export const doesFlowBlockProduceLayoutFragment = (
+  blocks: FlowBlock[],
+  index: number,
+  suppressedBlockIds?: ReadonlySet<string>,
+): boolean => {
+  const block = blocks[index];
+  if (!block) return false;
+  if (suppressedBlockIds?.has(block.id)) return false;
+  if (block.kind === 'paragraph') return !shouldSkipParagraphDuringLayout(blocks, index);
+  return block.kind === 'table' || block.kind === 'list' || block.kind === 'image' || block.kind === 'drawing';
+};
+
 export type ColumnLayout = {
   count: number;
   gap: number;
@@ -1994,6 +2763,45 @@ export type ColumnRegion = {
 };
 
 /** A measured line within a block, output by the measurer. */
+/**
+ * Measured vertical alignment for one inline image run on a {@link Line}.
+ *
+ * Measurement owns this decision because only it knows the composed line's
+ * text-derived metrics and whether the image fits inside the line box (glyph)
+ * or expands it. The painter consumes it as paint-ready data and never
+ * re-derives alignment by measuring the DOM.
+ *
+ * `runIndex` indexes into the owning block's `runs` array (the same space as
+ * {@link Line.fromRun}/{@link LineSegment.runIndex}).
+ */
+export type LineInlineImageAlignment = {
+  runIndex: number;
+  verticalAlign: ImageRunVerticalAlign;
+};
+
+/**
+ * Paint-ready geometry for one inline-box slice on a measured line.
+ *
+ * Measurement owns the slice geometry and resolved style. The painter consumes
+ * these values directly and never normalizes logical sides or measures the DOM.
+ */
+export type LineInlineBox = {
+  id: string;
+  /** Line-relative UTF-16 offsets covered by this slice. */
+  from: number;
+  to: number;
+  x: number;
+  width: number;
+  top: number;
+  height: number;
+  startsRange: boolean;
+  endsRange: boolean;
+  style: ResolvedInlineBoxStyle;
+  className?: string;
+  data?: Record<string, string>;
+  cursor?: 'default' | 'pointer' | 'text' | 'help';
+};
+
 export type Line = {
   fromRun: number;
   fromChar: number;
@@ -2014,6 +2822,38 @@ export type Line = {
   segments?: LineSegment[];
   leaders?: LeaderDecoration[];
   bars?: BarDecoration[];
+  /**
+   * Measured per-image vertical alignment for inline images on this line.
+   *
+   * Measurement only emits an entry for an image it resolved to a non-default
+   * alignment (currently `'baseline'` for glyph-like images that fit inside the
+   * text-derived line box). Images absent from this list keep the legacy `'top'`
+   * default in the painter. An authored {@link ImageRun.verticalAlign} always
+   * wins over the entry here.
+   */
+  inlineImageAlignments?: LineInlineImageAlignment[];
+  /** Paint-ready inline-box slices emitted by measurement. */
+  inlineBoxes?: LineInlineBox[];
+  /**
+   * Measured tab widths keyed by tab run `pmStart`, stored alongside the
+   * `ParagraphMeasure` so the painter can read them even after FlowBlock
+   * re-projection where the measuring cache returns a hit and `run.width` is
+   * never re-assigned on the fresh run objects.
+   */
+  tabWidths?: Record<number, number>;
+};
+
+/**
+ * One contiguous horizontal region available to a measured paragraph line.
+ *
+ * Coordinates are relative to the paragraph fragment's content origin. A line
+ * can expose multiple regions when text wraps on both sides of a floating
+ * object. Measuring owns the line breaks inside these regions; layout owns
+ * deriving the regions from page/column float geometry.
+ */
+export type ParagraphLineRegion = {
+  offsetX: number;
+  width: number;
 };
 
 export type LineSegment = {
@@ -2021,6 +2861,17 @@ export type LineSegment = {
   fromChar: number;
   toChar: number;
   width: number;
+  /**
+   * Explicit line-content-relative x override (px), set by the measurer only for
+   * tab-aligned segments. When omitted, the segment flows immediately after the
+   * previous one (cumulative measured widths from the line content start).
+   *
+   * This stays optional on the producer type on purpose: it is an override
+   * channel, not a resolved coordinate. The editor-neutral substrate resolves it
+   * (together with indent + alignment) into a load-bearing absolute
+   * {@link NeutralSegmentGeometry.x}, so hosts consume the resolved value and
+   * never need fallback positioning logic. See `segment-geometry.ts`.
+   */
   x?: number;
   /** End x for an immediately preceding tab when it differs from this segment's paint x. */
   precedingTabEndX?: number;
@@ -2040,6 +2891,18 @@ export type ParagraphMeasure = {
   kind: 'paragraph';
   lines: Line[];
   totalHeight: number;
+  /**
+   * The `maxWidth` constraint (pre-indent, in pixels) this measure was produced for.
+   *
+   * Layout uses this to decide whether a paragraph must be remeasured for a
+   * narrower region (e.g. a multi-column section). Per-line `maxWidth` cannot
+   * serve that purpose: the first line's available width legitimately differs
+   * from the constraint under hanging/negative first-line indents, which made
+   * width-change detection based on `lines[0].maxWidth` fire spuriously.
+   * Optional so producer-independent measures (and fixtures) stay valid; when
+   * absent, layout falls back to the legacy first-line width heuristic.
+   */
+  measuredAtMaxWidth?: number;
   marker?: {
     markerWidth: number;
     /**
@@ -2098,6 +2961,8 @@ export type DrawingMeasure = {
   naturalHeight: number;
   geometry: DrawingGeometry;
   groupTransform?: ShapeGroupTransform;
+  /** Canonical block measurements for textbox content, when the drawing owns a textbox story. */
+  contentMeasures?: TextboxContentMeasure[];
 };
 
 export type TableCellMeasure = {
@@ -2248,6 +3113,13 @@ export type FootnotePageLedger = {
 export type Page = {
   number: number;
   fragments: Fragment[];
+  /**
+   * Suppress header/footer stories on a physically inserted parity page.
+   * Word emits these pages to satisfy odd/even section starts, but leaves the
+   * page itself completely blank and does not treat it as page one of the new
+   * section.
+   */
+  suppressHeaderFooter?: boolean;
   margins?: PageMargins;
   /**
    * Extra bottom space reserved on this page for footnotes (in px).
@@ -2266,6 +3138,8 @@ export type Page = {
   numberText?: string;
   /** Numeric page number after section page numbering settings are applied. */
   effectivePageNumber?: number;
+  /** One-based physical position within the owning section. */
+  sectionPageNumber?: number;
   /** Section PAGE number format before any run-local PAGE switch is applied. */
   pageNumberFormat?: PageNumberFormat;
   /** MVP chapter prefix text derived from the nearest numbered Heading N marker. */
@@ -2285,8 +3159,8 @@ export type Page = {
   vAlign?: SectionVerticalAlign;
   /**
    * Base section margins before header/footer inflation.
-   * Used for vAlign centering calculations to match Word's behavior
-   * where headers/footers don't affect vertical alignment.
+   * Used for vAlign centering and page-relative decoration positioning to match
+   * Word's behavior without inheriting effective header/footer margin inflation.
    */
   baseMargins?: { top: number; bottom: number };
   /**
@@ -2324,6 +3198,9 @@ export type Page = {
 export type ParaFragment = {
   kind: 'para';
   blockId: BlockId;
+  /** Flow column that owns this fragment (e.g. a footnote body placed in a
+   *  specific column's note band), distinct from visual x. */
+  columnIndex?: number;
   fromLine: number;
   toLine: number;
   x: number;
@@ -2467,7 +3344,9 @@ export type DrawingFragment = {
   geometry: DrawingGeometry;
   scale: number;
   drawingContentId?: string;
-  contentMeasures?: ParagraphMeasure[];
+  /** V2 textbox story id for DrawingML textbox content painted inside this drawing. */
+  textboxId?: string;
+  contentMeasures?: TextboxContentMeasure[];
   pmStart?: number;
   pmEnd?: number;
   sourceAnchor?: SourceAnchor;
@@ -2479,6 +3358,9 @@ export type ListItemFragment = {
   kind: 'list-item';
   blockId: BlockId;
   itemId: BlockId;
+  /** Flow column that owns this fragment (e.g. a footnote body placed in a
+   *  specific column's note band), distinct from visual x. */
+  columnIndex?: number;
   fromLine: number;
   toLine: number;
   x: number;
@@ -2499,6 +3381,18 @@ export type HeaderFooterType = 'default' | 'first' | 'even' | 'odd';
 export type HeaderFooterPage = {
   number: number;
   fragments: Fragment[];
+  /**
+   * Measurement height for this page's resolved story content. PAGE/NUMPAGES
+   * fields can wrap differently across physical pages, so paint alignment must
+   * not substitute the layout-wide maximum for this value.
+   */
+  measurementHeight?: number;
+  /** Per-page minimum rendered y, including out-of-band decorations. */
+  minY?: number;
+  /** Per-page maximum rendered y + fragment height. */
+  maxY?: number;
+  /** Per-page visual extent (`maxY - minY`). */
+  renderHeight?: number;
   numberText?: string;
   /** Section-aware numeric page value before formatting. */
   displayNumber?: number;
@@ -2532,6 +3426,34 @@ export type HeaderFooterLayout = {
   pages: HeaderFooterPage[];
 };
 
+/**
+ * Engine-owned paginator state immediately before a top-level paragraph.
+ * Incremental layout may resume from this state only after independently
+ * proving that every preceding fragment on the page is stable.
+ */
+export type LayoutBlockResumeCheckpoint = {
+  blockId: BlockId;
+  pageIndex: number;
+  prefixFragmentCount: number;
+  cursorY: number;
+  maxCursorY: number;
+  columnIndex: number;
+  trailingSpacing: number;
+  lastParagraphStyleId?: string;
+  lastParagraphContextualSpacing: boolean;
+  lastParagraphBorderHash?: string;
+  constraintBoundaries: readonly { y: number; columns: ColumnLayout }[];
+  activeConstraintIndex: number;
+  footnoteDemandThisPage: number;
+  footnoteRefsThisPage: number;
+  footnoteAnchorsThisPage: readonly {
+    pmPos: number;
+    refId: string;
+    fullHeight: number;
+    firstLineHeight: number;
+  }[];
+};
+
 /** Final layout output ready for painting. */
 export type Layout = {
   pageSize: { w: number; h: number };
@@ -2549,11 +3471,13 @@ export type Layout = {
   /**
    * Document epoch identifier for the document state used to produce this layout.
    *
-   * This value is set by higher-level orchestration (e.g., PresentationEditor) and is
+   * This value is set by higher-level document orchestration and is
    * stamped into the painted DOM as `data-layout-epoch` to enable deterministic mapping
    * from DOM-derived positions back to the current ProseMirror document state.
    */
   layoutEpoch?: number;
+  /** Exact paragraph-boundary resume sidecar; never inferred from painted geometry. */
+  blockResumeCheckpoints?: ReadonlyMap<BlockId, LayoutBlockResumeCheckpoint>;
 };
 
 export type WrapTextMode = 'bothSides' | 'left' | 'right' | 'largest';
@@ -2612,5 +3536,27 @@ export {
   isEmptySdtPlaceholderRun,
   sliceRunsForLine,
 } from './run-helpers.js';
+
+export {
+  INLINE_OBJECT_REPLACEMENT_CHARACTER,
+  flattenParagraphVisibleText,
+  mapVisibleRangeToRunSlices,
+  type ParagraphVisibleRunSlice,
+} from './paragraph-visible-text.js';
+
+export {
+  inlineBoxStyleSignature,
+  isFiniteNonNegativeInteger,
+  normalizeInlineBoxLogicalSides,
+  type InlineBoxLogicalSides,
+  type ResolvedInlineBoxLogicalSides,
+} from './inline-box.js';
+
+export {
+  PAGE_CHECKPOINT_DEPENDENCY_CLASSES,
+  areValidPageCheckpointDependencyClasses,
+  type NonFlowingPageRelativeAnchorDependencyProof,
+  type PageCheckpointDependencyClass,
+} from './incremental-dependency.js';
 
 export * as Engines from './engines/index.js';

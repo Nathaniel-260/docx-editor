@@ -28,8 +28,8 @@ export const RTL_DATE_LIKE_TOKEN_RE = /^-?\d+(?:[./-]\d+)+$/;
  * etc.; the Script properties add presentation forms without including
  * noncharacters (FDD0-FDEF) or the BOM (FEFF).
  *
- * AIDEV-NOTE: also duplicated in super-editor's mixed-bidi-backspace extension.
- * Consolidating crosses a layer boundary; tracked under SD-3169 follow-ups.
+ * AIDEV-NOTE: also used by editing/runtime mixed-bidi handling. Consolidating
+ * crosses a layer boundary; tracked under SD-3169 follow-ups.
  */
 export const STRONG_RTL_CHAR_RE = /[\u0590-\u08FF\p{Script=Hebrew}\p{Script=Arabic}]/u;
 

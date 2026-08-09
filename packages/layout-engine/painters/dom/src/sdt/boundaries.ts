@@ -1,30 +1,40 @@
-import type { Fragment, ResolvedPaintItem, SdtMetadata } from '@superdoc/contracts';
-import { getSdtContainerKey } from '@superdoc/contracts';
-import { computeOwnContainerFlags, type SdtBoundaryOptions } from './container.js';
+import type { Fragment, ResolvedPaintItem } from '@superdoc/contracts';
+import type { SdtBoundaryOptions } from './container.js';
 
-type SdtAttrsCandidate = {
-  attrs?: {
-    sdt?: SdtMetadata | null;
-  } | null;
-};
+const EMPTY_LABEL_KEYS: ReadonlySet<string> = new Set();
 
-const getOwnContainerKey = (item: ResolvedPaintItem): string | null => {
-  if (item.kind !== 'fragment') return null;
-
-  const fragment = item.fragment;
-  const block = item.block;
-  if (!block) return null;
-
-  if (fragment.kind === 'list-item' && block.kind === 'list') {
-    const listItem = block.items.find((candidate) => candidate.id === fragment.itemId);
-    return getSdtContainerKey(listItem?.paragraph.attrs?.sdt);
+/**
+ * The container-label keys a `computeSdtBoundaries` walk over `resolvedItems`
+ * WOULD add to `sdtLabelsRendered`, without mutating it. This is the pure
+ * "which labels does this page display" function the persistent-page reuse path
+ * compares against recorded per-page label state: label placement is
+ * cross-page prefix state that resolve stamps do not cover, so an untouched
+ * reuse is only safe when the recorded labels equal this expectation.
+ *
+ * Implemented BY running `computeSdtBoundaries` on a scratch copy of the
+ * prefix set (never a hand-maintained mirror), so the two can not drift.
+ * Pages without container items take the allocation-free fast path.
+ */
+export const computeExpectedSdtLabelKeys = (
+  resolvedItems: readonly ResolvedPaintItem[],
+  sdtLabelsRendered: ReadonlySet<string>,
+): ReadonlySet<string> => {
+  let hasContainerItem = false;
+  for (const item of resolvedItems) {
+    if (item && 'sdtContainerKey' in item && (item as { sdtContainerKey?: string | null }).sdtContainerKey != null) {
+      hasContainerItem = true;
+      break;
+    }
   }
+  if (!hasContainerItem) return EMPTY_LABEL_KEYS;
 
-  if ('attrs' in block) {
-    return getSdtContainerKey((block as SdtAttrsCandidate).attrs?.sdt);
+  const scratch = new Set(sdtLabelsRendered);
+  computeSdtBoundaries(resolvedItems, scratch);
+  const expected = new Set<string>();
+  for (const key of scratch) {
+    if (!sdtLabelsRendered.has(key)) expected.add(key);
   }
-
-  return null;
+  return expected;
 };
 
 export const computeSdtBoundaries = (
@@ -39,7 +49,6 @@ export const computeSdtBoundaries = (
     }
     return null;
   });
-  const ownContainerKeys: (string | null)[] = resolvedItems.map((item) => getOwnContainerKey(item));
 
   const fragmentOf = (idx: number): Fragment | null => {
     const item = resolvedItems[idx];
@@ -87,25 +96,17 @@ export const computeSdtBoundaries = (
         }
       }
 
-      const ownKey = ownContainerKeys[k];
-      const previousOwnKey = k > 0 ? ownContainerKeys[k - 1] : null;
-      const nextOwnKey = k + 1 < ownContainerKeys.length ? ownContainerKeys[k + 1] : null;
-      const nextContainerKey = k + 1 < containerKeys.length ? containerKeys[k + 1] : null;
-      const ownFlags = computeOwnContainerFlags({
-        containerKey: currentKey,
-        ownContainerKey: ownKey,
-        previousOwnContainerKey: previousOwnKey,
-        nextOwnContainerKey: nextOwnKey,
-        nextContainerKey,
-        sdtLabelsRendered,
-      });
+      const showLabel = isStart && !sdtLabelsRendered.has(currentKey);
+      if (showLabel) {
+        sdtLabelsRendered.add(currentKey);
+      }
 
       boundaries.set(k, {
         isStart,
         isEnd,
         widthOverride: groupRight - fragment.x,
         paddingBottomOverride,
-        ...ownFlags,
+        showLabel,
       });
     }
 

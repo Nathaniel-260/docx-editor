@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import type { FieldAnnotationRun } from '@superdoc/contracts';
 import { renderFieldAnnotationRun } from './field-annotation-run.js';
 import type { RunRenderContext } from './types.js';

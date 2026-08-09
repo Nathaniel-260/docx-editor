@@ -6,7 +6,7 @@
  * with bucket fallback when exact page matches are not found.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { getBucketForPageNumber, getBucketRepresentative, type DigitBucket } from '../src/layoutHeaderFooter';
 import type { HeaderFooterLayout, HeaderFooterPage } from '@superdoc/contracts';
 
@@ -56,10 +56,7 @@ describe('Bucket Fallback Logic', () => {
   });
 
   describe('Bucket Fallback Simulation', () => {
-    /**
-     * Helper function to simulate the decoration provider's bucket fallback logic.
-     * This is the same logic implemented in PresentationEditor#findHeaderFooterPageForPageNumber.
-     */
+    /** Helper function to simulate the decoration provider's bucket fallback logic. */
     function findHeaderFooterPageForPageNumber(
       pages: HeaderFooterPage[],
       pageNumber: number,

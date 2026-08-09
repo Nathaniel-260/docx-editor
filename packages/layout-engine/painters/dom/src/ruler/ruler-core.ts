@@ -34,11 +34,17 @@ export type RulerTick = {
   size: 'main' | 'half' | 'eighth';
   /** Height as CSS percentage string (e.g., '40%') */
   height: string;
-  /** Optional inch number label (only on main ticks) */
+  /** Optional whole-unit number label (inch or cm, per `unit`; only on main ticks) */
   label?: number;
   /** X position in pixels from left edge */
   x: number;
 };
+
+/**
+ * Measurement unit the ruler numbers/ticks reflect. `in` = inches (the default,
+ * unchanged behaviour), `cm` = centimetres (Word's alternate measurement unit).
+ */
+export type RulerUnit = 'in' | 'cm';
 
 /**
  * Complete ruler definition with ticks and margin positions
@@ -70,6 +76,8 @@ export type RulerConfig = {
   ppi?: number;
   /** Ruler height in pixels (default: 25) */
   heightPx?: number;
+  /** Measurement unit for tick numbering/spacing (default: 'in'). */
+  unit?: RulerUnit;
 };
 
 /** Default pixels per inch */
@@ -78,11 +86,73 @@ const DEFAULT_PPI = 96;
 /** Default ruler height in pixels */
 const DEFAULT_RULER_HEIGHT = 25;
 
+/** Centimetres per inch (exact). */
+const CM_PER_INCH = 2.54;
+
 /**
- * Spacing between tick marks in pixels.
- * With 8 ticks per inch (main + 3 eighth + half + 3 eighth), spacing = 96/8 = 12px
+ * Build the tick marks for a page of the given inch width.
+ *
+ * Inches (default): 8 subdivisions per inch — a labelled main tick, three eighth
+ * ticks, a half tick, three eighth ticks — matching the historical ruler exactly.
+ * Spacing is ppi-aware (`ppi / 8` px per eighth), so 1 inch = `ppi` px; at the
+ * default 96 ppi this is the historical 12px eighth spacing.
+ *
+ * Centimetres: a labelled main tick every whole cm with a half tick at each
+ * 0.5 cm, matching Word's centimetre ruler. Positions are in unscaled page
+ * pixels (the caller scales by zoom), so 1 cm = `ppi / 2.54` px.
  */
-const TICK_SPACING_PX = DEFAULT_PPI / 8;
+function buildRulerTicks(pageWidthInInches: number, unit: RulerUnit, ppi: number): RulerTick[] {
+  const ticks: RulerTick[] = [];
+
+  if (unit === 'cm') {
+    const cmPx = ppi / CM_PER_INCH;
+    const totalCm = pageWidthInInches * CM_PER_INCH;
+    for (let cm = 0; cm < totalCm; cm++) {
+      const x = cm * cmPx;
+      ticks.push({ size: 'main', height: '20%', label: cm, x });
+      // Half-centimetre tick, unless it would fall past the page edge.
+      if (totalCm - cm > 0.5) {
+        ticks.push({ size: 'half', height: '40%', x: x + cmPx / 2 });
+      }
+    }
+    return ticks;
+  }
+
+  // Eighth-inch spacing derived from the caller's ppi so inch mode stays
+  // ppi-aware like cm mode. 8 subdivisions per inch → ppi/8 px each
+  // (12px at the default 96 ppi, matching the historical fixed spacing).
+  const eighthPx = ppi / 8;
+
+  let currentX = 0;
+  for (let inch = 0; inch < pageWidthInInches; inch++) {
+    const remaining = pageWidthInInches - inch;
+
+    // Main tick (inch marker with label)
+    ticks.push({ size: 'main', height: '20%', label: inch, x: currentX });
+    currentX += eighthPx;
+
+    // First set of eighth ticks (3 ticks)
+    for (let i = 0; i < 3; i++) {
+      ticks.push({ size: 'eighth', height: '10%', x: currentX });
+      currentX += eighthPx;
+    }
+
+    // Half tick
+    ticks.push({ size: 'half', height: '40%', x: currentX });
+    currentX += eighthPx;
+
+    // Stop if we're at the last half inch
+    if (remaining <= 0.5) break;
+
+    // Second set of eighth ticks (3 ticks)
+    for (let i = 0; i < 3; i++) {
+      ticks.push({ size: 'eighth', height: '10%', x: currentX });
+      currentX += eighthPx;
+    }
+  }
+
+  return ticks;
+}
 
 /**
  * Generate a complete ruler definition based on page configuration.
@@ -132,53 +202,7 @@ export function generateRulerDefinition(config: RulerConfig): RulerDefinition {
   }
 
   const widthPx = pageSize.width * ppi;
-  const ticks: RulerTick[] = [];
-
-  let currentX = 0;
-
-  for (let inch = 0; inch < pageSize.width; inch++) {
-    const remaining = pageSize.width - inch;
-
-    // Main tick (inch marker with label)
-    ticks.push({
-      size: 'main',
-      height: '20%',
-      label: inch,
-      x: currentX,
-    });
-    currentX += TICK_SPACING_PX;
-
-    // First set of eighth ticks (3 ticks)
-    for (let i = 0; i < 3; i++) {
-      ticks.push({
-        size: 'eighth',
-        height: '10%',
-        x: currentX,
-      });
-      currentX += TICK_SPACING_PX;
-    }
-
-    // Half tick
-    ticks.push({
-      size: 'half',
-      height: '40%',
-      x: currentX,
-    });
-    currentX += TICK_SPACING_PX;
-
-    // Stop if we're at the last half inch
-    if (remaining <= 0.5) break;
-
-    // Second set of eighth ticks (3 ticks)
-    for (let i = 0; i < 3; i++) {
-      ticks.push({
-        size: 'eighth',
-        height: '10%',
-        x: currentX,
-      });
-      currentX += TICK_SPACING_PX;
-    }
-  }
+  const ticks = buildRulerTicks(pageSize.width, config.unit ?? 'in', ppi);
 
   return {
     widthPx,
@@ -332,6 +356,8 @@ export type RulerConfigPx = {
   ppi?: number;
   /** Ruler height in pixels (default: 25) */
   heightPx?: number;
+  /** Measurement unit for tick numbering/spacing (default: 'in'). */
+  unit?: RulerUnit;
 };
 
 /**
@@ -384,53 +410,7 @@ export function generateRulerDefinitionFromPx(config: RulerConfigPx): RulerDefin
 
   // Calculate page width in inches for tick generation
   const pageWidthInches = pageWidthPx / ppi;
-  const ticks: RulerTick[] = [];
-
-  let currentX = 0;
-
-  for (let inch = 0; inch < pageWidthInches; inch++) {
-    const remaining = pageWidthInches - inch;
-
-    // Main tick (inch marker with label)
-    ticks.push({
-      size: 'main',
-      height: '20%',
-      label: inch,
-      x: currentX,
-    });
-    currentX += TICK_SPACING_PX;
-
-    // First set of eighth ticks (3 ticks)
-    for (let i = 0; i < 3; i++) {
-      ticks.push({
-        size: 'eighth',
-        height: '10%',
-        x: currentX,
-      });
-      currentX += TICK_SPACING_PX;
-    }
-
-    // Half tick
-    ticks.push({
-      size: 'half',
-      height: '40%',
-      x: currentX,
-    });
-    currentX += TICK_SPACING_PX;
-
-    // Stop if we're at the last half inch
-    if (remaining <= 0.5) break;
-
-    // Second set of eighth ticks (3 ticks)
-    for (let i = 0; i < 3; i++) {
-      ticks.push({
-        size: 'eighth',
-        height: '10%',
-        x: currentX,
-      });
-      currentX += TICK_SPACING_PX;
-    }
-  }
+  const ticks = buildRulerTicks(pageWidthInches, config.unit ?? 'in', ppi);
 
   return {
     widthPx: pageWidthPx,

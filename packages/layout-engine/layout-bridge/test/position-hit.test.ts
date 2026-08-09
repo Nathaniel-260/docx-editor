@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { FlowBlock, ParagraphAttrs, Layout, Page, TableFragment } from '@superdoc/contracts';
 import { isRtlBlock, determineColumn, determineTableColumn } from '../src/position-hit';
 

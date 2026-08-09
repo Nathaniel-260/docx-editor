@@ -1,7 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import type { TableBlock } from '@superdoc/contracts';
 import { buildAutoFitWorkingGridInput } from './autofit-normalize.js';
-import { computeFixedTableColumnWidths } from './fixed-table-columns.js';
 
 /**
  * Build a minimal runtime table block for normalization tests.
@@ -133,52 +132,6 @@ describe('buildAutoFitWorkingGridInput', () => {
     expect(result.gridColumnCount).toBe(3);
   });
 
-  // SD-3309: a pct-width table re-resolves its absolute width against the CURRENT available
-  // width, so the authored grid sum (from authoring-time twips) legitimately differs from the
-  // re-resolved table width while the grid PROPORTIONS stay authoritative. Word honors those
-  // proportions (300dpi probes: a tblW=pct table with grid 30/70 + short content renders 30/70,
-  // not content-sized). The grid sum must NOT have to equal the table width for a pct table.
-  it('preserves an explicit non-uniform grid for a pct-width table even when the grid sum differs from the resolved width', () => {
-    const block = createTableBlock({
-      attrs: {
-        // 100% of available; resolves to 624 at maxWidth 624, but the authored grid sums to 640.
-        tableWidth: { width: 5000, type: 'pct' },
-      },
-      columnWidths: [192, 448], // 30 / 70, authored twips->px, sum 640 != 624
-      rows: [
-        {
-          id: 'row-1',
-          cells: [{ id: 'cell-1' }, { id: 'cell-2' }],
-        },
-      ],
-    });
-
-    const result = buildAutoFitWorkingGridInput(block, { maxWidth: 624 });
-
-    expect(result.layoutMode).toBe('autofit');
-    expect(result.preferredTableWidth).toBe(624);
-    expect(result.preserveExplicitAutoGrid).toBe(true);
-  });
-
-  it('does not preserve a uniform pct-width grid with no concrete cell widths (lets content size it)', () => {
-    const block = createTableBlock({
-      attrs: {
-        tableWidth: { width: 5000, type: 'pct' },
-      },
-      columnWidths: [312, 312], // uniform, no cell width hints
-      rows: [
-        {
-          id: 'row-1',
-          cells: [{ id: 'cell-1' }, { id: 'cell-2' }],
-        },
-      ],
-    });
-
-    const result = buildAutoFitWorkingGridInput(block, { maxWidth: 624 });
-
-    expect(result.preserveExplicitAutoGrid).toBeUndefined();
-  });
-
   it('does not mark complete fixed grids far under tblW as authoritative', () => {
     const block = createTableBlock({
       attrs: {
@@ -220,7 +173,7 @@ describe('buildAutoFitWorkingGridInput', () => {
     expect(result.preserveAutoGrid).toBe(true);
   });
 
-  it('does not mark uniform tblW auto grids as preferred AutoFit geometry', () => {
+  it('stabilizes a complete uniform tblW auto grid without redundant tcW metadata', () => {
     const block = createTableBlock({
       attrs: {
         tableWidth: { value: 0, type: 'auto' },
@@ -237,10 +190,51 @@ describe('buildAutoFitWorkingGridInput', () => {
     const result = buildAutoFitWorkingGridInput(block, { maxWidth: 624 });
 
     expect(result.preserveAutoGrid).toBeUndefined();
+    expect(result.stableAutoGrid).toBe(true);
     expect(result.gridColumnCount).toBe(4);
   });
 
-  it('records a fitting uniform tblW auto grid as the AutoFit width budget even when tcW preferences overflow it', () => {
+  it('preserves the SD-3817 complete uniform tblW auto grid with matching tcW widths', () => {
+    const columnCount = 9;
+    const rowCount = 20;
+    const columnWidthTwips = 1360;
+    const columnWidthPx = columnWidthTwips / 15;
+    const block = createTableBlock({
+      attrs: {
+        tableWidth: { value: 0, type: 'auto' },
+      },
+      columnWidths: Array.from({ length: columnCount }, () => columnWidthPx),
+      rows: Array.from({ length: rowCount }, (_, rowIndex) => ({
+        id: `row-${rowIndex}`,
+        attrs: rowIndex === 0 ? { tableRowProperties: { header: 1 } } : {},
+        cells: Array.from({ length: columnCount }, (_, columnIndex) => ({
+          id: `cell-${rowIndex}-${columnIndex}`,
+          attrs: {
+            tableCellProperties: {
+              cellWidth: { value: columnWidthTwips, type: 'dxa' },
+            },
+          },
+        })),
+      })),
+    });
+
+    const result = buildAutoFitWorkingGridInput(block, { maxWidth: columnCount * columnWidthPx });
+
+    expect(result).toMatchObject({
+      layoutMode: 'autofit',
+      preserveAutoGrid: true,
+      stableAutoGrid: true,
+      gridColumnCount: columnCount,
+      preferredColumnWidths: Array.from({ length: columnCount }, () => columnWidthPx),
+    });
+    expect(result.rows).toHaveLength(rowCount);
+    expect(result.rows.every((row) => row.logicalColumnCount === columnCount)).toBe(true);
+  });
+
+  it('stabilizes a fitting complete tblW auto grid even when tcW preferences conflict', () => {
+    // Repro for TABLES-FIDELITY-AUTOFIT-COMPLETE-GRID-AUTO-WIDTH-001:
+    // 4×2160 twip (=4×144px) authored grid + non-uniform cell tcW totals to 748.8px
+    // but the table must stay anchored to the 576px authored-grid total.
     const block = createTableBlock({
       attrs: {
         tableWidth: { value: 0, type: 'auto' },
@@ -270,9 +264,11 @@ describe('buildAutoFitWorkingGridInput', () => {
 
     const result = buildAutoFitWorkingGridInput(block, { maxWidth: 576 });
 
+    expect(result.layoutMode).toBe('autofit');
     expect(result.preferredTableWidth).toBeUndefined();
     expect(result.preferredColumnWidths).toEqual([144, 144, 144, 144]);
     expect(result.preserveAutoGrid).toBeUndefined();
+    expect(result.stableAutoGrid).toBe(true);
     expect(result).toMatchObject({ autoGridWidthBudget: 576 });
   });
 
@@ -301,7 +297,50 @@ describe('buildAutoFitWorkingGridInput', () => {
     expect(result).toMatchObject({ autoGridWidthBudget: 576 });
   });
 
+  it('uses a smaller fully specified row tcW total over a conflicting non-uniform tblW auto grid budget', () => {
+    const block = createTableBlock({
+      attrs: {
+        tableWidth: { value: 0, type: 'auto' },
+      },
+      columnWidths: [122.13333333333333, 90.06666666666666, 90.06666666666666, 164, 119.13333333333333],
+      rows: [
+        {
+          id: 'row-1',
+          cells: [
+            {
+              id: 'cell-1',
+              colSpan: 5,
+              attrs: { tableCellProperties: { cellWidth: { value: 8600, type: 'dxa' } } },
+            },
+          ],
+        },
+        {
+          id: 'row-2',
+          cells: [
+            { id: 'cell-2', attrs: { tableCellProperties: { cellWidth: { value: 1832, type: 'dxa' } } } },
+            { id: 'cell-3', attrs: { tableCellProperties: { cellWidth: { value: 1351, type: 'dxa' } } } },
+            { id: 'cell-4', attrs: { tableCellProperties: { cellWidth: { value: 1351, type: 'dxa' } } } },
+            { id: 'cell-5', attrs: { tableCellProperties: { cellWidth: { value: 2460, type: 'dxa' } } } },
+            { id: 'cell-6', attrs: { tableCellProperties: { cellWidth: { value: 1606, type: 'dxa' } } } },
+          ],
+        },
+      ],
+    });
+
+    const result = buildAutoFitWorkingGridInput(block, { maxWidth: 624 });
+
+    expect(result.preserveAutoGrid).toBe(true);
+    expect(result.preferredColumnWidths).toEqual([
+      122.13333333333333, 90.06666666666666, 90.06666666666666, 164, 119.13333333333333,
+    ]);
+    expect(result.autoGridWidthBudget).toBeCloseTo(573.3333333333334, 6);
+  });
+
   it('does not create an AutoFit grid budget from fallback widths when tblW and tblGrid are omitted', () => {
+    // Repro for TABLES-FIDELITY-AUTOFIT-OMITTED-WIDTH-NO-USABLE-GRID-001:
+    // tblGrid is empty in OOXML; layout-adapter falls back to PM colwidth scaled up
+    // to the page-content width (624). The first-row cell tcW values sum to
+    // 519px, so the runtime must not anchor to the [312, 312] fallback grid.
     const block = createTableBlock({
       attrs: {},
       columnWidths: [312, 312],
@@ -318,6 +357,9 @@ describe('buildAutoFitWorkingGridInput', () => {
 
     const result = buildAutoFitWorkingGridInput(block, { maxWidth: 624 });
 
+    expect(result.preserveAutoGrid).toBeUndefined();
+    expect(result.stableAutoGrid).toBeUndefined();
+    expect(result.gridColumnCount).toBe(2);
     expect(result.preferredTableWidth).toBeUndefined();
     expect(result.preferredColumnWidths).toEqual([312, 312]);
     expect(result.autoGridWidthBudget).toBeUndefined();
@@ -340,6 +382,7 @@ describe('buildAutoFitWorkingGridInput', () => {
     const result = buildAutoFitWorkingGridInput(block, { maxWidth: 600 });
 
     expect(result.preserveAutoGrid).toBeUndefined();
+    expect(result.stableAutoGrid).toBeUndefined();
     expect(result.gridColumnCount).toBe(2);
   });
 
@@ -783,114 +826,5 @@ describe('buildAutoFitWorkingGridInput', () => {
       cells: [{ cellId: 'cell-3', startColumn: 1, span: 1, preferredWidth: 100 }],
     });
     expect(result.gridColumnCount).toBe(2);
-  });
-});
-
-/**
- * SD-1513 regression locks: overhanging fixed-layout tables with a merged,
- * inset row (gridBefore/gridAfter + wBefore/wAfter + gridSpan).
- *
- * Contract, verified against Word renders and the live production pipeline:
- * the authored grid is preserved verbatim (preserveAuthoredGrid), so the
- * merged span resolves to exactly grid_sum - wBefore - wAfter. Word wraps the
- * cell text at that width; any narrowing here reflows lines one word early.
- *
- * Block shapes below mirror the v1 layout-adapter output captured from the
- * running pipeline: tableWidth pre-converted to px, cell widths as raw dxa
- * measurements, row skips on attrs.tableRowProperties.
- */
-describe('overhanging fixed tables with a merged inset row (SD-1513)', () => {
-  const TWIPS_PER_PX = 15;
-
-  /** Table block mirroring the adapter output for a fixed table with one merged inset row. */
-  function createOverhangBlock(args: {
-    gridDxa: number[];
-    headerCells: Array<{ span?: number; widthDxa: number }>;
-    insetRow: { wBeforeDxa: number; wAfterDxa: number; span: number; widthDxa: number };
-  }): TableBlock {
-    const gridSumDxa = args.gridDxa.reduce((sum, w) => sum + w, 0);
-    return createTableBlock({
-      attrs: {
-        tableLayout: 'fixed',
-        tableWidth: { width: gridSumDxa / TWIPS_PER_PX, type: 'dxa' },
-      },
-      columnWidths: args.gridDxa.map((w) => w / TWIPS_PER_PX),
-      rows: [
-        {
-          id: 'header-row',
-          cells: args.headerCells.map((cell, index) => ({
-            id: `header-${index}`,
-            colSpan: cell.span ?? 1,
-            attrs: { tableCellProperties: { cellWidth: { value: cell.widthDxa, type: 'dxa' } } },
-          })),
-        },
-        {
-          id: 'inset-row',
-          attrs: {
-            tableRowProperties: {
-              gridBefore: 1,
-              gridAfter: 1,
-              wBefore: { value: args.insetRow.wBeforeDxa, type: 'dxa' },
-              wAfter: { value: args.insetRow.wAfterDxa, type: 'dxa' },
-            },
-          },
-          cells: [
-            {
-              id: 'merged-cell',
-              colSpan: args.insetRow.span,
-              attrs: { tableCellProperties: { cellWidth: { value: args.insetRow.widthDxa, type: 'dxa' } } },
-            },
-          ],
-        },
-      ],
-    } as Partial<TableBlock>);
-  }
-
-  /** Resolve the merged span's final width: the solved columns it covers. */
-  function solveMergedSpanWidth(block: TableBlock, maxWidth: number, span: number): number {
-    const working = buildAutoFitWorkingGridInput(block, { maxWidth });
-    // The overhang shape must take the authored-grid early return; the shrink
-    // path is what could narrow the merged span.
-    expect(working.preserveAuthoredGrid).toBe(true);
-    const solved = computeFixedTableColumnWidths(working);
-    return solved.columnWidths.slice(1, 1 + span).reduce((sum, w) => sum + w, 0);
-  }
-
-  it('keeps the ticket repro merged span at grid_sum - wBefore - wAfter (9920 grid)', () => {
-    // overhang__first row overhangs margins: grid 9920 dxa > 9360 text column.
-    const block = createOverhangBlock({
-      gridDxa: [280, 1900, 1900, 1900, 1900, 1840, 200],
-      headerCells: [
-        { span: 2, widthDxa: 2180 },
-        { widthDxa: 1900 },
-        { widthDxa: 1900 },
-        { widthDxa: 1900 },
-        { span: 2, widthDxa: 2040 },
-      ],
-      insetRow: { wBeforeDxa: 280, wAfterDxa: 200, span: 5, widthDxa: 9440 },
-    });
-
-    const mergedWidth = solveMergedSpanWidth(block, 624, 5);
-    expect(mergedWidth).toBeCloseTo((9920 - 280 - 200) / TWIPS_PER_PX, 1);
-  });
-
-  it('keeps the canonical repro merged span at grid_sum - wBefore - wAfter (9360 grid)', () => {
-    // sd1513-paragraph-allignment: grid exactly the text column width.
-    const block = createOverhangBlock({
-      gridDxa: [185, 51, 1451, 1503, 1503, 1503, 1503, 1503, 158],
-      headerCells: [
-        { span: 2, widthDxa: 236 },
-        { widthDxa: 1451 },
-        { widthDxa: 1503 },
-        { widthDxa: 1503 },
-        { widthDxa: 1503 },
-        { widthDxa: 1503 },
-        { span: 2, widthDxa: 1661 },
-      ],
-      insetRow: { wBeforeDxa: 185, wAfterDxa: 158, span: 7, widthDxa: 9017 },
-    });
-
-    const mergedWidth = solveMergedSpanWidth(block, 624, 7);
-    expect(mergedWidth).toBeCloseTo((9360 - 185 - 158) / TWIPS_PER_PX, 1);
   });
 });

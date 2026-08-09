@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
 import { createPinia, setActivePinia } from 'pinia';
 import { useSuperdocStore } from './superdoc-store.js';
 import { DOCX, PDF } from '@superdoc/common';
@@ -201,11 +201,7 @@ describe('SuperDoc Store - Blob Support', () => {
     });
 
     it('should handle invalid document configuration gracefully', async () => {
-      const config = createTestConfig([
-        {
-          /* no data, url, or other valid config */
-        },
-      ]);
+      const config = createTestConfig([{/* no data, url, or other valid config */}]);
 
       await store.init(config);
 
@@ -218,11 +214,7 @@ describe('SuperDoc Store - Blob Support', () => {
       const handler = vi.fn();
       store.setExceptionHandler(handler);
 
-      const config = createTestConfig([
-        {
-          /* invalid entry */
-        },
-      ]);
+      const config = createTestConfig([{/* invalid entry */}]);
 
       await store.init(config);
 
@@ -311,5 +303,54 @@ describe('SuperDoc Store - zoom.mode seeding', () => {
   it('starts with null viewport metrics', async () => {
     await store.init(configWithZoom(undefined));
     expect(store.viewportMetrics).toBeNull();
+  });
+});
+
+describe('SuperDoc Store - measurementUnit seeding', () => {
+  let store;
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    store = useSuperdocStore();
+  });
+
+  const configWithUnit = (measurementUnit) =>
+    createTestConfig([{ data: new File(['x'], 'test.docx', { type: DOCX }), name: 'test.docx', type: DOCX }], {
+      measurementUnit,
+    });
+
+  it('defaults measurementUnit to in when config is absent', async () => {
+    await store.init(configWithUnit(undefined));
+    expect(store.measurementUnit).toBe('in');
+  });
+
+  it('seeds measurementUnit from config', async () => {
+    await store.init(configWithUnit('cm'));
+    expect(store.measurementUnit).toBe('cm');
+  });
+
+  it('ignores invalid measurementUnit values with a warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await store.init(configWithUnit('meters'));
+    expect(store.measurementUnit).toBe('in');
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('reset() restores measurementUnit to the default', () => {
+    store.measurementUnit = 'cm';
+    store.reset();
+    expect(store.measurementUnit).toBe('in');
+  });
+
+  it('does not leak a prior cm unit into a later default document', async () => {
+    // A document that opts into cm...
+    await store.init(configWithUnit('cm'));
+    expect(store.measurementUnit).toBe('cm');
+
+    // ...must not survive into a later default (no measurementUnit) document.
+    await store.init(configWithUnit(undefined));
+    expect(store.measurementUnit).toBe('in');
   });
 });

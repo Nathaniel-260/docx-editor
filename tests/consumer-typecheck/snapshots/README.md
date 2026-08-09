@@ -1,80 +1,70 @@
-# Legacy public surface snapshots (SD-3176)
+# Public surface snapshots
 
-These files lock the public TypeScript surface that ships through SuperDoc's legacy compatibility paths. CI fails when a snapshot drifts. See the [SD-3175 umbrella](https://linear.app/superdocworkspace/issue/SD-3175) for the architectural plan these snapshots stabilize for.
+These files lock the public TypeScript surface that ships through the v2
+`superdoc` package contract. CI fails when a snapshot drifts.
 
 ## What each file locks
 
 | File | Source | Scope |
 | --- | --- | --- |
-| `super-editor-package-exports.txt` | `packages/super-editor/package.json#exports` keys | Subpaths the `@superdoc/super-editor` package advertises. New subpath = new public surface area. |
-| `superdoc-super-editor.txt` | Resolved named exports through `superdoc/super-editor` | The main no-growth gate. `superdoc/src/super-editor.js` is `export *`, so growth is silent without this. |
-| `superdoc-converter.txt` | Resolved exports through `superdoc/converter` | Single-purpose legacy entry; freeze check. |
-| `superdoc-docx-zipper.txt` | Resolved exports through `superdoc/docx-zipper` | Single-purpose legacy entry; freeze check. |
-| `superdoc-file-zipper.txt` | Resolved exports through `superdoc/file-zipper` | Single-purpose legacy entry; freeze check. |
-| `superdoc-headless-toolbar.txt` | Resolved exports through `superdoc/headless-toolbar` | Reclassified as legacy in SD-3179 ahead of the `superdoc/ui` migration. 16-name surface; freeze check. |
-| `superdoc-headless-toolbar-react.txt` | Resolved exports through `superdoc/headless-toolbar/react` | Framework helper paired with `superdoc/headless-toolbar`. Migration target: `superdoc/ui/react`. |
-| `superdoc-headless-toolbar-vue.txt` | Resolved exports through `superdoc/headless-toolbar/vue` | Framework helper paired with `superdoc/headless-toolbar`. Migration target: tracked separately. |
-| `superdoc-root-exports.json` | 4-source root inventory (`types.import` / `types.require` / `import` / `require`) | SD-3212 PR A0. Drift gate on each source's name set independently. Cross-source mismatches (typed-only, runtime-only, ESM vs CJS) reported in the companion `.md` as evidence for the SD-3212 classification pass. |
-| `superdoc-root-exports.md` | Companion evidence report for the above | Regenerated on `--write`; not a drift gate. Includes per-name evidence: presence in each source, fixture import count, JSDoc typedef membership, docs/examples/demos mentions, `package-boundaries.md` reference. |
-| `superdoc-root-classification.json` | SD-3212 PR A1 classification | Each of the 200 root names assigned a bucket (`supported-root` / `legacy-root` / `move-to-subpath` / `internal-candidate`) with rationale and confidence. Decision document for PR B (re-curation) and PR C (root types flip). Applies dependency-closure rule: any type required by a supported-root or legacy-root exported class/method is at least `legacy-root`. Not a drift gate. |
+| `superdoc-root-exports.json` | 4-source root inventory (`types.import` / `types.require` / `import` / `require`) | Drift gate on each root source's exported name set. Cross-source mismatches are reported in the companion `.md` evidence file. |
+| `superdoc-root-exports.md` | Companion evidence report for the root inventory | Regenerated on `--write`; not a drift gate. Includes per-name evidence from fixtures, JSDoc typedefs, docs, examples, demos, and package-boundaries references. |
+| `superdoc-root-classification.json` | SD-3212 PR A1 classification | Decision record assigning root names to supported or legacy buckets. Not a drift gate. |
 | `superdoc-root-classification.md` | Companion human-review surface for the classification | Grouped by bucket with per-name rationale. |
 
-Snapshot scripts (SD-3213b consolidated all three into one CLI):
+The unified entry point is `tests/consumer-typecheck/snapshot.mjs`.
 
-- `tests/consumer-typecheck/snapshot.mjs` -- unified entry point. Dispatches to the family modules under `tests/consumer-typecheck/snapshot/` (`super-editor-package-exports.mjs`, `legacy-exports.mjs`, `root-exports.mjs`).
-- CI calls `node tests/consumer-typecheck/snapshot.mjs --all --check`.
+- `--family v2-only-resolution` is a source-only absence gate. It verifies
+  supported v2 package exports exist and removed v1 subpaths/package surfaces do
+  not exist in `packages/superdoc/package.json` or the workspace package layout.
+- `--family root` checks the packed-and-installed consumer fixture's root export
+  inventory against `superdoc-root-exports.json`.
+- `--all --check` runs both families.
 
 ## What to do when CI fails
 
-The failure message tells you which snapshot drifted, what was added, and what was removed.
+For `v2-only-resolution` failures, reject the change unless the v2 public
+contract has intentionally changed. Removed v1 package, editor, type,
+converter, zipper, toolbar, and UI surfaces must not be reintroduced.
 
-**Default response: reject the change.** These paths are classified as legacy public compatibility surface in `docs/architecture/package-boundaries.md` (Decision 1). They are not supposed to grow. New entries usually mean:
+For `root` failures, inspect the added and removed names. Default response is
+to keep the root contract stable and remove accidental public leakage. If the
+root contract intentionally changes, regenerate the root family:
 
-1. A new public symbol leaked through a wildcard re-export. Don't add it to the snapshot - remove it from the public path, or add it through a non-legacy public entry.
-2. An intentional rename or refactor that happens to flow through a legacy path. Stop and check whether the rename should travel through `superdoc` instead.
+```bash
+node tests/consumer-typecheck/snapshot.mjs --family root --write
+```
 
-**When growth is intentional** (rare: an explicitly approved compat shim for a legacy customer, an accepted deprecation alias, or similar):
-
-1. Make sure the PR links to SD-3175 or a child ticket so the architectural reviewer sees the justification.
-2. Regenerate the affected family:
-   ```bash
-   # Snapshot A (package exports map, source-only):
-   node tests/consumer-typecheck/snapshot.mjs --family super-editor-package --write
-
-   # Snapshot B (resolved exports, requires fixture installed):
-   node tests/consumer-typecheck/snapshot.mjs --family legacy --write
-
-   # Snapshot C (root entry 4-source inventory, requires fixture installed):
-   node tests/consumer-typecheck/snapshot.mjs --family root --write
-   ```
-3. Commit the updated snapshot together with the change that caused it. Reviewer reads both as one decision.
-
-**Removals are not a hard fail by intent**, but the snapshot still flags them so the diff gets reviewed. Removing from a legacy compat path can break consumers; intentional removals belong in a major-version cleanup (Phase 5 of SD-3175).
+Commit the updated snapshot with the source change that caused it.
 
 ## How to run locally
 
-Snapshot A (source-only, no fixture needed):
+The v2-only absence gate is source-only:
+
 ```bash
-node tests/consumer-typecheck/snapshot.mjs --family super-editor-package --check
+node tests/consumer-typecheck/snapshot.mjs --family v2-only-resolution --check
 ```
 
-Snapshots B and C require the packed-and-installed fixture under `tests/consumer-typecheck/node_modules/superdoc/`. The matrix script sets this up:
-```bash
-# Either run the full matrix first (it packs and installs):
-node tests/consumer-typecheck/typecheck-matrix.mjs
+The root snapshot requires the packed-and-installed fixture under
+`tests/consumer-typecheck/node_modules/superdoc/`. The matrix script sets this
+up:
 
-# Or install manually:
-pnpm --filter superdoc run pack:es                                 # repo root
-cd tests/consumer-typecheck
-npm install ../../packages/superdoc/superdoc.tgz --no-save
-cd ../..
+```bash
+node tests/consumer-typecheck/typecheck-matrix.mjs
+node tests/consumer-typecheck/snapshot.mjs --family root --check
+```
+
+Run all active families:
+
+```bash
 node tests/consumer-typecheck/snapshot.mjs --all --check
 ```
 
-## What this gate does NOT do
+## What this gate does not do
 
-- Does not classify supported public surfaces (root `superdoc`, `superdoc/ui`, etc.). Root classification lives in `tests/consumer-typecheck/snapshots/superdoc-root-classification.json` (SD-3212 PR A1); subpath facade decisions live in `packages/superdoc/scripts/verify-public-facade-emit.cjs` and `docs/architecture/package-boundaries.md` under SD-3147 / SD-3175.
-- Does not catch leaks through non-legacy paths. The full path-as-contract facade lands under SD-3175.
-- Does not lock the *types* of exported symbols, only their names. A breaking change to an existing export's shape passes this gate.
-- Does not run against arbitrary subpaths. Only the files listed in the table above are tracked. The authoritative list lives in `SUBPATHS` inside `tests/consumer-typecheck/snapshot/legacy-exports.mjs`.
-- Does not enumerate every file reachable through existing wildcard export-map keys in `@superdoc/super-editor` (e.g. `"./*"`, `"./converter/internal/*"`). Snapshot A freezes the export-map key set; Snapshot B freezes the resolved `superdoc/super-editor` named export surface. A new file added under an existing wildcard that a consumer reaches via deep import (`@superdoc/super-editor/something-new`) passes both gates. Wildcard removal or shrinkage belongs to the later compat/major phases of SD-3175.
+- It does not lock the type shapes of exported symbols, only their names.
+- The v2-only family checks the source package export map and workspace package
+  layout. It intentionally does not read a generated fixture, because local
+  fixtures can be stale.
+- The root family still depends on the generated packed fixture and can fail
+  when that fixture was not refreshed.

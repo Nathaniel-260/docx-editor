@@ -82,18 +82,31 @@ export interface PlanExecuteResult {
   failure?: PlanExecuteFailure;
 }
 
-export interface PlanApi {
+export interface PlanApi<TExecuteResult = PlanExecuteResult> {
   /**
    * Execute a compiled run of operation entries with host-side capture
    * resolution. Capture state persists across `plan.execute` calls within the
    * same document session, so chunked plans share one capture space.
    */
-  execute(input: PlanExecuteInput): PlanExecuteResult;
+  execute(input: PlanExecuteInput): TExecuteResult;
 }
 
 type DynamicInvoke = (operationId: string, input: unknown, options: unknown) => unknown;
+type AsyncDynamicInvoke = (operationId: string, input: unknown, options: unknown) => PromiseLike<unknown>;
 
 const PLAN_EXECUTE_UNSUPPORTED_OPERATION_IDS = new Set<string>(['plan.execute', 'templates.apply']);
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    Boolean(value) &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+function isAsyncFunction(value: unknown): boolean {
+  return typeof value === 'function' && Object.prototype.toString.call(value) === '[object AsyncFunction]';
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -403,19 +416,30 @@ function validatePlanExecuteInput(input: PlanExecuteInput): void {
  * The capture map lives in this closure, so it persists across chunked
  * `plan.execute` calls for the lifetime of the owning DocumentApi instance.
  */
-export function createPlanApi(invoke: DynamicInvoke): PlanApi {
+export function createPlanApi(invoke: AsyncDynamicInvoke): PlanApi<Promise<PlanExecuteResult>>;
+export function createPlanApi(invoke: DynamicInvoke): PlanApi;
+export function createPlanApi(invoke: DynamicInvoke): PlanApi<PlanExecuteResult | Promise<PlanExecuteResult>> {
   const captures: Record<string, unknown> = {};
+  // Empty plans and input validation run before any invoke return can be sampled,
+  // so only native async functions can be forced through the async path up front.
+  const forceAsync = isAsyncFunction(invoke);
   return {
-    execute(input: PlanExecuteInput): PlanExecuteResult {
-      validatePlanExecuteInput(input);
-      const captureReturns = input.captureReturns ?? [];
-      const receipts: PlanEntryReceipt[] = [];
-      let failure: PlanExecuteFailure | undefined;
-      for (const [entryIndex, entry] of input.entries.entries()) {
-        try {
-          const resolvedInput = substitutePlanMarkers(entry.input, captures);
-          const resolvedOptions = substitutePlanMarkers(entry.options, captures);
-          const result = invoke(entry.operationId, resolvedInput, resolvedOptions);
+    execute(input: PlanExecuteInput): PlanExecuteResult | Promise<PlanExecuteResult> {
+      const executePlan = (): PlanExecuteResult | Promise<PlanExecuteResult> => {
+        validatePlanExecuteInput(input);
+        const captureReturns = input.captureReturns ?? [];
+        const receipts: PlanEntryReceipt[] = [];
+        let failure: PlanExecuteFailure | undefined;
+
+        const finish = (): PlanExecuteResult => {
+          const projectedCaptures =
+            captureReturns === '*'
+              ? { ...captures }
+              : Object.fromEntries(captureReturns.filter((key) => key in captures).map((key) => [key, captures[key]]));
+          return { receipts, captures: projectedCaptures, ...(failure ? { failure } : {}) };
+        };
+
+        const applyResult = (entryIndex: number, entry: PlanExecuteEntry, result: unknown): void => {
           const failedReceipt = findFailedReceipt(result);
           if (failedReceipt) {
             // Stepwise parity: the SDK converts returned failure receipts into
@@ -431,7 +455,9 @@ export function createPlanApi(invoke: DynamicInvoke): PlanApi {
             status: 'passed',
             captureAs: entry.captureAs ?? null,
           });
-        } catch (error) {
+        };
+
+        const handleError = (entryIndex: number, entry: PlanExecuteEntry, error: unknown): boolean => {
           const message = errorMessageOf(error);
           if (matchesAllowedFailure(entry.expect, error)) {
             receipts.push({
@@ -441,7 +467,7 @@ export function createPlanApi(invoke: DynamicInvoke): PlanApi {
               captureAs: entry.captureAs ?? null,
               error: message,
             });
-            continue;
+            return true;
           }
           if (matchesExpectedFailure(entry.expect, error)) {
             if (entry.captureAs) {
@@ -454,17 +480,54 @@ export function createPlanApi(invoke: DynamicInvoke): PlanApi {
               captureAs: entry.captureAs ?? null,
               error: message,
             });
-            continue;
+            return true;
           }
           failure = { entryIndex, operationId: entry.operationId, message };
-          break;
+          return false;
+        };
+
+        const invokeEntry = (entry: PlanExecuteEntry): unknown => {
+          const resolvedInput = substitutePlanMarkers(entry.input, captures);
+          const resolvedOptions = substitutePlanMarkers(entry.options, captures);
+          return invoke(entry.operationId, resolvedInput, resolvedOptions);
+        };
+
+        const continueAsync = async (
+          pendingResult: PromiseLike<unknown>,
+          pendingIndex: number,
+          pendingEntry: PlanExecuteEntry,
+        ): Promise<PlanExecuteResult> => {
+          try {
+            applyResult(pendingIndex, pendingEntry, await pendingResult);
+          } catch (error) {
+            if (!handleError(pendingIndex, pendingEntry, error)) return finish();
+          }
+          for (let entryIndex = pendingIndex + 1; entryIndex < input.entries.length; entryIndex += 1) {
+            const entry = input.entries[entryIndex]!;
+            try {
+              applyResult(entryIndex, entry, await invokeEntry(entry));
+            } catch (error) {
+              if (!handleError(entryIndex, entry, error)) break;
+            }
+          }
+          return finish();
+        };
+
+        for (const [entryIndex, entry] of input.entries.entries()) {
+          try {
+            const result = invokeEntry(entry);
+            if (isPromiseLike(result)) {
+              return continueAsync(result, entryIndex, entry) as never;
+            }
+            applyResult(entryIndex, entry, result);
+          } catch (error) {
+            if (!handleError(entryIndex, entry, error)) break;
+          }
         }
-      }
-      const projectedCaptures =
-        captureReturns === '*'
-          ? { ...captures }
-          : Object.fromEntries(captureReturns.filter((key) => key in captures).map((key) => [key, captures[key]]));
-      return { receipts, captures: projectedCaptures, ...(failure ? { failure } : {}) };
+        return finish();
+      };
+
+      return forceAsync ? Promise.resolve().then(executePlan) : executePlan();
     },
   };
 }

@@ -12,6 +12,7 @@ import {
   executeParagraphsClearTabStop,
   executeParagraphsSetFlowOptions,
   executeParagraphsSetIndentation,
+  executeParagraphsSetMarkRunProps,
   executeParagraphsSetNumbering,
   executeParagraphsSetTabStop,
 } from './paragraphs.js';
@@ -26,6 +27,7 @@ function makeTarget() {
 
 function makeAdapter(): ParagraphsAdapter & {
   setIndentation: ReturnType<typeof mock>;
+  setMarkRunProps: ReturnType<typeof mock>;
 } {
   const success: ParagraphMutationResult = {
     success: true,
@@ -55,12 +57,19 @@ function makeAdapter(): ParagraphsAdapter & {
     clearBorder: mock(() => success),
     setShading: mock(() => success),
     clearShading: mock(() => success),
+    setMarkRunProps: mock(() => success),
     setDirection: mock(() => success),
     clearDirection: mock(() => success),
     setNumbering: mock(() => success),
   } as ParagraphsAdapter & {
     setIndentation: ReturnType<typeof mock>;
+    setMarkRunProps: ReturnType<typeof mock>;
   };
+}
+
+function makeLegacyAdapterWithoutMarkRunProps(): ParagraphsAdapter {
+  const { setMarkRunProps: _omitted, ...adapter } = makeAdapter();
+  return adapter;
 }
 
 describe('executeParagraphsSetNumbering', () => {
@@ -268,6 +277,54 @@ describe('executeParagraphsSetFlowOptions', () => {
     expect(() =>
       executeParagraphsSetFlowOptions(adapter, {
         target: makeTarget(),
+      }),
+    ).toThrow(DocumentApiValidationError);
+  });
+});
+
+describe('executeParagraphsSetMarkRunProps', () => {
+  it('accepts supported numeric and boolean mark run props', () => {
+    const adapter = makeAdapter();
+    const input = {
+      target: makeTarget(),
+      markRunProps: {
+        characterSpacing: -1.5,
+        fitTextWidth: 72,
+        fontSizeCs: 11,
+        specVanish: true,
+      },
+    };
+
+    const result = executeParagraphsSetMarkRunProps(adapter, input);
+
+    expect(result.success).toBe(true);
+    expect(adapter.setMarkRunProps).toHaveBeenCalledWith(input, expect.objectContaining({ changeMode: 'direct' }));
+  });
+
+  it('returns CAPABILITY_UNAVAILABLE when legacy adapters omit setMarkRunProps', () => {
+    const result = executeParagraphsSetMarkRunProps(makeLegacyAdapterWithoutMarkRunProps(), {
+      target: makeTarget(),
+      markRunProps: {
+        bold: true,
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      failure: { code: 'CAPABILITY_UNAVAILABLE' },
+    });
+  });
+
+  it('rejects unknown markRunProps keys', () => {
+    const adapter = makeAdapter();
+
+    expect(() =>
+      executeParagraphsSetMarkRunProps(adapter, {
+        target: makeTarget(),
+        markRunProps: {
+          // @ts-expect-error intentional invalid key
+          bogus: true,
+        },
       }),
     ).toThrow(DocumentApiValidationError);
   });

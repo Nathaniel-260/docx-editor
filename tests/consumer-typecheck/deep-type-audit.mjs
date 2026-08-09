@@ -36,6 +36,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve, relative, sep, join } from 'node:path';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
+import { installPackedSuperdocFixture } from './packed-fixture.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const require = createRequire(import.meta.url);
@@ -47,11 +49,9 @@ const doWrite = args.has('--write');
 // stale entries, compiler diagnostics, private specifier leaks). Without
 // it, the audit runs in inventory/reporting mode and always exits 0
 // unless the script itself errors. Strict mode is intentionally NOT used
-// in CI yet. The facade landed in SD-3212 PR C, but the audit still walks
-// every entry in `package.json#exports`, including the broad legacy
-// `./super-editor` surface. Until the audit is scoped to the curated
-// facade entries (SD-3213 follow-up), strict-on-everything would gate
-// on ~1.8k findings dominated by legacy reach.
+// in CI yet; CI uses the supported-root strict gate below so the team can
+// drain the customer-facing facade without turning the broader inventory
+// into an immediate all-or-nothing gate.
 const doStrict = args.has('--strict');
 // SD-3213e: scoped strict gate. Filters findings to the supported-root
 // subset (rootBuckets includes 'supported-root') and compares against
@@ -72,10 +72,11 @@ if (doPack) {
   console.log('[audit] Packing superdoc...');
   execSync('pnpm --filter superdoc run pack:es', { cwd: repoRoot, stdio: 'inherit' });
   console.log('[audit] Installing fixture...');
-  execSync(
-    'npm install ../../packages/superdoc/superdoc.tgz --no-save --prefer-offline --no-audit --no-fund --silent',
-    { cwd: here, stdio: 'inherit' },
-  );
+  installPackedSuperdocFixture({
+    fixtureRoot: here,
+    superdocTarball: join(repoRoot, 'packages', 'superdoc', 'superdoc.tgz'),
+    engineTarball: process.env.SUPERDOC_DOCX_ENGINE_TARBALL,
+  });
 }
 
 // -- Resolve typescript from the fixture's node_modules --------------------
@@ -520,10 +521,9 @@ const staleAllowlistKeys = [...remainingAllowlist];
 // everything; this scoped one tracks ONLY findings reachable from root
 // '.' whose top-level symbol is classified as `supported-root`. That is
 // the subset that directly affects documented consumer IntelliSense.
-// Legacy-root, internal-candidate, and raw `./super-editor` reach are
-// intentionally excluded from this first strict gate; each has its own
-// drain story (legacy = compat, internal-candidate = should be hidden,
-// raw = redesign).
+// Legacy-root and internal-candidate reach are intentionally excluded
+// from this first strict gate; each has its own drain story (legacy =
+// compat, internal-candidate = should be hidden).
 const supportedRootAllowlistPath = resolve(here, 'deep-type-audit.supported-root-allowlist.json');
 const supportedRootAllowlist = existsSync(supportedRootAllowlistPath)
   ? JSON.parse(readFileSync(supportedRootAllowlistPath, 'utf8'))
@@ -554,9 +554,8 @@ function classifyOwner(f) {
   if (f.file.endsWith('core/types/index.d.ts')) return 'tier-4-public-contract';
   // SuperConverter + DocxZipper expose `[key: string]: any` and
   // `constructor(...args: any[])`. Both are classified as `legacy-root`
-  // in superdoc-root-classification.json (Decision 1 of
-  // package-boundaries.md); group with tier-4 so the public-contract
-  // drain work owns the fix.
+  // in superdoc-root-classification.json; group with tier-4 so the
+  // public-contract drain work owns the fix.
   if (f.file.endsWith('SuperConverter.d.ts') || f.file.endsWith('DocxZipper.d.ts')) return 'tier-4-public-contract';
   return 'tier-5-other';
 }
@@ -643,22 +642,13 @@ for (const [k, v] of Object.entries(fileCounts).sort((a, b) => b[1] - a[1]).slic
 }
 
 // SD-3213d attribution tables. The point of these breakdowns is to
-// distinguish supported-root leaks from legacy compat reach from raw
-// ./super-editor noise, so PR 3 can scope the strict gate to the
-// curated facade subset without guessing.
+// distinguish supported-root leaks from legacy compat reach so strict
+// gates can be scoped without guessing.
 const entryCounts = {};
 const rootBucketCounts = {};
-let curatedOnly = 0;
-let rawOnly = 0;
-let both = 0;
 for (const f of tieredFindings) {
   for (const e of f.reachedFrom) entryCounts[e] = (entryCounts[e] ?? 0) + 1;
   for (const b of f.rootBuckets) rootBucketCounts[b] = (rootBucketCounts[b] ?? 0) + 1;
-  const reachesCurated = [...f.reachedFrom].some((e) => e !== './super-editor');
-  const reachesRaw = f.reachedFrom.has('./super-editor');
-  if (reachesCurated && reachesRaw) both++;
-  else if (reachesCurated) curatedOnly++;
-  else if (reachesRaw) rawOnly++;
 }
 console.log(``);
 console.log(`[audit] By export entry (reachedFrom; one finding can count under several):`);
@@ -670,11 +660,6 @@ console.log(`[audit] By root bucket (only for findings reached from root '.'):`)
 for (const [k, v] of Object.entries(rootBucketCounts).sort((a, b) => b[1] - a[1])) {
   console.log(`  ${v.toString().padStart(5)}  ${k}`);
 }
-console.log(``);
-console.log(`[audit] Curated facade entries vs raw ./super-editor reach:`);
-console.log(`  ${curatedOnly.toString().padStart(5)}  reached only from curated facade entries`);
-console.log(`  ${rawOnly.toString().padStart(5)}  reached only from ./super-editor`);
-console.log(`  ${both.toString().padStart(5)}  reached from both`);
 
 // JSON attribution report. Lives under tmp/ (gitignored). PR 3 reads
 // this to drive strict-scope selection without re-running the walker.
@@ -689,7 +674,6 @@ try {
       byTier: tierCounts,
       byEntry: entryCounts,
       byRootBucket: rootBucketCounts,
-      curatedFacadeVsRaw: { curatedOnly, rawOnly, both },
     },
     findings: tieredFindings.map((f) => ({
       kind: f.kind,

@@ -1,5 +1,3 @@
-/* eslint-disable import-x/export */
-
 export * from './base.js';
 export * from './node.js';
 export * from './query.js';
@@ -29,3 +27,4 @@ export * from './placement.js';
 export * from './adapter-result.js';
 export * from './structural-input.js';
 export * from './story.types.js';
+export * from './clipboard.js';

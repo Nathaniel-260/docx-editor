@@ -41,13 +41,12 @@ export function getWordLayoutConfig(block: ParagraphBlock | undefined): WordLayo
 /**
  * Determines if a block is a list item based on multiple detection signals.
  *
- * This function uses a robust detection strategy that checks:
+ * This function uses explicit list signals:
  * 1. **Marker width**: Primary signal - lists always have markers
  * 2. **List attributes**: Explicit list metadata from ProseMirror
- * 3. **Indent pattern**: Hanging indent + left indent suggests a list structure
  *
- * The multi-signal approach handles edge cases where layout data might be stale
- * or incomplete (e.g., a newly created list item before full layout).
+ * Paragraph indentation alone is not a list signal: ordinary Word paragraphs
+ * can use the same left + hanging-indent geometry without a marker.
  *
  * @param markerWidth - The measured width of the list marker in pixels (0 for non-lists)
  * @param block - The paragraph block to check (may be undefined for defensive coding)
@@ -81,12 +80,7 @@ export function isListItem(markerWidth: number, block: ParagraphBlock | undefine
     return true;
   }
 
-  // Check indent pattern: hanging indent with left indent is a strong signal
-  const hangingIndent = block.attrs?.indent?.hanging ?? 0;
-  const paraIndentLeft = block.attrs?.indent?.left ?? 0;
-  const hasHangingIndentPattern = hangingIndent > 0 && paraIndentLeft > 0;
-
-  return hasHangingIndentPattern;
+  return false;
 }
 
 /**

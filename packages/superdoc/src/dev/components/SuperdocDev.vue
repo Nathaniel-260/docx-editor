@@ -2,42 +2,47 @@
 import '@superdoc/common/styles/common-styles.css';
 import '../dev-styles.css';
 import '../themes/neon-night.css';
-import { nextTick, onMounted, onBeforeUnmount, provide, ref, shallowRef, computed, watch } from 'vue';
+import { nextTick, onMounted, onBeforeUnmount, ref, shallowRef, computed, watch } from 'vue';
 
 import { SuperDoc } from '@superdoc/index.js';
-import { DOCX, PDF, HTML } from '@superdoc/common';
+import { DOCX } from '@superdoc/common';
 import { getFileObject } from '@superdoc/common';
+import { superdocFonts } from '@superdoc/fonts';
 import BasicUpload from '@superdoc/common/components/BasicUpload.vue';
 import SuperdocLogo from './superdoc-logo.webp?url';
-import { Editor, fieldAnnotationHelpers, getStarterExtensions } from '@superdoc/super-editor';
-import { toolbarIcons } from '../../../../super-editor/src/editors/v1/components/toolbar/toolbarIcons';
 import BlankDOCX from '@superdoc/common/data/blank.docx?url';
 import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs';
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import SidebarSearch from './sidebar/SidebarSearch.vue';
-import SidebarFieldAnnotations from './sidebar/SidebarFieldAnnotations.vue';
+import SidebarCollaboration from './sidebar/SidebarCollaboration.vue';
 import SidebarLayout from './sidebar/SidebarLayout.vue';
-import { WebsocketProvider } from 'y-websocket';
-import * as Y from 'yjs';
+import {
+  createDevCollaborationAutoUrl,
+  createDevDocumentConfig,
+  createDevV2CollaborationConfig,
+  resolveDevCollaborationRoomMode,
+  resolveDevCollaborationServerUrl,
+} from '../collaboration-config';
+import {
+  applyCompareWithWs09Fallback,
+  captureCompareApplyDebugSnapshot,
+  compareApplyDeferredMessage,
+  settleCompareApplyPaint,
+} from '../compare-apply';
 
 // note:
 // Or set worker globally outside the component.
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 /* For local dev */
 const superdoc = shallowRef(null);
 const activeEditor = shallowRef(null);
 
-const title = ref('initial title');
 const currentFile = ref(null);
-const commentsPanel = ref(null);
-const showCommentsPanel = ref(true);
 const sidebarInstanceKey = ref(0);
 const compareInput = ref(null);
 
 const urlParams = new URLSearchParams(window.location.search);
-const wordBaselineServiceUrl = 'http://127.0.0.1:9185';
-const clampOpacity = (v) => Math.min(1, Math.max(0, v));
-const overlayOpacityFromUrl = Number.parseFloat(urlParams.get('wordOverlayOpacity') ?? '0.45');
 const isInternal = urlParams.has('internal');
 const ensureStableDevTabId = () => {
   const storageKey = 'superdoc-dev-tab-id';
@@ -55,41 +60,85 @@ const userRole = urlParams.get('role') || 'editor';
 const useLayoutEngine = ref(urlParams.get('layout') !== '0');
 const showBookmarks = ref(urlParams.get('bookmarks') === '1');
 const useWebLayout = ref(urlParams.get('view') === 'web');
+const useWhiteboardModule = ['1', 'true', 'on'].includes((urlParams.get('whiteboard') || '').toLowerCase());
+const normalizeBooleanParam = (raw, fallback = true) => {
+  const value = (raw || '').toLowerCase();
+  if (['0', 'false', 'off', 'no'].includes(value)) return false;
+  if (['1', 'true', 'on', 'yes'].includes(value)) return true;
+  return fallback;
+};
+// Painter plan P7: the windowed paint owner IS vertical-paginated flow (no
+// flag). `?v2Hud=1`: per-paint counter HUD + dark reuse tripwire.
+const paintHud = normalizeBooleanParam(urlParams.get('v2Hud'), false);
+// WS6.2 — DEV-ONLY HARNESS CONTROLS. The URL params `v2exec`,
+// `executionMode`, and `workerMode` (and the streaming/HUD params above) are
+// parsed only by this dev app. `src/dev/**` is unreachable from every library
+// build: the lib entries (`src/index.js`, `src/public/ui*.ts` in
+// vite.config.js) never import it, the dts/coverage configs exclude
+// `src/dev/**`, and vite.config.devapp.js — the only build that bundles this
+// file — is explicitly NOT a library build. No customer bundle can reach
+// these overrides. They feed the internal/test-only `benchmarkExecutionMode`
+// config key; product/customer browser execution stays worker-only.
+const normalizeV2ExecutionModeParam = (raw) => {
+  if (raw === 'worker' || raw === 'inline' || raw === 'auto') return raw;
+  return null;
+};
+const requestedV2ExecutionMode = normalizeV2ExecutionModeParam(
+  urlParams.get('v2exec') ?? urlParams.get('executionMode') ?? urlParams.get('workerMode'),
+);
 // Tracked-change replacement model. 'paired' groups ins+del into one change
 // (Google Docs model); 'independent' keeps each as its own revision (Word / ECMA-376).
 const trackChangesReplacements = ref(urlParams.get('replacements') === 'independent' ? 'independent' : 'paired');
 const useCollaboration = urlParams.get('collab') === '1';
 const collabRoom = urlParams.get('room') || 'superdoc-dev-room';
-const collabUrl = 'ws://localhost:8081/v1/collaboration';
-const useWordOverlay = ref(urlParams.get('wordOverlay') !== '0');
-const wordOverlayOpacity = ref(Number.isFinite(overlayOpacityFromUrl) ? clampOpacity(overlayOpacityFromUrl) : 0.45);
-const wordOverlayBlendMode = ref(urlParams.get('wordOverlayBlend') || 'difference');
-const selectedTheme = ref('default');
-const generatedWordScreenshots = ref([]);
-const isGeneratingWordBaseline = ref(false);
-const wordBaselineStatus = ref('');
-const wordBaselineError = ref('');
-const wordOverlayOpacityLabel = computed(() => `${Math.round(wordOverlayOpacity.value * 100)}%`);
-const wordOverlayAvailable = computed(
-  () => useLayoutEngine.value && !useWebLayout.value && generatedWordScreenshots.value.length > 0,
+const collabUrl = resolveDevCollaborationServerUrl(urlParams.get('collabUrl'));
+const collabRoomMode = ref(useCollaboration ? resolveDevCollaborationRoomMode(urlParams.get('collabRoomMode')) : null);
+const activeCollaborationRoomMode = ref(
+  useCollaboration && collabRoomMode.value === 'auto' ? 'join' : collabRoomMode.value,
 );
-let wordOverlayLayoutUnsubscribe = null;
+const selectedTheme = ref('default');
 
 // Collaboration state
-const ydocRef = shallowRef(null);
-const providerRef = shallowRef(null);
-const yjsChangeEvents = ref([]);
-const yjsProviderStatus = ref(useCollaboration ? 'connecting' : 'disabled');
-const yjsActivityStatus = ref(useCollaboration ? 'connecting' : 'disabled');
-const YJS_EVENT_LOG_LIMIT = 250;
-const YJS_CHANGE_ROWS_LIMIT = 60;
-const seenServerActivityEventIds = new Set();
-let removeYjsObservers = null;
-let closeActivityStream = null;
+const collaborationEvents = ref([]);
+const collaborationProviderStatus = ref(useCollaboration ? 'connecting' : 'disabled');
+const COLLABORATION_EVENT_LOG_LIMIT = 250;
+const collaborationFallbackAttempts = new Set();
+let lastAwarenessActorsKey = '';
 const superdocLogo = SuperdocLogo;
 const uploadedFileName = ref('');
 const uploadDisplayName = computed(() => uploadedFileName.value || 'No file chosen');
+const exportFileStem = computed(() => {
+  const rawName = uploadedFileName.value?.trim();
+  if (!rawName) return 'document';
+  return rawName.replace(/\.[^.]+$/, '') || 'document';
+});
+const resolvedV2ExecutionMode = computed(() => {
+  if (useCollaboration) return null;
+  if (requestedV2ExecutionMode === 'worker' || requestedV2ExecutionMode === 'inline') {
+    return requestedV2ExecutionMode;
+  }
+  return null;
+});
 const headerCollapsed = ref(false);
+const documentApiUnavailableMessage = computed(
+  () => activeEditor.value?.documentApiUnavailableReason || 'Document API unavailable in the current execution mode.',
+);
+const baseEditorSignalsReady = ref(false);
+const canCompareDocuments = computed(() => {
+  const diff = activeEditor.value?.doc?.diff;
+  return Boolean(
+    baseEditorSignalsReady.value &&
+    diff &&
+    typeof diff.capture === 'function' &&
+    typeof diff.compare === 'function' &&
+    typeof diff.apply === 'function',
+  );
+});
+const compareButtonTitle = computed(() =>
+  canCompareDocuments.value
+    ? 'Compare against another DOCX and apply tracked changes to the current document.'
+    : documentApiUnavailableMessage.value,
+);
 
 const DEV_THEME_CLASSES = ['sd-theme-docs', 'sd-theme-word', 'sd-theme-blueprint', 'sd-theme-neon-night'];
 
@@ -104,6 +153,11 @@ const documentUrl = ref('');
 const isLoadingUrl = ref(false);
 
 const handleLoadFromUrl = async () => {
+  if (useCollaboration) {
+    console.warn('[collab] URL loading is disabled for the V2 blank-room dev harness.');
+    return;
+  }
+
   const url = documentUrl.value.trim();
   if (!url) return;
 
@@ -126,88 +180,7 @@ const user = {
   email: testUserEmail,
 };
 
-const getSuperdocRoot = () => document.getElementById('superdoc');
-
-const removeWordOverlay = () => {
-  const root = getSuperdocRoot();
-  if (!root) return;
-  root.querySelectorAll('.dev-word-overlay-image').forEach((node) => node.remove());
-  root.querySelectorAll('.dev-word-overlay-page-host').forEach((node) => {
-    node.classList.remove('dev-word-overlay-page-host');
-  });
-};
-
-const applyWordOverlay = () => {
-  const root = getSuperdocRoot();
-  if (!root) return;
-
-  if (!useWordOverlay.value || !wordOverlayAvailable.value) {
-    removeWordOverlay();
-    return;
-  }
-
-  const pageNodes = Array.from(root.querySelectorAll('.superdoc-page[data-page-index]'));
-  pageNodes.forEach((pageNode, index) => {
-    const pageIndexRaw = Number.parseInt(pageNode.getAttribute('data-page-index') ?? String(index), 10);
-    const pageNumber = Number.isFinite(pageIndexRaw) ? pageIndexRaw + 1 : index + 1;
-    const screenshotUrl = generatedWordScreenshots.value[pageNumber - 1];
-    let overlayNode = pageNode.querySelector(':scope > .dev-word-overlay-image');
-
-    if (!screenshotUrl) {
-      overlayNode?.remove();
-      pageNode.classList.remove('dev-word-overlay-page-host');
-      return;
-    }
-
-    if (!overlayNode) {
-      overlayNode = document.createElement('img');
-      overlayNode.className = 'dev-word-overlay-image';
-      overlayNode.setAttribute('alt', `Word screenshot page ${pageNumber}`);
-      overlayNode.setAttribute('draggable', 'false');
-      pageNode.appendChild(overlayNode);
-    }
-
-    pageNode.classList.add('dev-word-overlay-page-host');
-    overlayNode.setAttribute('src', screenshotUrl);
-    overlayNode.style.opacity = String(wordOverlayOpacity.value);
-    overlayNode.style.mixBlendMode = wordOverlayBlendMode.value;
-  });
-};
-
-const scheduleWordOverlayApply = () => {
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      applyWordOverlay();
-    });
-  });
-};
-
-const detachWordOverlayListener = () => {
-  if (typeof wordOverlayLayoutUnsubscribe === 'function') {
-    wordOverlayLayoutUnsubscribe();
-  }
-  wordOverlayLayoutUnsubscribe = null;
-};
-
-const bindWordOverlayListener = (editor) => {
-  detachWordOverlayListener();
-  const presentationEditor = editor?.presentationEditor;
-  if (presentationEditor?.onLayoutUpdated) {
-    wordOverlayLayoutUnsubscribe = presentationEditor.onLayoutUpdated(() => {
-      scheduleWordOverlayApply();
-    });
-  }
-  scheduleWordOverlayApply();
-};
-
-const clearGeneratedWordBaseline = () => {
-  generatedWordScreenshots.value = [];
-  wordBaselineStatus.value = '';
-  wordBaselineError.value = '';
-  scheduleWordOverlayApply();
-};
-
-const commentPermissionResolver = ({ permission, comment, defaultDecision, currentUser }) => {
+const commentPermissionResolver = ({ permission, comment, defaultDecision }) => {
   if (!comment) return defaultDecision;
 
   // Example: hide tracked-change buttons for matching author email domain
@@ -224,10 +197,7 @@ const commentPermissionResolver = ({ permission, comment, defaultDecision, curre
 };
 
 const handleNewFile = async (file) => {
-  clearGeneratedWordBaseline();
   uploadedFileName.value = file?.name || '';
-  // Generate a file url
-  const url = URL.createObjectURL(file);
 
   // Detect file type by extension
   const fileExtension = file.name.split('.').pop()?.toLowerCase();
@@ -246,20 +216,26 @@ const handleNewFile = async (file) => {
       currentFile.value.htmlContent = content;
     }
   } else {
-    // For binary files (DOCX, PDF), use as-is
-    currentFile.value = await getFileObject(url, file.name, file.type);
+    // For binary files (DOCX, PDF), keep the browser File as-is. Re-fetching a
+    // blob URL clones large uploads before SuperDoc sees them and can fail for
+    // huge DOCX files.
+    currentFile.value = file;
   }
 
-  // In collab mode, use replaceFile() on the existing editor instead of
-  // destroying and recreating SuperDoc. This avoids the Y.js race condition
-  // where empty room state overwrites the DOCX content during reinit.
-  if (useCollaboration && activeEditor.value && !isMarkdown && !isHtml) {
-    try {
-      await activeEditor.value.replaceFile(currentFile.value);
-      console.log('[collab] Replaced file via editor.replaceFile()');
-    } catch (err) {
-      console.error('[collab] replaceFile failed, falling back to full reinit:', err);
-      nextTick(() => init());
+  if (useCollaboration) {
+    if (isMarkdown || isHtml) {
+      console.warn('[collab] Text document uploads are not supported by the V2 replace-file dev harness.');
+      return;
+    }
+    if (superdoc.value && typeof superdoc.value.replaceFile === 'function') {
+      try {
+        await superdoc.value.replaceFile(currentFile.value);
+        console.log('[collab] Replaced file via superdoc.replaceFile()');
+      } catch (err) {
+        console.error('[collab] replaceFile failed:', err);
+      }
+    } else {
+      console.warn('[collab] superdoc.replaceFile is unavailable.');
     }
   } else {
     nextTick(() => init());
@@ -268,50 +244,181 @@ const handleNewFile = async (file) => {
   sidebarInstanceKey.value += 1;
 };
 
-/**
- * Triggers the compare file picker.
- * @returns {void}
- */
-const handleCompareClick = () => {
-  compareInput.value?.click?.();
+const createHiddenCompareMount = () => {
+  const element = document.createElement('div');
+  element.id = `superdoc-dev-compare-${crypto.randomUUID()}`;
+  element.style.position = 'fixed';
+  element.style.left = '-9999px';
+  element.style.top = '0';
+  element.style.width = '1px';
+  element.style.height = '1px';
+  element.style.opacity = '0';
+  element.style.pointerEvents = 'none';
+  document.body.appendChild(element);
+  return element;
 };
 
-/**
- * Loads a comparison DOCX file, computes diffs, and replays tracked changes.
- * @param {Event} event
- * @returns {Promise<void>}
- */
-const handleCompareFile = async (event) => {
-  const file = event?.target?.files?.[0];
-  if (!file) return;
-  event.target.value = '';
+const captureDiffSnapshotFromFile = async (file) => {
+  const mount = createHiddenCompareMount();
+  let tempSuperdoc = null;
 
-  const editor = activeEditor.value;
-  if (!editor) return;
-
-  let compareEditor = null;
   try {
-    const [docx, media, mediaFiles, fonts] = (await Editor.loadXmlData(file)) || [];
-    if (!docx) return;
+    const snapshot = await new Promise((resolve, reject) => {
+      const MAX_WAIT_MS = 15000;
+      let settled = false;
+      let capturedEditor = null;
 
-    compareEditor = new Editor({
-      isHeadless: true,
-      skipViewCreation: true,
-      extensions: getStarterExtensions(),
-      documentId: `compare-${Date.now()}`,
-      content: docx,
-      mode: 'docx',
-      media,
-      mediaFiles,
-      fonts,
-      annotations: true,
+      const timeoutId = setTimeout(() => {
+        doReject(new Error(`Compare document did not reach source-ready state within ${MAX_WAIT_MS / 1000}s.`));
+      }, MAX_WAIT_MS);
+
+      const doResolve = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(value);
+      };
+      const doReject = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(error);
+      };
+
+      tempSuperdoc = new SuperDoc({
+        superdocId: `superdoc-dev-compare-${crypto.randomUUID()}`,
+        selector: `#${mount.id}`,
+        documentMode: 'editing',
+        benchmarkExecutionMode: 'inline',
+        licenseKey: 'public_license_key_superdocinternal_ad7035140c4b',
+        telemetry: {
+          enabled: true,
+          metadata: {
+            source: 'superdoc-dev-compare',
+          },
+        },
+        user,
+        document: {
+          data: file,
+          id: 'compare-target',
+        },
+        modules: {
+          trackChanges: {
+            visible: true,
+            replacements: trackChangesReplacements.value,
+          },
+          pdf: {
+            pdfLib: pdfjsLib,
+            setWorker: false,
+          },
+        },
+        onEditorCreate: ({ editor }) => {
+          capturedEditor = editor;
+        },
+        onSourceSignalsComplete: () => {
+          try {
+            const capture = capturedEditor?.doc?.diff?.capture;
+            if (typeof capture !== 'function') {
+              doReject(new Error('Compare document did not expose the inline v2 diff capture API.'));
+              return;
+            }
+            doResolve(capture());
+          } catch (error) {
+            doReject(error);
+          }
+        },
+        onContentError: ({ error, documentId }) => {
+          doReject(
+            new Error(`Failed to load compare document ${documentId ?? ''}: ${error?.message ?? String(error)}`),
+          );
+        },
+      });
+
+      tempSuperdoc.on('exception', (error) => {
+        doReject(error);
+      });
     });
 
-    const diff = editor.commands.compareDocuments(compareEditor);
-    const userToApply = editor.options?.user ?? user;
-    editor.commands.replayDifferences(diff, { user: userToApply, applyTrackedChanges: true });
+    return snapshot;
   } finally {
-    compareEditor?.destroy?.();
+    tempSuperdoc?.destroy?.();
+    mount.remove();
+  }
+};
+
+const resolvePreferredCompareApplyDocApi = (editor) => {
+  const hostFacade = editor?.host?.getDocumentFacade?.();
+  if (hostFacade?.available === true) {
+    return {
+      ...hostFacade.doc,
+      doc: hostFacade.doc,
+      host: editor?.host ?? null,
+      documentMutationReadiness: editor?.documentMutationReadiness ?? null,
+    };
+  }
+  return editor?.doc ? { ...editor.doc } : null;
+};
+
+const handleCompareClick = () => {
+  if (!canCompareDocuments.value) {
+    alert(documentApiUnavailableMessage.value);
+    return;
+  }
+  compareInput.value?.click();
+};
+
+const handleCompareFile = async (event) => {
+  const input = event.target;
+  const file = input?.files?.[0] ?? null;
+  input.value = '';
+  if (!file) return;
+
+  if (!canCompareDocuments.value) {
+    alert(documentApiUnavailableMessage.value);
+    return;
+  }
+
+  try {
+    const targetSnapshot = await captureDiffSnapshotFromFile(file);
+
+    const liveCompareDocApi = resolvePreferredCompareApplyDocApi(activeEditor.value);
+    if (!liveCompareDocApi?.diff?.compare || !liveCompareDocApi?.diff?.apply) {
+      throw new Error('Compare document API is unavailable on the active editor.');
+    }
+
+    const diff = liveCompareDocApi.diff.compare({ targetSnapshot });
+
+    if (!diff?.summary?.hasChanges) {
+      alert('No differences found between the current document and the comparison DOCX.');
+      return;
+    }
+
+    const { applyResult, changeMode, fallbackFromTracked } = applyCompareWithWs09Fallback(liveCompareDocApi, diff);
+    await settleCompareApplyPaint(liveCompareDocApi);
+
+    console.info('[SuperDoc Dev] Compare result', { applyResult, changeMode, fallbackFromTracked });
+    console.info('[SuperDoc Dev] Compare debug snapshot', captureCompareApplyDebugSnapshot(activeEditor.value));
+
+    const diagnosticsSuffix =
+      Array.isArray(applyResult?.diagnostics) && applyResult.diagnostics.length > 0
+        ? ` Diagnostics: ${applyResult.diagnostics.join(' | ')}`
+        : '';
+    const fallbackPrefix = fallbackFromTracked
+      ? 'Tracked compare apply was deferred for ws09 table topology, so SuperDoc Dev retried in direct mode. '
+      : '';
+    alert(
+      `${fallbackPrefix}Applied ${applyResult?.appliedOperations ?? 0} ${changeMode} compare operations.${diagnosticsSuffix}`,
+    );
+  } catch (error) {
+    const deferredMessage = compareApplyDeferredMessage(error);
+    if (deferredMessage) {
+      console.info('[SuperDoc Dev] Compare apply deferred', error);
+      alert(deferredMessage);
+      return;
+    }
+    console.error('[SuperDoc Dev] Compare failed', error);
+    const message = error instanceof Error ? error.message : String(error);
+    alert(`Compare failed: ${message}`);
   }
 };
 
@@ -331,316 +438,98 @@ const readFileAsText = (file) => {
 
 const createClientEventId = () => `client-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-const summarizeValue = (value) => {
-  if (value === null) return 'null';
-  if (value === undefined) return 'undefined';
-  if (value instanceof Uint8Array) return `Uint8Array(${value.byteLength})`;
-  if (value instanceof ArrayBuffer) return `ArrayBuffer(${value.byteLength})`;
-  if (typeof value === 'string') {
-    if (value.length <= 80) return JSON.stringify(value);
-    return `${JSON.stringify(value.slice(0, 80))}... (${value.length} chars)`;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return `Array(${value.length})`;
-  }
-  if (typeof value === 'object') {
-    const name = value.constructor?.name || 'Object';
-    return name;
-  }
-  return String(value);
+const appendCollaborationEvent = (event) => {
+  collaborationEvents.value = [event, ...collaborationEvents.value].slice(0, COLLABORATION_EVENT_LOG_LIMIT);
 };
 
-const summarizeDelta = (delta) =>
-  delta.map((part) => {
-    if (typeof part.insert === 'string') {
-      return {
-        insert: part.insert.length > 60 ? `${part.insert.slice(0, 60)}...` : part.insert,
-        chars: part.insert.length,
-      };
-    }
-    if (part.insert != null) {
-      return { insert: summarizeValue(part.insert) };
-    }
-    if (part.delete != null) {
-      return { delete: part.delete };
-    }
-    if (part.retain != null) {
-      return { retain: part.retain };
-    }
-    return { op: 'unknown' };
+const clearCollaborationEvents = () => {
+  collaborationEvents.value = [];
+  lastAwarenessActorsKey = '';
+};
+
+const getCollaborationOpenRoomMode = () => {
+  if (!useCollaboration) return null;
+  return collabRoomMode.value === 'auto' ? activeCollaborationRoomMode.value : collabRoomMode.value;
+};
+
+const onCollaborationReady = () => {
+  const openedWithRoomMode = getCollaborationOpenRoomMode();
+  collaborationProviderStatus.value = 'connected';
+  appendCollaborationEvent({
+    id: createClientEventId(),
+    source: 'client',
+    at: new Date().toISOString(),
+    origin: 'v2-runtime',
+    summary: `V2 collaboration ready (${openedWithRoomMode})`,
   });
 
-const summarizeOrigin = (origin) => {
-  if (origin == null) return null;
-  if (typeof origin === 'string') return origin;
-  if (typeof origin === 'number' || typeof origin === 'boolean') return String(origin);
-  if (typeof origin === 'object') {
-    if (typeof origin.event === 'string') {
-      return origin.event;
-    }
-    const constructorName = origin.constructor?.name;
-    if (constructorName && constructorName !== 'Object') {
-      return constructorName;
-    }
-    return 'Object';
+  // Creation is a one-shot operation. Keep copied/reloaded dev URLs in auto
+  // mode so they join live rooms but can recreate rooms after server restarts.
+  if (openedWithRoomMode === 'create') {
+    collabRoomMode.value = 'auto';
+    activeCollaborationRoomMode.value = 'join';
+    window.history.replaceState(window.history.state, '', createDevCollaborationAutoUrl(window.location.href));
   }
-  return String(origin);
 };
 
-const appendYjsEvent = (event) => {
-  yjsChangeEvents.value = [event, ...yjsChangeEvents.value].slice(0, YJS_EVENT_LOG_LIMIT);
-};
-
-const toActivityItemsFromRows = (rows) =>
-  rows.map((row) => {
-    const rootPath = typeof row.path === 'string' ? row.path.split('.')[0] : null;
-    const changedKeys = rootPath && rootPath !== '(root)' && rootPath.length > 0 ? [rootPath] : [];
-    const rowAction = row.action === 'add' ? 'added' : row.action === 'delete' ? 'deleted' : 'modified';
-    const valueSummary = row.newValue ?? row.oldValue ?? null;
-    return {
-      changedKeys,
-      entryKey: row.key ?? null,
-      type: rowAction,
-      valueSummary,
-      targetType: row.targetType ?? null,
-    };
+const retryCollaborationOpen = (nextRoomMode, summary, { promoteToAuto = false } = {}) => {
+  const currentRoomMode = getCollaborationOpenRoomMode();
+  const retryKey = `${collabRoom}:${currentRoomMode ?? 'none'}:${nextRoomMode}`;
+  if (collaborationFallbackAttempts.has(retryKey)) return false;
+  collaborationFallbackAttempts.add(retryKey);
+  if (promoteToAuto) {
+    collabRoomMode.value = 'auto';
+    window.history.replaceState(window.history.state, '', createDevCollaborationAutoUrl(window.location.href));
+  }
+  activeCollaborationRoomMode.value = nextRoomMode;
+  appendCollaborationEvent({
+    id: createClientEventId(),
+    source: 'client',
+    at: new Date().toISOString(),
+    origin: 'v2-runtime',
+    summary,
   });
-
-const clearYjsChanges = () => {
-  yjsChangeEvents.value = [];
-  seenServerActivityEventIds.clear();
+  void init();
+  return true;
 };
 
-const rowsFromDeepEvents = (events) => {
-  const rows = [];
-  for (const event of events) {
-    const path = Array.isArray(event.path) && event.path.length > 0 ? event.path.join('.') : '(root)';
-    const targetType = event.target?.constructor?.name ?? 'UnknownType';
-
-    if (event.keysChanged instanceof Set && event.changes?.keys instanceof Map && event.keysChanged.size > 0) {
-      for (const key of event.keysChanged) {
-        const keyChange = event.changes.keys.get(key);
-        const action = keyChange?.action ?? 'changed';
-        const row = {
-          path,
-          key,
-          action,
-          targetType,
-          oldValue: summarizeValue(keyChange?.oldValue),
-        };
-        if (action !== 'delete' && typeof event.target?.get === 'function') {
-          row.newValue = summarizeValue(event.target.get(key));
-        }
-        rows.push(row);
-        if (rows.length >= YJS_CHANGE_ROWS_LIMIT) {
-          return rows;
-        }
-      }
-      continue;
-    }
-
-    if (Array.isArray(event.changes?.delta) && event.changes.delta.length > 0) {
-      rows.push({
-        path,
-        key: null,
-        action: 'delta',
-        targetType,
-        delta: summarizeDelta(event.changes.delta),
+const handleCollaborationException = (error) => {
+  if (!useCollaboration) return false;
+  const code = typeof error?.code === 'string' ? error.code : null;
+  const currentRoomMode = getCollaborationOpenRoomMode();
+  if (code === 'collaboration-v2-room-missing' && currentRoomMode === 'join') {
+    const isRecoverableJoinUrl = collabRoomMode.value === 'join';
+    if (collabRoomMode.value === 'auto' || isRecoverableJoinUrl) {
+      return retryCollaborationOpen('create', 'V2 collaboration room missing; retrying with create', {
+        promoteToAuto: isRecoverableJoinUrl,
       });
-      if (rows.length >= YJS_CHANGE_ROWS_LIMIT) {
-        return rows;
-      }
-      continue;
-    }
-
-    rows.push({
-      path,
-      key: null,
-      action: 'changed',
-      targetType,
-    });
-    if (rows.length >= YJS_CHANGE_ROWS_LIMIT) {
-      return rows;
     }
   }
-  return rows;
-};
-
-const attachYjsDebugObservers = (ydoc, provider) => {
-  if (typeof removeYjsObservers === 'function') {
-    removeYjsObservers();
+  if (
+    code === 'collaboration-v2-room-already-exists' &&
+    currentRoomMode === 'create' &&
+    collabRoomMode.value === 'auto'
+  ) {
+    return retryCollaborationOpen('join', 'V2 collaboration room already exists; retrying with join');
   }
-
-  const onAfterTransaction = (transaction) => {
-    const events = [];
-    if (transaction.changedParentTypes instanceof Map) {
-      for (const changedEvents of transaction.changedParentTypes.values()) {
-        if (Array.isArray(changedEvents) && changedEvents.length > 0) {
-          events.push(...changedEvents);
-        }
-      }
-    }
-    const rows = rowsFromDeepEvents(events);
-    const origin = summarizeOrigin(transaction.origin);
-    const hasMeaningfulRows = rows.length > 0;
-    if (!hasMeaningfulRows) {
-      return;
-    }
-
-    const activityItems = toActivityItemsFromRows(rows);
-    appendYjsEvent({
-      id: createClientEventId(),
-      source: 'client',
-      at: new Date().toISOString(),
-      local: Boolean(transaction.local),
-      origin,
-      summary:
-        rows.length > 0
-          ? `transaction (${rows.length} change row${rows.length === 1 ? '' : 's'})`
-          : 'transaction (no observable rows)',
-      changedKeys: Array.from(new Set(activityItems.flatMap((item) => item.changedKeys ?? []))),
-      entryKey: activityItems[0]?.entryKey ?? null,
-      changeType: activityItems[0]?.type ?? null,
-      valueSummary: activityItems[0]?.valueSummary ?? null,
-      activityItems,
-      changes: rows,
-    });
-  };
-
-  const onProviderStatus = (event) => {
-    const status = event?.status ?? 'unknown';
-    yjsProviderStatus.value = status;
-    appendYjsEvent({
-      id: createClientEventId(),
-      source: 'client',
-      at: new Date().toISOString(),
-      local: null,
-      origin: 'provider',
-      summary: `provider status: ${status}`,
-      changes: [],
-    });
-  };
-
-  const onProviderSync = (isSynced) => {
-    appendYjsEvent({
-      id: createClientEventId(),
-      source: 'client',
-      at: new Date().toISOString(),
-      local: null,
-      origin: 'provider',
-      summary: `provider sync: ${Boolean(isSynced)}`,
-      changes: [],
-    });
-  };
-
-  ydoc.on('afterTransaction', onAfterTransaction);
-  provider.on('status', onProviderStatus);
-  provider.on('sync', onProviderSync);
-
-  removeYjsObservers = () => {
-    ydoc.off('afterTransaction', onAfterTransaction);
-    provider.off?.('status', onProviderStatus);
-    provider.off?.('sync', onProviderSync);
-    removeYjsObservers = null;
-  };
+  return false;
 };
 
-const toCollaborationHttpBaseUrl = () => {
-  const url = new URL(collabUrl);
-  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
-  return url.toString().replace(/\/$/, '');
-};
-
-const addServerActivityEvent = (payload) => {
-  const eventId = payload?.id ?? null;
-  if (eventId) {
-    if (seenServerActivityEventIds.has(eventId)) return;
-    seenServerActivityEventIds.add(eventId);
-    if (seenServerActivityEventIds.size > 2_000) {
-      seenServerActivityEventIds.clear();
-      seenServerActivityEventIds.add(eventId);
-    }
-  }
-
-  appendYjsEvent({
-    id: eventId ?? createClientEventId(),
-    source: 'server',
-    at: payload?.receivedAt ?? new Date().toISOString(),
-    local: null,
-    origin: 'yjs-hub',
-    summary: payload?.type === 'ydoc:update:v1' ? `server update (${payload.bytes ?? 0} bytes)` : 'server activity',
-    by: payload?.by ?? null,
-    actors: Array.isArray(payload?.actors) ? payload.actors : [],
-    customAttributions: Array.isArray(payload?.customAttributions) ? payload.customAttributions : [],
-    guess: payload?.guess ?? null,
-    clocks: Array.isArray(payload?.clocks) ? payload.clocks : [],
-    changedKeys: Array.isArray(payload?.changedKeys) ? payload.changedKeys : [],
-    entryKey: payload?.entryKey ?? null,
-    changeType: payload?.changeType ?? null,
-    valueSummary: payload?.valueSummary ?? null,
-    activityItems: Array.isArray(payload?.activityItems) ? payload.activityItems : [],
-    changes: [],
+const onAwarenessUpdate = ({ states = [], added = [], removed = [] }) => {
+  const actors = states
+    .map((state) => state?.name || state?.email || (state?.clientId != null ? String(state.clientId) : null))
+    .filter(Boolean);
+  const actorsKey = JSON.stringify([...actors].sort());
+  if (added.length === 0 && removed.length === 0 && actorsKey === lastAwarenessActorsKey) return;
+  lastAwarenessActorsKey = actorsKey;
+  appendCollaborationEvent({
+    id: createClientEventId(),
+    source: 'client',
+    at: new Date().toISOString(),
+    origin: 'awareness',
+    summary: `Awareness: ${states.length} present, +${added.length}, -${removed.length}`,
+    actors,
   });
-};
-
-const attachServerActivityStream = async () => {
-  if (!useCollaboration) return;
-  if (typeof closeActivityStream === 'function') {
-    closeActivityStream();
-  }
-
-  const baseUrl = `${toCollaborationHttpBaseUrl()}/${encodeURIComponent(collabRoom)}/activity`;
-  yjsActivityStatus.value = 'connecting';
-
-  try {
-    const recentResponse = await fetch(`${baseUrl}/recent`);
-    if (recentResponse.ok) {
-      const recentPayload = await recentResponse.json();
-      if (Array.isArray(recentPayload?.events)) {
-        recentPayload.events.forEach((event) => addServerActivityEvent(event));
-      }
-    }
-  } catch (error) {
-    console.warn('[collab] failed to load recent activity events:', error);
-  }
-
-  const stream = new EventSource(`${baseUrl}/stream`);
-
-  const onActivity = (event) => {
-    try {
-      const payload = JSON.parse(event.data);
-      addServerActivityEvent(payload);
-      yjsActivityStatus.value = 'open';
-    } catch (error) {
-      console.warn('[collab] failed to parse activity stream payload:', error);
-    }
-  };
-
-  const onOpen = () => {
-    yjsActivityStatus.value = 'open';
-  };
-
-  const onError = () => {
-    if (stream.readyState === EventSource.CLOSED) {
-      yjsActivityStatus.value = 'closed';
-      return;
-    }
-    yjsActivityStatus.value = 'error';
-  };
-
-  stream.addEventListener('activity', onActivity);
-  stream.onopen = onOpen;
-  stream.onerror = onError;
-
-  closeActivityStream = () => {
-    stream.removeEventListener('activity', onActivity);
-    stream.close();
-    yjsActivityStatus.value = 'closed';
-    closeActivityStream = null;
-  };
 };
 
 const init = async () => {
@@ -648,38 +537,48 @@ const init = async () => {
   superdoc.value?.destroy?.();
   superdoc.value = null;
   activeEditor.value = null;
+  baseEditorSignalsReady.value = false;
+  window.superdoc = null;
+  window.editor = null;
 
-  let testId = 'document-123';
+  const testId = 'document-123';
 
-  // eslint-disable-next-line no-unused-vars
-  const testDocumentId = 'doc123';
-
-  // Prepare document config only if a file was uploaded
-  // If no file, SuperDoc will automatically create a blank document
-  let documentConfig = null;
-  if (currentFile.value) {
-    documentConfig = {
-      data: currentFile.value,
-      id: testId,
-    };
-
-    // Add markdown/HTML content if present
-    if (currentFile.value.markdownContent) {
-      documentConfig.markdown = currentFile.value.markdownContent;
-    }
-    if (currentFile.value.htmlContent) {
-      documentConfig.html = currentFile.value.htmlContent;
-    }
-  }
+  // V2 collaboration is document-owned, so the dev harness must provide an
+  // explicit DOCX even when the user has not uploaded one. Non-collaborative
+  // opens retain the normal implicit-blank behavior.
+  const documentSource = useCollaboration
+    ? currentFile.value || (await getFileObject(BlankDOCX, 'blank.docx', DOCX))
+    : currentFile.value;
+  const v2Collaboration = createDevV2CollaborationConfig({
+    enabled: useCollaboration,
+    serverUrl: collabUrl,
+    documentId: collabRoom,
+    roomMode: getCollaborationOpenRoomMode(),
+    userId: user.id || user.email || user.name,
+  });
+  const documentConfig = createDevDocumentConfig({
+    source: documentSource,
+    id: testId,
+    v2Collaboration,
+  });
 
   const config = {
     superdocId: 'superdoc-dev',
     selector: '#superdoc',
     toolbar: 'toolbar',
-    toolbarGroups: ['center'],
     role: userRole,
+    // Dev-shell render lifecycle diagnostics are forwarded once per named
+    // code/reason so large-document failures are visible without DOM probes.
+    isDebug: true,
     documentMode: 'editing',
+    // Explicit dev-only override. The default execution path is product-owned
+    // by the v2 shell and should run here without harness configuration.
+    ...(resolvedV2ExecutionMode.value ? { benchmarkExecutionMode: resolvedV2ExecutionMode.value } : {}),
     licenseKey: 'public_license_key_superdocinternal_ad7035140c4b',
+    // Word-parity QA must load reviewed metric-compatible substitutes before
+    // the first measurement pass. Production consumers opt into the same pack
+    // with `@superdoc/fonts`; the dev harness enables it by default.
+    fonts: superdocFonts,
     telemetry: {
       enabled: true,
       metadata: {
@@ -698,10 +597,13 @@ const init = async () => {
       flowMode: useWebLayout.value ? 'semantic' : 'paginated',
       ...(useWebLayout.value ? { semanticOptions: { marginsMode: 'none' } } : {}),
       showBookmarks: showBookmarks.value,
+      ...(paintHud ? { paintHud: true } : {}),
     },
     rulers: true,
     rulerContainer: '#ruler-container',
     annotations: true,
+    // Diagnostic kill switch for parity runs; product behavior defaults on.
+    ...(urlParams.get('deferDerived') === '0' ? { experimental: { deferDerivedInvalidations: false } } : {}),
     isInternal,
     // disableContextMenu: true,
     // format: 'docx',
@@ -711,10 +613,11 @@ const init = async () => {
     user,
     title: 'Test document',
     users: [
-      { name: 'Nick Bernal', email: 'nick@harbourshare.com', access: 'internal' },
-      { name: 'Eric Doversberger', email: 'eric@harbourshare.com', access: 'external' },
+      { name: 'Internal Reviewer', email: 'internal@example.com', access: 'internal' },
+      { name: 'External Reviewer', email: 'external@example.com', access: 'external' },
     ],
-    // Only pass document config if a file was uploaded, otherwise SuperDoc creates blank
+    // Collaboration always supplies a concrete blank DOCX so the V2 room can
+    // be created or joined through document.v2Collaboration.
     ...(documentConfig ? { document: documentConfig } : {}),
     // documents: [
     //   {
@@ -858,24 +761,16 @@ const init = async () => {
         //     }
         //   ];
         // }
+
       },
       // 'hrbr-fields': {},
 
-      // Collaboration - enabled via ?collab=1 URL param
-      // Run `pnpm run collab-server` first, then open http://localhost:5173?collab=1
-      ...(useCollaboration && ydocRef.value && providerRef.value
-        ? {
-            collaboration: {
-              ydoc: ydocRef.value,
-              provider: providerRef.value,
-            },
-          }
-        : {}),
       ai: {
         // Provide your Harbour API key here for direct endpoint access
         // apiKey: 'test',
         // Optional: Provide a custom endpoint for AI services
         // endpoint: 'https://sd-dev-express-gateway-i6xtm.ondigitalocean.app/insights',
+
       },
       pdf: {
         pdfLib: pdfjsLib,
@@ -884,11 +779,20 @@ const init = async () => {
         // textLayer: true,
         // outputScale: 1.5,
       },
-      // whiteboard: {
-      //   enabled: true,
-      // },
+      ...(useWhiteboardModule
+        ? {
+            whiteboard: {
+              enabled: true,
+            },
+          }
+        : {}),
     },
     onEditorCreate,
+    onCollaborationReady,
+    onAwarenessUpdate,
+    onSourceSignalsComplete: () => {
+      baseEditorSignalsReady.value = true;
+    },
     onContentError,
     // handleImageUpload: async (file) => url,
 
@@ -904,17 +808,11 @@ const init = async () => {
     // },
     // Override icons.
     toolbarIcons: {},
-    onCommentsUpdate,
-    onCommentsListChange: ({ isRendered }) => {
-      isCommentsListOpen.value = isRendered;
-    },
   };
 
   superdoc.value = new SuperDoc(config);
-  superdoc.value?.on('ready', () => {
-    superdoc.value.addCommentsList(commentsPanel.value);
-  });
   superdoc.value?.on('exception', (error) => {
+    if (handleCollaborationException(error)) return;
     console.error('SuperDoc exception:', error);
   });
 
@@ -929,28 +827,13 @@ const init = async () => {
   });
 
   window.superdoc = superdoc.value;
-
-  // const ydoc = superdoc.value.ydoc;
-  // const metaMap = ydoc.getMap('meta');
-  // metaMap.observe((event) => {
-  //   const { keysChanged } = event;
-  //   keysChanged.forEach((key) => {
-  //     if (key === 'title') {
-  //       title.value = metaMap.get('title');
-  //     }
-  //   });
-  // });
 };
 
-const onCommentsUpdate = () => {};
-
-const onContentError = ({ editor, error, documentId, file }) => {
+const onContentError = ({ error, documentId }) => {
   console.debug('Content error on', documentId, error);
 };
 
-const exportHTML = async (commentsType) => {
-  console.debug('Exporting HTML', { commentsType });
-
+const exportHTML = async () => {
   // Get HTML content from SuperDoc
   const htmlArray = superdoc.value.getHTML();
   const html = htmlArray.join('');
@@ -962,7 +845,7 @@ const exportHTML = async (commentsType) => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${title.value || 'document'}.html`;
+  link.download = `${exportFileStem.value}.html`;
 
   // Trigger the download
   document.body.appendChild(link);
@@ -971,8 +854,6 @@ const exportHTML = async (commentsType) => {
 
   // Clean up the URL
   URL.revokeObjectURL(url);
-
-  console.debug('HTML exported successfully');
 };
 
 const exportDocx = async (commentsType) => {
@@ -982,100 +863,7 @@ const exportDocx = async (commentsType) => {
 
 const exportDocxBlob = async () => {
   const blob = await superdoc.value.export({ commentsType: 'external', triggerDownload: false });
-  console.debug(blob);
-};
-
-const blobToBase64 = (blob) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== 'string') {
-        reject(new Error('Unable to encode DOCX export'));
-        return;
-      }
-
-      const commaIndex = result.indexOf(',');
-      resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
-    };
-    reader.onerror = () => {
-      reject(reader.error || new Error('Failed to read DOCX export blob'));
-    };
-    reader.readAsDataURL(blob);
-  });
-
-const getWordBaselineFileName = () => {
-  const source = uploadedFileName.value || currentFile.value?.name || title.value || 'document';
-  const trimmedSource = String(source).trim() || 'document';
-  const withoutExtension = trimmedSource.replace(/\.[^.]+$/, '') || 'document';
-  return `${withoutExtension}.docx`;
-};
-
-const generateWordBaseline = async () => {
-  if (!superdoc.value) {
-    wordBaselineError.value = 'SuperDoc is not ready yet.';
-    return;
-  }
-
-  isGeneratingWordBaseline.value = true;
-  wordBaselineError.value = '';
-  wordBaselineStatus.value = 'Exporting current document...';
-
-  try {
-    const exportBlob = await superdoc.value.export({
-      commentsType: 'external',
-      triggerDownload: false,
-    });
-
-    if (!(exportBlob instanceof Blob)) {
-      throw new Error('SuperDoc export did not return a DOCX blob');
-    }
-
-    const response = await fetch(`${wordBaselineServiceUrl}/api/word-baseline`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        fileName: getWordBaselineFileName(),
-        docxBase64: await blobToBase64(exportBlob),
-      }),
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload?.error || `Word reference request failed (${response.status})`);
-    }
-
-    if (!Array.isArray(payload?.pages) || payload.pages.length === 0) {
-      throw new Error('Word reference request completed but returned no page images');
-    }
-
-    generatedWordScreenshots.value = payload.pages;
-    useWordOverlay.value = true;
-    wordBaselineStatus.value = `Generated ${payload.pages.length} Word reference page(s).`;
-    scheduleWordOverlayApply();
-  } catch (error) {
-    wordBaselineStatus.value = '';
-    wordBaselineError.value = error instanceof Error ? error.message : String(error);
-    console.error('[SuperDoc Dev] Failed to generate Word reference:', error);
-  } finally {
-    isGeneratingWordBaseline.value = false;
-  }
-};
-
-const toggleWordOverlay = () => {
-  useWordOverlay.value = !useWordOverlay.value;
-};
-
-const setWordOverlayOpacity = (value) => {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) return;
-  wordOverlayOpacity.value = clampOpacity(numericValue);
-};
-
-const setWordOverlayBlendMode = (value) => {
-  wordOverlayBlendMode.value = String(value || 'difference');
+  downloadBlob(blob, `${exportFileStem.value}-blob.docx`);
 };
 
 const downloadBlob = (blob, fileName) => {
@@ -1090,36 +878,14 @@ const downloadBlob = (blob, fileName) => {
   URL.revokeObjectURL(url);
 };
 
-const getActiveDocumentEntry = () => {
-  const docsSource = superdoc.value?.superdocStore?.documents;
-  const documents = Array.isArray(docsSource) ? docsSource : docsSource?.value;
-  if (!documents?.length) return null;
-
-  const activeDocId = activeEditor.value?.options?.documentId;
-  if (activeDocId) {
-    const activeDoc = documents.find((doc) => doc.id === activeDocId);
-    if (activeDoc) return activeDoc;
-  }
-
-  return documents[0] ?? null;
-};
-
 const onEditorCreate = ({ editor }) => {
   activeEditor.value = editor;
   window.editor = editor;
-  bindWordOverlayListener(editor);
 
-  editor.on('fieldAnnotationClicked', (params) => {
-    console.log('fieldAnnotationClicked', { params });
-  });
-
-  editor.on('fieldAnnotationSelected', (params) => {
-    console.log('fieldAnnotationSelected', { params });
-  });
-
-  editor.on('fieldAnnotationDoubleClicked', (params) => {
-    console.log('fieldAnnotationDoubleClicked', { params });
-  });
+  if (typeof editor?.on !== 'function') {
+    console.log('[SuperDoc Dev] v2 editor facade ready', editor);
+    return;
+  }
 
   // SD-2494: Pointer event observability for debugging trackpad/right-click selection issues
   editor.on('pointerDown', (params) => {
@@ -1135,99 +901,30 @@ const onEditorCreate = ({ editor }) => {
   });
 };
 
-watch(
-  [useWordOverlay, wordOverlayOpacity, wordOverlayBlendMode, generatedWordScreenshots, useLayoutEngine, useWebLayout],
-  () => {
-    scheduleWordOverlayApply();
-  },
-);
-
 watch(selectedTheme, (theme) => {
   applyDevTheme(theme);
 });
 
-const handleTitleChange = (e) => {
-  title.value = e.target.innerText;
-
-  const ydoc = superdoc.value.ydoc;
-  const metaMap = ydoc.getMap('meta');
-  metaMap.set('title', title.value);
-  console.debug('Title changed', metaMap.toJSON());
-};
-
-const isCommentsListOpen = ref(false);
-const toggleCommentsPanel = () => {
-  if (isCommentsListOpen.value) {
-    superdoc.value?.removeCommentsList();
-  } else {
-    superdoc.value?.addCommentsList(commentsPanel.value);
-  }
-};
-
 onMounted(async () => {
   applyDevTheme(selectedTheme.value);
 
-  // Initialize collaboration if enabled via ?collab=1
   if (useCollaboration) {
-    clearYjsChanges();
-    const ydoc = new Y.Doc();
-    const provider = new WebsocketProvider(collabUrl, collabRoom, ydoc, {
-      params: {
-        userId: user.id || user.email || user.name,
-      },
-    });
-
-    ydocRef.value = ydoc;
-    providerRef.value = provider;
-    attachYjsDebugObservers(ydoc, provider);
-    await attachServerActivityStream();
-
-    // Wait for sync before loading document
-    await new Promise((resolve) => {
-      let settled = false;
-      const settle = () => {
-        if (settled) return;
-        settled = true;
-        provider.off?.('sync', settle);
-        resolve();
-      };
-
-      provider.on('sync', settle);
-
-      // Fallback timeout in case sync doesn't fire
-      setTimeout(settle, 3000);
-    });
-
-    console.log(`[collab] Provider ready (${collabUrl}/${collabRoom}), initializing SuperDoc`);
+    clearCollaborationEvents();
   }
 
-  // Initialize SuperDoc - it will automatically create a blank document
-  init();
+  await init();
 });
 
 onBeforeUnmount(() => {
   applyDevTheme('default');
-  detachWordOverlayListener();
-  removeWordOverlay();
 
-  if (typeof removeYjsObservers === 'function') {
-    removeYjsObservers();
-  }
-  if (typeof closeActivityStream === 'function') {
-    closeActivityStream();
-  }
-
-  // Ensure SuperDoc tears down global listeners (e.g., PresentationEditor input bridge)
+  // Ensure SuperDoc tears down global listeners (e.g., DocumentRendererRuntime input bridge)
   superdoc.value?.destroy?.();
   superdoc.value = null;
   activeEditor.value = null;
-
-  // Cleanup collaboration provider
-  if (providerRef.value) {
-    providerRef.value.destroy();
-    providerRef.value = null;
-  }
-  ydocRef.value = null;
+  baseEditorSignalsReady.value = false;
+  window.superdoc = null;
+  window.editor = null;
 });
 
 const toggleLayoutEngine = () => {
@@ -1240,12 +937,6 @@ const toggleLayoutEngine = () => {
 const toggleShowBookmarks = () => {
   showBookmarks.value = !showBookmarks.value;
   superdoc.value?.setShowBookmarks?.(showBookmarks.value);
-};
-
-// SD-3400: demo wiring for the custom insert-footnote action. Consumer apps
-// register this on their own toolbar; it is intentionally not a default item.
-const handleInsertFootnote = () => {
-  activeEditor.value?.commands?.insertFootnote?.();
 };
 
 const toggleViewLayout = () => {
@@ -1302,11 +993,15 @@ const sidebarOptions = [
     label: 'Search',
     component: SidebarSearch,
   },
-  {
-    id: 'fields',
-    label: 'Field Annotations',
-    component: SidebarFieldAnnotations,
-  },
+  ...(useCollaboration
+    ? [
+        {
+          id: 'collaboration',
+          label: 'Collaboration',
+          component: SidebarCollaboration,
+        },
+      ]
+    : []),
   {
     id: 'layout',
     label: 'Layout',
@@ -1323,24 +1018,15 @@ const activeSidebarProps = computed(() => {
   if (activeSidebarId.value === 'layout') {
     return {
       useWebLayout: useWebLayout.value,
-      useWordOverlay: useWordOverlay.value,
-      isGeneratingWordBaseline: isGeneratingWordBaseline.value,
-      generatedCount: generatedWordScreenshots.value.length,
-      wordOverlayOpacity: wordOverlayOpacity.value,
-      wordOverlayOpacityLabel: wordOverlayOpacityLabel.value,
-      wordOverlayBlendMode: wordOverlayBlendMode.value,
-      wordBaselineStatus: wordBaselineStatus.value,
-      wordBaselineError: wordBaselineError.value,
-      wordOverlayAvailable: wordOverlayAvailable.value,
     };
   }
 
-  if (activeSidebarId.value === 'yjs-changes') {
+  if (activeSidebarId.value === 'collaboration') {
     return {
-      events: yjsChangeEvents.value,
-      providerStatus: yjsProviderStatus.value,
-      activityStatus: yjsActivityStatus.value,
+      events: collaborationEvents.value,
+      providerStatus: collaborationProviderStatus.value,
       collabRoom,
+      roomMode: collabRoomMode.value,
     };
   }
 
@@ -1357,11 +1043,6 @@ const setActiveSidebar = (id) => {
 
 // Scroll test mode - adds content above editor to make page scrollable (for testing focus scroll bugs)
 const scrollTestMode = ref(urlParams.get('scrolltest') === '1');
-const toggleScrollTestMode = () => {
-  const url = new URL(window.location.href);
-  url.searchParams.set('scrolltest', scrollTestMode.value ? '0' : '1');
-  window.location.href = url.toString();
-};
 
 // Debug: Track all scroll changes when in scroll test mode
 if (scrollTestMode.value) {
@@ -1396,11 +1077,6 @@ if (scrollTestMode.value) {
           <div class="dev-app__brand-meta">
             <div class="dev-app__meta-row">
               <span class="dev-app__pill">SUPERDOC LABS</span>
-              <span class="badge">Layout Engine: {{ useLayoutEngine ? 'ON' : 'OFF' }}</span>
-              <span v-if="useLayoutEngine" class="badge">Flow: {{ useWebLayout ? 'SEMANTIC' : 'PAGINATED' }}</span>
-              <span v-if="useWebLayout" class="badge">Web Layout: ON</span>
-              <span v-if="scrollTestMode" class="badge badge--warning">Scroll Test: ON</span>
-              <span v-if="useCollaboration" class="badge badge--collab">Collab: ON</span>
             </div>
             <h2 class="dev-app__title">SuperDoc Dev</h2>
             <div class="dev-app__header-layout-toggle">
@@ -1536,7 +1212,14 @@ if (scrollTestMode.value) {
               <button class="dev-app__header-export-btn" @click="zoomIn">+</button>
             </div>
             <div class="dev-app__compare-control">
-              <button class="dev-app__header-export-btn" @click="handleCompareClick">Compare documents</button>
+              <button
+                class="dev-app__header-export-btn"
+                :disabled="!canCompareDocuments"
+                :title="compareButtonTitle"
+                @click="handleCompareClick"
+              >
+                Compare documents
+              </button>
               <input
                 ref="compareInput"
                 class="dev-app__compare-input"
@@ -1548,7 +1231,6 @@ if (scrollTestMode.value) {
             <button class="dev-app__header-export-btn" @click="toggleShowBookmarks">
               {{ showBookmarks ? 'Hide' : 'Show' }} bookmarks
             </button>
-            <button class="dev-app__header-export-btn" @click="handleInsertFootnote">Insert footnote</button>
             <button class="dev-app__header-export-btn" @click="toggleLayoutEngine">
               Turn Layout Engine {{ useLayoutEngine ? 'off' : 'on' }} (reloads)
             </button>
@@ -1591,13 +1273,8 @@ if (scrollTestMode.value) {
             :key="`${activeSidebarId}-${sidebarInstanceKey}`"
             v-bind="activeSidebarProps"
             @close="setActiveSidebar('off')"
-            @toggle-overlay="toggleWordOverlay"
             @toggle-web-layout="toggleViewLayout"
-            @generate-baseline="generateWordBaseline"
-            @clear-generated-baseline="clearGeneratedWordBaseline"
-            @update:word-overlay-opacity="setWordOverlayOpacity"
-            @update:word-overlay-blend-mode="setWordOverlayBlendMode"
-            @clear-yjs-events="clearYjsChanges"
+            @clear-collaboration-events="clearCollaborationEvents"
           />
         </div>
       </div>
@@ -1630,13 +1307,11 @@ if (scrollTestMode.value) {
   min-height: 25px;
 }
 
-/* Hide the ruler container when no ruler is rendered inside it */
-.sd-ruler:not(:has(.ruler)) {
+/* Hide the ruler container only when it is truly empty. The v1 editor mounts a
+   `.ruler` root; the v2 shell teleports a `.v2-ruler-host` instead, so recognize
+   both — otherwise the v2 ruler renders into a `display: none` container. */
+.sd-ruler:not(:has(.ruler)):not(:has(.v2-ruler-host)) {
   display: none;
-}
-
-.comments-panel {
-  width: 320px;
 }
 
 @media screen and (max-width: 1024px) {
@@ -1651,21 +1326,6 @@ if (scrollTestMode.value) {
   display: flex;
   justify-content: center;
   width: 100%;
-}
-
-.temp-comment {
-  margin: 5px;
-  border: 1px solid black;
-  display: flex;
-  flex-direction: column;
-}
-
-.comments-panel {
-  position: absolute;
-  right: 0;
-  height: 100%;
-  background-color: #fafafa;
-  z-index: 100;
 }
 
 .dev-app {
@@ -1816,29 +1476,6 @@ if (scrollTestMode.value) {
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 8px;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 10px;
-  background: rgba(59, 130, 246, 0.15);
-  border-radius: 10px;
-  font-weight: 700;
-  color: #bfdbfe;
-  letter-spacing: 0.02em;
-  font-size: 12px;
-  pointer-events: none;
-}
-
-.badge--warning {
-  background: rgba(251, 191, 36, 0.2);
-  color: #fcd34d;
-}
-
-.badge--collab {
-  background: rgba(34, 197, 94, 0.2);
-  color: #86efac;
 }
 
 .dev-app__upload-block {
@@ -2207,21 +1844,6 @@ if (scrollTestMode.value) {
 
 .dev-app__main:has(.dev-app__content-container--web-layout) {
   overflow-x: hidden;
-}
-
-:deep(.dev-word-overlay-page-host) {
-  position: relative;
-  overflow: hidden;
-}
-
-:deep(.dev-word-overlay-image) {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: fill;
-  pointer-events: none;
-  z-index: 120;
 }
 
 .dev-app__inputs-panel {

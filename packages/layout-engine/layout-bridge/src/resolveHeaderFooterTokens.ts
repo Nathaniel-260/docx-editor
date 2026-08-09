@@ -14,6 +14,7 @@ import {
   formatChapterPageNumberText,
   formatPageNumberFieldValue,
   formatSectionPageNumberText,
+  type DrawingBlock,
   type FlowBlock,
   type ListBlock,
   type PageNumberChapterSeparator,
@@ -21,6 +22,33 @@ import {
   type ParagraphBlock,
   type TableBlock,
 } from '@superdoc/contracts';
+
+/**
+ * Placeholder for a total-page-count field whose source document carries no
+ * cached result while pagination is still provisional. An em dash reads as
+ * "value not yet known" without committing to a wrong number.
+ */
+export const PROVISIONAL_PAGE_COUNT_PLACEHOLDER = '—';
+
+/**
+ * Options for {@link resolveHeaderFooterTokens}.
+ */
+export interface ResolveHeaderFooterTokensOptions {
+  /**
+   * When `false`, document-total fields (`NUMPAGES` / `SECTIONPAGES`) are NOT
+   * substituted with the supplied totals: the run keeps its source-cached DOCX
+   * result text, falling back to {@link PROVISIONAL_PAGE_COUNT_PLACEHOLDER}
+   * when no cached result exists. `PAGE` always resolves — the physical page
+   * a header/footer paints on is known even under partial pagination.
+   * Defaults to `true` (exact totals), preserving existing caller behavior.
+   */
+  pageCountFieldsExact?: boolean;
+}
+
+/** Provisional text for a page-count field: cached DOCX result or em dash. */
+function provisionalPageCountText(cachedText: string | undefined): string {
+  return cachedText && cachedText.trim().length > 0 ? cachedText : PROVISIONAL_PAGE_COUNT_PLACEHOLDER;
+}
 
 /**
  * Walk every paragraph block reachable through `blocks`, including those
@@ -47,6 +75,11 @@ function forEachParagraphBlock(blocks: FlowBlock[], visit: (para: ParagraphBlock
             forEachParagraphBlock([cell.paragraph], visit);
           }
         }
+      }
+    } else if (block.kind === 'drawing') {
+      const drawing = block as DrawingBlock;
+      if (drawing.drawingKind === 'textboxShape' && Array.isArray(drawing.contentBlocks)) {
+        forEachParagraphBlock(drawing.contentBlocks, visit);
       }
     }
   }
@@ -92,6 +125,7 @@ export function resolveHeaderFooterTokens(
   pageNumberFormat?: PageNumberFormat,
   chapterNumberText?: string,
   chapterSeparator?: PageNumberChapterSeparator,
+  options?: ResolveHeaderFooterTokensOptions,
 ): void {
   // Validate inputs
   if (!blocks || blocks.length === 0) {
@@ -108,6 +142,7 @@ export function resolveHeaderFooterTokens(
     totalPages = 1;
   }
 
+  const pageCountFieldsExact = options?.pageCountFieldsExact !== false;
   const pageNumberStr = pageNumberText ?? String(pageNumber);
   const totalPagesStr = String(totalPages);
   const displayNumber = displayPageNumber ?? pageNumber;
@@ -145,13 +180,19 @@ export function resolveHeaderFooterTokens(
         } else if (run.token === 'totalPageCount') {
           // Replace placeholder text with total page count for measurement.
           // IMPORTANT: Keep token for painter to re-resolve if needed.
-          run.text = run.pageNumberFieldFormat
-            ? formatPageNumberFieldValue(totalPages, run.pageNumberFieldFormat)
-            : totalPagesStr;
+          // Under provisional pagination the total is not authoritative:
+          // preserve the source-cached DOCX result (em dash when absent).
+          run.text = !pageCountFieldsExact
+            ? provisionalPageCountText(run.text)
+            : run.pageNumberFieldFormat
+              ? formatPageNumberFieldValue(totalPages, run.pageNumberFieldFormat)
+              : totalPagesStr;
         } else if (run.token === 'sectionPageCount') {
-          run.text = run.pageNumberFieldFormat
-            ? formatPageNumberFieldValue(sectionPageCountNumber, run.pageNumberFieldFormat)
-            : sectionPageCountStr;
+          run.text = !pageCountFieldsExact
+            ? provisionalPageCountText(run.text)
+            : run.pageNumberFieldFormat
+              ? formatPageNumberFieldValue(sectionPageCountNumber, run.pageNumberFieldFormat)
+              : sectionPageCountStr;
         }
         // Note: pageReference tokens should not appear in headers/footers typically,
         // but if they do, they'll be handled by the PAGEREF resolution logic
@@ -229,6 +270,17 @@ function cloneHeaderFooterBlock(block: FlowBlock): FlowBlock {
       })),
     } as ListBlock;
   }
-  // For other block types, shallow copy is sufficient (they don't contain tokens)
+  if (block.kind === 'drawing') {
+    const drawing = block as DrawingBlock;
+    if (drawing.drawingKind === 'textboxShape') {
+      return {
+        ...drawing,
+        contentBlocks: drawing.contentBlocks.map((contentBlock) => cloneHeaderFooterBlock(contentBlock)),
+        // Page-specific token text requires fresh content measurement.
+        contentMeasures: undefined,
+      } as DrawingBlock;
+    }
+  }
+  // Other block types do not contain mutable paragraph-token trees.
   return { ...block };
 }

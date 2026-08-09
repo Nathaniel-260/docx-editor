@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { MeasureCache } from '../src/cache';
 import type {
   FlowBlock,
@@ -33,6 +33,27 @@ const paragraphBlock = (id: string, text: string): ParagraphBlock => ({
   kind: 'paragraph',
   id,
   runs: [{ text, fontFamily: 'Arial', fontSize: 12 }],
+});
+
+const inlineBoxParagraph = (paddingInlineStart = 4, backgroundColor = '#eef2ff'): ParagraphBlock => ({
+  ...paragraphBlock('inline-box-cache', 'Citation'),
+  inlineBoxes: [
+    {
+      id: 'citation',
+      from: 0,
+      to: 8,
+      layout: {
+        paddingInlineStart,
+        paddingInlineEnd: 4,
+        paddingBlockStart: 1,
+        paddingBlockEnd: 1,
+        gapBefore: 1,
+        gapAfter: 1,
+        borderWidth: 1,
+      },
+      appearance: { backgroundColor, borderStyle: 'solid' },
+    },
+  ],
 });
 
 /**
@@ -119,6 +140,23 @@ describe('MeasureCache', () => {
     expect(cache.get(item, 400, 500)).toBeUndefined();
   });
 
+  it('invalidates inline-box measures for metric or appearance changes but reuses identical boxes', () => {
+    const base = inlineBoxParagraph();
+    cache.set(base, 400, 600, { totalHeight: 20 });
+
+    expect(cache.get(inlineBoxParagraph(), 400, 600)).toEqual({ totalHeight: 20 });
+    expect(cache.get(inlineBoxParagraph(8), 400, 600)).toBeUndefined();
+    expect(cache.get(inlineBoxParagraph(4, '#ffffff'), 400, 600)).toBeUndefined();
+  });
+
+  it('invalidates a table measure when a nested paragraph inline box changes', () => {
+    const base = tableWithCellBlocks('inline-box-table', [inlineBoxParagraph()]);
+    const changed = tableWithCellBlocks('inline-box-table', [inlineBoxParagraph(8)]);
+    cache.set(base, 400, 600, { totalHeight: 20 });
+
+    expect(cache.get(changed, 400, 600)).toBeUndefined();
+  });
+
   it('invalidates entries by block id', () => {
     const item = block('0-paragraph', 'hello');
     cache.set(item, 400, 600, { totalHeight: 20 });
@@ -142,29 +180,6 @@ describe('MeasureCache', () => {
     // Omitting the signature is the same as '' on both sides, so default documents share cache.
     expect(cache.get(item, 400, 600)?.totalHeight).toBe(20);
     expect(cache.get(item, 400, 600, '')?.totalHeight).toBe(20);
-  });
-
-  it('creates different cache keys when vector shape shadow opacity changes', () => {
-    const baseShadow = {
-      type: 'outerShadow' as const,
-      blurRadius: 6,
-      distance: 4,
-      direction: 45,
-      color: '#a6a6a6',
-      opacity: 0.4,
-    };
-    const block1: VectorShapeDrawing = {
-      ...vectorShapeBlock('shadow-shape', 100, 50, '#ffffff'),
-      effects: { outerShadow: baseShadow },
-    };
-    const block2: VectorShapeDrawing = {
-      ...vectorShapeBlock('shadow-shape', 100, 50, '#ffffff'),
-      effects: { outerShadow: { ...baseShadow, opacity: 0.8 } },
-    };
-
-    cache.set(block1, 400, 600, { totalHeight: 20 });
-
-    expect(cache.get(block2, 400, 600)).toBeUndefined();
   });
 
   it('invalidates by block id even when a font signature is part of the key', () => {
@@ -379,7 +394,46 @@ describe('MeasureCache', () => {
     });
   });
 
+  describe('top-level drawing caching', () => {
+    it('invalidates cache when intrinsic geometry changes under a stable block id', () => {
+      const before = vectorShapeBlock('drawing-1', 189, 84, '#ff0000');
+      const after = vectorShapeBlock('drawing-1', 219, 104, '#ff0000');
+
+      cache.set(before, 400, 600, { totalHeight: 84 });
+
+      expect(cache.get(after, 400, 600)).toBeUndefined();
+    });
+
+    it('reuses cache when the drawing payload is unchanged', () => {
+      const first = vectorShapeBlock('drawing-1', 189, 84, '#ff0000');
+      const equivalent = vectorShapeBlock('drawing-1', 189, 84, '#ff0000');
+
+      cache.set(first, 400, 600, { totalHeight: 84 });
+
+      expect(cache.get(equivalent, 400, 600)).toEqual({ totalHeight: 84 });
+    });
+  });
+
   describe('table block caching', () => {
+    it('invalidates cache when an inline in-cell image is resized', () => {
+      // A cell paragraph whose only run is an inline image. Resizing that image
+      // changes the cell's content height and therefore an auto-height row's
+      // geometry. The table hash must account for the image run's dimensions;
+      // otherwise the resized table hits the stale cached measure and the row
+      // keeps its old height until an unrelated edit (regression: in-cell image
+      // resize did not re-fit the table row).
+      const big = tableWithCellBlocks('table-img', [
+        blockWithImage('table-img-p', imageRun('media/image1.jpeg', 237, 237)),
+      ]);
+      cache.set(big, 800, 600, { totalHeight: 260 });
+      expect(cache.get(big, 800, 600)?.totalHeight).toBe(260);
+
+      const small = tableWithCellBlocks('table-img', [
+        blockWithImage('table-img-p', imageRun('media/image1.jpeg', 120, 120)),
+      ]);
+      expect(cache.get(small, 800, 600)).toBeUndefined();
+    });
+
     it('invalidates cache when cell text changes', () => {
       const table1 = tableBlock('table-1', [
         ['Row 1 Cell 1', 'Row 1 Cell 2'],
@@ -408,6 +462,64 @@ describe('MeasureCache', () => {
       cache.set(table1, 800, 600, { totalHeight: 100 });
       // Identical content should result in cache hit
       expect(cache.get(table2, 800, 600)).toEqual({ totalHeight: 100 });
+    });
+
+    it('invalidates the measure cache when only the column widths change (table resize)', () => {
+      const content = [['A', 'B']];
+      const wide: TableBlock = { ...tableBlock('table-1', content), columnWidths: [100, 300] };
+      const narrow: TableBlock = { ...tableBlock('table-1', content), columnWidths: [200, 200] };
+
+      cache.set(wide, 800, 600, { totalHeight: 100 });
+      // A column-width drag changes geometry only (no border/text/attr change).
+      // Without columnWidths in the key, the shared header/footer measure cache
+      // returns a stale TableMeasure and the resize never paints until an
+      // unrelated edit perturbs the hash. Must be a cache miss.
+      expect(cache.get(narrow, 800, 600)).toBeUndefined();
+    });
+
+    it('keeps the measure cache hit when column widths are unchanged', () => {
+      const content = [['A', 'B']];
+      const a: TableBlock = { ...tableBlock('table-1', content), columnWidths: [100, 300] };
+      const b: TableBlock = { ...tableBlock('table-1', content), columnWidths: [100, 300] };
+
+      cache.set(a, 800, 600, { totalHeight: 100 });
+      expect(cache.get(b, 800, 600)).toEqual({ totalHeight: 100 });
+    });
+
+    it('absorbs sub-pixel column-width float jitter via rounding', () => {
+      const content = [['A', 'B']];
+      const exact: TableBlock = { ...tableBlock('table-1', content), columnWidths: [100, 300] };
+      const jittered: TableBlock = { ...tableBlock('table-1', content), columnWidths: [100.3, 299.6] };
+
+      cache.set(exact, 800, 600, { totalHeight: 100 });
+      // Math.round in the key prevents spurious misses from float drift between
+      // the resolver (unrounded twips*px) and the readTableColumnWidthsPx fallback.
+      expect(cache.get(jittered, 800, 600)).toEqual({ totalHeight: 100 });
+    });
+
+    it('invalidates the measure cache when only a row height changes (row resize)', () => {
+      const base = tableBlock('table-1', [['A', 'B']]);
+      const withRowHeight = (value: number): TableBlock => ({
+        ...base,
+        rows: base.rows.map((r) => ({ ...r, attrs: { rowHeight: { value, rule: 'atLeast' } } })),
+      });
+
+      cache.set(withRowHeight(30), 800, 600, { totalHeight: 100 });
+      // A row-height drag (setRowHeight) changes geometry only; without rowHeight
+      // in the key the shared header/footer measure cache returns a stale
+      // TableMeasure and the resize never paints until an unrelated edit.
+      expect(cache.get(withRowHeight(80), 800, 600)).toBeUndefined();
+    });
+
+    it('keeps the measure cache hit when row heights are unchanged', () => {
+      const base = tableBlock('table-1', [['A', 'B']]);
+      const withRowHeight = (value: number): TableBlock => ({
+        ...base,
+        rows: base.rows.map((r) => ({ ...r, attrs: { rowHeight: { value, rule: 'atLeast' } } })),
+      });
+
+      cache.set(withRowHeight(30), 800, 600, { totalHeight: 100 });
+      expect(cache.get(withRowHeight(30), 800, 600)).toEqual({ totalHeight: 100 });
     });
 
     it('handles multi-block cells (new format with blocks array)', () => {

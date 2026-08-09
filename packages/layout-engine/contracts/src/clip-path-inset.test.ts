@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { parseInsetClipPathForScale, formatInsetClipPathTransform } from './clip-path-inset.js';
 
 describe('parseInsetClipPathForScale', () => {

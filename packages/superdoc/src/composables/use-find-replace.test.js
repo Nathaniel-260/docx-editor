@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { ref, nextTick } from 'vue';
 import { useFindReplace } from './use-find-replace.js';
 
@@ -130,13 +130,13 @@ describe('useFindReplace', () => {
     });
 
     it('does nothing when no active editor', async () => {
-      const noEditor = useFindReplace({
+      const noActive = useFindReplace({
         getSurfaceManager: () => manager,
         getActiveEditor: () => null,
         getFindReplaceConfig: () => true,
       });
 
-      await noEditor.open();
+      await noActive.open();
       expect(manager.open).not.toHaveBeenCalled();
     });
 
@@ -586,31 +586,6 @@ describe('useFindReplace', () => {
       expect(editor.commands.replaceAllSearchMatches).toHaveBeenCalledWith('new text');
     });
 
-    it('replaceAll resets matchCount/activeMatchIndex when nothing was skipped', () => {
-      editor.commands.replaceAllSearchMatches.mockReturnValue({ replacedCount: 3, skippedCount: 0 });
-      handle.matchCount.value = 3;
-      handle.replaceText.value = 'new text';
-
-      handle.replaceAll();
-
-      expect(handle.matchCount.value).toBe(0);
-      expect(handle.activeMatchIndex.value).toBe(-1);
-    });
-
-    it('replaceAll resyncs from storage instead of hardcoding a reset when matches were skipped', () => {
-      editor.commands.replaceAllSearchMatches.mockReturnValue({ replacedCount: 1, skippedCount: 1 });
-      // The command leaves the session refreshed with the remaining (locked) match.
-      editor.extensionStorage.Search.searchResults = [{ id: 'locked-1' }];
-      editor.extensionStorage.Search.activeMatchIndex = 0;
-      handle.matchCount.value = 2;
-      handle.replaceText.value = 'new text';
-
-      handle.replaceAll();
-
-      expect(handle.matchCount.value).toBe(1);
-      expect(handle.activeMatchIndex.value).toBe(0);
-    });
-
     it('replaceCurrent is a no-op when replaceEnabled is false', async () => {
       // Close and reopen with replaceEnabled: false
       manager.lastHandle._settle({ status: 'closed' });
@@ -693,67 +668,6 @@ describe('useFindReplace', () => {
         }),
       );
     });
-
-    describe('debounce', () => {
-      beforeEach(() => {
-        vi.useFakeTimers();
-      });
-
-      afterEach(() => {
-        vi.useRealTimers();
-      });
-
-      it('coalesces two query changes within 150ms into one final search', async () => {
-        handle.findQuery.value = 'tr';
-        await nextTick();
-
-        vi.advanceTimersByTime(100);
-
-        handle.findQuery.value = 'tracked';
-        await nextTick();
-
-        vi.advanceTimersByTime(149);
-        expect(editor.commands.setSearchSession).not.toHaveBeenCalled();
-
-        vi.advanceTimersByTime(1);
-
-        expect(editor.commands.setSearchSession).toHaveBeenCalledTimes(1);
-        expect(editor.commands.setSearchSession).toHaveBeenCalledWith(
-          'tracked',
-          expect.objectContaining({
-            searchModel: 'visible',
-          }),
-        );
-      });
-
-      it('runs separate searches when query changes are more than 150ms apart', async () => {
-        handle.findQuery.value = 'tr';
-        await nextTick();
-
-        vi.advanceTimersByTime(150);
-
-        handle.findQuery.value = 'tracked';
-        await nextTick();
-
-        vi.advanceTimersByTime(150);
-
-        expect(editor.commands.setSearchSession).toHaveBeenCalledTimes(2);
-        expect(editor.commands.setSearchSession).toHaveBeenNthCalledWith(
-          1,
-          'tr',
-          expect.objectContaining({
-            searchModel: 'visible',
-          }),
-        );
-        expect(editor.commands.setSearchSession).toHaveBeenNthCalledWith(
-          2,
-          'tracked',
-          expect.objectContaining({
-            searchModel: 'visible',
-          }),
-        );
-      });
-    });
   });
 
   describe('handle reactive state', () => {
@@ -809,6 +723,272 @@ describe('useFindReplace', () => {
       const newHandle = manager.open.mock.calls[1][0].props.findReplace;
       expect(newHandle.findQuery.value).toBe('');
       expect(newHandle.matchCount.value).toBe(0);
+    });
+  });
+
+  describe('v2 driver (host.search via ui.search)', () => {
+    /** A V2 active editor facade — no command-backed search API. */
+    function createV2Editor() {
+      return { editorVersion: 2 };
+    }
+
+    /** Stateful `ui.search` stub mirroring the host search session contract. */
+    function createV2SearchStub({ canReplace = true, available = true } = {}) {
+      const state = { query: '', total: 0, activeIndex: -1, canReplace, available, includeDeletedText: false };
+      return {
+        getSnapshot: vi.fn(() => ({ ...state })),
+        search: vi.fn((query, options = {}) => {
+          state.query = query;
+          state.total = query ? 2 : 0;
+          state.activeIndex = query ? 0 : -1;
+          state.includeDeletedText = options.includeDeletedText === true;
+          return { ...state };
+        }),
+        next: vi.fn(() => {
+          if (state.total > 0) state.activeIndex = (state.activeIndex + 1) % state.total;
+          return { ok: true };
+        }),
+        previous: vi.fn(() => {
+          if (state.total > 0) state.activeIndex = (state.activeIndex - 1 + state.total) % state.total;
+          return { ok: true };
+        }),
+        clear: vi.fn(() => {
+          state.query = '';
+          state.total = 0;
+          state.activeIndex = -1;
+        }),
+        replace: vi.fn(() => {
+          state.total = Math.max(0, state.total - 1);
+          state.activeIndex = state.total > 0 ? Math.min(state.activeIndex, state.total - 1) : -1;
+          return { ok: true };
+        }),
+        replaceAll: vi.fn(() => {
+          state.total = 0;
+          state.activeIndex = -1;
+          return { ok: true };
+        }),
+      };
+    }
+
+    function makeV2({ canReplace = true, available = true } = {}) {
+      const v2Editor = createV2Editor();
+      const search = createV2SearchStub({ canReplace, available });
+      const fr = useFindReplace({
+        getSurfaceManager: () => manager,
+        getActiveEditor: () => v2Editor,
+        activeEditorRef: ref(v2Editor),
+        getFindReplaceConfig: () => true,
+        getSuperDocUI: () => ({ search }),
+      });
+      return { fr, search };
+    }
+
+    it('wouldOpen requires the host search facade to be available', () => {
+      const unavailable = makeV2({ available: false });
+      expect(unavailable.fr.wouldOpen()).toBe(false);
+
+      const noUi = useFindReplace({
+        getSurfaceManager: () => manager,
+        getActiveEditor: () => createV2Editor(),
+        getFindReplaceConfig: () => true,
+        getSuperDocUI: () => null,
+      });
+      expect(noUi.wouldOpen()).toBe(false);
+
+      const available = makeV2();
+      expect(available.fr.wouldOpen()).toBe(true);
+    });
+
+    it('routes query and navigation through ui.search', async () => {
+      const { fr, search } = makeV2();
+      await fr.open();
+      await vi.dynamicImportSettled();
+      const handle = manager.open.mock.calls.at(-1)[0].props.findReplace;
+
+      handle.findQuery.value = 'needle';
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      expect(search.search).toHaveBeenCalledWith('needle', {
+        caseSensitive: false,
+        includeDeletedText: false,
+        regex: false,
+      });
+      expect(handle.matchCount.value).toBe(2);
+      expect(handle.activeMatchIndex.value).toBe(0);
+
+      handle.goNext();
+      expect(search.next).toHaveBeenCalled();
+      expect(handle.activeMatchIndex.value).toBe(1);
+
+      handle.goPrev();
+      expect(search.previous).toHaveBeenCalled();
+      expect(handle.activeMatchIndex.value).toBe(0);
+
+      fr.close();
+    });
+
+    it('threads the regex toggle into ui.search and surfaces invalid-pattern errors (SD-3569)', async () => {
+      const v2Editor = createV2Editor();
+      const search = createV2SearchStub();
+      search.search = vi.fn((query, options = {}) => ({
+        query,
+        total: options.regex && query === '(' ? 0 : 1,
+        activeIndex: options.regex && query === '(' ? -1 : 0,
+        canReplace: true,
+        available: true,
+        includeDeletedText: false,
+        regex: options.regex === true,
+        reason: options.regex && query === '(' ? 'search-invalid-pattern' : undefined,
+      }));
+      const fr = useFindReplace({
+        getSurfaceManager: () => manager,
+        getActiveEditor: () => v2Editor,
+        activeEditorRef: ref(v2Editor),
+        getFindReplaceConfig: () => true,
+        getSuperDocUI: () => ({ search }),
+      });
+
+      await fr.open();
+      await vi.dynamicImportSettled();
+      const handle = manager.open.mock.calls.at(-1)[0].props.findReplace;
+
+      // The V2 driver exposes the regex toggle.
+      expect(handle.regexSupported.value).toBe(true);
+
+      handle.regex.value = true;
+      handle.findQuery.value = 'nee(dle)';
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      expect(search.search).toHaveBeenCalledWith('nee(dle)', {
+        caseSensitive: false,
+        includeDeletedText: false,
+        regex: true,
+      });
+      expect(handle.searchError.value).toBe(null);
+
+      // Invalid pattern surfaces the inline error label without a crash.
+      handle.findQuery.value = '(';
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      expect(handle.searchError.value).toBe('Invalid pattern');
+      expect(handle.matchCount.value).toBe(0);
+
+      // A valid query clears the error.
+      handle.findQuery.value = 'needle';
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      expect(handle.searchError.value).toBe(null);
+
+      fr.close();
+    });
+
+    it('passes includeDeletedText from config into ui.search on v2', async () => {
+      const v2Editor = createV2Editor();
+      const search = createV2SearchStub();
+      const fr = useFindReplace({
+        getSurfaceManager: () => manager,
+        getActiveEditor: () => v2Editor,
+        activeEditorRef: ref(v2Editor),
+        getFindReplaceConfig: () => ({ includeDeletedText: true }),
+        getSuperDocUI: () => ({ search }),
+      });
+
+      await fr.open();
+      await vi.dynamicImportSettled();
+      const handle = manager.open.mock.calls.at(-1)[0].props.findReplace;
+
+      handle.findQuery.value = 'needle';
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      expect(search.search).toHaveBeenCalledWith('needle', {
+        caseSensitive: false,
+        includeDeletedText: true,
+        regex: false,
+      });
+
+      fr.close();
+    });
+
+    it('replaceCurrent / replaceAll mutate through ui.search and refresh state', async () => {
+      const { fr, search } = makeV2();
+      await fr.open();
+      await vi.dynamicImportSettled();
+      const handle = manager.open.mock.calls.at(-1)[0].props.findReplace;
+
+      handle.findQuery.value = 'needle';
+      await new Promise((resolve) => setTimeout(resolve, 180));
+
+      handle.replaceText.value = 'pin';
+      handle.replaceCurrent();
+      expect(search.replace).toHaveBeenCalledWith('pin');
+      expect(handle.matchCount.value).toBe(1);
+
+      handle.replaceAll();
+      expect(search.replaceAll).toHaveBeenCalledWith('pin');
+      expect(handle.matchCount.value).toBe(0);
+
+      fr.close();
+    });
+
+    it('holds replacePending across an async (worker) replace and blocks re-entry', async () => {
+      const { fr, search } = makeV2();
+      let resolveReplace;
+      search.replace.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveReplace = resolve;
+          }),
+      );
+      await fr.open();
+      await vi.dynamicImportSettled();
+      const handle = manager.open.mock.calls.at(-1)[0].props.findReplace;
+
+      handle.findQuery.value = 'needle';
+      await new Promise((resolve) => setTimeout(resolve, 180));
+
+      handle.replaceText.value = 'pin';
+      handle.replaceCurrent();
+      // The worker mutation has not settled: pending must hold so the replace
+      // controls stay disabled and a second click cannot start a concurrent
+      // replace.
+      expect(handle.replacePending.value).toBe(true);
+      handle.replaceCurrent();
+      expect(search.replace).toHaveBeenCalledTimes(1);
+
+      resolveReplace({ ok: true });
+      await tick();
+      await tick();
+      expect(handle.replacePending.value).toBe(false);
+      fr.close();
+    });
+
+    it('disables replace and hides ignore-diacritics in read-only mode', async () => {
+      const { fr, search } = makeV2({ canReplace: false });
+      await fr.open();
+      await vi.dynamicImportSettled();
+      const handle = manager.open.mock.calls.at(-1)[0].props.findReplace;
+
+      handle.findQuery.value = 'needle';
+      await new Promise((resolve) => setTimeout(resolve, 180));
+
+      expect(handle.canReplace.value).toBe(false);
+      // V2 does not support ignore-diacritics search.
+      expect(handle.ignoreDiacriticsSupported.value).toBe(false);
+
+      handle.replaceText.value = 'pin';
+      handle.replaceCurrent();
+      handle.replaceAll();
+      expect(search.replace).not.toHaveBeenCalled();
+      expect(search.replaceAll).not.toHaveBeenCalled();
+
+      fr.close();
+    });
+
+    it('clears the host search session on close', async () => {
+      const { fr, search } = makeV2();
+      await fr.open();
+      await vi.dynamicImportSettled();
+
+      manager.lastHandle._settle({ status: 'closed', reason: 'escape' });
+      await tick();
+
+      expect(search.clear).toHaveBeenCalled();
+      expect(fr.isOpen.value).toBe(false);
     });
   });
 

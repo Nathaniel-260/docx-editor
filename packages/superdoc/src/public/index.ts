@@ -1,19 +1,9 @@
 /**
  * SuperDoc public facade: root entry.
  *
- * SD-3212 PR B (Phase 4b re-curation) under SD-3175. This file mirrors
- * the classification artifact at
- *   tests/consumer-typecheck/snapshots/superdoc-root-classification.json
- *
- * Three tiers:
- *   1. Supported root: documented public API; first-class root surface.
- *   2. Legacy root: typed for backward compatibility; not the recommended
- *      path. Per-name @deprecated JSDoc only where a replacement exists.
- *   3. Internal candidate: accidental implementation leak; kept typed under
- *      compat re-export with @internal so a future major can remove it.
- *      Today these only exist at root because at least one supported or
- *      legacy export reaches them transitively (see closure gate at
- *      tests/consumer-typecheck/check-root-classification-closure.mjs).
+ * The v2 branch exposes a single root package surface plus CSS assets. V1
+ * editor, converter, zipper, toolbar, and UI compatibility subpaths are not
+ * part of superdoc@2.
  *
  * Rules for this file:
  *   - AIDEV-NOTE: Named exports only. No `export *` (the postbuild gate
@@ -23,14 +13,6 @@
  *     .d.cts match. Changing the surface here also updates the
  *     classification artifact in the same PR; skipping that fails the
  *     consumer-typecheck snapshot.
- *   - The CI closure gate enforces that no supported-root or legacy-root
- *     export references an internal-candidate root symbol in its declared
- *     type. Overrides require a reason string per
- *     check-root-classification-closure.mjs.
- *   - Per-name `@deprecated` JSDoc only fires for names with a real
- *     migration target. Section-level framing carries the "legacy compat"
- *     intent for names where no replacement exists today (avoids
- *     "deprecated to nothing" noise in customer IDEs).
  */
 
 // The common package is workspace-private. Source imports stay readable here;
@@ -42,11 +24,6 @@ import BlankDOCXAsset from '@superdoc/common/data/blank.docx?url';
 /** URL to the blank DOCX template. */
 export const BlankDOCX: string = BlankDOCXAsset;
 export { DOCX, PDF, HTML, getFileObject, compareVersions };
-
-// =============================================================================
-// SUPPORTED ROOT
-// First-class public API. Documented, advertised, supported long-term.
-// =============================================================================
 
 // Source: ./core/SuperDoc.ts. The `.js` import specifier is intentional
 // for ESM output and resolves to the .ts source during TypeScript builds.
@@ -60,7 +37,9 @@ export { createTheme } from '../core/theme/create-theme.js';
 export type { AwarenessState } from '../core/types/index.js';
 export type { AwarenessUser } from '../core/types/index.js';
 export type { BlockNavigationAddress } from '../core/types/index.js';
+export type { BlocksListResult } from '@superdoc/document-api';
 export type { BookmarkAddress } from '../core/types/index.js';
+export type { BookmarkInfo } from '@superdoc/document-api';
 export type { CanPerformPermissionParams } from '../core/types/index.js';
 export type { CollaborationConfig } from '../core/types/index.js';
 export type { CommentAddress } from '../core/types/index.js';
@@ -69,7 +48,10 @@ export type { Config } from '../core/types/index.js';
 export type { DirectSurfaceRequest } from '../core/types/index.js';
 export type { DocRange } from '../core/types/index.js';
 export type { Document } from '../core/types/index.js';
+export type { DocumentApi } from '@superdoc/document-api';
 export type { DocumentMode } from '../core/types/index.js';
+export type { DocumentProtectionState } from '@superdoc/document-api';
+export type { EntityAddress } from '@superdoc/document-api';
 export type { EditorSurface } from '../core/types/index.js';
 export type { EditorTransactionEvent } from '../core/types/index.js';
 export type { EditorUpdateEvent } from '../core/types/index.js';
@@ -93,25 +75,59 @@ export type { PasswordPromptResolution } from '../core/types/index.js';
 export type { PermissionResolverParams } from '../core/types/index.js';
 export type { ResolvedFindReplaceTexts } from '../core/types/index.js';
 export type { ResolvedPasswordPromptTexts } from '../core/types/index.js';
+export type { ResolveRangeOutput } from '@superdoc/document-api';
 export type { ContentControlActiveChangePayload } from '../core/types/index.js';
 export type { ContentControlClickPayload } from '../core/types/index.js';
 export type { SdtRef } from '../core/types/index.js';
 export type { SearchMatch } from '../core/types/index.js';
+export type { SelectionHandle } from './ui/types.js';
+export type { SelectionInfo } from '@superdoc/document-api';
 export type { StoryLocator } from '../core/types/index.js';
 export type { SuperDocAwarenessUpdatePayload } from '../core/types/index.js';
 export type { SuperDocCommentsUpdatePayload } from '../core/types/index.js';
 export type { SuperDocEditorPayload } from '../core/types/index.js';
 export type { SuperDocExceptionEditorPayload } from '../core/types/index.js';
+export type { SuperDocExceptionToolbarPayload } from '../core/types/index.js';
 export type { SuperDocExceptionPayload } from '../core/types/index.js';
 export type { SuperDocExceptionRestorePayload } from '../core/types/index.js';
 export type { SuperDocExceptionStorePayload } from '../core/types/index.js';
 export type { SuperDocFitWidthOptions } from '../core/types/index.js';
 export type { SuperDocFontsApi, SuperDocFontFamily, SuperDocFontFace } from '../core/types/index.js';
 export type { SuperDocLayoutEngineOptions } from '../core/types/index.js';
+export type { SuperDocLayoutEngineOptions as LayoutEngineOptions } from '../core/types/index.js';
+export type { FlowBlock, FlowMode, Layout, Fragment as LayoutFragment, Page as LayoutPage } from '@superdoc/contracts';
+export type { LayoutMetrics } from '@superdoc/layout-bridge';
+export type { LayoutMode } from '@superdoc/painter-dom';
+export type { CommentsConfig } from '../core/types/index.js';
+export type { TrackChangeHighlightColors } from '../core/types/index.js';
+export type { ContentControlsConfig } from '../core/types/index.js';
+// The entry union and its members. A consumer assembling `customButtons` in a
+// variable rather than inline needs a name to annotate with: widening turns
+// each `type` into `string`, and without an exported type the only answers
+// were `as const` or a per-entry assertion.
+export type { ToolbarCustomButton } from '../core/types/index.js';
+export type { ToolbarCustomButtonItem } from '../core/types/index.js';
+export type { ToolbarCustomDropdownItem } from '../core/types/index.js';
+export type { ToolbarCustomDropdownOption } from '../core/types/index.js';
+export type { ToolbarCustomSeparatorItem } from '../core/types/index.js';
+export type { ToolbarCustomButtonContext } from '../core/types/index.js';
+export type { LinkPopoverConfig } from '../core/types/index.js';
+export type { LinkPopoverContext } from '../core/types/index.js';
+export type { LinkPopoverResolution } from '../core/types/index.js';
+export type { LinkPopoverResolver } from '../core/types/index.js';
 export type { SuperDocLockedPayload } from '../core/types/index.js';
+export type { SuperDocMeasurementUnit } from '../core/types/index.js';
+export type { SuperDocMeasurementUnitChangePayload } from '../core/types/index.js';
 export type { SuperDocReadyPayload } from '../core/types/index.js';
 export type { SuperDocState } from '../core/types/index.js';
 export type { SuperDocTelemetryConfig } from '../core/types/index.js';
+// `BorrowedSuperDocUI` is the type of `SuperDoc.ui`: the controller minus
+// `destroy()`, because the instance owns teardown. `SuperDocUI` is the owned
+// form returned by `createSuperDocUI()`. Both are exported here so the instance
+// property resolves from the root entry alone; `superdoc/ui` remains the home of
+// the controller factory and the rest of its type graph.
+export type { BorrowedSuperDocUI } from './ui/types.js';
+export type { SuperDocUI } from './ui/types.js';
 export type { SuperDocViewportChangePayload } from '../core/types/index.js';
 export type { SuperDocViewportMetrics } from '../core/types/index.js';
 export type { SuperDocZoomConfig } from '../core/types/index.js';
@@ -127,202 +143,98 @@ export type { SurfaceRequest } from '../core/types/index.js';
 export type { SurfaceResolution } from '../core/types/index.js';
 export type { SurfaceResolver } from '../core/types/index.js';
 export type { SurfacesModuleConfig } from '../core/types/index.js';
+export type { TextAddress } from '@superdoc/document-api';
+export type { TextSegment } from '@superdoc/document-api';
+export type { TextTarget } from '@superdoc/document-api';
 export type { TrackChangeAuthor } from '../core/types/index.js';
 export type { TrackChangesAuthorColorsConfig } from '../core/types/index.js';
 export type { TrackChangesModuleConfig } from '../core/types/index.js';
+export type { TrackChangesSemanticColorsConfig } from '../core/types/index.js';
+export type { TrackedChangeSemanticColorKey } from '../core/types/index.js';
+export type { TrackedChangeSemanticColorResolverInput } from '../core/types/index.js';
 export type { TrackedChangeAddress } from '../core/types/index.js';
+export type { InteractionConfig } from '../core/types/index.js';
+export type { SurfacesConfig } from '../core/types/index.js';
+export type { UIConfig } from '../core/types/index.js';
 export type { UpgradeToCollaborationOptions } from '../core/types/index.js';
+export type { V2CollaborationConfig } from '../core/types/index.js';
+export type { User } from '../core/types/index.js';
+export type { ViewOptions } from '../core/types/index.js';
 export type { ViewingVisibilityConfig } from '../core/types/index.js';
 
-// Source: ./helpers/schema-introspection.js
-export { getSchemaIntrospection } from '../helpers/schema-introspection.js';
+// Source: ./core/extensions — v2 SuperDoc extension authoring API.
+export { defineSuperDocExtension } from '../core/extensions/index.js';
+export type { SuperDocActiveEditorExtensions } from '../core/extensions/index.js';
+export type { SuperDocActiveEditorExtensionsCommands } from '../core/extensions/index.js';
+export type { SuperDocActiveEditorExtensionsDiagnostics } from '../core/extensions/index.js';
+export type { SuperDocAnchor } from '../core/extensions/index.js';
+export type { SuperDocAnchorApi } from '../core/extensions/index.js';
+export type { SuperDocAnchorCollection } from '../core/extensions/index.js';
+export type { SuperDocAnchorStatus } from '../core/extensions/index.js';
+export type { SuperDocAnchorTarget } from '../core/extensions/index.js';
+export type { SuperDocCharRange } from '../core/extensions/index.js';
+export type { SuperDocCommandApi } from '../core/extensions/index.js';
+export type { SuperDocCommandExecuteContext } from '../core/extensions/index.js';
+export type { SuperDocCommandState } from '../core/extensions/index.js';
+export type { SuperDocCommandStateContext } from '../core/extensions/index.js';
+export type { SuperDocDecoration } from '../core/extensions/index.js';
+export type { SuperDocDecorationApi } from '../core/extensions/index.js';
+export type { SuperDocDecorationContext } from '../core/extensions/index.js';
+export type { SuperDocDecorationData } from '../core/extensions/index.js';
+export type { SuperDocDecorationProvider } from '../core/extensions/index.js';
+export type { SuperDocDisposableBag } from '../core/extensions/index.js';
+export type { SuperDocExtension } from '../core/extensions/index.js';
+export type { SuperDocExtensionActivateReturn } from '../core/extensions/index.js';
+export type { SuperDocExtensionCapabilities } from '../core/extensions/index.js';
+export type { SuperDocExtensionCommandHandle } from '../core/extensions/index.js';
+export type { SuperDocExtensionCommandListEntry } from '../core/extensions/index.js';
+export type { SuperDocExtensionCommandRegistration } from '../core/extensions/index.js';
+export type { SuperDocExtensionCommandStateView } from '../core/extensions/index.js';
+export type { SuperDocExtensionContext } from '../core/extensions/index.js';
+export type { SuperDocExtensionDiagnostic } from '../core/extensions/index.js';
+export type { SuperDocExtensionDiagnostics } from '../core/extensions/index.js';
+export type { SuperDocExtensionDisposable } from '../core/extensions/index.js';
+export type { SuperDocExtensionEventApi } from '../core/extensions/index.js';
+export type { SuperDocExtensionPhase } from '../core/extensions/index.js';
+export type { SuperDocExtensionSnapshot } from '../core/extensions/index.js';
+export type { SuperDocExtensionStorage } from '../core/extensions/index.js';
+export type { SuperDocGuardedDoc } from '../core/extensions/index.js';
+export type { SuperDocGuardedDocQuery } from '../core/extensions/index.js';
+export type { SuperDocGuardedDocSelection } from '../core/extensions/index.js';
+export type { SuperDocInlineBoxAppearance } from '../core/extensions/index.js';
+export type { SuperDocInlineBoxLayout } from '../core/extensions/index.js';
+export type { SuperDocInlineBoxOptions } from '../core/extensions/index.js';
+export type { SuperDocMutationAffect } from '../core/extensions/index.js';
+export type { SuperDocMutationEvent } from '../core/extensions/index.js';
+export type { SuperDocMutationFilter } from '../core/extensions/index.js';
+export type { SuperDocMutationOrigin } from '../core/extensions/index.js';
+export type { SuperDocPaintEvent } from '../core/extensions/index.js';
+export type { SuperDocReceiptSuccess } from '../core/extensions/index.js';
+export type { SuperDocSaveEvent } from '../core/extensions/index.js';
+export type { SuperDocSelectionEvent } from '../core/extensions/index.js';
+export type { SuperDocSelectionPoint } from '../core/extensions/index.js';
+export type { SuperDocSelectionTarget } from '../core/extensions/index.js';
+export type { SuperDocStoryLocator } from '../core/extensions/index.js';
+export type { SuperDocTextAddress } from '../core/extensions/index.js';
+export type { SuperDocTextTarget } from '../core/extensions/index.js';
+export type { SuperDocVisibleRange } from '../core/extensions/index.js';
+export type { SuperDocVisualApi } from '../core/extensions/index.js';
+export type { SuperDocVisualHandle } from '../core/extensions/index.js';
+export type { SuperDocVisualOptions } from '../core/extensions/index.js';
+export type { SuperDocVisualTarget } from '../core/extensions/index.js';
 
 // `compareVersions`, `DOCX`, `getFileObject`, `HTML`, `PDF` and `BlankDOCX`
 // from `@superdoc/common` are handled at the top of this file
 // (import-then-export pattern; see comment there for rationale).
-
-// Source: @superdoc/super-editor
-export { assertNodeType } from '@superdoc/super-editor';
-export { createZip } from '@superdoc/super-editor';
-export { defineMark } from '@superdoc/super-editor';
-export { defineNode } from '@superdoc/super-editor';
-export { Editor } from '@superdoc/super-editor';
-export { Extensions } from '@superdoc/super-editor';
-export { getActiveFormatting } from '@superdoc/super-editor';
-export { getAllowedImageDimensions } from '@superdoc/super-editor';
-export { getMarksFromSelection } from '@superdoc/super-editor';
-export { getRichTextExtensions } from '@superdoc/super-editor';
-export { getStarterExtensions } from '@superdoc/super-editor';
-export { isMarkType } from '@superdoc/super-editor';
-export { isNodeType } from '@superdoc/super-editor';
-
-// Type source: @superdoc/super-editor
-export type { BinaryData } from '@superdoc/super-editor';
-export type { BlocksListResult } from '@superdoc/super-editor';
-export type { BookmarkInfo } from '@superdoc/super-editor';
-export type { CollaborationProvider } from '@superdoc/super-editor';
-export type { Comment } from '@superdoc/super-editor';
-export type { CommentConfig } from '@superdoc/super-editor';
-export type { CommentElement } from '@superdoc/super-editor';
-export type { CommentLocationsPayload } from '@superdoc/super-editor';
-export type { CommentsPayload } from '@superdoc/super-editor';
-export type { DocumentApi } from '@superdoc/super-editor';
-export type { DocumentProtectionState } from '@superdoc/super-editor';
-export type { DocxFileEntry } from '@superdoc/super-editor';
-export type { EditorEventMap } from '@superdoc/super-editor';
-export type { EditorLifecycleState } from '@superdoc/super-editor';
-export type { EntityAddress } from '@superdoc/super-editor';
-export type { ExportDocxParams } from '@superdoc/super-editor';
-export type { ExportFormat } from '@superdoc/super-editor';
-export type { ExportOptions } from '@superdoc/super-editor';
-export type { FieldValue } from '@superdoc/super-editor';
-export type { FontAssetUrlContext } from '@superdoc/super-editor';
-export type { FontAssetUrlResolver } from '@superdoc/super-editor';
-export type { FontConfig } from '@superdoc/super-editor';
-export type { FontFaceConfig } from '@superdoc/super-editor';
-export type { FontFamilyConfig } from '@superdoc/super-editor';
-export type { FontResolutionRecord } from '@superdoc/super-editor';
-export type { DocumentFontOption } from '@superdoc/super-editor';
-export type { FontsChangedPayload } from '@superdoc/super-editor';
-export type { FontsConfig } from '@superdoc/super-editor';
-export type { FontsResolvedPayload } from '@superdoc/super-editor';
-export type { ImageDeselectedEvent } from '@superdoc/super-editor';
-export type { ImageSelectedEvent } from '@superdoc/super-editor';
-export type { LinkPopoverContext } from '@superdoc/super-editor';
-export type { LinkPopoverResolution } from '@superdoc/super-editor';
-export type { LinkPopoverResolver } from '@superdoc/super-editor';
-export type { OpenOptions } from '@superdoc/super-editor';
-export type { PageMargins } from '@superdoc/super-editor';
-export type { PageSize } from '@superdoc/super-editor';
-export type { PageStyles } from '@superdoc/super-editor';
-export type { PartChangedEvent } from '@superdoc/super-editor';
-export type { PermissionParams } from '@superdoc/super-editor';
-export type { ProofingCapabilities } from '@superdoc/super-editor';
-export type { ProofingCheckRequest } from '@superdoc/super-editor';
-export type { ProofingCheckResult } from '@superdoc/super-editor';
-export type { ProofingConfig } from '@superdoc/super-editor';
-export type { ProofingError } from '@superdoc/super-editor';
-export type { ProofingIssue } from '@superdoc/super-editor';
-export type { ProofingIssueKind } from '@superdoc/super-editor';
-export type { ProofingProvider } from '@superdoc/super-editor';
-export type { ProofingSegment } from '@superdoc/super-editor';
-export type { ProofingSegmentMetadata } from '@superdoc/super-editor';
-export type { ProofingStatus } from '@superdoc/super-editor';
-export type { ProtectionChangeSource } from '@superdoc/super-editor';
-export type { ResolveRangeOutput } from '@superdoc/super-editor';
-export type { SaveOptions } from '@superdoc/super-editor';
-export type { ScrollIntoViewInput } from '@superdoc/super-editor';
-export type { ScrollIntoViewOutput } from '@superdoc/super-editor';
-export type { SelectionApi } from '@superdoc/super-editor';
-export type { SelectionCommandContext } from '@superdoc/super-editor';
-export type { SelectionCurrentInput } from '@superdoc/super-editor';
-export type { SelectionHandle } from '@superdoc/super-editor';
-export type { SelectionInfo } from '@superdoc/super-editor';
-export type { TextAddress } from '@superdoc/super-editor';
-export type { TextSegment } from '@superdoc/super-editor';
-export type { TextTarget } from '@superdoc/super-editor';
-export type { TrackedChangesMode } from '@superdoc/super-editor';
-export type { UnsupportedContentItem } from '@superdoc/super-editor';
-export type { User } from '@superdoc/super-editor';
-export type { ViewLayout } from '@superdoc/super-editor';
-export type { ViewOptions } from '@superdoc/super-editor';
-
-// =============================================================================
-// LEGACY ROOT (60)
-// Typed for backward compatibility. Not the recommended root story.
-// Per-name @deprecated JSDoc applied below where a clear replacement exists.
-// =============================================================================
 
 // Type source: ./core/types/index.js
 export type { ContextMenuConfig } from '../core/types/index.js';
 export type { ContextMenuContext } from '../core/types/index.js';
 export type { ContextMenuItem } from '../core/types/index.js';
 export type { ContextMenuSection } from '../core/types/index.js';
+export type { ContextMenuSelectContext } from '../core/types/index.js';
+export type { ContextMenuSelectPayload } from '../core/types/index.js';
+export type { ContextMenuSelectReadiness } from '../core/types/index.js';
 export type { FindReplaceConfig } from '../core/types/index.js';
 
 // BlankDOCX is handled via the import-then-export pattern at the top of this file.
-
-// Source: @superdoc/super-editor
-export { AIWriter } from '@superdoc/super-editor';
-export { CommentsPluginKey } from '@superdoc/super-editor';
-export { ContextMenu } from '@superdoc/super-editor';
-export { DocxZipper } from '@superdoc/super-editor';
-export { fieldAnnotationHelpers } from '@superdoc/super-editor';
-export { PresentationEditor } from '@superdoc/super-editor';
-export { SlashMenu } from '@superdoc/super-editor';
-export { SuperConverter } from '@superdoc/super-editor';
-export { SuperEditor } from '@superdoc/super-editor';
-export { SuperInput } from '@superdoc/super-editor';
-export { SuperToolbar } from '@superdoc/super-editor';
-export { Toolbar } from '@superdoc/super-editor';
-export { TrackChangesBasePluginKey } from '@superdoc/super-editor';
-
-// Type source: @superdoc/super-editor
-export type { BoundingRect } from '@superdoc/super-editor';
-export type { CanObject } from '@superdoc/super-editor';
-export type { ChainableCommandObject } from '@superdoc/super-editor';
-export type { ChainedCommand } from '@superdoc/super-editor';
-export type { Command } from '@superdoc/super-editor';
-export type { CommandProps } from '@superdoc/super-editor';
-export type { CoreCommandMap } from '@superdoc/super-editor';
-export type { EditorCommands } from '@superdoc/super-editor';
-export type { EditorExtension } from '@superdoc/super-editor';
-export type { EditorOptions } from '@superdoc/super-editor';
-export type { EditorState } from '@superdoc/super-editor';
-export type { EditorView } from '@superdoc/super-editor';
-export type { ExtensionCommandMap } from '@superdoc/super-editor';
-export type { FlowBlock } from '@superdoc/super-editor';
-export type { FlowMode } from '@superdoc/super-editor';
-export type { Layout } from '@superdoc/super-editor';
-export type { LayoutEngineOptions } from '@superdoc/super-editor';
-export type { LayoutError } from '@superdoc/super-editor';
-export type { LayoutFragment } from '@superdoc/super-editor';
-export type { LayoutMetrics } from '@superdoc/super-editor';
-export type { LayoutMode } from '@superdoc/super-editor';
-export type { LayoutPage } from '@superdoc/super-editor';
-export type { LayoutState } from '@superdoc/super-editor';
-export type { ListDefinitionsPayload } from '@superdoc/super-editor';
-export type { Measure } from '@superdoc/super-editor';
-export type { PaginationPayload } from '@superdoc/super-editor';
-export type { PaintSnapshot } from '@superdoc/super-editor';
-export type { PartId } from '@superdoc/super-editor';
-export type { PartSectionId } from '@superdoc/super-editor';
-export type { PositionHit } from '@superdoc/super-editor';
-export type { PresenceOptions } from '@superdoc/super-editor';
-export type { PresentationEditorOptions } from '@superdoc/super-editor';
-export type { ProseMirrorJSON } from '@superdoc/super-editor';
-export type { RangeRect } from '@superdoc/super-editor';
-export type { RemoteCursorState } from '@superdoc/super-editor';
-export type { RemoteUserInfo } from '@superdoc/super-editor';
-export type { Schema } from '@superdoc/super-editor';
-export type { SectionMetadata } from '@superdoc/super-editor';
-export type { TrackedChangesOverrides } from '@superdoc/super-editor';
-export type { Transaction } from '@superdoc/super-editor';
-export type { VirtualizationOptions } from '@superdoc/super-editor';
-
-// =============================================================================
-// INTERNAL CANDIDATE (8)
-// Should not be public long-term. Kept typed under compat re-export because
-// at least one supported/legacy export reaches them transitively. Removal
-// planned for a major-version cleanup (see SD-3212 follow-ups).
-// =============================================================================
-
-// Source: @superdoc/super-editor
-/** @internal */
-export { AnnotatorHelpers } from '@superdoc/super-editor';
-/** @internal */
-export { registeredHandlers } from '@superdoc/super-editor';
-/** @internal */
-export { SectionHelpers } from '@superdoc/super-editor';
-/** @internal */
-export { helpers as superEditorHelpers } from '@superdoc/super-editor';
-/** @internal */
-export { trackChangesHelpers } from '@superdoc/super-editor';
-
-// Type source: @superdoc/super-editor
-/** @internal */
-export type { LayoutUpdatePayload } from '@superdoc/super-editor';
-/** @internal */
-export type { RemoteCursorsRenderPayload } from '@superdoc/super-editor';
-/** @internal */
-export type { TelemetryEvent } from '@superdoc/super-editor';

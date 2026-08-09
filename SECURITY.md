@@ -2,11 +2,17 @@
 
 ## Supported Versions
 
-We actively support and patch the latest minor version of SuperDoc.
+We actively support both the 2.x and 1.x release lines. Security fixes land in
+the latest patch release of each line, so upgrading within your major version is
+enough to receive them.
 
-| Version  | Supported    |
-| -------- | ------------ |
-| ≥ 0.15.0 | ✅ Supported |
+| Release line | npm dist-tag | Supported                          |
+| ------------ | ------------ | ---------------------------------- |
+| 2.x          | `latest`     | ✅ Supported                       |
+| 1.x          | `legacy`     | ✅ Supported                       |
+| Pre-releases | `next`       | ⚠️ Best effort, not for production |
+
+Versions below 1.0 are no longer supported.
 
 ## Reporting a Vulnerability
 

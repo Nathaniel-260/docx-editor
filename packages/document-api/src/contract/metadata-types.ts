@@ -60,6 +60,24 @@ export interface CommandStaticMetadata {
   idempotency: OperationIdempotency;
   supportsDryRun: boolean;
   supportsTrackedMode: boolean;
+  /**
+   * Tracked mode is permitted for *some* targets of this operation but cannot
+   * be promised statically, because whether it applies depends on the document
+   * state at the target — not on the operation itself.
+   *
+   * Set this only when `supportsTrackedMode` is `false`. It does not advertise
+   * tracked support: capability reporting still reports `tracked: false`,
+   * because the operation cannot guarantee a reviewable revision. What it does
+   * is stop transports from rejecting a tracked call on static metadata alone,
+   * so the engine adapter gets to resolve the target and make the real
+   * decision — succeeding where the context allows it and otherwise failing
+   * closed with `CAPABILITY_UNAVAILABLE`, exactly as an unsupported operation
+   * would.
+   *
+   * Without this, an adapter-level contextual allowance is unreachable from
+   * any transport that gates on the contract (see `tables.setCellText`).
+   */
+  supportsConditionalTrackedMode?: boolean;
   possibleFailureCodes: readonly ReceiptFailureCode[];
   throws: CommandThrowPolicy;
   deterministicTargetResolution: boolean;
@@ -73,4 +91,6 @@ export interface CommandStaticMetadata {
    * operation returns its receipt synchronously).
    */
   returnsPromise?: boolean;
+  /** When true, the operation result follows the Receipt success/failure envelope. */
+  returnsReceipt?: boolean;
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { validateStoryLocator, validateStoryConsistency } from './story-validator.js';
 import { DocumentApiValidationError } from '../errors.js';
 import type { StoryLocator } from '../types/story.types.js';

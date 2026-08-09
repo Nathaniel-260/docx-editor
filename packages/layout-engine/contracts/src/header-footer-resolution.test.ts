@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { resolveEffectiveHeaderFooterRef, selectHeaderFooterVariantForPage } from './header-footer-resolution.js';
 import type { HeaderFooterResolutionSection } from './header-footer-resolution.js';
 

@@ -12,6 +12,8 @@ import {
 } from '@superdoc/common/list-marker-utils';
 import { applySourceAnchorDataset } from '../utils/source-anchor.js';
 import { allowFontSynthesis } from '../runs/font-synthesis.js';
+import { applyMarkerTrackedChange, type MarkerTrackedChangeView } from './marker-tracked-change.js';
+import type { TrackedChangesRenderConfig } from '../runs/types.js';
 
 type PainterListTextStartParams = {
   wordLayout: MinimalWordLayout | undefined;
@@ -91,6 +93,8 @@ export const createListMarkerElement = (
   run: MarkerRunStyle,
   sourceAnchor?: SourceAnchor,
   resolvePhysical: ResolvePhysicalFamily = (css) => resolvePhysicalFamily(css),
+  trackedChange?: MarkerTrackedChangeView,
+  trackedChangesConfig?: TrackedChangesRenderConfig,
 ): HTMLElement => {
   const markerContainer = doc.createElement('span');
   markerContainer.classList.add(DOM_CLASS_NAMES.LIST_MARKER);
@@ -137,6 +141,9 @@ export const createListMarkerElement = (
   if (sourceAnchor) {
     applySourceAnchorDataset(markerEl, sourceAnchor);
   }
+  // Plan 5: stamp marker review metadata + Word-like glyph styling when the
+  // marker is affected by a tracked change. Additive — no-op for normal markers.
+  applyMarkerTrackedChange(markerEl, trackedChange, trackedChangesConfig);
   return markerContainer;
 };
 
@@ -153,6 +160,7 @@ export const renderLegacyListMarker = (params: {
   isRtl?: boolean;
   sourceAnchor?: SourceAnchor;
   resolvePhysical?: ResolvePhysicalFamily;
+  trackedChangesConfig?: TrackedChangesRenderConfig;
 }): void => {
   const {
     doc,
@@ -167,6 +175,7 @@ export const renderLegacyListMarker = (params: {
     isRtl,
     sourceAnchor,
     resolvePhysical = (css) => resolvePhysicalFamily(css),
+    trackedChangesConfig,
   } = params;
   const markerTextWidth = markerTextWidthPx ?? markerMeasure?.markerTextWidth ?? 0;
   const shouldUseSharedInlinePrefixGeometry =
@@ -233,6 +242,8 @@ export const renderLegacyListMarker = (params: {
     markerLayout?.run ?? {},
     sourceAnchor,
     resolvePhysical,
+    markerLayout?.trackedChange,
+    trackedChangesConfig,
   );
   markerContainer.style.position = 'relative';
   if (markerJustification === 'right') {
@@ -270,8 +281,9 @@ export const renderResolvedListMarker = (params: {
   isRtl?: boolean;
   sourceAnchor?: SourceAnchor;
   resolvePhysical?: ResolvePhysicalFamily;
+  trackedChangesConfig?: TrackedChangesRenderConfig;
 }): void => {
-  const { doc, lineEl, marker, isRtl, sourceAnchor, resolvePhysical } = params;
+  const { doc, lineEl, marker, isRtl, sourceAnchor, resolvePhysical, trackedChangesConfig } = params;
   if (isRtl) {
     lineEl.style.paddingRight = `${marker.firstLinePaddingLeftPx}px`;
   } else {
@@ -288,6 +300,8 @@ export const renderResolvedListMarker = (params: {
     marker.run,
     marker.sourceAnchor ?? sourceAnchor,
     resolvePhysical,
+    marker.trackedChange,
+    trackedChangesConfig,
   );
   markerContainer.style.position = 'relative';
   if (marker.justification === 'right') {

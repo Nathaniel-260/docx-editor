@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import {
   ensureDocumentSurfaceStyles,
   ensureFootnoteStyles,
@@ -10,6 +10,13 @@ import {
 } from './styles.js';
 
 describe('pageStyles', () => {
+  it('keeps page chrome inside the exact resolved outer dimensions', () => {
+    const styles = pageStyles(793.7333333333, 1122.5333333333);
+    expect(styles.boxSizing).toBe('border-box');
+    expect(styles.width).toBe('793.7333333333px');
+    expect(styles.height).toBe('1122.5333333333px');
+  });
+
   it('establishes a document foreground on the page root', () => {
     const styles = pageStyles(612, 792);
     expect(styles.color).toBe('var(--sd-layout-page-color, #000000)');
@@ -71,6 +78,8 @@ describe('ensureDocumentSurfaceStyles', () => {
     expect(cssText).toContain('color: var(--sd-layout-page-color, #000000);');
     expect(cssText).toContain('.superdoc-layout .superdoc-page .superdoc-text-run');
     expect(cssText).toContain(':not([data-bookmark-marker])');
+    expect(cssText).toContain('.superdoc-layout .superdoc-thin-double-border');
+    expect(cssText).toContain('background-image: none;');
     expect(cssText).not.toContain('!important');
   });
 });
@@ -151,33 +160,6 @@ describe('ensureSdtContainerStyles', () => {
     );
   });
 
-  it('shows nested child top chrome only on the active child SDT', () => {
-    ensureSdtContainerStyles(document);
-
-    const styleEl = document.querySelector('[data-superdoc-sdt-container-styles="true"]');
-    const cssText = styleEl?.textContent ?? '';
-    const nestedInactiveRule =
-      cssText.match(
-        /\.superdoc-structured-content-block\[data-sdt-own-container-nested="true"\]\[data-sdt-own-container-start="true"\]:not\(\.ProseMirror-selectednode\)::after\s*\{([^}]*)\}/,
-      )?.[1] ?? '';
-
-    expect(nestedInactiveRule).toContain('border-top: none;');
-    expect(cssText).toContain(
-      '.superdoc-structured-content-block[data-sdt-next-own-container-starts-nested="true"]::after',
-    );
-    expect(cssText).toContain(
-      '.superdoc-structured-content-block.sdt-ancestor-selected[data-sdt-next-own-container-starts-nested="true"]::after',
-    );
-    expect(cssText).toContain(
-      '.superdoc-structured-content-block.sdt-container-selected:not(.ProseMirror-selectednode):not(.sdt-ancestor-selected)::after',
-    );
-    const nestedActiveRule =
-      cssText.match(
-        /\.superdoc-structured-content-block\.ProseMirror-selectednode\[data-sdt-container-start="false"\]::after\s*\{([^}]*)\}/,
-      )?.[1] ?? '';
-    expect(nestedActiveRule).toContain('border-top: none;');
-  });
-
   it('gives empty inline SDTs a default visible affordance', () => {
     ensureSdtContainerStyles(document);
 
@@ -191,6 +173,23 @@ describe('ensureSdtContainerStyles', () => {
     expect(cssText).toContain('border-color: var(--sd-content-controls-inline-border, #629be7);');
     expect(emptyRule).not.toContain('display: inline-block');
     expect(emptyRule).not.toContain('vertical-align');
+  });
+
+  it('colors deleted content-control chrome with the tracked deletion color', () => {
+    ensureSdtContainerStyles(document);
+
+    const styleEl = document.querySelector('[data-superdoc-sdt-container-styles="true"]');
+    const cssText = styleEl?.textContent ?? '';
+
+    expect(cssText).toContain(".superdoc-structured-content-inline[data-track-change-content-control-deletion='true']");
+    expect(cssText).toContain(
+      ".superdoc-structured-content-block[data-track-change-content-control-deletion='true']::after",
+    );
+    expect(cssText).toContain('border-color: var(--sd-tracked-changes-delete-border, #cb0e47);');
+    expect(cssText).toContain(
+      ".superdoc-structured-content-inline[data-track-change-content-control-deletion='true'] .superdoc-structured-content-inline__label",
+    );
+    expect(cssText).toContain('background-color: var(--sd-tracked-changes-delete-border, #cb0e47);');
   });
 
   it('promotes only image-bearing inline SDT wrappers to inline-block geometry', () => {
@@ -484,6 +483,43 @@ describe('ensureSdtContainerStyles', () => {
 });
 
 describe('ensureTrackChangeStyles', () => {
+  it('renders paragraph-property tracked-change markers as paint-only gutter bars', () => {
+    ensureTrackChangeStyles(document);
+
+    const styleEl = document.querySelector('[data-superdoc-track-change-styles="true"]');
+    const cssText = styleEl?.textContent ?? '';
+    const markerRule =
+      cssText.match(/\.superdoc-layout \.superdoc-paragraph-property-review-marker\s*\{([^}]*)\}/)?.[1] ?? '';
+    const formatRule =
+      [
+        ...cssText.matchAll(
+          /\.superdoc-layout \.superdoc-paragraph-property-review-marker\.track-format-dec\.highlighted\s*\{([^}]*)\}/g,
+        ),
+      ]
+        .map((match) => match[1] ?? '')
+        .find((rule) => rule.includes('gold')) ?? '';
+    const framePseudoRule =
+      cssText.match(
+        /\.superdoc-layout\s*\n\s*\.superdoc-fragment\[data-track-change-anchor='paragraph-property'\]\[data-track-change-id\]\[data-track-change-marker-visible='true'\]::before\s*\{([^}]*)\}/,
+      )?.[1] ?? '';
+    const frameFormatPseudoRule =
+      cssText.match(
+        /\.superdoc-layout\s*\n\s*\.superdoc-fragment\[data-track-change-anchor='paragraph-property'\]\[data-track-change-id\]\[data-track-change-marker-visible='true'\]\[data-track-change-kind='format'\]::before\s*\{([^}]*)\}/,
+      )?.[1] ?? '';
+
+    expect(markerRule).toContain('position: absolute;');
+    expect(markerRule).toContain('left: var(--sd-tracked-changes-paragraph-property-marker-left, -10px);');
+    expect(markerRule).toContain('width: var(--sd-tracked-changes-paragraph-property-marker-width, 2px);');
+    expect(markerRule).toContain('border: 0;');
+    expect(markerRule).toContain('cursor: pointer;');
+    expect(formatRule).toContain('background: var(--sd-tracked-changes-format-border, gold);');
+    expect(formatRule).not.toContain('border-bottom:');
+    expect(framePseudoRule).toContain("content: '';");
+    expect(framePseudoRule).toContain('position: absolute;');
+    expect(framePseudoRule).toContain('pointer-events: none;');
+    expect(frameFormatPseudoRule).toContain('background: var(--sd-tracked-changes-format-border, gold);');
+  });
+
   it('keeps focused tracked-change emphasis paint-only so selection does not change inline geometry', () => {
     ensureTrackChangeStyles(document);
 
@@ -510,5 +546,40 @@ describe('ensureTrackChangeStyles', () => {
       /track-(insert|delete)-dec\.highlighted\.track-change-focused\s*\{[\s\S]*border-right-width:/,
     );
     expect(cssText).not.toMatch(/track-format-dec\.highlighted\.track-change-focused\s*\{[\s\S]*border-bottom-width:/);
+  });
+
+  it('keeps tracked-move list markers legible without decorating the bullet glyph', () => {
+    ensureTrackChangeStyles(document);
+
+    const styleEl = document.querySelector('[data-superdoc-track-change-styles="true"]');
+    const cssText = styleEl?.textContent ?? '';
+    const moveMarkerRule =
+      cssText.match(
+        /\.superdoc-layout \.track-list-marker-dec\.highlighted\[data-track-change-semantic-color-key='move-from'\],[\s\S]*?\.superdoc-layout \.track-list-marker-dec\.highlighted\[data-track-change-semantic-color-key='move-to'\]\s*\{([^}]*)\}/,
+      )?.[1] ?? '';
+
+    expect(moveMarkerRule).toContain('text-decoration: none !important;');
+  });
+
+  it('gives each focused tracked-move side visible emphasis', () => {
+    ensureTrackChangeStyles(document);
+
+    const styleEl = document.querySelector('[data-superdoc-track-change-styles="true"]');
+    const cssText = styleEl?.textContent ?? '';
+    const moveToFocusedRule =
+      cssText.match(
+        /\.superdoc-layout \.track-insert-dec\.highlighted\.track-change-focused\[data-track-change-semantic-color-key='move-to'\]\s*\{([^}]*)\}/,
+      )?.[1] ?? '';
+    const moveFromFocusedRule =
+      cssText.match(
+        /\.superdoc-layout \.track-delete-dec\.highlighted\.track-change-focused\[data-track-change-semantic-color-key='move-from'\]\s*\{([^}]*)\}/,
+      )?.[1] ?? '';
+
+    expect(moveToFocusedRule).toContain(
+      'background-color: var(--sd-tracked-changes-move-to-background-focused, #00853d44);',
+    );
+    expect(moveFromFocusedRule).toContain(
+      'background-color: var(--sd-tracked-changes-move-from-background-focused, #00853d44);',
+    );
   });
 });

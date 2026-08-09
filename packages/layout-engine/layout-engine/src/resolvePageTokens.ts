@@ -24,6 +24,12 @@ import {
   type Measure,
 } from '@superdoc/contracts';
 import type { DisplayPageInfo } from './pageNumbering';
+import {
+  checkpointLayoutExecution,
+  layoutExecutionCheckpointEveryBlocks,
+  type LayoutExecutionCheckpoint,
+  type LayoutExecutionControl,
+} from './execution.js';
 
 /**
  * Numbering context for page token resolution.
@@ -76,14 +82,40 @@ export interface ResolvePageTokensResult {
  * }
  * ```
  */
-export function resolvePageNumberTokens(
+export interface ResolvePageTokensOptions {
+  /**
+   * When `false`, `totalPageCount` / `sectionPageCount` tokens keep their
+   * source-cached DOCX result text (em dash when absent) instead of resolving
+   * to the current — possibly partial — page totals. `pageNumber` always
+   * resolves. Defaults to `true` (exact totals).
+   */
+  pageCountFieldsExact?: boolean;
+}
+
+/**
+ * Placeholder for a total-page-count field with no source-cached result while
+ * pagination is provisional. Mirrors the layout-bridge header/footer policy.
+ */
+const PROVISIONAL_PAGE_COUNT_PLACEHOLDER = '—';
+
+function provisionalPageCountText(cachedText: string | undefined): string {
+  return cachedText && cachedText.trim().length > 0 ? cachedText : PROVISIONAL_PAGE_COUNT_PLACEHOLDER;
+}
+
+function* resolvePageNumberTokenSteps(
   layout: Layout,
   blocks: FlowBlock[],
   measures: Measure[],
   numberingCtx: NumberingContext,
-): ResolvePageTokensResult {
+  options?: ResolvePageTokensOptions,
+  checkpointEveryBlocks: number | null = null,
+): Generator<LayoutExecutionCheckpoint, ResolvePageTokensResult, void> {
   const affectedBlockIds = new Set<string>();
   const updatedBlocks = new Map<string, FlowBlock>();
+
+  if (checkpointEveryBlocks != null) {
+    yield { phase: 'page-token:prepare', index: 0, total: blocks.length };
+  }
 
   // Validate inputs
   if (!layout?.pages || layout.pages.length === 0) {
@@ -100,6 +132,9 @@ export function resolvePageNumberTokens(
   const blockHasTokensFlags = new Map<string, boolean>();
 
   for (let i = 0; i < blocks.length; i++) {
+    if (checkpointEveryBlocks != null && i > 0 && i % checkpointEveryBlocks === 0) {
+      yield { phase: 'page-token:prepare', index: i, total: blocks.length };
+    }
     const block = blocks[i];
     blockMap.set(block.id, block);
 
@@ -114,12 +149,18 @@ export function resolvePageNumberTokens(
 
   // Track which blocks we've already processed to avoid duplicate work
   const processedBlocks = new Set<string>();
+  const displayPageInfoByPhysicalPage = new Map(numberingCtx.displayPages.map((info) => [info.physicalPage, info]));
 
   // Iterate through all pages and fragments
-  for (const page of layout.pages) {
+  for (let layoutPageIndex = 0; layoutPageIndex < layout.pages.length; layoutPageIndex += 1) {
+    if (checkpointEveryBlocks != null) {
+      yield { phase: 'page-token:page', index: layoutPageIndex, total: layout.pages.length };
+    }
+    const page = layout.pages[layoutPageIndex];
+    if (!page) continue;
     // Get display page info for this physical page
-    const pageIndex = page.number - 1; // Convert to 0-indexed
-    const displayPageInfo = numberingCtx.displayPages[pageIndex];
+    const displayPageInfo =
+      displayPageInfoByPhysicalPage.get(page.number) ?? numberingCtx.displayPages[layoutPageIndex];
 
     if (!displayPageInfo) {
       console.warn(`[resolvePageTokens] No display page info for page ${page.number} - skipping`);
@@ -150,6 +191,7 @@ export function resolvePageNumberTokens(
           totalPagesStr,
           numberingCtx.totalPages,
           sectionPageCount,
+          options?.pageCountFieldsExact !== false,
         );
         if (!clonedBlock) {
           processedBlocks.add(blockId);
@@ -182,6 +224,47 @@ export function resolvePageNumberTokens(
   }
 
   return { affectedBlockIds, updatedBlocks };
+}
+
+export function resolvePageNumberTokens(
+  layout: Layout,
+  blocks: FlowBlock[],
+  measures: Measure[],
+  numberingCtx: NumberingContext,
+  options?: ResolvePageTokensOptions,
+): ResolvePageTokensResult {
+  const steps = resolvePageNumberTokenSteps(layout, blocks, measures, numberingCtx, options);
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+export async function resolvePageNumberTokensCooperatively(
+  layout: Layout,
+  blocks: FlowBlock[],
+  measures: Measure[],
+  numberingCtx: NumberingContext,
+  options?: ResolvePageTokensOptions,
+  execution?: LayoutExecutionControl,
+): Promise<ResolvePageTokensResult> {
+  const steps = resolvePageNumberTokenSteps(
+    layout,
+    blocks,
+    measures,
+    numberingCtx,
+    options,
+    layoutExecutionCheckpointEveryBlocks(execution),
+  );
+  try {
+    while (true) {
+      const step = steps.next();
+      if (step.done) return step.value;
+      await checkpointLayoutExecution(execution, step.value);
+    }
+  } finally {
+    steps.return?.(undefined as never);
+  }
 }
 
 /**
@@ -220,6 +303,7 @@ function cloneBlockWithResolvedTokens(
   totalPagesStr: string,
   totalPages: number,
   sectionPageCount: number,
+  pageCountFieldsExact: boolean,
 ): ParagraphBlock | undefined {
   let changed = false;
   // Clone the runs array and resolve tokens
@@ -247,18 +331,22 @@ function cloneBlockWithResolvedTokens(
           text: resolvedText,
         };
       } else if (run.token === 'totalPageCount') {
-        const resolvedText = run.pageNumberFieldFormat
-          ? formatPageNumberFieldValue(totalPages, run.pageNumberFieldFormat)
-          : totalPagesStr;
+        const resolvedText = !pageCountFieldsExact
+          ? provisionalPageCountText(run.text)
+          : run.pageNumberFieldFormat
+            ? formatPageNumberFieldValue(totalPages, run.pageNumberFieldFormat)
+            : totalPagesStr;
         changed ||= run.text !== resolvedText;
         return {
           ...run,
           text: resolvedText,
         };
       } else if (run.token === 'sectionPageCount') {
-        const resolvedText = run.pageNumberFieldFormat
-          ? formatPageNumberFieldValue(sectionPageCount, run.pageNumberFieldFormat)
-          : String(sectionPageCount);
+        const resolvedText = !pageCountFieldsExact
+          ? provisionalPageCountText(run.text)
+          : run.pageNumberFieldFormat
+            ? formatPageNumberFieldValue(sectionPageCount, run.pageNumberFieldFormat)
+            : String(sectionPageCount);
         changed ||= run.text !== resolvedText;
         return {
           ...run,

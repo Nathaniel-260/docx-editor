@@ -11,6 +11,7 @@ import type { ReceiptFailure } from '../types/receipt.js';
 import type { StylesChannel } from './registry.js';
 import { XML_PATH_BY_CHANNEL } from './registry.js';
 import { validateStylesApplyInput, validateStylesApplyOptions } from './validation.js';
+import type { StylesGetCatalogInput, StylesGetCatalogResult } from './catalog.js';
 
 // ---------------------------------------------------------------------------
 // State Types (before/after receipts)
@@ -173,6 +174,8 @@ export interface StylesAdapter {
   apply(input: StylesApplyRunInput, options: NormalizedStylesApplyOptions): StylesApplyReceipt;
   apply(input: StylesApplyParagraphInput, options: NormalizedStylesApplyOptions): StylesApplyReceipt;
   apply(input: StylesApplyInput, options: NormalizedStylesApplyOptions): StylesApplyReceipt;
+  /** Read the normalized style catalogue. See `styles/catalog.ts`. */
+  getCatalog?(input?: StylesGetCatalogInput): StylesGetCatalogResult;
 }
 
 export interface NormalizedStylesApplyOptions {
@@ -188,6 +191,8 @@ export interface StylesApi {
   apply(input: StylesApplyRunInput, options?: StylesApplyOptions): StylesApplyReceipt;
   apply(input: StylesApplyParagraphInput, options?: StylesApplyOptions): StylesApplyReceipt;
   apply(input: StylesApplyInput, options?: StylesApplyOptions): StylesApplyReceipt;
+  /** Read the normalized style catalogue for discovery and quick-gallery UI. */
+  getCatalog(input?: StylesGetCatalogInput): StylesGetCatalogResult;
 }
 
 // ---------------------------------------------------------------------------

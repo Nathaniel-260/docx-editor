@@ -128,6 +128,81 @@ describe('executeCreateTable', () => {
     ).toThrow(/Cannot combine/i);
     expect(tableCalled).toBe(false);
   });
+
+  it('accepts an inParagraph location with a target and a non-negative integer offset', () => {
+    const adapter = {
+      paragraph: () => ({ success: true }),
+      heading: () => ({ success: true }),
+      table: () => ({
+        success: true,
+        table: { kind: 'block', nodeType: 'table', nodeId: 'new-table' },
+      }),
+    } as any;
+    const target = { kind: 'block' as const, nodeType: 'paragraph' as const, nodeId: 'p1' };
+
+    expect(() =>
+      executeCreateTable(adapter, {
+        rows: 2,
+        columns: 2,
+        at: { kind: 'inParagraph', target, offset: 5 },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      executeCreateTable(adapter, {
+        rows: 2,
+        columns: 2,
+        at: { kind: 'inParagraph', target, offset: 7, coordinateSpace: 'tracked' },
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects an unknown inParagraph coordinate space', () => {
+    const adapter = { paragraph: () => ({ success: true }), heading: () => ({ success: true }) } as any;
+    const target = { kind: 'block' as const, nodeType: 'paragraph' as const, nodeId: 'p1' };
+
+    expect(() =>
+      executeCreateTable(adapter, {
+        rows: 2,
+        columns: 2,
+        at: { kind: 'inParagraph', target, offset: 5, coordinateSpace: 'painted' } as any,
+      }),
+    ).toThrow(/at\.coordinateSpace/);
+  });
+
+  it('rejects an inParagraph location missing at.target', () => {
+    const adapter = { paragraph: () => ({ success: true }), heading: () => ({ success: true }) } as any;
+
+    expect(() =>
+      executeCreateTable(adapter, {
+        rows: 2,
+        columns: 2,
+        at: { kind: 'inParagraph', offset: 5 } as any,
+      }),
+    ).toThrow(/requires at\.target/);
+  });
+
+  it('rejects an inParagraph location with a missing or invalid at.offset', () => {
+    const adapter = { paragraph: () => ({ success: true }), heading: () => ({ success: true }) } as any;
+    const target = { kind: 'block' as const, nodeType: 'paragraph' as const, nodeId: 'p1' };
+
+    expect(() =>
+      executeCreateTable(adapter, { rows: 2, columns: 2, at: { kind: 'inParagraph', target } as any }),
+    ).toThrow(/non-negative integer at\.offset/);
+    expect(() =>
+      executeCreateTable(adapter, {
+        rows: 2,
+        columns: 2,
+        at: { kind: 'inParagraph', target, offset: -1 } as any,
+      }),
+    ).toThrow(/non-negative integer at\.offset/);
+    expect(() =>
+      executeCreateTable(adapter, {
+        rows: 2,
+        columns: 2,
+        at: { kind: 'inParagraph', target, offset: 1.5 } as any,
+      }),
+    ).toThrow(/non-negative integer at\.offset/);
+  });
 });
 
 describe('create.paragraph input validation', () => {

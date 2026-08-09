@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import SurfaceExternalMount from './SurfaceExternalMount.vue';
 import { FOCUSABLE_SELECTOR } from './focusable-selector.js';
 
@@ -9,6 +9,7 @@ const props = defineProps({
 
 const floatingRef = ref(null);
 defineExpose({ rootEl: floatingRef });
+const clampedInsets = ref({});
 
 const titleId = computed(() => (props.surface.request.title ? `sd-surface-title-${props.surface.id}` : undefined));
 const labelledBy = computed(() => titleId.value ?? props.surface.request.ariaLabelledBy ?? undefined);
@@ -55,8 +56,44 @@ const floatingStyle = computed(() => {
   if (o.maxWidth != null) style['max-width'] = toPx(o.maxWidth);
   if (o.maxHeight != null) style['max-height'] = toPx(o.maxHeight);
 
-  return style;
+  return { ...style, ...clampedInsets.value };
 });
+
+async function clampToHostBounds() {
+  clampedInsets.value = {};
+  if (!hasExplicitInsets.value) return;
+
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+
+  const rootEl = floatingRef.value;
+  const hostEl = rootEl?.parentElement;
+  if (!rootEl || !hostEl) return;
+
+  const edgePadding = 8;
+  const rootRect = rootEl.getBoundingClientRect();
+  const hostRect = hostEl.getBoundingClientRect();
+  const nextInsets = {};
+  const o = floatingOpts.value;
+
+  if (o.left != null && o.right == null) {
+    const currentLeft = rootRect.left - hostRect.left;
+    const maxLeft = Math.max(edgePadding, hostRect.width - rootRect.width - edgePadding);
+    const nextLeft = Math.min(Math.max(currentLeft, edgePadding), maxLeft);
+    if (nextLeft !== currentLeft) nextInsets.left = `${nextLeft}px`;
+  }
+
+  if (o.top != null && o.bottom == null) {
+    const currentTop = rootRect.top - hostRect.top;
+    const maxTop = Math.max(edgePadding, hostRect.height - rootRect.height - edgePadding);
+    const nextTop = Math.min(Math.max(currentTop, edgePadding), maxTop);
+    if (nextTop !== currentTop) nextInsets.top = `${nextTop}px`;
+  }
+
+  clampedInsets.value = nextInsets;
+}
+
+watch(floatingOpts, clampToHostBounds, { deep: true });
 
 // ---------------------------------------------------------------------------
 // Component props assembly
@@ -81,12 +118,23 @@ const mergedComponentProps = computed(() => {
 
 let previouslyFocusedElement = null;
 let didTakeFocus = false;
+let boundsResizeObserver = null;
 
 onMounted(async () => {
+  clampToHostBounds();
+  window.addEventListener('resize', clampToHostBounds);
+  if (typeof ResizeObserver !== 'undefined' && floatingRef.value?.parentElement) {
+    boundsResizeObserver = new ResizeObserver(clampToHostBounds);
+    boundsResizeObserver.observe(floatingRef.value.parentElement);
+    boundsResizeObserver.observe(floatingRef.value);
+  }
   if (floatingOpts.value.autoFocus === false) return;
   await nextTick();
   if (!floatingRef.value) return;
-  const firstFocusable = floatingRef.value.querySelector(FOCUSABLE_SELECTOR);
+  // A surface can mark its preferred initial-focus element (e.g. the find
+  // input) with `data-sd-autofocus`; otherwise the first focusable wins.
+  const firstFocusable =
+    floatingRef.value.querySelector('[data-sd-autofocus]') ?? floatingRef.value.querySelector(FOCUSABLE_SELECTOR);
   if (firstFocusable) {
     previouslyFocusedElement = document.activeElement;
     firstFocusable.focus();
@@ -95,6 +143,9 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', clampToHostBounds);
+  boundsResizeObserver?.disconnect();
+  boundsResizeObserver = null;
   if (didTakeFocus && previouslyFocusedElement && typeof previouslyFocusedElement.focus === 'function') {
     previouslyFocusedElement.focus();
   }

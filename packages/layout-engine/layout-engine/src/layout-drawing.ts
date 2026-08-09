@@ -1,6 +1,6 @@
-import type { DrawingBlock, DrawingMeasure, DrawingFragment, ParagraphMeasure } from '@superdoc/contracts';
+import type { DrawingBlock, DrawingMeasure, DrawingFragment, TextboxContentMeasure } from '@superdoc/contracts';
 import type { NormalizedColumns } from './layout-image.js';
-import type { PageState } from './paginator.js';
+import { breakParagraphAdjacency, type PageState } from './paginator.js';
 import { extractBlockPmRange } from './layout-utils.js';
 import { getFragmentZIndex } from '@superdoc/contracts';
 
@@ -24,8 +24,8 @@ export type DrawingLayoutContext = {
   advanceColumn: (state: PageState) => PageState;
   /** Computes the X coordinate for a column in the given page state (SD-2629). */
   columnX: (state: PageState, columnIndex?: number) => number;
-  /** Optional textbox paragraph measurements carried alongside textbox drawings. */
-  textboxContentMeasures?: ParagraphMeasure[];
+  /** Optional canonical textbox block measurements carried alongside textbox drawings. */
+  textboxContentMeasures?: TextboxContentMeasure[];
 };
 
 /**
@@ -89,18 +89,31 @@ export function layoutDrawingBlock({
   const maxWidthForBlock =
     attrs?.isFullWidth === true && maxWidth > 0 ? Math.max(1, maxWidth - indentLeft - indentRight) : maxWidth;
   const rawWrap = attrs?.wrap as { type?: unknown } | undefined;
-  // Inline shape groups and textboxes render at their authored width, so a centered or
-  // right-aligned host paragraph must offset the whole box within the column (SD: IT-1140).
-  const isInlineAlignableDrawing =
-    (block.drawingKind === 'shapeGroup' || block.drawingKind === 'textboxShape') && rawWrap?.type === 'Inline';
+  const isInlineShapeGroup = block.drawingKind === 'shapeGroup' && rawWrap?.type === 'Inline';
+  const sourceExtent = attrs?.sourceExtent as { width?: unknown; height?: unknown } | undefined;
+  const isInlineZeroHeightDrawing =
+    block.drawingKind === 'vectorShape' &&
+    rawWrap?.type === 'Inline' &&
+    sourceExtent?.height === 0 &&
+    typeof sourceExtent.width === 'number' &&
+    Number.isFinite(sourceExtent.width);
+  const isParagraphAlignedDrawing = isInlineShapeGroup || isInlineZeroHeightDrawing;
   const inlineParagraphAlignment =
     attrs?.inlineParagraphAlignment === 'center' || attrs?.inlineParagraphAlignment === 'right'
       ? attrs.inlineParagraphAlignment
       : undefined;
+  const paragraphIndentLeft =
+    isParagraphAlignedDrawing && typeof attrs?.paragraphIndentLeft === 'number' ? attrs.paragraphIndentLeft : 0;
+  const paragraphIndentRight =
+    isParagraphAlignedDrawing && typeof attrs?.paragraphIndentRight === 'number' ? attrs.paragraphIndentRight : 0;
+  const availableWidth = isParagraphAlignedDrawing
+    ? Math.max(0, maxWidthForBlock - paragraphIndentLeft - paragraphIndentRight)
+    : maxWidthForBlock;
+  const authoredFitWidth = isInlineZeroHeightDrawing ? (sourceExtent.width as number) : width;
 
-  if (width > maxWidthForBlock && maxWidthForBlock > 0) {
-    const scale = maxWidthForBlock / width;
-    width = maxWidthForBlock;
+  if (authoredFitWidth > availableWidth && availableWidth > 0) {
+    const scale = availableWidth / authoredFitWidth;
+    width *= scale;
     height *= scale;
   }
 
@@ -114,18 +127,26 @@ export function layoutDrawingBlock({
 
   const requiredHeight = marginTop + height + marginBottom;
 
+  if (requiredHeight > 0) {
+    breakParagraphAdjacency(state);
+  }
+
   if (state.cursorY + requiredHeight > state.contentBottom && state.cursorY > state.topMargin) {
     state = advanceColumn(state);
   }
 
   const pmRange = extractBlockPmRange(block);
   let x = columnX(state) + marginLeft + indentLeft;
-  if (isInlineAlignableDrawing && inlineParagraphAlignment) {
-    const pIndentLeft = typeof attrs?.paragraphIndentLeft === 'number' ? attrs.paragraphIndentLeft : 0;
-    const pIndentRight = typeof attrs?.paragraphIndentRight === 'number' ? attrs.paragraphIndentRight : 0;
-    const alignBox = Math.max(0, maxWidthForBlock - pIndentLeft - pIndentRight);
-    const extra = Math.max(0, alignBox - width);
-    x += pIndentLeft + (inlineParagraphAlignment === 'center' ? extra / 2 : extra);
+  if (isParagraphAlignedDrawing) {
+    const layoutScale = measure.width > 0 ? width / measure.width : 1;
+    const alignedWidth = isInlineZeroHeightDrawing ? (sourceExtent.width as number) * layoutScale : width;
+    const extra = Math.max(0, availableWidth - alignedWidth);
+    x +=
+      paragraphIndentLeft +
+      (inlineParagraphAlignment === 'center' ? extra / 2 : inlineParagraphAlignment === 'right' ? extra : 0);
+    if (isInlineZeroHeightDrawing) {
+      x -= (block.drawingKind === 'vectorShape' ? (block.effectExtent?.left ?? 0) : 0) * layoutScale;
+    }
   }
 
   const fragment: DrawingFragment = {
@@ -146,7 +167,9 @@ export function layoutDrawingBlock({
   };
 
   if (textboxContentMeasures) {
-    (fragment as DrawingFragment & { contentMeasures?: ParagraphMeasure[] }).contentMeasures = textboxContentMeasures;
+    fragment.contentMeasures = textboxContentMeasures;
+    const textboxId = block.attrs?.textboxId;
+    if (typeof textboxId === 'string' && textboxId.length > 0) fragment.textboxId = textboxId;
   }
 
   state.page.fragments.push(fragment);

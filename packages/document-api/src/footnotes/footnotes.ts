@@ -56,6 +56,31 @@ function isStructuredBody(body: unknown): boolean {
   return body != null && typeof body === 'object';
 }
 
+/**
+ * Footnote/endnote stories can only represent paragraph and heading content
+ * nodes. A structurally well-formed fragment node whose kind falls outside that
+ * set (for example a `table`) is not malformed input — it is content that
+ * cannot be represented as note OOXML. That case must surface the canonical
+ * `INVALID_FRAGMENT` failure (mirroring the note-body encoder) rather than the
+ * generic `INVALID_INPUT` used for structurally malformed input.
+ */
+const NOTE_SUPPORTED_CONTENT_NODE_KINDS: ReadonlySet<string> = new Set(['paragraph', 'heading']);
+
+function assertNoteRepresentableContentKinds(operationName: string, fieldName: string, body: unknown): void {
+  const nodes = Array.isArray(body) ? body : [body];
+  for (const node of nodes) {
+    if (node == null || typeof node !== 'object') continue;
+    const kind = (node as Record<string, unknown>).kind;
+    if (typeof kind === 'string' && kind.length > 0 && !NOTE_SUPPORTED_CONTENT_NODE_KINDS.has(kind)) {
+      throw new DocumentApiValidationError(
+        'INVALID_FRAGMENT',
+        `${operationName} ${fieldName}: unsupported content node kind "${kind}" (only paragraph/heading are supported).`,
+        { field: fieldName, kind },
+      );
+    }
+  }
+}
+
 function validateStructuredBody(operationName: string, fieldName: string, body: unknown): void {
   if (!isStructuredBody(body)) {
     throw new DocumentApiValidationError(
@@ -63,6 +88,8 @@ function validateStructuredBody(operationName: string, fieldName: string, body: 
       `${operationName} ${fieldName} must be a content node or array of content nodes.`,
     );
   }
+
+  assertNoteRepresentableContentKinds(operationName, fieldName, body);
 
   try {
     validateDocumentFragment(body);

@@ -17,7 +17,7 @@ import {
   resolveTableWidthAttr,
   getTableVisualDirection,
 } from '@superdoc/contracts';
-import type { PageState } from './paginator.js';
+import { breakParagraphAdjacency, type PageState } from './paginator.js';
 import { computeFragmentPmRange, extractBlockPmRange } from './layout-utils.js';
 import { describeCellRenderBlocks, createCellSliceCursor, computeFullCellContentHeight } from './table-cell-slice.js';
 import { isAnchoredTableFullWidth } from './floating-table-anchor.js';
@@ -403,39 +403,74 @@ function countHeaderRows(block: TableBlock): number {
 }
 
 /**
- * Count the leading rows that form the repeatable header BAND on continuation
- * pages.
+ * Extend the declared header row count to fully cover any rowSpan (w:vMerge)
+ * that starts in a header row but reaches past it into non-header rows.
  *
- * Starts from the contiguous `w:tblHeader` rows ({@link countHeaderRows}) and
- * extends downward to include any row that a header-row vertically-merged cell
- * (`w:vMerge`, `rowSpan > 1`) spans into. Word repeats the whole merged header
- * band as a unit even when the spanned rows are not themselves flagged
- * `w:tblHeader`, so the merged cell is never cut at the repeat boundary
- * (verified against Word's render of the sd-1962 "Inpatient Stay in CRU"
- * schedule: only row 0 carries `w:tblHeader`, but its `rowSpan = 2`
- * label / "Screening" / "EOS" cells pull row 1 into the repeated header).
+ * Word repeats a vertically-merged cell in its entirety when it starts inside
+ * a repeated header, so the row(s) it merges into are implicitly part of the
+ * repeated header even when not individually flagged `repeatHeader`. Without
+ * this, a header row's rowspan cell renders at its full merged height while
+ * the header-repeat paint loop only advances past the declared header rows,
+ * leaving the merged cell overlapping the body content painted right after.
  *
- * Without this extension only row 0 repeats while the painter still draws the
- * merged cell at its full `rowSpan` height, so it overflows the fragment and
- * paints over the body rows / footnotes below (SD-1962).
+ * The scan is transitive: a row pulled in only because a merge from above
+ * reaches into it may itself have a rowSpan reaching further down (chained
+ * merges), so `count` grows in place and the loop bound (`r < count`) is
+ * re-evaluated each iteration until nothing new is pulled in.
  *
- * @param block - Table block containing rows, cells, and attributes
- * @returns Number of leading rows that repeat together as the header band
+ * @param block - Table block containing rows and attributes
+ * @param measure - Table measurements, providing per-row cell rowSpans
+ * @param headerCount - Declared header row count from countHeaderRows()
+ * @returns Effective header row count, extended to cover crossing rowSpans
  */
-function countRepeatableHeaderRows(block: TableBlock): number {
-  const headerCount = countHeaderRows(block);
-  if (headerCount === 0) return 0;
-
-  // A vMerge that starts inside the flagged header rows cannot be split at the
-  // repeat boundary; extend the band to the farthest row it reaches.
-  let bandEnd = headerCount; // exclusive
-  for (let r = 0; r < headerCount && r < block.rows.length; r++) {
-    for (const cell of block.rows[r]?.cells ?? []) {
+function computeEffectiveHeaderCount(block: TableBlock, measure: TableMeasure, headerCount: number): number {
+  let count = headerCount;
+  for (let r = 0; r < count; r += 1) {
+    for (const cell of measure.rows[r]?.cells ?? []) {
       const rowSpan = cell.rowSpan ?? 1;
-      if (rowSpan > 1) bandEnd = Math.max(bandEnd, r + rowSpan);
+      count = Math.max(count, r + rowSpan);
     }
   }
-  return Math.min(bandEnd, block.rows.length);
+  return Math.min(count, block.rows.length);
+}
+
+/**
+ * Find the largest repeatable header prefix that does not cut through a
+ * vertical merge.
+ *
+ * When a later header row continues on a new page, we normally repeat only the
+ * completed header prefix. That prefix must be self-contained: if any row
+ * inside it has a cell whose rowSpan reaches past the prefix boundary, the
+ * painter would still render the merged cell at its full height and overlap the
+ * continued row below. In that case, we fall back to the largest shorter prefix
+ * that is rowspan-safe, or 0 if every non-empty prefix would cut a merge.
+ *
+ * @param measure - Table measurements, providing per-row cell rowSpans
+ * @param maxCount - Maximum prefix length under consideration
+ * @returns Largest safe prefix length in the range [0, maxCount]
+ */
+function computeSelfContainedHeaderPrefix(measure: TableMeasure, maxCount: number): number {
+  const cappedMaxCount = Math.max(0, Math.min(maxCount, measure.rows.length));
+
+  for (let candidate = cappedMaxCount; candidate > 0; candidate -= 1) {
+    let crossesBoundary = false;
+
+    for (let r = 0; r < candidate && !crossesBoundary; r += 1) {
+      for (const cell of measure.rows[r]?.cells ?? []) {
+        const rowSpan = cell.rowSpan ?? 1;
+        if (r + rowSpan > candidate) {
+          crossesBoundary = true;
+          break;
+        }
+      }
+    }
+
+    if (!crossesBoundary) {
+      return candidate;
+    }
+  }
+
+  return 0;
 }
 
 /**
@@ -504,6 +539,31 @@ function computeFragmentHeight(
   }
 
   return height;
+}
+
+/**
+ * Return the height Word uses for the pagination fit decision.
+ *
+ * Collapsed borders do not grow the DOM table box, so `computeFragmentHeight`
+ * intentionally excludes them from fragment geometry. Word nevertheless
+ * reserves the authored terminal bottom border before admitting the final row
+ * to a page. Keeping that budget in the fit plane (and out of the paint plane)
+ * avoids a one-pixel geometry inflation while preserving Word's boundary
+ * decision for rows that otherwise fit by only a few twips.
+ */
+function computeFragmentFitHeight(
+  measure: TableMeasure,
+  fromRow: number,
+  toRow: number,
+  repeatHeaderCount: number,
+  borderCollapse?: 'collapse' | 'separate',
+  partialRow?: PartialRowInfo | null,
+): number {
+  const fragmentHeight = computeFragmentHeight(measure, fromRow, toRow, repeatHeaderCount, borderCollapse, partialRow);
+  if (borderCollapse !== 'collapse' || toRow < measure.rows.length) {
+    return fragmentHeight;
+  }
+  return fragmentHeight + (measure.tableBorderWidths?.bottom ?? 0);
 }
 
 type SplitPointResult = {
@@ -1169,7 +1229,7 @@ function findSplitPoint(
     }
 
     // Check if this row fits: use full fragment height (rows + spacing + borders) so pagination matches render
-    const fragmentHeightWithRow = computeFragmentHeight(measure, startRow, i + 1, 0, borderCollapse);
+    const fragmentHeightWithRow = computeFragmentFitHeight(measure, startRow, i + 1, 0, borderCollapse);
     if (fragmentHeightWithRow <= availableHeight) {
       // Row fits completely
       lastFitRow = i + 1; // Next row index (exclusive)
@@ -1285,6 +1345,15 @@ function layoutMonolithicTable(context: TableLayoutContext): void {
   state = context.ensurePage();
   const height = Math.min(context.measure.totalHeight, state.contentBottom - state.cursorY);
 
+  // Canonical projection attaches anchor.isAnchored to tblpPr tables, so
+  // narrow floats return before this path and full-width floats paginate via
+  // the inline path. Keep the layout contract defensive for callers that pass
+  // floating properties without an anchor: monolithic placement consumes body
+  // height, and therefore must break paragraph adjacency too.
+  if (height > 0) {
+    breakParagraphAdjacency(state);
+  }
+
   const baseX = context.columnX(state);
   const baseWidth = Math.max(0, context.measure.totalWidth || context.columnWidth);
   const { x, width } = resolveTableFrame(baseX, context.columnWidth, baseWidth, context.block.attrs);
@@ -1369,9 +1438,11 @@ export function layoutTableBlock({
     return;
   }
 
-  // 2. Count header rows (extended to cover vMerge cells that span past the
-  //    flagged header rows, so the merged band repeats intact — see SD-1962).
-  const headerCount = countRepeatableHeaderRows(block);
+  // 2. Count header rows. A header row's cell may vertically merge (rowSpan)
+  // past the declared header rows; the effective count extends to cover the
+  // full merge so the repeated header's height/paint loop stay consistent
+  // with what the rowspan cell actually renders (see computeEffectiveHeaderCount).
+  const headerCount = computeEffectiveHeaderCount(block, measure, countHeaderRows(block));
   const headerPrefixHeights = [0];
   for (let i = 0; i < headerCount; i += 1) {
     headerPrefixHeights.push(headerPrefixHeights[i] + (measure.rows[i]?.height ?? 0));
@@ -1379,6 +1450,12 @@ export function layoutTableBlock({
 
   // 3. Initialize state
   let state = ensurePage();
+
+  // Inline tables are body-flow boundaries. The preceding paragraph's
+  // trailing spacing is already reflected in cursorY; retain that position,
+  // but do not let the next paragraph collapse spacing or borders through the
+  // table. Anchored/out-of-flow tables return above and preserve adjacency.
+  breakParagraphAdjacency(state);
 
   // Check if we need to advance column/page before starting the table
   // If the table doesn't fit in the current position and there's already content on the page,
@@ -1481,10 +1558,13 @@ export function layoutTableBlock({
     return headerPrefixHeights[clampedCount] ?? 0;
   };
 
-  // Tracks whether the current iteration is a same-page continuation of a
-  // partial row. Headers must not repeat mid-page: the painter always renders
-  // repeated headers at the top of a fragment, which would insert headers
-  // between two slices of the same row on the same page.
+  // Tracks whether the current iteration's fragment is known to sit on the
+  // same physical page as the fragment immediately before it — either
+  // because it's another slice of the same partially-split row, or because
+  // a split row just finished and the next body row starts right after it
+  // with no page advance in between. Headers must not repeat mid-page: the
+  // painter always renders repeated headers at the top of a fragment, which
+  // would insert a duplicate header between two fragments that share a page.
   let samePagePartialContinuation = false;
 
   // When computePartialRow makes no progress because repeated headers
@@ -1518,8 +1598,12 @@ export function layoutTableBlock({
       // When continuing a later header row on a new page, repeat only the
       // completed header prefix. The current partial header row continues as
       // body content, so including it in repeatHeaderCount would duplicate it.
+      // If that completed prefix would cut through a vertical merge, shrink it
+      // to the largest self-contained prefix (or 0).
       const candidateRepeatHeaderCount =
-        pendingPartialRow && pendingPartialRow.rowIndex < headerCount ? pendingPartialRow.rowIndex : headerCount;
+        pendingPartialRow && pendingPartialRow.rowIndex < headerCount
+          ? computeSelfContainedHeaderPrefix(measure, pendingPartialRow.rowIndex)
+          : headerCount;
       const candidateHeaderHeight = getRepeatedHeaderHeight(candidateRepeatHeaderCount);
 
       if (candidateRepeatHeaderCount > 0 && candidateHeaderHeight < availableHeight) {
@@ -1645,6 +1729,11 @@ export function layoutTableBlock({
       if (rowComplete) {
         currentRow = rowIndex + 1;
         pendingPartialRow = null;
+        // The row that just finished and the next body row are on the SAME
+        // physical page (no advanceColumn happened between them). Suppress
+        // header repetition on the next iteration so we don't insert a
+        // duplicate header mid-page before the next row.
+        samePagePartialContinuation = true;
       } else if (!madeProgress && hadRemainingLinesBefore) {
         if (repeatHeaderCount > 0) {
           // Headers consumed the body budget. Retry this page without headers

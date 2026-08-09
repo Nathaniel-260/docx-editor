@@ -1,22 +1,24 @@
-import type {
-  ParagraphAttrs,
-  ParagraphBlock,
-  Run,
-  TextRun,
-  TrackedChangeKind,
-  TrackedChangeMeta,
-  TrackedChangesMode,
+import {
+  isConfigurableSemanticColorKey,
+  type ParagraphAttrs,
+  type Run,
+  type TextRun,
+  type TrackedChangeKind,
+  type TrackedChangeMeta,
+  type TrackedChangeSemanticColorKey,
+  type TrackedChangesMode,
 } from '@superdoc/contracts';
 import type { TrackedChangesRenderConfig } from './types.js';
 
-const TRACK_CHANGE_BASE_CLASS: Record<TrackedChangeKind, string> = {
+export const TRACK_CHANGE_BASE_CLASS: Record<TrackedChangeKind, string> = {
   insert: 'track-insert-dec',
   delete: 'track-delete-dec',
   format: 'track-format-dec',
 };
 const TRACK_CHANGE_OVERLAP_INSERT_DELETE_CLASS = 'track-overlap-insert-delete-dec';
 
-/** Alpha (0-255) applied to an author color to derive the focused background. */
+/** Alpha (0-255) applied to a resolved color to derive tracked-change backgrounds. */
+const TRACK_CHANGE_BACKGROUND_ALPHA = 0x22;
 const TRACK_CHANGE_BACKGROUND_FOCUSED_ALPHA = 0x44;
 
 const expandHexColor = (hex: string): string | null => {
@@ -51,24 +53,75 @@ const setColorVar = (elem: HTMLElement, name: string, value: string): void => {
 };
 
 /**
- * Stamps the element-scoped CSS variable family for a single tracked-change
- * layer from its resolved `meta.color`. The painter reads only `meta.color`;
- * color resolution (overrides / resolver / fallback) happened upstream in
- * layout-adapter. Backgrounds are derived from the base color with alpha.
+ * Resolve the color used for the kind-level tracked-change CSS variable family.
+ *
+ * Plain insertion/deletion semantic colors are the default change-kind palette.
+ * When an author color is present it remains the visible insert/delete/format
+ * highlight color. Side/structural semantic categories (`move-from`,
+ * `table-insertion`, `table-cell-insertion`, `cell-merge`, etc.) are explicit
+ * semantic paint roles and keep semantic precedence.
  */
-const applyAuthorColorVariables = (elem: HTMLElement, layer: TrackedChangeMeta): void => {
-  const color = layer.color;
+export const resolveTrackedChangeVisualColor = (layer: TrackedChangeMeta): string | undefined => {
+  const key = layer.semanticColorKey;
+  const semanticOwnsVisual = Boolean(key && key !== 'insertion' && key !== 'deletion');
+  if (semanticOwnsVisual) return layer.semanticColor ?? layer.color;
+  return layer.color ?? layer.semanticColor;
+};
+
+/**
+ * Stamps the element-scoped CSS variable family for a single tracked-change
+ * layer from its resolved visual color. `meta.color` remains the per-author
+ * color and is still surfaced separately as `data-track-change-author-color`.
+ * The painter reads only paint-ready metadata; color resolution (overrides /
+ * resolver / fallback) happened upstream in layout-adapter. Focused backgrounds
+ * are derived from the visual color with alpha and only when it is a hex string
+ * `colorWithAlpha` can safely extend (named/non-hex visual colors still set
+ * border/text but never fabricate a derived background).
+ */
+export const applyTrackedChangeColorVariables = (elem: HTMLElement, layer: TrackedChangeMeta): void => {
+  // CSS-only categories (table structure) are colored by the stylesheet rules
+  // keyed on `data-track-change-semantic-color-key`, themed via the
+  // `--sd-tracked-changes-table-*` variables. These layers never carry a
+  // JS-resolved semanticColor; stamping inline element vars here (from the
+  // author color) would beat any `:root` CSS override, so skip entirely.
+  if (layer.semanticColorKey && !isConfigurableSemanticColorKey(layer.semanticColorKey)) return;
+  const color = resolveTrackedChangeVisualColor(layer);
   if (!color) return;
+  const background = colorWithAlpha(color, TRACK_CHANGE_BACKGROUND_ALPHA);
   const backgroundFocused = colorWithAlpha(color, TRACK_CHANGE_BACKGROUND_FOCUSED_ALPHA);
+  const semanticColor = layer.semanticColor;
+  const semanticBackground = semanticColor ? colorWithAlpha(semanticColor, TRACK_CHANGE_BACKGROUND_ALPHA) : null;
+  const semanticBackgroundFocused = semanticColor
+    ? colorWithAlpha(semanticColor, TRACK_CHANGE_BACKGROUND_FOCUSED_ALPHA)
+    : null;
+  const semanticOwnsVisual = Boolean(semanticColor && color === semanticColor);
+  if (semanticColor) {
+    setColorVar(elem, '--sd-tracked-changes-semantic-color', semanticColor);
+    if (semanticBackground) {
+      setColorVar(elem, '--sd-tracked-changes-semantic-background', semanticBackground);
+    }
+    if (semanticBackgroundFocused) {
+      setColorVar(elem, '--sd-tracked-changes-semantic-background-focused', semanticBackgroundFocused);
+    }
+  }
   switch (layer.kind) {
     case 'insert':
       setColorVar(elem, '--sd-tracked-changes-insert-border', color);
+      if (semanticOwnsVisual) {
+        setColorVar(elem, '--sd-tracked-changes-insert-text', color);
+        if (background) {
+          setColorVar(elem, '--sd-tracked-changes-insert-background', background);
+        }
+      }
       if (backgroundFocused) {
         setColorVar(elem, '--sd-tracked-changes-insert-background-focused', backgroundFocused);
       }
       break;
     case 'delete':
       setColorVar(elem, '--sd-tracked-changes-delete-border', color);
+      if (semanticOwnsVisual && background) {
+        setColorVar(elem, '--sd-tracked-changes-delete-background', background);
+      }
       if (backgroundFocused) {
         setColorVar(elem, '--sd-tracked-changes-delete-background-focused', backgroundFocused);
       }
@@ -85,7 +138,7 @@ const applyAuthorColorVariables = (elem: HTMLElement, layer: TrackedChangeMeta):
   }
 };
 
-const TRACK_CHANGE_MODIFIER_CLASS: Record<TrackedChangeKind, Record<TrackedChangesMode, string | undefined>> = {
+export const TRACK_CHANGE_MODIFIER_CLASS: Record<TrackedChangeKind, Record<TrackedChangesMode, string | undefined>> = {
   insert: {
     review: 'highlighted',
     original: 'hidden',
@@ -106,16 +159,81 @@ const TRACK_CHANGE_MODIFIER_CLASS: Record<TrackedChangeKind, Record<TrackedChang
   },
 };
 
+/**
+ * Stable DOM class per semantic tracked-change category. The class name
+ * matches the canonical {@link TrackedChangeSemanticColorKey} so downstream
+ * UI/tests can identify the rendered move side or cell-structural type without
+ * reparsing comment metadata.
+ */
+const TRACK_CHANGE_SEMANTIC_CLASS: Record<TrackedChangeSemanticColorKey, string> = {
+  insertion: 'insertion',
+  deletion: 'deletion',
+  move: 'move',
+  'move-from': 'move-from',
+  'move-to': 'move-to',
+  'table-insertion': 'table-insertion',
+  'table-deletion': 'table-deletion',
+  'table-row-insertion': 'table-row-insertion',
+  'table-row-deletion': 'table-row-deletion',
+  'table-cell-insertion': 'table-cell-insertion',
+  'table-cell-deletion': 'table-cell-deletion',
+  'table-split': 'table-split',
+  'cell-merge': 'cell-merge',
+  'cell-split': 'cell-split',
+  'image-insertion': 'image-insertion',
+  'image-deletion': 'image-deletion',
+  'image-property-change': 'image-property-change',
+};
+
+/**
+ * Stamps the semantic class + datasets for a tracked-change layer. Shared by
+ * inline, row-level, and cell-level paint paths so the dataset/class vocabulary
+ * stays identical. Only fields that are present are stamped; this never reads
+ * or writes the author `color` dataset. The semantic datasets are namespaced
+ * (`data-track-change-semantic-*`, `-type`, `-subtype`, `-target-kind`,
+ * `-semantic-anchor-scope`) so they never collide with the existing author/
+ * structural datasets even when row + cell metadata coexist.
+ */
+export const applySemanticTrackedChangeMetadata = (elem: HTMLElement, meta: TrackedChangeMeta): void => {
+  const key = meta.semanticColorKey;
+  if (key) {
+    const semanticClass = TRACK_CHANGE_SEMANTIC_CLASS[key];
+    if (semanticClass) {
+      elem.classList.add(semanticClass);
+    }
+    elem.dataset.trackChangeSemanticColorKey = key;
+  }
+  if (meta.semanticColor) {
+    elem.dataset.trackChangeSemanticColor = meta.semanticColor;
+  }
+  if (meta.type) {
+    elem.dataset.trackChangeType = meta.type;
+  }
+  if (meta.subtype) {
+    elem.dataset.trackChangeSubtype = meta.subtype;
+  }
+  if (meta.targetKind) {
+    elem.dataset.trackChangeTargetKind = meta.targetKind;
+  }
+  if (meta.semanticAnchorScope) {
+    elem.dataset.trackChangeSemanticAnchorScope = meta.semanticAnchorScope;
+  }
+};
+
 type InsertDeleteOverlap = {
   parentInsert: TrackedChangeMeta;
   childDelete: TrackedChangeMeta;
 };
 
-export const getTrackedChangeLayers = (run: TextRun): TrackedChangeMeta[] => {
-  if (Array.isArray(run.trackedChanges) && run.trackedChanges.length > 0) {
-    return run.trackedChanges;
+type TrackedChangeCarrier = Partial<Pick<TextRun, 'trackedChange' | 'trackedChanges'>>;
+type TrackedChangeDecoratable = Run | TrackedChangeCarrier;
+
+export const getTrackedChangeLayers = (carrier: TrackedChangeDecoratable): TrackedChangeMeta[] => {
+  const trackedCarrier = carrier as TrackedChangeCarrier;
+  if (Array.isArray(trackedCarrier.trackedChanges) && trackedCarrier.trackedChanges.length > 0) {
+    return trackedCarrier.trackedChanges;
   }
-  return run.trackedChange ? [run.trackedChange] : [];
+  return trackedCarrier.trackedChange ? [trackedCarrier.trackedChange] : [];
 };
 
 const resolveInsertDeleteOverlap = (layers: TrackedChangeMeta[]): InsertDeleteOverlap | undefined => {
@@ -131,7 +249,7 @@ const resolveInsertDeleteOverlap = (layers: TrackedChangeMeta[]): InsertDeleteOv
   return undefined;
 };
 
-export const resolveTrackedChangesConfig = (block: ParagraphBlock): TrackedChangesRenderConfig => {
+export const resolveTrackedChangesConfig = (block: { attrs?: unknown }): TrackedChangesRenderConfig => {
   const attrs = (block.attrs as ParagraphAttrs | undefined) ?? {};
   const mode = (attrs.trackedChangesMode as TrackedChangesMode | undefined) ?? 'review';
   const enabled = attrs.trackedChangesEnabled !== false;
@@ -146,13 +264,23 @@ export const resolveTrackedChangesConfig = (block: ParagraphBlock): TrackedChang
 const TRACK_CHANGE_ROW_CELL_CLASS = 'track-row-cell-dec';
 
 /**
+ * Marks a cell-level tracked-change cell (SD-3481 `TableCellAttrs.trackedChange`)
+ * so block-context CSS can target cell-structural decorations without colliding
+ * with the inline `.track-insert-dec` span rules or the row-level
+ * `.track-row-cell-dec` rules. Parallel to {@link TRACK_CHANGE_ROW_CELL_CLASS}.
+ */
+const TRACK_CHANGE_CELL_CLASS = 'track-cell-dec';
+
+/**
  * Applies a structural row-level tracked change (inserted/deleted whole row) to
  * a single table cell element, reusing the exact same machinery as inline runs:
  * the shared {@link TrackedChangeMeta}, the `TRACK_CHANGE_BASE_CLASS`
  * (`track-insert-dec` / `track-delete-dec`), the `TRACK_CHANGE_MODIFIER_CLASS`
  * mode map (insert → review:highlighted / original:hidden / final:normal;
  * delete → review:highlighted / original:normal / final:hidden), and
- * `applyAuthorColorVariables` for the per-author color CSS variable family.
+ * `applyTrackedChangeColorVariables` for the tracked-change CSS variable family
+ * (author colors own plain insert/delete highlights; semantic categories own
+ * move/table/cell visuals).
  *
  * The painter renders a row as cells appended to a container (there is no
  * `<tr>` element), so the row's tracked-change visual is applied to each cell.
@@ -186,39 +314,136 @@ export const applyRowTrackedChangeToCell = (
     elem.classList.add(modifier);
   }
 
-  applyAuthorColorVariables(elem, meta);
+  applyTrackedChangeColorVariables(elem, meta);
 
   elem.dataset.trackChangeId = meta.id;
   elem.dataset.trackChangeKind = meta.kind;
   elem.dataset.trackChangeStructural = 'row';
-  elem.dataset.storyKey = meta.storyKey ?? 'body';
+  // No 'body' default: the projector stamps 'body' for genuine body stories, so
+  // a missing key means the owning story is UNKNOWN. Defaulting it to body
+  // would let a header/footer carrier win body-scoped carrier searches
+  // (IT-1250); carrier matching treats an absent key as body only outside
+  // header/footer containers.
+  if (meta.storyKey) {
+    elem.dataset.storyKey = meta.storyKey;
+  }
   if (meta.author) {
     elem.dataset.trackChangeAuthor = meta.author;
   }
   if (meta.authorEmail) {
     elem.dataset.trackChangeAuthorEmail = meta.authorEmail;
   }
+  if (meta.color) {
+    elem.dataset.trackChangeAuthorColor = meta.color;
+  }
   if (meta.date) {
     elem.dataset.trackChangeDate = meta.date;
   }
+  applySemanticTrackedChangeMetadata(elem, meta);
 };
 
-export const applyTrackedChangeDecorations = (
+/**
+ * Applies a cell-level structural tracked change (SD-3481
+ * `TableCellAttrs.trackedChange`: cell insertion/deletion, merge, or split) to a
+ * single table cell element. Mirrors {@link applyRowTrackedChangeToCell} but
+ * carries its own marker class {@link TRACK_CHANGE_CELL_CLASS} so cell-level CSS
+ * never affects inline spans or row-level decorations, and supports the
+ * `format` kind (merge/split paint through the `--sd-tracked-changes-format-*`
+ * family).
+ *
+ * Visual color uses {@link resolveTrackedChangeVisualColor} via
+ * {@link applyTrackedChangeColorVariables}; semantic class/datasets come from
+ * {@link applySemanticTrackedChangeMetadata}.
+ *
+ * Coexistence with a row-level tracked change: when this cell already carries a
+ * row-level decoration (`track-row-cell-dec`), the row keeps ownership of the
+ * shared single-value datasets and same-kind color variable family (row
+ * precedence). Different-kind cell metadata still stamps its own independent
+ * variable family (for example format vars for a cell merge inside an inserted
+ * row), and the semantic datasets/classes are always added so neither
+ * structural marker is dropped.
+ *
+ * @param elem - The cell element to decorate.
+ * @param meta - The cell's resolved tracked-change metadata.
+ * @param config - Tracked-changes mode/enabled (same source inline runs use).
+ */
+export const applyCellTrackedChangeToCell = (
   elem: HTMLElement,
-  run: Run,
+  meta: TrackedChangeMeta,
   config: TrackedChangesRenderConfig,
 ): void => {
   if (!config.enabled || config.mode === 'off') {
     return;
   }
 
-  const textRun = run as TextRun;
-  const layers = getTrackedChangeLayers(textRun);
+  const hasRowDecoration = elem.classList.contains(TRACK_CHANGE_ROW_CELL_CLASS);
+
+  const baseClass = TRACK_CHANGE_BASE_CLASS[meta.kind];
+  if (baseClass) {
+    elem.classList.add(baseClass);
+  }
+  elem.classList.add(TRACK_CHANGE_CELL_CLASS);
+
+  const modifier = TRACK_CHANGE_MODIFIER_CLASS[meta.kind]?.[config.mode];
+  if (modifier) {
+    elem.classList.add(modifier);
+  }
+
+  const rowOwnsSameColorFamily = hasRowDecoration && elem.dataset.trackChangeKind === meta.kind;
+
+  // Row precedence: don't clobber the row-level same-kind color variable family
+  // when both structural markers are present. Different tracked-change kinds use
+  // independent variable families and can be stamped safely.
+  if (!rowOwnsSameColorFamily) {
+    applyTrackedChangeColorVariables(elem, meta);
+  }
+  applySemanticTrackedChangeMetadata(elem, meta);
+
+  const existingStructural = elem.dataset.trackChangeStructural;
+  elem.dataset.trackChangeStructural =
+    existingStructural && existingStructural !== 'cell' ? `${existingStructural} cell` : 'cell';
+  // Row-level metadata (when present) keeps ownership of these shared
+  // single-value datasets; a cell-only change sets them itself.
+  if (!elem.dataset.trackChangeId) {
+    elem.dataset.trackChangeId = meta.id;
+  }
+  if (!elem.dataset.trackChangeKind) {
+    elem.dataset.trackChangeKind = meta.kind;
+  }
+  // No 'body' default for a missing story key (see applyRowTrackedChangeToCell).
+  if (!elem.dataset.storyKey && meta.storyKey) {
+    elem.dataset.storyKey = meta.storyKey;
+  }
+  if (meta.author && !elem.dataset.trackChangeAuthor) {
+    elem.dataset.trackChangeAuthor = meta.author;
+  }
+  if (meta.authorEmail && !elem.dataset.trackChangeAuthorEmail) {
+    elem.dataset.trackChangeAuthorEmail = meta.authorEmail;
+  }
+  if (meta.color && !elem.dataset.trackChangeAuthorColor) {
+    elem.dataset.trackChangeAuthorColor = meta.color;
+  }
+  if (meta.date && !elem.dataset.trackChangeDate) {
+    elem.dataset.trackChangeDate = meta.date;
+  }
+};
+
+export const applyTrackedChangeDecorations = (
+  elem: HTMLElement,
+  run: TrackedChangeDecoratable,
+  config: TrackedChangesRenderConfig,
+): void => {
+  if (!config.enabled || config.mode === 'off') {
+    return;
+  }
+
+  const layers = getTrackedChangeLayers(run);
   if (layers.length === 0) {
     return;
   }
   const overlap = resolveInsertDeleteOverlap(layers);
-  const meta = overlap?.parentInsert ?? textRun.trackedChange ?? layers[0]!;
+  const trackedCarrier = run as TrackedChangeCarrier;
+  const meta = overlap?.parentInsert ?? trackedCarrier.trackedChange ?? layers[0]!;
 
   layers.forEach((layer) => {
     const baseClass = TRACK_CHANGE_BASE_CLASS[layer.kind];
@@ -231,9 +456,9 @@ export const applyTrackedChangeDecorations = (
       elem.classList.add(modifier);
     }
 
-    // Stamp the per-author CSS variable family for this layer's kind from the
-    // resolved color. Overlapping layers each contribute their own kind family.
-    applyAuthorColorVariables(elem, layer);
+    // Stamp the CSS variable family for this layer's kind from the resolved
+    // visual color. Overlapping layers each contribute their own kind family.
+    applyTrackedChangeColorVariables(elem, layer);
   });
 
   if (overlap) {
@@ -245,7 +470,10 @@ export const applyTrackedChangeDecorations = (
   elem.dataset.trackChangeKind = meta.kind;
   elem.dataset.trackChangeIds = layers.map((layer) => layer.id).join(',');
   elem.dataset.trackChangeKinds = layers.map((layer) => layer.kind).join(',');
-  elem.dataset.storyKey = meta.storyKey ?? 'body';
+  // No 'body' default for a missing story key (see applyRowTrackedChangeToCell).
+  if (meta.storyKey) {
+    elem.dataset.storyKey = meta.storyKey;
+  }
   if (meta.author) {
     elem.dataset.trackChangeAuthor = meta.author;
   }
@@ -261,5 +489,6 @@ export const applyTrackedChangeDecorations = (
   if (meta.date) {
     elem.dataset.trackChangeDate = meta.date;
   }
-  // track-change-focused class is applied post-paint by CommentHighlightDecorator (super-editor).
+  applySemanticTrackedChangeMetadata(elem, meta);
+  // track-change-focused class is applied post-paint by CommentHighlightDecorator.
 };

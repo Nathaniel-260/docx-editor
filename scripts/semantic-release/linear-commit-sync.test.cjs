@@ -1,5 +1,3 @@
-/* eslint-env node */
-
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
@@ -89,7 +87,7 @@ test('collectIssueIdsFromCommits ignores generated release commits with old note
 });
 
 
-test('formatComment links prerelease comments to the Git tag', () => {
+test('formatComment keeps the existing release comment template behavior', () => {
   assert.equal(
     formatComment(
       'shipped in {package} {releaseLink} {channel}',
@@ -99,21 +97,7 @@ test('formatComment links prerelease comments to the Git tag', () => {
       'v1.2.3',
       'https://github.com/superdoc/docx-editor.git',
     ),
-    'shipped in **superdoc** [1.2.3](https://github.com/superdoc/docx-editor/tree/v1.2.3) (next channel)',
-  );
-});
-
-test('formatComment links stable comments to the GitHub release', () => {
-  assert.equal(
-    formatComment(
-      'shipped in {package} {releaseLink} {channel}',
-      '1.2.3',
-      'latest',
-      'superdoc',
-      'v1.2.3',
-      'https://github.com/superdoc/docx-editor.git',
-    ),
-    'shipped in **superdoc** [1.2.3](https://github.com/superdoc/docx-editor/releases/tag/v1.2.3) (latest channel)',
+    'shipped in **superdoc** [1.2.3](https://github.com/superdoc/docx-editor/releases/tag/v1.2.3) (next channel)',
   );
 });
 

@@ -6,7 +6,7 @@
  * matching Microsoft Word's behavior.
  */
 
-import { getColumnGeometry, getColumnX } from '@superdoc/contracts';
+import { getColumnGeometry, getColumnX, hasGenuinelyUnequalExplicitColumnWidths } from '@superdoc/contracts';
 
 // ============================================================================
 // Types and Interfaces
@@ -708,13 +708,6 @@ export interface BalanceSectionOnPageArgs {
  *     explicit widths that are all equal still balance — SD-2324)
  *   - No fragments on this page belong to the section
  */
-/** True when every explicit column width is equal within a sub-pixel tolerance. */
-function allColumnWidthsEqual(widths: number[]): boolean {
-  if (widths.length <= 1) return true;
-  const first = widths[0];
-  return widths.every((w) => Math.abs(w - first) <= 0.5);
-}
-
 export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: number } | null {
   const { sectionColumns, sectionHasExplicitColumnBreak, sectionIndex, blockSectionMap, fragments } = args;
 
@@ -724,13 +717,9 @@ export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: nu
   // rebalancing, and the height-balancer measures each fragment at a single width so it
   // can't reflow per column. Explicit widths that are all EQUAL (equalWidth="0" with every
   // <w:col w:w> equal — the common continuous newspaper case) DO balance like implicit
-  // equal columns. (SD-2324)
-  if (
-    sectionColumns.equalWidth === false &&
-    Array.isArray(sectionColumns.widths) &&
-    sectionColumns.widths.length > 0 &&
-    !allColumnWidthsEqual(sectionColumns.widths)
-  ) {
+  // equal columns. (SD-2324) The predicate is shared with host retained-layout
+  // dependency scanning (SD-3772); both sides must consume the same definition.
+  if (hasGenuinelyUnequalExplicitColumnWidths(sectionColumns)) {
     return null;
   }
 

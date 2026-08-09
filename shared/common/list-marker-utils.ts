@@ -33,6 +33,39 @@ export type MinimalMarkerRun = {
 };
 
 /**
+ * Tracked-change review metadata for a list marker glyph (Plan 5).
+ *
+ * Structurally mirrors the canonical `MarkerTrackedChange` in
+ * `@superdoc/contracts` (which reuses `TrackedChangeMeta`). It is re-declared
+ * here so `@superdoc/common` stays dependency-free; the painter accepts both
+ * shapes through one permissive view. Keep the two declarations in sync.
+ */
+export type MinimalMarkerTrackedChange = {
+  /** Primary tracked-change id, stamped as `data-track-change-id`. */
+  id: string;
+  /** Review kind driving base class + marker color/decoration. */
+  kind: 'insert' | 'delete' | 'format';
+  /** All affected ids for `data-track-change-ids`, when more than one. */
+  groupedIds?: readonly string[];
+  /** Raw structural change type (e.g. `paragraph-mark`, `list-properties`). */
+  type?: string;
+  /** Logical structural subtype. */
+  subtype?: string;
+  /** Structural target kind (e.g. `list-item`). */
+  targetKind?: string;
+  /** Semantic color category (e.g. `insertion`, `move-from`). */
+  semanticColorKey?: string;
+  /** Paint-ready semantic color. */
+  semanticColor?: string;
+  /** Per-author color. */
+  color?: string;
+  author?: string;
+  authorEmail?: string;
+  date?: string;
+  storyKey?: string;
+};
+
+/**
  * Minimal marker information required for text start calculation.
  *
  * This type represents the essential properties needed from a marker object
@@ -58,6 +91,12 @@ export type MinimalMarker = {
   markerText?: string;
   /** Formatting information for the marker (for measurement if needed) */
   run?: MinimalMarkerRun;
+  /**
+   * Optional tracked-change review metadata for the marker glyph (Plan 5).
+   * Carried through the `wordLayout.marker` legacy paint path so the painter
+   * can stamp marker review identity/styling. Absent for normal markers.
+   */
+  trackedChange?: MinimalMarkerTrackedChange;
 };
 
 /**
@@ -275,12 +314,27 @@ export function resolveListMarkerGeometry(
   }
 
   if (justification !== 'left') {
-    const gutterWidthPx = Math.max(getNonNegativeFiniteNumber(marker.gutterWidthPx) ?? 0, LIST_MARKER_GAP);
+    // Right/center-justified markers separate from their text with a tab that
+    // advances to the same stop the painter targets (computeTabWidth: the
+    // hanging-indent text start, or the next default tab stop when a first-line
+    // indent applies), not a fixed marker gutter. Using the gutter here left the
+    // caret/text-start short of the painted text on hanging-indent levels, so
+    // the caret rendered ~one glyph to the left of the clicked position
+    // (SD-3778). This mirrors the firstLineIndentMode branch above.
+    const markerCurrentPosPx = justification === 'right' ? anchorPx : markerContentEndPx;
+    const suffixWidthPx = computeTabWidth(
+      markerCurrentPosPx,
+      justification,
+      wordLayout?.tabsPx,
+      hanging,
+      firstLine,
+      indentLeft,
+    );
     return {
       markerStartPx,
       markerTextWidthPx,
-      textStartPx: markerContentEndPx + gutterWidthPx,
-      suffixWidthPx: gutterWidthPx,
+      textStartPx: markerContentEndPx + suffixWidthPx,
+      suffixWidthPx,
     };
   }
 
@@ -305,6 +359,24 @@ export function resolveListMarkerGeometry(
       textStartPx: explicitTextStartPx,
       suffixWidthPx: explicitTextStartPx - markerContentEndPx,
     };
+  }
+
+  // A zero-indent numbering level can use a direct paragraph tab as the
+  // numbering suffix stop. There is no hanging-indent text start to prefer in
+  // this shape, so falling back to the default 0.5-inch stop creates a much
+  // larger marker gap than Word (for example, 284 twips / 18.93 px).
+  if (indentLeft === 0 && firstLine === 0 && hanging === 0) {
+    const explicitNumberingTabPx = wordLayout?.tabsPx?.find(
+      (tabStopPx) => Number.isFinite(tabStopPx) && tabStopPx > markerContentEndPx,
+    );
+    if (explicitNumberingTabPx != null) {
+      return {
+        markerStartPx,
+        markerTextWidthPx,
+        textStartPx: explicitNumberingTabPx,
+        suffixWidthPx: explicitNumberingTabPx - markerContentEndPx,
+      };
+    }
   }
 
   const markerBoxEndPx = markerStartPx + markerBoxWidthPx;

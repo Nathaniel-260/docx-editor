@@ -1,6 +1,6 @@
 /**
  * Shared utility functions for SVG shape rendering
- * Ported from super-editor to TypeScript for reuse across layout-engine
+ * Shared with the layout-engine rendering pipeline.
  */
 
 import type { GradientFill, GradientStop, SolidFillWithAlpha, ShapeTextContent, TextPart } from '@superdoc/contracts';

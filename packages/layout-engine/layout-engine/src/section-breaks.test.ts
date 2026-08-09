@@ -251,6 +251,23 @@ describe('scheduleSectionBreak', () => {
         expect(result.state.pendingColumns).toEqual({ count: 1, gap: 0 });
       });
 
+      it.each(['even', 'odd'] as const)(
+        'preserves a %s parity requirement derived for a nextPage restart',
+        (requiredPageParity) => {
+          const state = createSectionState({ activeColumns: { count: 2, gap: 48 } });
+          const block = createSectionBreak({ type: 'nextPage', requiredPageParity });
+
+          const result = scheduleSectionBreak(block, state, BASE_MARGINS);
+
+          expect(result.decision).toMatchObject({
+            forcePageBreak: true,
+            forceMidPageRegion: false,
+            requiredParity: requiredPageParity,
+          });
+          expect(result.state.pendingColumns).toEqual({ count: 1, gap: 0 });
+        },
+      );
+
       it('requirePageBoundary attr resets columns to single when undefined', () => {
         const state = createSectionState({ activeColumns: { count: 2, gap: 48 } });
         const block = createSectionBreak({

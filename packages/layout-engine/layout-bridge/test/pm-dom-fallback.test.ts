@@ -5,7 +5,7 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { PmDomFallback } from '../src/pm-dom-fallback';
 import type { PmEditorView, PageTransform } from '../src/pm-dom-fallback';
 

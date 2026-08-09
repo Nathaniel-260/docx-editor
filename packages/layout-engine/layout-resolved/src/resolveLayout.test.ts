@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { createFontResolver } from '@superdoc/font-system';
 import { resolveLayout } from './resolveLayout.js';
 import type {
@@ -47,6 +47,28 @@ describe('resolveLayout', () => {
       items: [],
     });
     expect(result.pageGap).toBe(24);
+  });
+
+  it('carries provisional body page-count mode onto every resolved page', () => {
+    const layout: Layout = {
+      pageSize: { w: 800, h: 1000 },
+      pages: [
+        { number: 1, fragments: [] },
+        { number: 2, fragments: [] },
+      ],
+    };
+
+    const provisional = resolveLayout({
+      layout,
+      flowMode: 'paginated',
+      blocks: [],
+      measures: [],
+      pageCountFieldsExact: false,
+    });
+    const exact = resolveLayout({ layout, flowMode: 'paginated', blocks: [], measures: [] });
+
+    expect(provisional.pages.map((page) => page.pageCountFieldsExact)).toEqual([false, false]);
+    expect(exact.pages.every((page) => page.pageCountFieldsExact === undefined)).toBe(true);
   });
 
   it('uses per-page dimensions when page.size is defined', () => {
@@ -189,6 +211,39 @@ describe('resolveLayout', () => {
 
       expect(item.block.runs[0].text).toBe('12');
       expect(item.content.lines[0].line.toChar).toBe(2);
+    });
+
+    it('re-clamps inline box offsets when PAGEREF resolution changes run length', () => {
+      const input = makePageRefInput();
+      const sourceMeasure = input.measures[0] as any;
+      sourceMeasure.lines[0].segments = [{ runIndex: 0, fromChar: 0, toChar: 1, width: 8 }];
+      sourceMeasure.lines[0].inlineBoxes = [
+        {
+          id: 'page-ref-box',
+          from: 0,
+          to: 1,
+          x: 0,
+          width: 10,
+          top: 0,
+          height: 12,
+          startsRange: true,
+          endsRange: true,
+          style: {
+            paddingInlineStart: 1,
+            paddingInlineEnd: 1,
+            paddingBlockStart: 0,
+            paddingBlockEnd: 0,
+            gapBefore: 0,
+            gapAfter: 0,
+            borderWidth: 0,
+          },
+        },
+      ];
+
+      const result = resolveLayout({ ...input, flowMode: 'paginated', bookmarks: new Map([['target', 100]]) });
+      const line = (result.pages[0].items[0] as any).content.lines[0].line;
+
+      expect(line.inlineBoxes[0]).toMatchObject({ from: 0, to: 2 });
     });
 
     it('does not duplicate resolved PAGEREF text across cached split lines', () => {
@@ -2241,6 +2296,40 @@ describe('resolveLayout', () => {
       expect(content.paragraphEndsWithLineBreak).toBe(true);
     });
 
+    it('skips justify when a terminal tab precedes the paragraph lineBreak', () => {
+      const layout: Layout = {
+        pageSize: { w: 612, h: 792 },
+        pages: [
+          {
+            number: 1,
+            fragments: [{ kind: 'para', blockId: 'p1', fromLine: 0, toLine: 2, x: 72, y: 100, width: 468 }],
+          },
+        ],
+      };
+      const blocks: FlowBlock[] = [
+        {
+          kind: 'paragraph',
+          id: 'p1',
+          runs: [{ kind: 'text', text: 'Hello' }, { kind: 'tab', text: '\t' }, { kind: 'lineBreak' }],
+        },
+      ];
+      const measures: Measure[] = [
+        {
+          kind: 'paragraph',
+          lines: [
+            makeLine({ toRun: 1, toChar: 1 }),
+            makeLine({ fromRun: 2, fromChar: 0, toRun: 2, toChar: 0, isLineBreakPlaceholder: true }),
+          ],
+          totalHeight: 40,
+        },
+      ];
+
+      const result = resolveLayout({ layout, flowMode: 'paginated', blocks, measures });
+      const content = (result.pages[0].items[0] as any).content;
+      expect(content.lines[0].skipJustify).toBe(true);
+      expect(content.paragraphEndsWithLineBreak).toBe(true);
+    });
+
     it('resolves drop cap on first fragment', () => {
       const layout: Layout = {
         pageSize: { w: 612, h: 792 },
@@ -3243,49 +3332,6 @@ describe('resolveLayout', () => {
       expect(item.sdtContainerKey).toBe('documentSection:sec-2');
     });
 
-    it('uses containerSdt as the visual boundary key for nested block SDTs', () => {
-      const layout: Layout = {
-        pageSize: { w: 612, h: 792 },
-        pages: [
-          {
-            number: 1,
-            fragments: [
-              { kind: 'para', blockId: 'p-parent-marker', fromLine: 0, toLine: 1, x: 72, y: 100, width: 468 },
-              { kind: 'para', blockId: 'p-child', fromLine: 0, toLine: 1, x: 72, y: 120, width: 468 },
-            ],
-          },
-        ],
-      };
-      const parentSdt = { type: 'structuredContent' as const, scope: 'block' as const, id: 'parent-sdt' };
-      const childSdt = { type: 'structuredContent' as const, scope: 'block' as const, id: 'child-sdt' };
-      const blocks: FlowBlock[] = [
-        {
-          kind: 'paragraph',
-          id: 'p-parent-marker',
-          runs: [],
-          attrs: { sdt: parentSdt },
-        },
-        {
-          kind: 'paragraph',
-          id: 'p-child',
-          runs: [],
-          attrs: { sdt: childSdt, containerSdt: parentSdt },
-        },
-      ];
-      const measures: Measure[] = [
-        { kind: 'paragraph', lines: [], totalHeight: 0 },
-        { kind: 'paragraph', lines: [], totalHeight: 0 },
-      ];
-
-      const result = resolveLayout({ layout, flowMode: 'paginated', blocks, measures });
-      const parentItem = result.pages[0].items[0] as import('@superdoc/contracts').ResolvedFragmentItem;
-      const childItem = result.pages[0].items[1] as import('@superdoc/contracts').ResolvedFragmentItem;
-      expect(parentItem.sdtContainerKey).toBe('structuredContent:parent-sdt');
-      expect(childItem.sdtContainerKey).toBe('structuredContent:parent-sdt');
-      expect(childItem.block?.attrs?.sdt).toBe(childSdt);
-      expect(childItem.block?.attrs?.containerSdt).toBe(parentSdt);
-    });
-
     it('returns null (omits sdtContainerKey) for inline structuredContent scope', () => {
       const layout: Layout = {
         pageSize: { w: 612, h: 792 },
@@ -3475,6 +3521,66 @@ describe('resolveLayout', () => {
       const drItem = result.pages[0].items[1] as import('@superdoc/contracts').ResolvedDrawingItem;
       expect(imgItem.sdtContainerKey).toBeUndefined();
       expect(drItem.sdtContainerKey).toBeUndefined();
+    });
+
+    it('sets sdtContainerKey for image and drawing fragments inside a block SDT (SD-3303)', () => {
+      // An image/drawing block sitting inside a block SDT must join that
+      // SDT's boundary group like any other fragment kind, or the wrapper is
+      // sized from text alone and renders too short when the image extends
+      // past the surrounding text lines.
+      const imageFragment: ImageFragment = {
+        kind: 'image',
+        blockId: 'img1',
+        x: 100,
+        y: 200,
+        width: 300,
+        height: 250,
+      };
+      const drawingFragment: DrawingFragment = {
+        kind: 'drawing',
+        drawingKind: 'vectorShape',
+        blockId: 'dr1',
+        x: 50,
+        y: 60,
+        width: 200,
+        height: 150,
+        geometry: { width: 200, height: 150 },
+        scale: 1,
+      };
+      const layout: Layout = {
+        pageSize: { w: 612, h: 792 },
+        pages: [{ number: 1, fragments: [imageFragment, drawingFragment] }],
+      };
+      const sdt = { type: 'structuredContent' as const, scope: 'block' as const, id: 'block-sdt-1' };
+      const imageBlock = {
+        kind: 'image' as const,
+        id: 'img1',
+        src: 'test.png',
+        width: 300,
+        height: 250,
+        attrs: { sdt },
+      };
+      const drawingBlock = {
+        kind: 'drawing' as const,
+        id: 'dr1',
+        drawingKind: 'vectorShape' as const,
+        geometry: { width: 200, height: 150 },
+        attrs: { sdt },
+      };
+
+      const result = resolveLayout({
+        layout,
+        flowMode: 'paginated',
+        blocks: [imageBlock, drawingBlock as any],
+        measures: [
+          { kind: 'image', width: 300, height: 250 },
+          { kind: 'drawing', width: 200, height: 150 },
+        ],
+      });
+      const imgItem = result.pages[0].items[0] as import('@superdoc/contracts').ResolvedImageItem;
+      const drItem = result.pages[0].items[1] as import('@superdoc/contracts').ResolvedDrawingItem;
+      expect(imgItem.sdtContainerKey).toBe('structuredContent:block-sdt-1');
+      expect(drItem.sdtContainerKey).toBe('structuredContent:block-sdt-1');
     });
 
     it('sets an object-stable key for structuredContent block scope with no id', () => {
@@ -4066,6 +4172,223 @@ describe('resolveLayout', () => {
       const ver1 = (result1.pages[0].items[0] as any).version;
       const ver2 = (result2.pages[0].items[0] as any).version;
       expect(ver1).not.toBe(ver2);
+    });
+
+    it('changes the paint cache version when only measured inline image alignment changes', () => {
+      const fragment: ParaFragment = {
+        kind: 'para',
+        blockId: 'p1',
+        fromLine: 0,
+        toLine: 1,
+        x: 72,
+        y: 0,
+        width: 468,
+      };
+      const layout: Layout = {
+        pageSize: { w: 612, h: 792 },
+        pages: [{ number: 1, fragments: [fragment] }],
+      };
+      const blocks: FlowBlock[] = [
+        {
+          kind: 'paragraph',
+          id: 'p1',
+          runs: [
+            { kind: 'image', src: 'data:image/png;base64,AAA', width: 11, height: 10 },
+            { text: ' Title', fontFamily: 'Arial', fontSize: 16 },
+          ],
+        } as any,
+      ];
+      const baseLine = {
+        fromRun: 0,
+        fromChar: 0,
+        toRun: 1,
+        toChar: 6,
+        width: 60,
+        ascent: 12,
+        descent: 4,
+        lineHeight: 18,
+      };
+      const topMeasure: Measure[] = [{ kind: 'paragraph', lines: [baseLine], totalHeight: 18 } as any];
+      const baselineMeasure: Measure[] = [
+        {
+          kind: 'paragraph',
+          lines: [{ ...baseLine, inlineImageAlignments: [{ runIndex: 0, verticalAlign: 'baseline' }] }],
+          totalHeight: 18,
+        } as any,
+      ];
+
+      const topResult = resolveLayout({ layout, flowMode: 'paginated', blocks, measures: topMeasure });
+      const baselineResult = resolveLayout({ layout, flowMode: 'paginated', blocks, measures: baselineMeasure });
+      const topItem = topResult.pages[0].items[0] as any;
+      const baselineItem = baselineResult.pages[0].items[0] as any;
+
+      expect(topItem.version).toBe(baselineItem.version);
+      expect(topItem.paintCacheVersion).not.toBe(baselineItem.paintCacheVersion);
+      expect(baselineItem.paintCacheVersion).toContain('inlineImageAlignments:0:0:baseline');
+    });
+
+    it('changes the paint cache version when only measured inline-box geometry or style changes', () => {
+      const fragment: ParaFragment = {
+        kind: 'para',
+        blockId: 'p1',
+        fromLine: 0,
+        toLine: 1,
+        x: 72,
+        y: 0,
+        width: 468,
+      };
+      const layout: Layout = {
+        pageSize: { w: 612, h: 792 },
+        pages: [{ number: 1, fragments: [fragment] }],
+      };
+      const blocks: FlowBlock[] = [
+        { kind: 'paragraph', id: 'p1', runs: [{ text: 'Citation', fontFamily: 'Arial', fontSize: 16 }] },
+      ];
+      const baseLine = {
+        fromRun: 0,
+        fromChar: 0,
+        toRun: 0,
+        toChar: 8,
+        width: 60,
+        ascent: 12,
+        descent: 4,
+        lineHeight: 18,
+      };
+      const style = {
+        paddingInlineStart: 4,
+        paddingInlineEnd: 4,
+        paddingBlockStart: 1,
+        paddingBlockEnd: 1,
+        gapBefore: 1,
+        gapAfter: 1,
+        borderWidth: 1,
+        backgroundColor: '#eef2ff',
+      };
+      const measureFor = (width: number, backgroundColor: string): Measure[] => [
+        {
+          kind: 'paragraph',
+          lines: [
+            {
+              ...baseLine,
+              inlineBoxes: [
+                {
+                  id: 'citation',
+                  from: 0,
+                  to: 8,
+                  x: 0,
+                  width,
+                  top: 0,
+                  height: 18,
+                  startsRange: true,
+                  endsRange: true,
+                  style: { ...style, backgroundColor },
+                },
+              ],
+            },
+          ],
+          totalHeight: 18,
+        } as any,
+      ];
+
+      const base = resolveLayout({ layout, flowMode: 'paginated', blocks, measures: measureFor(68, '#eef2ff') });
+      const metric = resolveLayout({ layout, flowMode: 'paginated', blocks, measures: measureFor(72, '#eef2ff') });
+      const appearance = resolveLayout({ layout, flowMode: 'paginated', blocks, measures: measureFor(68, '#ffffff') });
+      const baseVersion = (base.pages[0].items[0] as any).paintCacheVersion;
+
+      expect((metric.pages[0].items[0] as any).paintCacheVersion).not.toBe(baseVersion);
+      expect((appearance.pages[0].items[0] as any).paintCacheVersion).not.toBe(baseVersion);
+      expect(baseVersion).toContain('inlineBoxes:0:[["citation"');
+    });
+
+    it('changes list-item paint cache version when measured inline image alignment changes', () => {
+      const fragment: ListItemFragment = {
+        kind: 'list-item',
+        blockId: 'list1',
+        itemId: 'li1',
+        fromLine: 0,
+        toLine: 1,
+        x: 72,
+        y: 0,
+        width: 468,
+        markerWidth: 24,
+      };
+      const layout: Layout = {
+        pageSize: { w: 612, h: 792 },
+        pages: [{ number: 1, fragments: [fragment] }],
+      };
+      const blocks: FlowBlock[] = [
+        {
+          kind: 'list',
+          id: 'list1',
+          items: [
+            {
+              id: 'li1',
+              marker: { text: '1.', level: 0 },
+              paragraph: {
+                kind: 'paragraph',
+                id: 'li1-p',
+                runs: [
+                  { kind: 'image', src: 'data:image/png;base64,AAA', width: 11, height: 10 },
+                  { text: ' Item', fontFamily: 'Arial', fontSize: 16 },
+                ],
+              },
+            },
+          ],
+        } as any,
+      ];
+      const baseLine = {
+        fromRun: 0,
+        fromChar: 0,
+        toRun: 1,
+        toChar: 5,
+        width: 56,
+        ascent: 12,
+        descent: 4,
+        lineHeight: 18,
+      };
+      const topMeasure: Measure[] = [
+        {
+          kind: 'list',
+          items: [
+            {
+              itemId: 'li1',
+              markerWidth: 24,
+              markerTextWidth: 12,
+              indentLeft: 24,
+              paragraph: { kind: 'paragraph', lines: [baseLine], totalHeight: 18 },
+            },
+          ],
+          totalHeight: 18,
+        } as any,
+      ];
+      const baselineMeasure: Measure[] = [
+        {
+          kind: 'list',
+          items: [
+            {
+              itemId: 'li1',
+              markerWidth: 24,
+              markerTextWidth: 12,
+              indentLeft: 24,
+              paragraph: {
+                kind: 'paragraph',
+                lines: [{ ...baseLine, inlineImageAlignments: [{ runIndex: 0, verticalAlign: 'baseline' }] }],
+                totalHeight: 18,
+              },
+            },
+          ],
+          totalHeight: 18,
+        } as any,
+      ];
+
+      const topResult = resolveLayout({ layout, flowMode: 'paginated', blocks, measures: topMeasure });
+      const baselineResult = resolveLayout({ layout, flowMode: 'paginated', blocks, measures: baselineMeasure });
+      const topItem = topResult.pages[0].items[0] as any;
+      const baselineItem = baselineResult.pages[0].items[0] as any;
+
+      expect(topItem.version).toBe(baselineItem.version);
+      expect(topItem.paintCacheVersion).not.toBe(baselineItem.paintCacheVersion);
+      expect(baselineItem.paintCacheVersion).toContain('inlineImageAlignments:0:0:baseline');
     });
 
     it('caches block version across fragments sharing the same block', () => {

@@ -63,8 +63,30 @@ export type PaginatorOptions = {
   getActivePageSize(): { w: number; h: number };
   getDefaultPageSize(): { w: number; h: number };
   getActiveColumns(): ColumnLayout;
+  /** Exact first-page state from an engine-authored paragraph checkpoint. */
+  initialPageState?: {
+    prefixFragments: readonly Page['fragments'][number][];
+    cursorY: number;
+    maxCursorY: number;
+    columnIndex: number;
+    trailingSpacing: number;
+    lastParagraphStyleId?: string;
+    lastParagraphContextualSpacing: boolean;
+    lastParagraphBorderHash?: string;
+    constraintBoundaries: readonly ConstraintBoundary[];
+    activeConstraintIndex: number;
+    footnoteDemandThisPage: number;
+    footnoteRefsThisPage: number;
+    footnoteAnchorsThisPage: readonly PageState['footnoteAnchorsThisPage'][number][];
+  };
+  pageNumberOffset?: number;
   createPage(number: number, pageMargins: PageMargins, pageSizeOverride?: { w: number; h: number }): Page;
-  onNewPage?: (state: PageState) => void;
+  onNewPage?: (state: PageState | undefined, options?: { applyPendingSection: boolean }) => void;
+  shouldStopBeforeNewPage?: (input: {
+    completedPageIndex: number;
+    pages: readonly Page[];
+    states: readonly PageState[];
+  }) => boolean;
   /**
    * SD-3049: per-page footnote reserve (the value already added to
    * `getActiveBottomMargin`). Returned by index for the page about to be
@@ -72,6 +94,31 @@ export type PaginatorOptions = {
    */
   getFootnoteReserveForPage?: (pageIndex: number) => number;
 };
+
+export class PaginationEarlyStop extends Error {
+  constructor() {
+    super('layoutDocument pagination stopped at page boundary');
+    this.name = 'PaginationEarlyStop';
+  }
+}
+
+export function isPaginationEarlyStop(error: unknown): error is PaginationEarlyStop {
+  return error instanceof PaginationEarlyStop;
+}
+
+/**
+ * Break paragraph-only spacing and border adjacency at an in-flow block boundary.
+ *
+ * Paragraph layout has already included `trailingSpacing` in `cursorY`, so this
+ * intentionally does not move the cursor. It only prevents a later paragraph
+ * from collapsing spacing or borders through an intervening block.
+ */
+export function breakParagraphAdjacency(state: PageState): void {
+  state.trailingSpacing = 0;
+  state.lastParagraphStyleId = undefined;
+  state.lastParagraphContextualSpacing = false;
+  state.lastParagraphBorderHash = undefined;
+}
 
 export function createPaginator(opts: PaginatorOptions) {
   const states: PageState[] = [];
@@ -91,10 +138,32 @@ export function createPaginator(opts: PaginatorOptions) {
     return opts.getActiveColumns();
   };
 
-  const startNewPage = (): PageState => {
+  const startNewPage = (options: { applyPendingSection?: boolean; replaceCurrentPage?: boolean } = {}): PageState => {
+    const replaceCurrentPage = options.replaceCurrentPage === true && pages.length > 0;
+    if (replaceCurrentPage) {
+      // A manual page break can open the physical page that an immediately
+      // following section break also targets. Rebuild that still-empty page so
+      // pending section geometry is snapshotted onto the same physical page;
+      // appending here would create a spurious blank page.
+      pages.pop();
+      states.pop();
+    }
+    if (
+      !replaceCurrentPage &&
+      pages.length > 0 &&
+      opts.shouldStopBeforeNewPage?.({
+        completedPageIndex: pages.length - 1,
+        pages,
+        states,
+      }) === true
+    ) {
+      throw new PaginationEarlyStop();
+    }
     // Allow caller to update state (e.g., apply pending→active) before we snapshot margins/size
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (opts.onNewPage) opts.onNewPage(undefined as any);
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+    if (opts.onNewPage) {
+      opts.onNewPage(undefined, { applyPendingSection: options.applyPendingSection !== false });
+    }
     const topMargin = opts.getActiveTopMargin();
     const bottomMargin = opts.getActiveBottomMargin();
     const headerDistance = opts.getActiveHeaderDistance();
@@ -123,7 +192,7 @@ export function createPaginator(opts: PaginatorOptions) {
     const pageIndex = pages.length;
     const pageFootnoteReserve = opts.getFootnoteReserveForPage?.(pageIndex) ?? 0;
     const state: PageState = {
-      page: opts.createPage(pageIndex + 1, pageMargins, pageSizeOverride),
+      page: opts.createPage(pageIndex + 1 + (opts.pageNumberOffset ?? 0), pageMargins, pageSizeOverride),
       cursorY: topMargin,
       columnIndex: 0,
       topMargin,
@@ -139,6 +208,25 @@ export function createPaginator(opts: PaginatorOptions) {
       footnoteRefsThisPage: 0,
       footnoteAnchorsThisPage: [],
     };
+    const initial = pageIndex === 0 ? opts.initialPageState : undefined;
+    if (initial) {
+      state.page.fragments.push(...initial.prefixFragments.map((fragment) => ({ ...fragment })));
+      state.cursorY = initial.cursorY;
+      state.maxCursorY = initial.maxCursorY;
+      state.columnIndex = initial.columnIndex;
+      state.trailingSpacing = initial.trailingSpacing;
+      state.lastParagraphStyleId = initial.lastParagraphStyleId;
+      state.lastParagraphContextualSpacing = initial.lastParagraphContextualSpacing;
+      state.lastParagraphBorderHash = initial.lastParagraphBorderHash;
+      state.constraintBoundaries = initial.constraintBoundaries.map((boundary) => ({
+        y: boundary.y,
+        columns: { ...boundary.columns },
+      }));
+      state.activeConstraintIndex = initial.activeConstraintIndex;
+      state.footnoteDemandThisPage = initial.footnoteDemandThisPage;
+      state.footnoteRefsThisPage = initial.footnoteRefsThisPage;
+      state.footnoteAnchorsThisPage = initial.footnoteAnchorsThisPage.map((anchor) => ({ ...anchor }));
+    }
     states.push(state);
     pages.push(state.page);
     if (opts.onNewPage) opts.onNewPage(state);
@@ -165,9 +253,7 @@ export function createPaginator(opts: PaginatorOptions) {
       } else {
         state.cursorY = state.topMargin;
       }
-      state.trailingSpacing = 0;
-      state.lastParagraphStyleId = undefined;
-      state.lastParagraphContextualSpacing = false;
+      breakParagraphAdjacency(state);
       // Footnotes are reserved per-column; the body slicer's demand formula
       // must reset per-column. Field names retain "ThisPage" for back-compat.
       state.footnoteAnchorsThisPage = [];

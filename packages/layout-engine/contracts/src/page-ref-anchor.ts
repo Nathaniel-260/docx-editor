@@ -44,67 +44,167 @@ export function buildPageRefAnchorMap(
     }
   }
 
-  for (const [bookmarkName, pmPosition] of bookmarks) {
-    const location = findPageRefLocation(pmPosition, layout, blockById, measureById);
-    if (location) {
-      anchors.set(bookmarkName, { ...location, pmPosition });
+  const orderedBookmarks = [...bookmarks].map(([name, pmPosition]) => ({ name, pmPosition }));
+  const sortedBookmarks = orderedBookmarks
+    .filter((bookmark) => Number.isFinite(bookmark.pmPosition))
+    .sort((left, right) => left.pmPosition - right.pmPosition);
+  const resolvedByName = new Map<string, PageRefLocation>();
+  const nextUnresolved = Array.from({ length: sortedBookmarks.length + 1 }, (_, index) => index);
+  const findNextUnresolved = (index: number): number => {
+    let root = index;
+    while (nextUnresolved[root] !== root) root = nextUnresolved[root]!;
+    while (nextUnresolved[index] !== index) {
+      const parent = nextUnresolved[index]!;
+      nextUnresolved[index] = root;
+      index = parent;
     }
+    return root;
+  };
+  const assignRange = (range: PositionRange | null, page: Page): void => {
+    if (!range) return;
+    let index = findNextUnresolved(lowerBoundBookmark(sortedBookmarks, range.start));
+    while (index < sortedBookmarks.length && sortedBookmarks[index]!.pmPosition < range.end) {
+      const bookmark = sortedBookmarks[index]!;
+      resolvedByName.set(bookmark.name, pageRefLocationFromPage(page, bookmark.pmPosition));
+      nextUnresolved[index] = findNextUnresolved(index + 1);
+      index = nextUnresolved[index]!;
+    }
+  };
+
+  // Containment is resolved in layout order, exactly like the former
+  // bookmark-at-a-time scan. The disjoint-set skips bookmarks already claimed
+  // by an earlier fragment, making this O(fragments + bookmarks) apart from
+  // range lookup rather than O(fragments * bookmarks).
+  const fallbackCandidates: FallbackCandidate[] = [];
+  let fragmentOrdinal = 0;
+  let minimumPriorRangeEnd = Number.POSITIVE_INFINITY;
+  for (const page of layout.pages) {
+    for (const fragment of page.fragments) {
+      const block = blockById.get(fragment.blockId);
+      const measure = measureById.get(fragment.blockId);
+      assignRange(fragmentPmRange(fragment), page);
+      if (fragment.kind === 'para' && block?.kind === 'paragraph') {
+        assignRange(runRange(block.runs), page);
+      } else if (fragment.kind === 'table' && block?.kind === 'table') {
+        for (const range of tableFragmentContainmentRanges(block, fragment, measure)) assignRange(range, page);
+      } else if (fragment.kind === 'list-item' && block?.kind === 'list') {
+        assignRange(listItemRunRange(block, fragment.itemId), page);
+      }
+
+      const fallbackRange = fragmentPositionRange(fragment, block);
+      if (fallbackRange) {
+        // The legacy scan updated its prior-range flag before considering this
+        // fragment as a fallback candidate. For valid ranges this ordering is
+        // immaterial; retaining it also preserves malformed-range behavior.
+        minimumPriorRangeEnd = Math.min(minimumPriorRangeEnd, fallbackRange.end);
+        fallbackCandidates.push({
+          start: fallbackRange.start,
+          noPriorBefore: minimumPriorRangeEnd,
+          ordinal: fragmentOrdinal,
+          page,
+        });
+      }
+      fragmentOrdinal += 1;
+    }
+  }
+
+  resolveFallbackBookmarks(sortedBookmarks, resolvedByName, fallbackCandidates);
+  // Preserve the caller's bookmark iteration order even though the batched
+  // resolver processes positions in numeric order.
+  for (const bookmark of orderedBookmarks) {
+    const location = resolvedByName.get(bookmark.name);
+    if (location) anchors.set(bookmark.name, location);
   }
 
   return anchors;
 }
 
-function findPageRefLocation(
-  pmPosition: number,
-  layout: Layout,
-  blockById: Map<string, FlowBlock>,
-  measureById: Map<string, Measure>,
-): PageRefLocation | null {
-  let nextLocation: PageRefLocation | null = null;
-  let nextDistance = Number.POSITIVE_INFINITY;
-  let hasPriorVisibleRange = false;
+type PositionRange = { start: number; end: number };
 
-  for (const page of layout.pages) {
-    for (const fragment of page.fragments) {
-      if (fragmentContainsPosition(fragment, pmPosition)) {
-        return pageRefLocationFromPage(page, pmPosition);
-      }
+type FallbackCandidate = {
+  start: number;
+  /** Minimum visible-range end observed through this fragment in layout order. */
+  noPriorBefore: number;
+  ordinal: number;
+  page: Page;
+};
 
-      const block = blockById.get(fragment.blockId);
-      if (fragment.kind === 'para' && block?.kind === 'paragraph' && blockContainsPosition(block, pmPosition)) {
-        return pageRefLocationFromPage(page, pmPosition);
-      }
-      if (
-        fragment.kind === 'table' &&
-        block?.kind === 'table' &&
-        tableContainsPosition(block, fragment, pmPosition, measureById.get(fragment.blockId))
-      ) {
-        return pageRefLocationFromPage(page, pmPosition);
-      }
-      if (
-        fragment.kind === 'list-item' &&
-        block?.kind === 'list' &&
-        listItemContainsPosition(block, fragment.itemId, pmPosition)
-      ) {
-        return pageRefLocationFromPage(page, pmPosition);
-      }
+function lowerBoundBookmark(bookmarks: readonly { pmPosition: number }[], target: number): number {
+  let low = 0;
+  let high = bookmarks.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (bookmarks[middle]!.pmPosition < target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
 
-      const fragmentRange = fragmentPositionRange(fragment, block);
-      if (fragmentRange?.end != null && fragmentRange.end <= pmPosition) {
-        hasPriorVisibleRange = true;
-      }
-      const fragmentStart = fragmentRange?.start ?? null;
-      if (fragmentStart != null && fragmentStart > pmPosition) {
-        const distance = fragmentStart - pmPosition;
-        if ((!hasPriorVisibleRange || distance <= MAX_BOOKMARK_MARKER_LEAD_DISTANCE) && distance < nextDistance) {
-          nextDistance = distance;
-          nextLocation = pageRefLocationFromPage(page, pmPosition);
-        }
-      }
+function upperBoundCandidate(candidates: readonly FallbackCandidate[], target: number): number {
+  let low = 0;
+  let high = candidates.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (candidates[middle]!.start <= target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/** Resolve marker-leading and pre-document fallbacks without rescanning the layout per bookmark. */
+function resolveFallbackBookmarks(
+  bookmarks: readonly { name: string; pmPosition: number }[],
+  resolvedByName: Map<string, PageRefLocation>,
+  candidatesInLayoutOrder: readonly FallbackCandidate[],
+): void {
+  if (candidatesInLayoutOrder.length === 0) return;
+  const candidates = [...candidatesInLayoutOrder].sort(
+    (left, right) => left.start - right.start || left.ordinal - right.ordinal,
+  );
+  const maxNoPriorIndex = buildRangeMaximumIndex(candidates.map((candidate) => candidate.noPriorBefore));
+  for (const bookmark of bookmarks) {
+    if (resolvedByName.has(bookmark.name)) continue;
+    const firstAfter = upperBoundCandidate(candidates, bookmark.pmPosition);
+    const nearest = candidates[firstAfter];
+    let candidate =
+      nearest && nearest.start - bookmark.pmPosition <= MAX_BOOKMARK_MARKER_LEAD_DISTANCE ? nearest : undefined;
+    if (!candidate) {
+      const farIndex = findFirstRangeMaximumAbove(maxNoPriorIndex, candidates.length, firstAfter, bookmark.pmPosition);
+      candidate = farIndex < candidates.length ? candidates[farIndex] : undefined;
+    }
+    if (candidate) {
+      resolvedByName.set(bookmark.name, pageRefLocationFromPage(candidate.page, bookmark.pmPosition));
     }
   }
+}
 
-  return nextLocation;
+type RangeMaximumIndex = { tree: number[]; leafCount: number };
+
+function buildRangeMaximumIndex(values: readonly number[]): RangeMaximumIndex {
+  let leafCount = 1;
+  while (leafCount < values.length) leafCount *= 2;
+  const tree = new Array<number>(leafCount * 2).fill(Number.NEGATIVE_INFINITY);
+  for (let index = 0; index < values.length; index += 1) tree[leafCount + index] = values[index]!;
+  for (let index = leafCount - 1; index > 0; index -= 1) {
+    tree[index] = Math.max(tree[index * 2]!, tree[index * 2 + 1]!);
+  }
+  return { tree, leafCount };
+}
+
+function findFirstRangeMaximumAbove(
+  index: RangeMaximumIndex,
+  valueCount: number,
+  fromIndex: number,
+  threshold: number,
+): number {
+  const visit = (node: number, left: number, right: number): number => {
+    if (right <= fromIndex || left >= valueCount || index.tree[node]! <= threshold) return valueCount;
+    if (right - left === 1) return left;
+    const middle = (left + right) >>> 1;
+    const inLeft = visit(node * 2, left, middle);
+    return inLeft < valueCount ? inLeft : visit(node * 2 + 1, middle, right);
+  };
+  return visit(1, 0, index.leafCount);
 }
 
 function pageRefLocationFromPage(page: Page, pmPosition: number): PageRefLocation {
@@ -121,22 +221,19 @@ function pageRefLocationFromPage(page: Page, pmPosition: number): PageRefLocatio
   };
 }
 
-function fragmentContainsPosition(fragment: Fragment, pmPosition: number): boolean {
+function fragmentPmRange(fragment: Fragment): PositionRange | null {
   const range = fragment as { pmStart?: number; pmEnd?: number };
-  return range.pmStart != null && range.pmEnd != null && pmPosition >= range.pmStart && pmPosition < range.pmEnd;
+  return range.pmStart != null && range.pmEnd != null && range.pmStart < range.pmEnd
+    ? { start: range.pmStart, end: range.pmEnd }
+    : null;
 }
 
-function blockContainsPosition(block: ParagraphBlock, pmPosition: number): boolean {
-  const range = runRange(block.runs);
-  return range != null && pmPosition >= range.start && pmPosition < range.end;
-}
-
-function tableContainsPosition(
+function tableFragmentContainmentRanges(
   block: TableBlock,
   fragment: TableFragment,
-  pmPosition: number,
   measure?: Measure,
-): boolean {
+): PositionRange[] {
+  const ranges: PositionRange[] = [];
   const fromRow = Math.max(0, fragment.fromRow);
   const toRow = Math.min(block.rows.length, fragment.toRow);
   const tableMeasure = measure?.kind === 'table' ? (measure as TableMeasure) : undefined;
@@ -149,29 +246,31 @@ function tableContainsPosition(
       if (!cell) continue;
       if (isPartialRow && tableMeasure) {
         const cellMeasure = tableMeasure.rows[rowIndex]?.cells[cellIndex];
-        if (cellContainsPositionInLineRange(cell, cellMeasure, fragment.partialRow!, cellIndex, pmPosition)) {
-          return true;
-        }
+        const range = cellLineRange(cell, cellMeasure, fragment.partialRow!, cellIndex);
+        if (range) ranges.push(range);
         continue;
       }
       const blocks = cell.blocks ?? (cell.paragraph ? [cell.paragraph] : []);
       for (const childBlock of blocks) {
-        if (childBlock.kind === 'paragraph' && blockContainsPosition(childBlock, pmPosition)) return true;
-        if (childBlock.kind === 'table' && tableBlockContainsPosition(childBlock, pmPosition)) return true;
+        if (childBlock.kind === 'paragraph') {
+          const range = runRange(childBlock.runs);
+          if (range) ranges.push(range);
+        } else if (childBlock.kind === 'table') {
+          collectTableBlockContainmentRanges(childBlock, ranges);
+        }
       }
     }
   }
-  return false;
+  return ranges;
 }
 
-function cellContainsPositionInLineRange(
+function cellLineRange(
   cell: TableCell,
   cellMeasure: TableCellMeasure | undefined,
   partialRow: NonNullable<TableFragment['partialRow']>,
   cellIndex: number,
-  pmPosition: number,
-): boolean {
-  if (!cellMeasure) return false;
+): PositionRange | null {
+  if (!cellMeasure) return null;
 
   const totalLines = getCellTotalLines(cellMeasure);
   const rawFromLine = partialRow.fromLineByCell[cellIndex];
@@ -182,8 +281,7 @@ function cellContainsPositionInLineRange(
       ? Math.max(0, Math.min(rawToLine === -1 ? totalLines : rawToLine, totalLines))
       : totalLines;
 
-  const range = computeCellLineRange(cell, cellMeasure, fromLine, Math.max(fromLine, toLine));
-  return range != null && pmPosition >= range.start && pmPosition < range.end;
+  return computeCellLineRange(cell, cellMeasure, fromLine, Math.max(fromLine, toLine));
 }
 
 function computeCellLineRange(
@@ -235,17 +333,20 @@ function getBlockLineCount(measure: Measure | undefined): number {
   return 1;
 }
 
-function tableBlockContainsPosition(block: TableBlock, pmPosition: number): boolean {
+function collectTableBlockContainmentRanges(block: TableBlock, ranges: PositionRange[]): void {
   for (const row of block.rows) {
     for (const cell of row.cells) {
       const blocks = cell.blocks ?? (cell.paragraph ? [cell.paragraph] : []);
       for (const childBlock of blocks) {
-        if (childBlock.kind === 'paragraph' && blockContainsPosition(childBlock, pmPosition)) return true;
-        if (childBlock.kind === 'table' && tableBlockContainsPosition(childBlock, pmPosition)) return true;
+        if (childBlock.kind === 'paragraph') {
+          const range = runRange(childBlock.runs);
+          if (range) ranges.push(range);
+        } else if (childBlock.kind === 'table') {
+          collectTableBlockContainmentRanges(childBlock, ranges);
+        }
       }
     }
   }
-  return false;
 }
 
 function fragmentPositionRange(
@@ -260,11 +361,6 @@ function fragmentPositionRange(
     return listItemRunRange(block, fragment.itemId);
   }
   return null;
-}
-
-function listItemContainsPosition(block: ListBlock, itemId: string, pmPosition: number): boolean {
-  const range = listItemRunRange(block, itemId);
-  return range != null && pmPosition >= range.start && pmPosition < range.end;
 }
 
 function listItemRunRange(block: ListBlock, itemId: string): { start: number; end: number } | null {

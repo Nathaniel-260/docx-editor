@@ -16,7 +16,7 @@
  * oscillating documents never capture.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure } from '@superdoc/contracts';
 import * as layoutEngine from '@superdoc/layout-engine';
 import { incrementalLayout, type FootnoteReserveSeed } from '../src/incrementalLayout';

@@ -39,15 +39,11 @@
  *        through the curated public facade.
  *      - `legacy` subpaths must resolve types under
  *        `dist/superdoc/src/public/legacy/`.
- *      - `legacyRaw` subpaths must NOT resolve under
- *        `dist/superdoc/src/public/`. That's the whole point of the
- *        legacy-raw bucket: an un-curated dist path.
+ *      - `legacyRaw` must be empty in superdoc@2. V1 raw subpaths were removed
+ *        with the public v2-only cleanup.
  *      - `asset` subpaths have no type field requirement.
- *   6. `legacyRaw` may only contain `./super-editor`. Any other
- *      legacy-raw entry is a regression: the team explicitly accepted
- *      `./super-editor` as the one un-curated bucket pending SD-3256
- *      Phase 3; everything else must route through
- *      `src/public/legacy/**`.
+ *   6. `legacyRaw` may not contain any subpath. Raw legacy entries bypass the
+ *      curated facade and would recreate the removed v1 package surface.
  *
  * Usage:
  *   pnpm report:public:superdoc            # print the report
@@ -63,7 +59,6 @@ import { fileURLToPath } from 'node:url';
 
 export const PUBLIC_DIR_PREFIX = './dist/superdoc/src/public/';
 export const PUBLIC_LEGACY_PREFIX = './dist/superdoc/src/public/legacy/';
-export const LEGACY_RAW_ALLOWED = new Set(['./super-editor']);
 
 /**
  * Maps bucket-key to the kebab-case tier value carried on each entry.
@@ -204,17 +199,13 @@ export function validatePublicContract(publicContract, exportsMap) {
   }
 
   for (const e of publicContract.legacyRaw ?? []) {
-    // 6. legacyRaw is restricted to the explicitly accepted set.
-    if (!LEGACY_RAW_ALLOWED.has(e.subpath)) {
-      fail(
-        `legacyRaw "${e.subpath}": not on the accepted list ([${[...LEGACY_RAW_ALLOWED].join(', ')}]). New legacy entries must route through src/public/legacy/** instead.`,
-      );
-    }
+    // 6. superdoc@2 has no raw legacy subpaths.
+    fail(`legacyRaw "${e.subpath}": raw legacy subpaths are not allowed in superdoc@2`);
     if (!exportsMap[e.subpath]) continue;
     for (const t of resolveTypesPaths(exportsMap[e.subpath])) {
       if (t.startsWith(PUBLIC_DIR_PREFIX)) {
         fail(
-          `legacyRaw "${e.subpath}": types resolve to "${t}" under ${PUBLIC_DIR_PREFIX}** - promote to legacy (route through src/public/legacy/**) instead`,
+          `legacyRaw "${e.subpath}": types resolve to "${t}" under ${PUBLIC_DIR_PREFIX}** - remove the raw legacy entry`,
         );
       }
     }
@@ -264,7 +255,7 @@ function printReport(publicContract, exportsMap) {
 
   printTier('Supported', publicContract.supported);
   printTier('Legacy (curated through src/public/legacy/**)', publicContract.legacy);
-  printTier('Legacy-raw (NOT yet curated; SD-3256 Phase 3 target)', publicContract.legacyRaw);
+  printTier('Legacy-raw (removed; must stay empty)', publicContract.legacyRaw);
   printTier('Asset (non-type)', publicContract.asset);
   printTier('Deprecated', publicContract.deprecated);
 

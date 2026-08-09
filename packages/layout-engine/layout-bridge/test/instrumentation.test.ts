@@ -4,7 +4,7 @@
  * Tests for debug logging and metrics collection.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test';
 import { PageTokenLogger, HeaderFooterCacheLogger, MetricsCollector } from '../src/instrumentation';
 
 describe('Instrumentation', () => {

@@ -6,7 +6,7 @@
  *
  * These utilities are format-agnostic and work with plain JavaScript objects.
  * They are used by both:
- * - super-editor's styles.js (for DOCX import/export)
+ * - document runtime import/export code
  * - layout-engine's style resolution (for rendering)
  */
 
@@ -114,8 +114,8 @@ function isObject(item: unknown): item is PropertyObject {
 //
 // Pair `<slot>` with `<slot>Theme`, except for the cs slot whose theme attribute is the
 // lowercase `cstheme` (OOXML inconsistency, not a typo).
-// Exported so super-editor's calculateInlineRunPropertiesPlugin can consume the same
-// list instead of duplicating it (SD-2894 follow-up).
+// Exported so runtime adapters can consume the same list instead of duplicating it
+// (SD-2894 follow-up).
 export const FONT_SLOT_THEME_PAIRS: Array<[keyof RunFontFamilyProperties, keyof RunFontFamilyProperties]> = [
   ['ascii', 'asciiTheme'],
   ['hAnsi', 'hAnsiTheme'],

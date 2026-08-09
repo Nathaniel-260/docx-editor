@@ -8,12 +8,49 @@
  * the architecture-boundary tests enforce that.
  */
 import { createDomPainter } from './index.js';
-import type { DomPainterOptions, DomPainterInput, PaintSnapshot } from './index.js';
+import type { DomPainterHandle, DomPainterOptions, PaintSnapshot } from './index.js';
 import type { PageDecorationProvider } from './renderer.js';
 import { resolveLayout } from '@superdoc/layout-resolved';
 import type { FlowBlock, Fragment, Layout, Measure, ResolvedLayout, ResolvedPaintItem } from '@superdoc/contracts';
 
 export const emptyResolved: ResolvedLayout = { version: 1, flowMode: 'paginated', pageGap: 0, pages: [] };
+
+export function paintResolvedLayoutPersistent(
+  painter: DomPainterHandle,
+  resolvedLayout: ResolvedLayout,
+  mount: HTMLElement,
+): void {
+  const gapPx = resolvedLayout.pageGap ?? 24;
+  let topPx = 0;
+  const pages = resolvedLayout.pages.map((page, index) => {
+    const band = {
+      index,
+      topPx,
+      widthPx: page.width,
+      heightPx: page.height,
+      pageNumber: page.number,
+    };
+    topPx += page.height + gapPx;
+    return band;
+  });
+  const last = pages.at(-1);
+  painter.paintPersistentPages(
+    {
+      scaffold: {
+        generation: resolvedLayout.layoutEpoch ?? 0,
+        pageCount: pages.length,
+        gapPx,
+        totalHeightPx: last ? last.topPx + last.heightPx : 0,
+        pages,
+      },
+      desiredContentPageIndices: pages.map((page) => page.index),
+      packetsByPageIndex: new Map(resolvedLayout.pages.map((page, index) => [index, page])),
+      sectionPageCounts: resolvedLayout.sectionPageCounts,
+      documentBackground: resolvedLayout.documentBackground,
+    },
+    mount,
+  );
+}
 
 /**
  * Test-only bridge: accepts old-style `{ blocks, measures, ...options }` and
@@ -110,10 +147,11 @@ export function createTestPainter(opts: { blocks?: FlowBlock[]; measures?: Measu
             blocks: effectiveBlocks,
             measures: effectiveMeasures,
           });
-      const input: DomPainterInput = {
-        resolvedLayout: effectiveResolved,
-      };
-      painter.paint(input, mount, mapping as never);
+      if ((opts.flowMode ?? 'paginated') === 'semantic') {
+        painter.paint({ resolvedLayout: effectiveResolved }, mount, mapping as never);
+      } else {
+        paintResolvedLayoutPersistent(painter, effectiveResolved, mount);
+      }
     },
     setData(
       blocks: FlowBlock[],
@@ -137,23 +175,11 @@ export function createTestPainter(opts: { blocks?: FlowBlock[]; measures?: Measu
     setProviders(header?: PageDecorationProvider, footer?: PageDecorationProvider) {
       painter.setProviders(wrapProvider(header, 'header'), wrapProvider(footer, 'footer'));
     },
-    setVirtualizationPins(pageIndices: number[] | null | undefined) {
-      painter.setVirtualizationPins(pageIndices);
-    },
-    getMountedPageIndices() {
-      return painter.getMountedPageIndices();
+    getPersistentPageIndices() {
+      return painter.getPersistentPageIndices();
     },
     getPaintSnapshot() {
       return lastPaintSnapshot;
-    },
-    onScroll() {
-      painter.onScroll();
-    },
-    setZoom(zoom: number) {
-      painter.setZoom(zoom);
-    },
-    setScrollContainer(el: HTMLElement | null) {
-      painter.setScrollContainer(el);
     },
     setShowFormattingMarks(showFormattingMarks: boolean) {
       painter.setShowFormattingMarks(showFormattingMarks);

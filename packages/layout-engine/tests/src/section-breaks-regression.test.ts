@@ -12,7 +12,7 @@
  * @module section-breaks-regression.test
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import {
   createPMDocWithSections,
   convertAndLayout,
@@ -22,11 +22,6 @@ import {
   resetBlockIdCounter,
 } from './test-helpers/section-test-utils.js';
 import type { PMNode } from '@superdoc/contracts';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe('Section Breaks - Regression Tests', () => {
   beforeEach(() => {
@@ -455,27 +450,6 @@ describe('Section Breaks - Regression Tests', () => {
       // First section's oddPage type should be preserved
       const oddPageBreak = sectionBreaks.find((b) => b.type === 'oddPage');
       expect(oddPageBreak).toBeDefined();
-    });
-  });
-
-  describe('Verification against real DOCX fixture', () => {
-    it('should match expected output for multi_section_doc.json fixture', () => {
-      // Load the actual fixture
-      const fixturePath = path.join(
-        __dirname,
-        '../../../super-editor/src/editors/v1/core/layout-adapter/fixtures/multi_section_doc.json',
-      );
-
-      if (!fs.existsSync(fixturePath)) {
-        console.warn(`Fixture not found: ${fixturePath}, skipping test`);
-        return;
-      }
-
-      const pmDoc: PMNode = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
-
-      expect(pmDoc).toBeDefined();
-      expect(pmDoc.type).toBe('doc');
-      expect(pmDoc.content).toBeDefined();
     });
   });
 

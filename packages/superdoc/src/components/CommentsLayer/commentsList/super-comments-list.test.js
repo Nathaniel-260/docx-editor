@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test';
 import { defineComponent, h } from 'vue';
 import { createPinia } from 'pinia';
 
@@ -82,6 +82,58 @@ describe('SuperComments', () => {
     expect(instance.app).toBeNull();
     expect(instance.container).toBeNull();
     expect(instance.element).toBeNull();
+  });
+
+  it('holds both document-directory observers until close and publishes only ready snapshots', async () => {
+    const listeners = {};
+    const stops = { comments: vi.fn(), trackChanges: vi.fn() };
+    const handle = (family) => ({
+      observe: vi.fn((listener) => {
+        listeners[family] = listener;
+        listener({ listStatus: 'ready', items: [{ id: `${family}-window` }] });
+        return stops[family];
+      }),
+      getSnapshot: vi.fn(() => ({ listStatus: 'pending', items: [] })),
+    });
+    const commentsStore = {
+      isReviewDirectoryActive: false,
+      isReviewDirectoryLoading: false,
+      setReviewDirectoryFromV2: vi.fn(),
+      clearReviewDirectory: vi.fn(),
+    };
+    const instance = new SuperComments(
+      { element },
+      {
+        ...superdocStub,
+        commentsStore,
+        ui: {
+          comments: handle('comments'),
+          trackChanges: handle('trackChanges'),
+        },
+      },
+    );
+
+    listeners.comments({ listStatus: 'ready', items: [{ id: 'comment-directory' }] });
+    listeners.trackChanges({ listStatus: 'ready', items: [{ id: 'change-directory' }] });
+    expect(commentsStore.setReviewDirectoryFromV2).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        commentItems: [{ id: 'comment-directory' }],
+        trackedChangeItems: [{ id: 'change-directory' }],
+      }),
+    );
+    const stableItems = [{ id: 'stable-directory' }];
+    listeners.comments({ listStatus: 'ready', items: stableItems });
+    listeners.comments({ listStatus: 'ready', items: stableItems });
+    expect(commentsStore.setReviewDirectoryFromV2).toHaveBeenCalledTimes(5);
+    expect(commentsStore.isReviewDirectoryActive).toBe(true);
+
+    instance.close();
+    expect(stops.comments).toHaveBeenCalledTimes(1);
+    expect(stops.trackChanges).toHaveBeenCalledTimes(1);
+    expect(commentsStore.clearReviewDirectory).toHaveBeenCalledTimes(1);
+    expect(commentsStore.isReviewDirectoryActive).toBe(false);
+    await Promise.resolve();
+    expect(commentsStore.setReviewDirectoryFromV2).toHaveBeenCalledTimes(5);
   });
 
   it('close() is a no-op when there is no app', () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vite-plus/test';
 import { createTestPainter as createDomPainter } from './_test-utils.js';
 import type { FlowBlock, Measure, Layout } from '@superdoc/contracts';
 
@@ -393,5 +393,87 @@ describe('DomPainter - Link Rendering', () => {
 
     const linkElement = linkElements[0] as HTMLAnchorElement;
     expect(linkElement.textContent).toBe('with link');
+  });
+
+  it('repaints a removed hyperlink as plain text instead of reusing the old anchor', () => {
+    const linkedBlock: FlowBlock = {
+      kind: 'paragraph',
+      id: 'mutable-link-block',
+      runs: [
+        {
+          text: 'SuperDoc website',
+          fontFamily: 'Arial',
+          fontSize: 16,
+          pmStart: 0,
+          pmEnd: 16,
+          link: {
+            version: 2,
+            href: 'https://www.superdoc.dev/',
+            rId: 'rId201',
+          },
+        },
+      ],
+    };
+    const unlinkedBlock: FlowBlock = {
+      ...linkedBlock,
+      runs: [
+        {
+          text: 'SuperDoc website',
+          fontFamily: 'Arial',
+          fontSize: 16,
+          pmStart: 0,
+          pmEnd: 16,
+        },
+      ],
+    };
+    const measure: Measure = {
+      kind: 'paragraph',
+      lines: [
+        {
+          fromRun: 0,
+          fromChar: 0,
+          toRun: 0,
+          toChar: 16,
+          width: 130,
+          ascent: 12,
+          descent: 4,
+          lineHeight: 20,
+        },
+      ],
+      totalHeight: 20,
+    };
+    const layout: Layout = {
+      pageSize: { w: 400, h: 500 },
+      pages: [
+        {
+          number: 1,
+          fragments: [
+            {
+              kind: 'para',
+              blockId: 'mutable-link-block',
+              fromLine: 0,
+              toLine: 1,
+              x: 24,
+              y: 24,
+              width: 260,
+              pmStart: 0,
+              pmEnd: 16,
+            },
+          ],
+        },
+      ],
+    };
+
+    const painter = createDomPainter({ blocks: [linkedBlock], measures: [measure] });
+    painter.paint(layout, container);
+    expect(container.querySelector('a.superdoc-link')?.textContent).toBe('SuperDoc website');
+
+    painter.setData([unlinkedBlock], [measure]);
+    painter.paint(layout, container);
+
+    expect(container.querySelector('a.superdoc-link')).toBeNull();
+    const textRun = container.querySelector('.superdoc-text-run');
+    expect(textRun?.tagName).toBe('SPAN');
+    expect(textRun?.textContent).toBe('SuperDoc website');
   });
 });

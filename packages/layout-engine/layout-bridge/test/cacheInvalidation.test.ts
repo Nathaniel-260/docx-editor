@@ -4,7 +4,7 @@
  * Tests for cache invalidation logic for headers/footers and body content.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
 import type { FlowBlock, ParagraphBlock, SectionMetadata } from '@superdoc/contracts';
 import type { HeaderFooterConstraints } from '../../layout-engine';
 import {

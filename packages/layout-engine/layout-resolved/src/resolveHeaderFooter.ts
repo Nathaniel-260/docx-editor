@@ -31,6 +31,10 @@ export function resolveHeaderFooterLayout(
 
     return {
       number: page.number,
+      measurementHeight: page.measurementHeight,
+      minY: page.minY,
+      maxY: page.maxY,
+      renderHeight: page.renderHeight,
       displayNumber: page.displayNumber,
       numberText: page.numberText,
       pageNumberFormat: page.pageNumberFormat,

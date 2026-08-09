@@ -10,7 +10,7 @@
  * And that the legacy `data-pm-start` / `data-pm-end` / `data-block-id`
  * attributes remain available alongside the new ones (additive only).
  */
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vite-plus/test';
 import {
   LAYOUT_BOUNDARY_SCHEMA,
   type FlowBlock,
@@ -20,7 +20,8 @@ import {
   type ResolvedLayout,
 } from '@superdoc/contracts';
 import { resolveHeaderFooterLayout, resolveLayout } from '@superdoc/layout-resolved';
-import { createDomPainter, type DomPainterInput, type PaintSnapshot } from './index.js';
+import { createDomPainter, type PaintSnapshot } from './index.js';
+import { paintResolvedLayoutPersistent } from './_test-utils.js';
 
 const block: FlowBlock = {
   kind: 'paragraph',
@@ -79,8 +80,7 @@ const paintLayout = (mount: HTMLElement, layoutInput: Layout = layout): void => 
     measures: [measure],
   });
   const painter = createDomPainter({});
-  const input: DomPainterInput = { resolvedLayout: resolved };
-  painter.paint(input, mount);
+  paintResolvedLayoutPersistent(painter, resolved, mount);
 };
 
 describe('DomPainter — editor-neutral layout identity (prep-001)', () => {
@@ -137,7 +137,7 @@ describe('DomPainter — editor-neutral layout identity (prep-001)', () => {
       },
     });
 
-    painter.paint({ resolvedLayout: resolved }, mount);
+    paintResolvedLayoutPersistent(painter, resolved, mount);
 
     expect(snapshot?.pages[0]?.lines[0]?.layoutSourceIdentity?.blockRef).toBe('block-1');
     expect(snapshot?.pages[0]?.lines[0]?.layoutSourceIdentity?.fragmentId).toBe(
@@ -168,10 +168,83 @@ describe('DomPainter — editor-neutral layout identity (prep-001)', () => {
       }),
     });
 
-    painter.paint({ resolvedLayout: resolvedBody }, mount);
+    paintResolvedLayoutPersistent(painter, resolvedBody, mount);
 
     const headerFragment = mount.querySelector('.superdoc-page-header .superdoc-fragment') as HTMLElement;
     expect(headerFragment.dataset.layoutStory).toBe('header:rIdHeader1');
     expect(headerFragment.dataset.layoutFragmentId).toContain('header:rIdHeader1');
+  });
+
+  it('threads note identity into run position validation', () => {
+    const noteBlock: FlowBlock = {
+      kind: 'paragraph',
+      id: 'footnote-7/paragraph-1',
+      runs: [{ text: 'Note text', fontFamily: 'Arial', fontSize: 16 }],
+    };
+    const noteMeasure: Measure = {
+      kind: 'paragraph',
+      lines: [
+        {
+          fromRun: 0,
+          fromChar: 0,
+          toRun: 0,
+          toChar: 9,
+          width: 72,
+          ascent: 12,
+          descent: 4,
+          lineHeight: 20,
+        },
+      ],
+      totalHeight: 20,
+    };
+    const noteLayout: Layout = {
+      pageSize: { w: 400, h: 500 },
+      pages: [
+        {
+          number: 1,
+          fragments: [
+            {
+              kind: 'para',
+              blockId: noteBlock.id,
+              fromLine: 0,
+              toLine: 1,
+              x: 30,
+              y: 400,
+              width: 300,
+            },
+          ],
+        },
+      ],
+    };
+    const resolved = resolveLayout({
+      layout: noteLayout,
+      flowMode: 'paginated',
+      blocks: [noteBlock],
+      measures: [noteMeasure],
+    });
+    const painter = createDomPainter({
+      positionValidation: {
+        enabled: true,
+        coordinateModel: 'editor-neutral-story',
+        policy: 'off',
+      },
+    });
+
+    paintResolvedLayoutPersistent(painter, resolved, mount);
+
+    const fragment = mount.querySelector('.superdoc-fragment') as HTMLElement;
+    expect(fragment.dataset.layoutStory).toBe('footnote:7');
+    const positionValidation = painter.consumePositionValidationSummary();
+    expect(positionValidation.checked).toBe(1);
+    expect(positionValidation.issues).toBe(0);
+    expect(positionValidation.groups).toContainEqual(
+      expect.objectContaining({
+        requirement: 'story-identity-required',
+        storyKind: 'footnote',
+        storyNamed: true,
+        section: 'body',
+        valid: 1,
+      }),
+    );
   });
 });

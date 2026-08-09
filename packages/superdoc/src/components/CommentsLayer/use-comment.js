@@ -4,9 +4,16 @@ import { v4 as uuidv4 } from 'uuid';
 import { syncCommentsToClients } from '@superdoc/core/collaboration/helpers.js';
 import { comments_module_events } from '@superdoc/common';
 import useSelection from '@superdoc/helpers/use-selection';
+import { DOCUMENT_EDITOR_SELECTION_SOURCE } from '@superdoc/helpers/selection-source';
+
+export const COMMENT_RECONCILIATION_TOKEN = Symbol('comment-reconciliation');
 
 const getCommentIds = (comment) =>
   [comment?.commentId, comment?.importedId].filter((id) => id != null).map((id) => String(id));
+
+const readOnlyMutationOutcome = () => ({ ok: false, reason: 'read-only-document' });
+const commentsAreReadOnly = (superdoc) =>
+  superdoc?.commentsStore?.getConfig?.readOnly === true || superdoc?.config?.modules?.comments?.readOnly === true;
 
 function getThreadDescendants(superdoc, rootComment) {
   const store = superdoc?.commentsStore;
@@ -46,10 +53,11 @@ function getThreadDescendants(superdoc, rootComment) {
  */
 export default function useComment(params) {
   const uid = ref(params.uid);
-  const commentId = params.commentId || uuidv4();
-  const importedId = params.importedId;
-  const parentCommentId = params.parentCommentId;
-  const trackedChangeParentId = params.trackedChangeParentId;
+  let commentId = params.commentId || uuidv4();
+  let importedId = params.importedId;
+  let parentCommentId = params.parentCommentId;
+  let trackedChangeParentId = params.trackedChangeParentId;
+  const trackedChangeThreadParentId = ref(params.trackedChangeThreadParentId);
   const fileId = params.fileId;
   const fileType = params.fileType;
   const createdAtVersionNumber = params.createdAtVersionNumber;
@@ -70,7 +78,7 @@ export default function useComment(params) {
   const origin = params.origin;
   const threadingMethod = params.threadingMethod;
   const threadingStyleOverride = params.threadingStyleOverride;
-  const threadingParentCommentId = params.threadingParentCommentId;
+  let threadingParentCommentId = params.threadingParentCommentId;
   const originalXmlStructure = params.originalXmlStructure;
 
   const commentText = ref(params.commentText || '');
@@ -92,11 +100,22 @@ export default function useComment(params) {
   const trackedChangeType = ref(params.trackedChangeType || null);
   const trackedChangeText = ref(params.trackedChangeText || null);
   const trackedChangeDisplayType = ref(params.trackedChangeDisplayType || null);
+  const semanticColorKey = ref(params.semanticColorKey || null);
+  const semanticColor = ref(params.semanticColor || null);
   const trackedChangeStory = ref(params.trackedChangeStory || null);
   const trackedChangeStoryKind = ref(params.trackedChangeStoryKind || null);
   const trackedChangeStoryLabel = ref(params.trackedChangeStoryLabel || '');
   const trackedChangeAnchorKey = ref(params.trackedChangeAnchorKey || null);
+  const trackedChangeCanonicalId = ref(params.trackedChangeCanonicalId || null);
+  const trackedChangePositionAliases = ref(params.trackedChangePositionAliases || []);
   const deletedText = ref(params.deletedText || null);
+  // Signed semantic label + optional per-member detail lines
+  // (`[{ excerpt, label }]`) for list tracked changes (TCS-LIST-005). When
+  // absent the dialog keeps its legacy per-variant copy.
+  const trackedChangeLabel = ref(params.trackedChangeLabel || null);
+  const trackedChangeDetailLines = ref(params.trackedChangeDetailLines || null);
+  const trackedChangeImagePreview = ref(params.trackedChangeImagePreview || null);
+  const customAttributes = ref(params.customAttributes ?? null);
 
   const resolvedTime = ref(params.resolvedTime || null);
   const resolvedById = ref(params.resolvedById || null);
@@ -115,7 +134,9 @@ export default function useComment(params) {
    * @param {'accept' | 'reject'} [decision] The tracked-change decision that resolved this thread
    * @returns {void}
    */
-  const resolveComment = ({ id, email, name, superdoc, decision }) => {
+  const resolveComment = ({ id, email, name, superdoc, decision, reconciliationToken }) => {
+    const isCanonicalReconciliation = reconciliationToken === COMMENT_RECONCILIATION_TOKEN;
+    if (commentsAreReadOnly(superdoc) && !isCanonicalReconciliation) return readOnlyMutationOutcome();
     if (resolvedTime.value) return;
     resolvedTime.value = Date.now();
     resolvedById.value = id ?? null;
@@ -165,6 +186,7 @@ export default function useComment(params) {
    * @returns {void}
    */
   const setIsInternal = ({ isInternal: newIsInternal, superdoc }) => {
+    if (commentsAreReadOnly(superdoc)) return readOnlyMutationOutcome();
     const previousValue = isInternal.value;
     if (previousValue === newIsInternal) return;
 
@@ -204,6 +226,7 @@ export default function useComment(params) {
    * @returns {void}
    */
   const setText = ({ text, superdoc, suppressUpdate }) => {
+    if (!suppressUpdate && commentsAreReadOnly(superdoc)) return readOnlyMutationOutcome();
     commentText.value = text;
 
     // Track mentions
@@ -257,7 +280,7 @@ export default function useComment(params) {
    * @param {*} source Specifies the source of the selection bounds
    */
   const updatePosition = (coords, parentElement) => {
-    selection.source = 'super-editor';
+    selection.source = DOCUMENT_EDITOR_SELECTION_SOURCE;
     const parentTop = parentElement?.getBoundingClientRect()?.top;
 
     const newCoords = {
@@ -289,6 +312,21 @@ export default function useComment(params) {
     syncCommentsToClients(superdoc, event);
   };
 
+  const updateIdentityValues = (updates = {}) => {
+    if (Object.prototype.hasOwnProperty.call(updates, 'commentId')) commentId = updates.commentId;
+    if (Object.prototype.hasOwnProperty.call(updates, 'importedId')) importedId = updates.importedId;
+    if (Object.prototype.hasOwnProperty.call(updates, 'parentCommentId')) parentCommentId = updates.parentCommentId;
+    if (Object.prototype.hasOwnProperty.call(updates, 'trackedChangeParentId')) {
+      trackedChangeParentId = updates.trackedChangeParentId;
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'trackedChangeThreadParentId')) {
+      trackedChangeThreadParentId.value = updates.trackedChangeThreadParentId;
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'threadingParentCommentId')) {
+      threadingParentCommentId = updates.threadingParentCommentId;
+    }
+  };
+
   /**
    * Get the raw values of this comment
    *
@@ -301,6 +339,7 @@ export default function useComment(params) {
       importedId,
       parentCommentId,
       trackedChangeParentId,
+      trackedChangeThreadParentId: trackedChangeThreadParentId.value,
       fileId,
       fileType,
       mentions: mentions.value.map((u) => {
@@ -321,11 +360,19 @@ export default function useComment(params) {
       trackedChangeText: trackedChangeText.value,
       trackedChangeType: trackedChangeType.value,
       trackedChangeDisplayType: trackedChangeDisplayType.value,
+      semanticColorKey: semanticColorKey.value,
+      semanticColor: semanticColor.value,
       trackedChangeStory: trackedChangeStory.value,
       trackedChangeStoryKind: trackedChangeStoryKind.value,
       trackedChangeStoryLabel: trackedChangeStoryLabel.value,
       trackedChangeAnchorKey: trackedChangeAnchorKey.value,
+      trackedChangeCanonicalId: trackedChangeCanonicalId.value,
+      trackedChangePositionAliases: trackedChangePositionAliases.value,
       trackedChangeDecision: trackedChangeDecision.value,
+      trackedChangeLabel: trackedChangeLabel.value,
+      trackedChangeDetailLines: trackedChangeDetailLines.value,
+      trackedChangeImagePreview: trackedChangeImagePreview.value,
+      customAttributes: customAttributes.value,
       deletedText: deletedText.value,
       resolvedTime: resolvedTime.value,
       resolvedById: resolvedById.value,
@@ -345,6 +392,7 @@ export default function useComment(params) {
     importedId,
     parentCommentId,
     trackedChangeParentId,
+    trackedChangeThreadParentId,
     fileId,
     fileType,
     mentions,
@@ -364,11 +412,19 @@ export default function useComment(params) {
     trackedChangeType,
     trackedChangeText,
     trackedChangeDisplayType,
+    semanticColorKey,
+    semanticColor,
     trackedChangeStory,
     trackedChangeStoryKind,
     trackedChangeStoryLabel,
     trackedChangeAnchorKey,
+    trackedChangeCanonicalId,
+    trackedChangePositionAliases,
     trackedChangeDecision,
+    trackedChangeLabel,
+    trackedChangeDetailLines,
+    trackedChangeImagePreview,
+    customAttributes,
     resolvedTime,
     resolvedById,
     resolvedByEmail,
@@ -389,5 +445,6 @@ export default function useComment(params) {
     setActive,
     updatePosition,
     getCommentUser,
+    updateIdentityValues,
   });
 }

@@ -102,7 +102,7 @@ export function useViewportFit({
   documents,
 }) {
   // Page width in CSS px at 100% zoom for one DOCX editor. Same two-tier
-  // source the renderer's own container sizing uses (SuperEditor.vue):
+  // source the renderer's own container sizing uses (SuperDoc editor.vue):
   // the widest laid-out page first, so interior landscape or custom-width
   // sections fit correctly, then the body section's page styles before
   // pagination has produced pages. Both are zoom-independent. Like the

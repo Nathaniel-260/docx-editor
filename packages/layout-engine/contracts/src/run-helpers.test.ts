@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import type { FlowBlock, Line, ParagraphBlock, Run, TabRun, TextRun, TrackedChangeMeta } from './index.js';
 import { expandRunsForInlineNewlines, isEmptySdtPlaceholderRun, sliceRunsForLine } from './run-helpers.js';
 
@@ -165,5 +165,33 @@ describe('sliceRunsForLine', () => {
     };
 
     expect(isEmptySdtPlaceholderRun(run)).toBe(true);
+  });
+
+  it('does not change text slicing or classify a boxed range as atomic', () => {
+    const plain = makeParagraph([makeTextRun('Citation', 10)]);
+    const boxed: ParagraphBlock = {
+      ...plain,
+      inlineBoxes: [
+        {
+          id: 'citation',
+          from: 1,
+          to: 7,
+          layout: {
+            paddingInlineStart: 4,
+            paddingInlineEnd: 4,
+            paddingBlockStart: 1,
+            paddingBlockEnd: 1,
+            gapBefore: 1,
+            gapAfter: 1,
+            borderWidth: 1,
+          },
+          appearance: { backgroundColor: '#eef2ff' },
+        },
+      ],
+    };
+    const line = makeLine({ fromRun: 0, fromChar: 1, toRun: 0, toChar: 7 });
+
+    expect(sliceRunsForLine(boxed, line)).toEqual(sliceRunsForLine(plain, line));
+    expect(sliceRunsForLine(boxed, line)).toMatchObject([{ text: 'itatio', pmStart: 11, pmEnd: 17 }]);
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test';
 import { mount } from '@vue/test-utils';
 import { shallowRef, defineComponent, h, nextTick } from 'vue';
 import SurfaceHost from './SurfaceHost.vue';
@@ -461,6 +461,32 @@ describe('SurfaceHost', () => {
       expect(ctx.mode).toBe('dialog');
       expect(typeof ctx.resolve).toBe('function');
       expect(typeof ctx.close).toBe('function');
+      wrapper.unmount();
+    });
+
+    it('destroys an external floating renderer when the surface closes', async () => {
+      const destroy = vi.fn();
+      const renderFn = vi.fn(() => ({ destroy }));
+
+      manager.activeFloating.value = createSurface({
+        id: 'float-1',
+        mode: 'floating',
+        request: {
+          id: 'float-1',
+          mode: 'floating',
+          closeOnEscape: true,
+          floating: { placement: 'top-right' },
+        },
+        component: null,
+        render: renderFn,
+      });
+      const wrapper = mountHost(manager);
+      await nextTick();
+
+      manager.close('float-1');
+      await nextTick();
+
+      expect(destroy).toHaveBeenCalledTimes(1);
       wrapper.unmount();
     });
   });

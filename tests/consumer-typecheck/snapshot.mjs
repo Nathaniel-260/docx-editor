@@ -10,21 +10,18 @@
  *   node tests/consumer-typecheck/snapshot.mjs --all --check
  *   node tests/consumer-typecheck/snapshot.mjs --all --write
  *   node tests/consumer-typecheck/snapshot.mjs --family root --check
- *   node tests/consumer-typecheck/snapshot.mjs --family legacy --check
- *   node tests/consumer-typecheck/snapshot.mjs --family super-editor-package --check
+ *   node tests/consumer-typecheck/snapshot.mjs --family v2-only-resolution --check
  *
  * --check (default) compares against committed snapshots and exits non-zero
  * on drift. --write regenerates snapshots in place.
  *
  * CI workflows call `snapshot.mjs --all --check`. The packed-tarball fixture
- * must be installed first (the legacy and root families need it); the
- * typecheck-matrix step in CI handles that.
+ * must be installed first; the typecheck-matrix step in CI handles that.
  */
-import * as superEditorPackage from './snapshot/super-editor-package-exports.mjs';
-import * as legacy from './snapshot/legacy-exports.mjs';
+import * as v2OnlyResolution from './snapshot/v2-only-resolution.mjs';
 import * as root from './snapshot/root-exports.mjs';
 
-const FAMILIES = [superEditorPackage, legacy, root];
+const FAMILIES = [v2OnlyResolution, root];
 const FAMILY_BY_NAME = new Map(FAMILIES.map((m) => [m.FAMILY, m]));
 
 function printUsage() {

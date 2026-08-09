@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
 import { createPinia, setActivePinia } from 'pinia';
 import { useSuperdocStore } from './superdoc-store.js';
 import { DOCX, PDF } from '@superdoc/common';
@@ -64,6 +64,53 @@ describe('SuperDoc Store - extended coverage', () => {
 
     it('returns undefined when id is not found', () => {
       expect(store.getDocument('missing')).toBeUndefined();
+    });
+  });
+
+  describe('removeDocument', () => {
+    it('removes the document from store/config state and prunes document-scoped comments', async () => {
+      const fileA = new File(['a'], 'a.docx', { type: DOCX });
+      const fileB = new File(['b'], 'b.docx', { type: DOCX });
+      const config = baseConfig([
+        { id: 'doc-1', data: fileA, type: DOCX, name: 'a.docx' },
+        { id: 'doc-2', data: fileB, type: DOCX, name: 'b.docx' },
+      ]);
+
+      await store.init(config);
+
+      store.pages['doc-1'] = [{ page: 1, containerBounds: { top: 0, height: 100 } }];
+      store.activeSelection = { documentId: 'doc-1', text: 'alpha' };
+      store.commentsStore.commentsList = [
+        { commentId: 'comment-a', fileId: 'doc-1' },
+        { commentId: 'comment-b', fileId: 'doc-2' },
+      ];
+      store.commentsStore.editorCommentPositions = {
+        'comment-a': { top: 10 },
+        'comment-b': { top: 20 },
+      };
+      store.commentsStore.activeComment = 'comment-a';
+
+      const removed = store.removeDocument('doc-1');
+
+      expect(removed?.id).toBe('doc-1');
+      expect(store.documents.map((doc) => doc.id)).toEqual(['doc-2']);
+      expect(config.documents.map((doc) => doc.id)).toEqual(['doc-2']);
+      expect(store.getDocument('doc-1')).toBeUndefined();
+      expect(store.pages['doc-1']).toBeUndefined();
+      expect(store.activeSelection).toBeNull();
+      expect(store.commentsStore.commentsList).toEqual([{ commentId: 'comment-b', fileId: 'doc-2' }]);
+      expect(store.commentsStore.editorCommentPositions).toEqual({
+        'comment-b': { top: 20 },
+      });
+      expect(store.commentsStore.activeComment).toBeNull();
+    });
+
+    it('returns null when the document id is unknown', async () => {
+      const file = new File(['x'], 'doc.docx', { type: DOCX });
+      await store.init(baseConfig([{ id: 'doc-1', data: file, type: DOCX, name: 'doc.docx' }]));
+
+      expect(store.removeDocument('missing-doc')).toBeNull();
+      expect(store.documents.map((doc) => doc.id)).toEqual(['doc-1']);
     });
   });
 

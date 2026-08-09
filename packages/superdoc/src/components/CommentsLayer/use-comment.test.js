@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import useComment from './use-comment.js';
+
+const ONE_BY_ONE_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4//8/AwAI/AL+KD0aVQAAAABJRU5ErkJggg==';
 
 describe('use-comment', () => {
   it('exposes threading metadata in getValues()', () => {
@@ -28,6 +31,17 @@ describe('use-comment', () => {
     });
   });
 
+  it('serializes the current tracked-change thread after reconciliation moves it', () => {
+    const comment = useComment({
+      commentId: 'comment-moved-between-changes',
+      trackedChangeThreadParentId: 'tc-old',
+    });
+
+    comment.trackedChangeThreadParentId = 'tc-new';
+
+    expect(comment.getValues().trackedChangeThreadParentId).toBe('tc-new');
+  });
+
   it('returns the latest docxCommentJSON value from getValues()', () => {
     const comment = useComment({
       commentId: 'comment-2',
@@ -39,6 +53,62 @@ describe('use-comment', () => {
 
     const values = comment.getValues();
     expect(values.docxCommentJSON).toEqual(updatedDocxCommentJSON);
+  });
+
+  it('returns tracked-change image preview metadata from getValues()', () => {
+    const comment = useComment({
+      commentId: 'tc-image',
+      trackedChange: true,
+      trackedChangeImagePreview: {
+        src: ONE_BY_ONE_PNG,
+        contentType: 'image/png',
+        role: 'deleted',
+        width: 96,
+        height: 96,
+        alt: 'Deleted preview',
+      },
+    });
+
+    expect(comment.getValues().trackedChangeImagePreview).toEqual({
+      src: ONE_BY_ONE_PNG,
+      contentType: 'image/png',
+      role: 'deleted',
+      width: 96,
+      height: 96,
+      alt: 'Deleted preview',
+    });
+  });
+
+  it('preserves tracked-change position aliases in the reactive model and serialized values', () => {
+    const comment = useComment({
+      commentId: 'tc-canonical-delete',
+      trackedChange: true,
+      trackedChangePositionAliases: ['00000029'],
+    });
+
+    expect(comment.trackedChangePositionAliases).toEqual(['00000029']);
+    expect(comment.getValues().trackedChangePositionAliases).toEqual(['00000029']);
+
+    comment.trackedChangePositionAliases = ['00000030'];
+    expect(comment.getValues().trackedChangePositionAliases).toEqual(['00000030']);
+  });
+
+  it('returns custom tracked-change attributes from getValues()', () => {
+    const customAttributes = [
+      {
+        name: 'ext:rationale',
+        namespaceUri: 'https://example.test/ns/edit',
+        localName: 'rationale',
+        value: 'customer-request',
+      },
+    ];
+    const comment = useComment({
+      commentId: 'tc-custom',
+      trackedChange: true,
+      customAttributes,
+    });
+
+    expect(comment.getValues().customAttributes).toEqual(customAttributes);
   });
 
   it('resolves thread descendants through comment and imported-id parent aliases', () => {

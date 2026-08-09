@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Report which `.js` files own emitted public `.d.ts` files across the
- * `superdoc` and `@superdoc/super-editor` packages (SD-673, audit-only).
+ * `superdoc` package (SD-673, audit-only).
  *
  * Walks every typed `exports` entry in each package, follows
  * relative-import / self-package edges through the emitted declaration
@@ -28,22 +28,16 @@
  * `packages/superdoc/dist/` (the consumer-visible tree).
  *
  * Sources of truth this script consumes:
- *   - `packages/superdoc/package.json` and
- *     `packages/super-editor/package.json` for typed exports
+ *   - `packages/superdoc/package.json` for typed exports
  *   - `packages/superdoc/scripts/jsdoc-debt-snapshot.json`
  *   - `packages/superdoc/scripts/jsdoc-allowlist.cjs`
  *   - `packages/superdoc/scripts/jsdoc-checked-files.cjs` — the same
  *     shared module `check-jsdoc.cjs` reads. Zero duplication; the
  *     two consumers cannot drift.
  *
- * Note on scope: the existing `check-jsdoc.cjs` ratchet walks from
- * `superdoc`'s entry points and reaches into super-editor JS via
- * implementation imports — its `128 / 102` numbers already include
- * super-editor JS owners. This script additionally walks super-editor's
- * OWN public exports independently, so super-editor JS files reached
- * only via super-editor's own publishings (not via superdoc's walk)
- * show up here even when they don't show up in the superdoc-side
- * ratchet.
+ * Note on scope: the v2 package exposes only the supported `superdoc`
+ * root entry plus CSS assets, so this audit walks the superdoc package
+ * only.
  */
 
 const fs = require('node:fs');
@@ -51,7 +45,6 @@ const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const superdocRoot = path.resolve(repoRoot, 'packages/superdoc');
-const superEditorRoot = path.resolve(repoRoot, 'packages/super-editor');
 
 // ─── check-jsdoc state ───────────────────────────────────────────────
 
@@ -132,7 +125,7 @@ function walkPackage(packageRoot) {
     return Object.values(value.types).filter((t) => typeof t === 'string');
   }
 
-  // Self-package resolver: `./super-editor` → dist .d.ts target.
+  // Self-package resolver: exported subpath -> dist .d.ts target.
   const selfPackageTypeMap = new Map();
   for (const [subpath, value] of Object.entries(exportsMap)) {
     const [target] = collectTypesTargets(value);
@@ -285,7 +278,6 @@ let structuralFailure = false;
 const sections = [];
 for (const [label, root] of [
   ['superdoc', superdocRoot],
-  ['@superdoc/super-editor', superEditorRoot],
 ]) {
   const result = walkPackage(root);
   if (result.error) {

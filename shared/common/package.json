@@ -18,7 +18,6 @@
     "./list-rendering": "./list-rendering.ts",
     "./layout-constants": "./layout-constants.ts",
     "./list-marker-utils": "./list-marker-utils.ts",
-    "./atomic-run-size": "./atomic-run-size.ts",
     "./*.ts": "./*.ts",
     "./*": {
       "source": "./*"
@@ -37,14 +36,15 @@
   "scripts": {
     "build": "tsc --project tsconfig.json --emitDeclarationOnly",
     "test": "bun test",
-    "test:watch": "vitest",
+    "test:watch": "vp test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "@vitejs/plugin-vue": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "vue": "catalog:"
+    "vite": "catalog:",
+    "vue": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

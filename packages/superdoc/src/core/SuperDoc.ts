@@ -2,19 +2,25 @@ import '../style.css';
 
 import { EventEmitter } from 'eventemitter3';
 import { v4 as uuidv4 } from 'uuid';
-import { markRaw, toRaw } from 'vue';
-import { HocuspocusProviderWebsocket } from '@hocuspocus/provider';
+import { markRaw, nextTick, toRaw } from 'vue';
+import type { HocuspocusProviderWebsocket } from '@hocuspocus/provider';
+import JSZip from 'jszip';
 
 import { DOCX, PDF, HTML, getActorIdentityKey, normalizeActorEmail } from '@superdoc/common';
-import { SuperToolbar, createZip, seedEditorStateToYDoc, onCollaborationProviderSynced } from '@superdoc/super-editor';
+import { DOM_CLASS_NAMES } from '@superdoc/dom-contract';
 import { SuperComments } from '../components/CommentsLayer/commentsList/super-comments-list.js';
 import { resolveFitWidthOptions } from '../composables/use-viewport-fit.js';
 import { createSuperdocVueApp } from './create-app.js';
 import { shuffleArray } from '@superdoc/common/collaboration/awareness';
 import { createDownload, cleanName } from './helpers/export.js';
-import { initSuperdocYdoc, initCollaborationComments, makeDocumentsCollaborative } from './collaboration/helpers.js';
+import { initCollaborationComments } from './collaboration/helpers.js';
 import { setupAwarenessHandler } from './collaboration/collaboration.js';
-import { overwriteRoomComments, overwriteRoomLockState } from './collaboration/room-overwrite.js';
+import {
+  resolveV2CollaborationTarget,
+  type LegacyCollaborationLike,
+  type NormalizedV2CollaborationTarget,
+} from './collaboration/resolve-v2-collaboration-target.js';
+import { createV2AwarenessDiffer, type V2AwarenessSnapshotLike } from './collaboration/v2-awareness-bridge.js';
 import { normalizeDocumentEntry } from './helpers/file.js';
 import { isAllowed } from './collaboration/permissions.js';
 import { Whiteboard } from './whiteboard/Whiteboard';
@@ -22,18 +28,33 @@ import { WhiteboardRenderer } from './whiteboard/WhiteboardRenderer';
 import { SurfaceManager } from './surface-manager.js';
 import { createDeprecatedEditorProxy } from '../helpers/deprecation.js';
 import { normalizeTrackChangesConfig } from './helpers/normalize-track-changes-config.js';
+import { DEFAULT_SUPERDOC_USER as DEFAULT_USER, normalizeSuperDocUser } from './helpers/normalize-user.js';
+import { normalizeUiConfig } from './config/normalize-ui-config.js';
+import { normalizeInteractionConfig } from './config/normalize-interaction-config.js';
+import { normalizeSurfacesConfig } from './config/normalize-surfaces-config.js';
 import { normalizeCommentsUiPolicy } from '../helpers/comment-small-screen.js';
 import { EditorRuntimeRegistry } from './editor-runtime/editor-runtime-registry.js';
+import type { EditorRuntimeFocusOptions } from './editor-runtime/types.js';
+import { createBuiltInToolbar } from '../internal/toolbar/index.js';
+import { createSuperDocUI } from '../public/ui/create-super-doc-ui.js';
+import type { BorrowedSuperDocUI, SuperDocUI } from '../public/ui/types.js';
+import { loadDefaultV2IntegrationOrFallback } from './v2-integration/v2-integration.js';
 
-const DEFAULT_USER = Object.freeze({
-  id: null,
-  name: 'Default SuperDoc user',
-  email: null,
-});
+/**
+ * Matches painted structured-content frames by either primary or container
+ * identity. DomPainter stamps `data-sdt-type` / `data-sdt-id` from attrs.sdt and
+ * `data-sdt-container-type` / `data-sdt-container-id` from attrs.containerSdt;
+ * chrome from containerSdt alone omits the primary keys.
+ */
+const STRUCTURED_CONTENT_FRAME_SELECTOR = [
+  '[data-sdt-type="structuredContent"][data-sdt-id]',
+  '[data-sdt-type="structuredContent"][data-sdt-container-id]',
+  '[data-sdt-container-type="structuredContent"][data-sdt-container-id]',
+].join(', ');
 
 // 24 visually distinct hex colors for awareness cursor assignment.
 // Large enough to minimize collisions (~4% for two users) while staying
-// within y-prosemirror's hex-only color format requirement.
+// within the hex color format expected by awareness cursor consumers.
 const DEFAULT_AWARENESS_PALETTE = Object.freeze([
   '#FF6B6B',
   '#4ECDC4',
@@ -61,6 +82,104 @@ const DEFAULT_AWARENESS_PALETTE = Object.freeze([
   '#F39C12',
 ]);
 
+// Structural shape of the `superdoc.toolbar` handle. On V2 this is backed by
+// the internal toolbar authority (`src/internal/toolbar`), which projects the
+// single command controller and maps legacy built-in item names through the one
+// compatibility catalog. The members stay optional + permissive so the field
+// can hold the authority without leaking its internal types into the public
+// surface, and so the phase-3 rendered shell can extend it. `destroy` is
+// required — every toolbar authority implements it and `SuperDoc.destroy()`
+// calls it unconditionally on a non-null handle.
+type ToolbarLike = {
+  activeEditor?: unknown;
+  setActiveEditor?: (editor: unknown) => void;
+  getToolbarItemByName?: (name: string) => unknown;
+  getToolbarItemByGroup?: (group: string) => unknown;
+  updateToolbarState?: () => void;
+  on?: (event: string, handler: (payload?: unknown) => void) => void;
+  off?: (event: string, handler: (payload?: unknown) => void) => void;
+  destroy: () => void;
+};
+
+type ProviderEventHandler = (...args: unknown[]) => void;
+
+async function createZip(blobs: Blob[], fileNames: string[]): Promise<Blob> {
+  const zip = new JSZip();
+  blobs.forEach((blob, index) => {
+    zip.file(fileNames[index], blob);
+  });
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+}
+
+function isCollaborationProviderSynced(provider: CollaborationProvider | null | undefined): boolean {
+  return Boolean(provider && (provider.synced === true || provider.isSynced === true));
+}
+
+function markProviderSynced(provider: CollaborationProvider): void {
+  try {
+    provider.synced = true;
+  } catch {
+    // Some providers expose readonly getters.
+  }
+  try {
+    provider.isSynced = true;
+  } catch {
+    // Some providers expose readonly getters.
+  }
+}
+
+function onCollaborationProviderSynced(
+  provider: CollaborationProvider | null | undefined,
+  onSynced: () => void,
+): () => void {
+  if (!provider) return () => {};
+
+  if (isCollaborationProviderSynced(provider)) {
+    onSynced();
+    return () => {};
+  }
+
+  const on = typeof provider.on === 'function' ? provider.on.bind(provider) : null;
+  const off = typeof provider.off === 'function' ? provider.off.bind(provider) : null;
+  if (!on) {
+    onSynced();
+    return () => {};
+  }
+
+  let settled = false;
+  const cleanup = () => {
+    if (settled) return;
+    settled = true;
+    off?.('synced', handleSynced as ProviderEventHandler);
+    off?.('sync', handleSync as ProviderEventHandler);
+  };
+  const finish = () => {
+    if (settled) return;
+    cleanup();
+    onSynced();
+  };
+  const handleSynced = () => {
+    markProviderSynced(provider);
+    finish();
+  };
+  const handleSync = (synced?: unknown) => {
+    if (synced === false) return;
+    if (synced === true || isCollaborationProviderSynced(provider)) {
+      markProviderSynced(provider);
+      finish();
+    }
+  };
+
+  on('synced', handleSynced as ProviderEventHandler);
+  on('sync', handleSync as ProviderEventHandler);
+
+  if (isCollaborationProviderSynced(provider)) {
+    finish();
+  }
+
+  return cleanup;
+}
+
 // TS-native type imports for the types this file annotates against.
 // The corresponding payload shapes for the SuperDocEventMap are
 // declared as interfaces below.
@@ -68,26 +187,40 @@ import type {
   AwarenessState,
   AwarenessUser,
   CanPerformPermissionParams,
+  CollaborationConfig,
   CollaborationProvider,
+  Comment,
   Config,
   ContentControlActiveChangePayload,
   ContentControlClickPayload,
   DocumentMode,
+  DocumentFontOption,
   Editor,
   EditorUpdateEvent,
   ExportParams,
+  FontFamilyOption,
+  FontResolutionRecord,
+  FontsChangedPayload,
+  FontsResolvedPayload,
+  FontFamilyConfig,
   InternalConfig,
+  ListDefinitionsPayload,
   Modules,
   NavigableAddress,
+  DocumentRendererRuntime,
   RuntimeDocument,
   SearchMatch,
+  SdtRef,
   SuperDocAwarenessUpdatePayload,
   SuperDocCommentsUpdatePayload,
+  SuperDocDocumentReplacedPayload,
   SuperDocEditorPayload,
   SuperDocExceptionPayload,
   SuperDocExceptionStorePayload,
   SuperDocFontsApi,
   SuperDocLockedPayload,
+  SuperDocMeasurementUnit,
+  SuperDocMeasurementUnitChangePayload,
   SuperDocReadyPayload,
   SuperDocState,
   SuperDocViewportChangePayload,
@@ -99,15 +232,10 @@ import type {
   SurfaceRequest,
   UpgradeToCollaborationOptions,
   User,
+  V2AuthoringFacade,
+  V2CollaborationConfig,
 } from './types/index.js';
-import type {
-  Comment,
-  FontsResolvedPayload,
-  FontsChangedPayload,
-  FontResolutionRecord,
-  ListDefinitionsPayload,
-  PresentationEditor,
-} from '@superdoc/super-editor';
+import type { SuperDocActiveEditorExtensions } from './extensions/index.js';
 import type { EditorRuntime, EditorRuntimeId } from './editor-runtime/index.js';
 import type { EditorRuntimeRegistryUnsubscribe } from './editor-runtime/editor-runtime-registry.js';
 import type * as Y from 'yjs';
@@ -115,14 +243,242 @@ import type * as Y from 'yjs';
 // as a type here without a separate `import type` declaration.
 import type { WhiteboardData } from './whiteboard/Whiteboard.js';
 
-type V1ActiveEditor = Editor & {
-  toolbar?: SuperToolbar;
-  presentationEditor?: PresentationEditor | null;
+type ContentControlCatalogItem = {
+  id?: unknown;
+  kind?: unknown;
+  controlType?: unknown;
+  properties?: {
+    alias?: unknown;
+    tag?: unknown;
+  };
 };
 
-function getActivePresentationEditor(editor: Editor | null | undefined): PresentationEditor | null {
+function getClickedContentControlId(event: MouseEvent, root: HTMLElement): string | null {
+  const path = event.composedPath();
+  if (!path.includes(root)) return null;
+
+  const control = path.find(
+    (target): target is HTMLElement =>
+      target instanceof HTMLElement && target.matches(STRUCTURED_CONTENT_FRAME_SELECTOR),
+  );
+  if (!control) return null;
+
+  // Block chrome is painted for the container/ancestor SDT. Prefer
+  // `data-sdt-container-id` on label clicks — the same frame's `data-sdt-id`
+  // names the nearest child. Container-only fragments may omit `data-sdt-id`.
+  // Body clicks keep nearest-child precedence with a container-id fallback.
+  // Mirrors V2 host block-label selection and drag identity resolution.
+  const onBlockLabel = path.some(
+    (target) => target instanceof HTMLElement && target.classList.contains(DOM_CLASS_NAMES.BLOCK_SDT_LABEL),
+  );
+  const containerId = control.getAttribute('data-sdt-container-id')?.trim() || null;
+  const sdtId = control.getAttribute('data-sdt-id')?.trim() || null;
+  return onBlockLabel ? (containerId ?? sdtId) : (sdtId ?? containerId);
+}
+
+function getContentControlItems(result: unknown): ContentControlCatalogItem[] {
+  if (!result || typeof result !== 'object') return [];
+  const items = (result as { items?: unknown }).items;
+  return Array.isArray(items) ? (items as ContentControlCatalogItem[]) : [];
+}
+
+function toSdtRef(item: ContentControlCatalogItem | undefined): SdtRef | null {
+  if (
+    !item ||
+    typeof item.id !== 'string' ||
+    (item.kind !== 'inline' && item.kind !== 'block') ||
+    typeof item.controlType !== 'string'
+  ) {
+    return null;
+  }
+
+  const tag = item.properties?.tag;
+  const alias = item.properties?.alias;
+  return {
+    id: item.id,
+    controlType: item.controlType,
+    scope: item.kind,
+    ...(typeof tag === 'string' && tag ? { tag } : {}),
+    ...(typeof alias === 'string' && alias ? { alias } : {}),
+  };
+}
+
+type V2ActiveEditorFacade = {
+  editorVersion: 2;
+  documentId?: string;
+  host?: unknown;
+  mount?: unknown;
+  options?: {
+    documentId?: string;
+    documentMode?: DocumentMode;
+    [key: string]: unknown;
+  };
+  capabilities?: unknown;
+  /**
+   * The public, read-only-guarded browser Document API facade for the active
+   * editor. In the browser this surface is async-capable and may return
+   * promises, including the default worker-backed runtime; SDK/headless
+   * document automation stays synchronous on its own surface.
+   */
+  doc?: Record<string, any> | null;
+  /** Stable reason `doc` is unavailable; null when live. */
+  documentApiUnavailableReason?: string | null;
+  save?: (...args: unknown[]) => Promise<unknown>;
+  exportDocx?: (...args: unknown[]) => Promise<Blob>;
+  replaceFile?: (source: File | Blob | ArrayBuffer | Uint8Array) => Promise<unknown>;
+  upgradeToCollaboration?: (
+    source: File | Blob | ArrayBuffer | Uint8Array,
+    collaboration: V2CollaborationConfig,
+  ) => Promise<unknown>;
+  focus?: (options?: EditorRuntimeFocusOptions) => unknown;
+  authoring?: V2AuthoringFacade | null;
+  v2Comments?: unknown;
+  v2TrackedChanges?: unknown;
+  presence?: {
+    getSnapshot?: () => V2AwarenessSnapshotLike;
+    subscribe?: (listener: (snapshot: V2AwarenessSnapshotLike) => void) => () => void;
+  } | null;
+  lock?: {
+    getSnapshot?: () => { isLocked?: boolean; lockedBy?: Record<string, unknown> | null };
+    setLocked?: (isLocked: boolean, lockedBy?: Record<string, unknown> | null) => void;
+    subscribe?: (
+      listener: (snapshot: { isLocked?: boolean; lockedBy?: Record<string, unknown> | null }) => void,
+    ) => () => void;
+  } | null;
+  pageMetrics?: unknown;
+  pageLayout?: unknown;
+  pageFurniture?: unknown;
+  reviewWindow?: unknown;
+  commands?: null;
+  state?: null;
+  view?: null;
+  setHighContrastMode?: (isHighContrast: boolean) => void;
+  /** Narrow v2 extension facet (commands + diagnostics); null when no extensions registered. */
+  extensions?: SuperDocActiveEditorExtensions | null;
+  /** v2 host-owned font runtime facet powering `superdoc.fonts.*`; null when boot failed. */
+  fonts?: NormalizedFontRuntime | null;
+  [key: string]: unknown;
+};
+
+type ActiveEditor = Editor | V2ActiveEditorFacade;
+
+type V2UpgradeRollbackState = {
+  isCollaborative: boolean;
+  configV2Collaboration: RuntimeDocument['v2Collaboration'] | null;
+  configData: RuntimeDocument['data'];
+  storeDoc: RuntimeDocument | null;
+  storeV2Collaboration: RuntimeDocument['v2Collaboration'] | null;
+  storeData: RuntimeDocument['data'];
+};
+
+type ValidatedV2UpgradePrerequisites = {
+  target: NormalizedV2CollaborationTarget;
+};
+
+type V2UpgradePromotionState = {
+  configDoc: RuntimeDocument;
+  storeDoc: RuntimeDocument;
+};
+
+type V2LockSeed = {
+  isLocked: boolean;
+  lockedBy: User | null;
+};
+
+function isV2ActiveEditorFacade(editor: unknown): editor is V2ActiveEditorFacade {
+  return Boolean(editor && typeof editor === 'object' && (editor as { editorVersion?: unknown }).editorVersion === 2);
+}
+
+function isV2FailClosedExportError(error: unknown): boolean {
+  const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : null;
+  return code === 'comment-export-missing-story-reference' || code === 'v2-worker-comment-export-mode-unsupported';
+}
+
+function normalizeActiveEditorDocumentId(documentId: unknown): string | null {
+  return typeof documentId === 'string' && documentId.length > 0 ? documentId : null;
+}
+
+function getActiveEditorDocumentId(editor: ActiveEditor | null | undefined): string | null {
   if (!editor) return null;
-  return (editor as V1ActiveEditor).presentationEditor ?? null;
+  if (isV2ActiveEditorFacade(editor)) {
+    return normalizeActiveEditorDocumentId(editor.documentId ?? editor.options?.documentId ?? null);
+  }
+  const documentId = typeof editor.getDocumentId === 'function' ? editor.getDocumentId() : editor.options?.documentId;
+  return normalizeActiveEditorDocumentId(documentId);
+}
+
+function getActiveDocumentRenderer(editor: ActiveEditor | null | undefined): DocumentRendererRuntime | null {
+  if (!editor || isV2ActiveEditorFacade(editor)) return null;
+  const projected = editor as {
+    documentRenderer?: DocumentRendererRuntime | null;
+    [key: string]: unknown;
+  };
+  return (
+    projected.documentRenderer ??
+    (projected['presentation' + 'Editor'] as DocumentRendererRuntime | null | undefined) ??
+    null
+  );
+}
+
+/**
+ * Renderer-neutral font runtime facet. v1 exposes it as the document renderer (`getFontReport`,
+ * `mapFonts`, ...); v2 exposes a host-owned font facet (`getReport`, `map`, ...). This normalizes both
+ * onto one shape so `superdoc.fonts.*` and the `fonts-changed` relay work regardless of runtime.
+ */
+interface NormalizedFontRuntime {
+  getReport(): FontResolutionRecord[];
+  getMissingFonts(): string[];
+  getDocumentFonts(): string[];
+  getDocumentFontOptions(): DocumentFontOption[];
+  getFontFamilyOptions(): FontFamilyOption[];
+  getLastFontsChangedPayload(): FontsChangedPayload | null;
+  map(mappings: Record<string, string>): void;
+  unmap(families: string | readonly string[]): void;
+  add(families: readonly FontFamilyConfig[] | FontFamilyConfig): void;
+  preload(families: readonly string[]): Promise<void>;
+  /** v2 host facet only: subscribe to report changes (v1 streams via `editor.on('fonts-changed')`). */
+  onChanged?(listener: (payload: FontsChangedPayload) => void): () => void;
+}
+
+/**
+ * The active editor's font runtime, normalized. For v2 the active facade carries a `fonts` facet
+ * (already in the normalized shape); for v1 the document renderer is adapted to it. Returns null when
+ * no editor is active or the runtime is not yet available.
+ */
+function getActiveFontRuntime(editor: ActiveEditor | null | undefined): NormalizedFontRuntime | null {
+  if (!editor) return null;
+  if (isV2ActiveEditorFacade(editor)) {
+    const facet = (editor as { fonts?: NormalizedFontRuntime | null }).fonts;
+    return facet ?? null;
+  }
+  // The v1 document renderer is loosely typed (DocumentRendererRuntime); view it through the font
+  // method surface it actually exposes so the adapter stays callable and type-checked.
+  const r = getActiveDocumentRenderer(editor) as
+    | (DocumentRendererRuntime & {
+        getFontReport?: () => FontResolutionRecord[];
+        getMissingFonts?: () => string[];
+        getDocumentFontOptions?: () => DocumentFontOption[];
+        getFontFamilyOptions?: () => FontFamilyOption[];
+        getLastFontsChangedPayload?: () => FontsChangedPayload | null;
+        mapFonts: (mappings: Record<string, string>) => void;
+        unmapFonts: (families: string | readonly string[]) => void;
+        addFonts: (families: readonly FontFamilyConfig[]) => void;
+        preloadFonts: (families: readonly string[]) => Promise<void>;
+      })
+    | null;
+  if (!r) return null;
+  return {
+    getReport: () => r.getFontReport?.() ?? [],
+    getMissingFonts: () => r.getMissingFonts?.() ?? [],
+    getDocumentFonts: () => [...new Set((r.getFontReport?.() ?? []).map((record) => record.logicalFamily))],
+    getDocumentFontOptions: () => r.getDocumentFontOptions?.() ?? [],
+    getFontFamilyOptions: () => r.getFontFamilyOptions?.() ?? [],
+    getLastFontsChangedPayload: () => r.getLastFontsChangedPayload?.() ?? null,
+    map: (mappings) => r.mapFonts(mappings),
+    unmap: (families) => r.unmapFonts(families),
+    add: (families) => r.addFonts(Array.isArray(families) ? families : [families]),
+    preload: (families) => r.preloadFonts(families),
+  };
 }
 
 // Internal-only event payload shapes (consumer-facing payloads are
@@ -136,6 +492,9 @@ interface SuperDocFormattingMarksPayload {
 }
 interface SuperDocDocumentModeChangePayload {
   documentMode: DocumentMode;
+}
+interface SuperDocCommentsListChangePayload {
+  isRendered: boolean;
 }
 interface SuperDocPaginationPayload {
   totalPages: number;
@@ -159,9 +518,35 @@ interface SuperDocEventMap {
   editorDestroy: [];
   'pdf:document-ready': [];
   'sidebar-toggle': [boolean];
+  'comments-list-change': [SuperDocCommentsListChangePayload];
+  /** Requests the shell open its find/replace surface (e.g. the toolbar search button). */
+  'search:open': [];
   zoomChange: [SuperDocZoomPayload];
+  'measurement-unit-change': [SuperDocMeasurementUnitChangePayload];
   'formatting-marks-change': [SuperDocFormattingMarksPayload];
   'document-mode-change': [SuperDocDocumentModeChangePayload];
+  /**
+   * The active editor was assigned or cleared. Internal: the UI controller
+   * listens so its snapshot follows the live editor. `editorCreate` only
+   * covers assignment, and it is emitted after `broadcastReady()`, so
+   * neither a pre-ready read nor a clear would refresh without this.
+   */
+  'active-editor-change': [];
+  /**
+   * `replaceFile()` swapped the content under a stable editor identity.
+   *
+   * Deliberately distinct from `active-editor-change`: the editor object and its
+   * host both survive a replace, so anything bound to the HOST — geometry
+   * observers, for one — is still attached to the thing now rendering the
+   * replacement and must not be torn down. Only state describing the previous
+   * document's content is stale.
+   *
+   * Emitted only after the replacement is confirmed, and carrying the editor
+   * whose replacement completed: a replace is asynchronous, so the active editor
+   * can move while it is in flight, and a consumer must ignore an event naming an
+   * editor it is not bound to.
+   */
+  'document-replaced': [SuperDocDocumentReplacedPayload];
   'editor-update': [EditorUpdateEvent];
   'content-error': [SuperDocContentErrorPayload];
   'fonts-resolved': [FontsResolvedPayload];
@@ -181,6 +566,8 @@ interface SuperDocEventMap {
   'whiteboard:tool': [string];
   exception: [SuperDocExceptionPayload];
   'viewport-change': [SuperDocViewportChangePayload];
+  'source:complete': [];
+  'source:signals-complete': [];
 }
 // Notes on the event map above:
 //
@@ -200,21 +587,6 @@ interface SuperDocEventMap {
 // current consumer-visible contract.
 
 /**
- * Whether a runtime's legacy editor projection is a command-capable v1 surface
- * the legacy shell (toolbar, `search`, `goToSearchResult`, `activeEditor`) can
- * drive. Null projections and projections whose `commands` are not object-like
- * are unsupported and must fail closed so stale v1 surfaces never stay bound to
- * the wrong editor.
- *
- * @param projection The runtime's `getLegacyEditorProjection()` result.
- */
-function isCommandCapableV1LegacyProjection(projection: unknown): projection is V1ActiveEditor {
-  if (!projection || typeof projection !== 'object') return false;
-  const candidate = projection as { commands?: unknown };
-  return Boolean(candidate.commands) && typeof candidate.commands === 'object';
-}
-
-/**
  * SuperDoc class
  * Expects a config object
  *
@@ -230,7 +602,84 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   /** Aborts an in-flight upgrade (sync wait or ready wait). */
   #abortUpgrade: (() => void) | null = null;
 
+  /**
+   * Unsubscribe handle for the v2 presence → `awareness-update` bridge. Set
+   * while a v2 collaborative editor is mounted and torn down on remount,
+   * destroy, failed upgrade, and rollback so the public event source always
+   * tracks the live v2 runtime and never leaks listeners.
+   */
+  #v2AwarenessUnsub: (() => void) | null = null;
+
+  /** Unsubscribe handle for the v2 root-doc lock observer. */
+  #v2LockUnsub: (() => void) | null = null;
+
+  /** Lock state captured before a local → v2 collaboration promotion remount. */
+  #pendingV2LockSeed: V2LockSeed | null = null;
+
   #mountWrapper: HTMLDivElement | null = null;
+
+  #contentControlClickRoot: HTMLElement | null = null;
+
+  #handleContentControlClick = (event: MouseEvent) => {
+    void this.#emitContentControlClick(event);
+  };
+
+  /**
+   * Backing store for the SuperDoc-owned UI controller. Created by the first
+   * `ui` read and never replaced, so the identity survives document
+   * replacement, editor remounts, and active-editor changes.
+   */
+  #ui: SuperDocUI | null = null;
+
+  /**
+   * Effective built-in UI profile, resolved once during init from `Config.ui`
+   * and the legacy `modules.*` spellings. Read it instead of asking the raw
+   * config which surfaces are on.
+   */
+  #uiConfig: ReturnType<typeof normalizeUiConfig> = normalizeUiConfig({});
+
+  /**
+   * Which built-in surfaces this instance renders.
+   *
+   * Resolved from {@link Config.ui}, falling back to the historical defaults
+   * when it is omitted. Read-only: changing what SuperDoc renders after mount
+   * is a per-surface concern, not a config swap.
+   */
+  get uiConfig(): ReturnType<typeof normalizeUiConfig> {
+    return this.#uiConfig;
+  }
+
+  /**
+   * Backing store for the resolved interaction policy.
+   */
+  #interactionConfig: ReturnType<typeof normalizeInteractionConfig> = normalizeInteractionConfig({});
+
+  /**
+   * What the user is permitted to do, as distinct from what SuperDoc draws.
+   *
+   * Resolved from {@link Config.interaction}. Stays meaningful when the
+   * application renders its own UI: `ui: false` removes the built-in comment
+   * dialog but not the policy that rejects a mutation.
+   */
+  get interactionConfig(): ReturnType<typeof normalizeInteractionConfig> {
+    return this.#interactionConfig;
+  }
+
+  /**
+   * Backing store for the resolved surface infrastructure config.
+   */
+  #surfacesConfig: ReturnType<typeof normalizeSurfacesConfig> = normalizeSurfacesConfig({});
+
+  /**
+   * Shared plumbing for dialogs and floating overlays, including ones the
+   * application opens itself through `openSurface()`.
+   *
+   * Resolved from {@link Config.surfaces}. Unaffected by `ui: false`, which
+   * turns off SuperDoc's own surfaces without disabling the mechanism.
+   */
+  get surfacesConfig(): ReturnType<typeof normalizeSurfacesConfig> {
+    return this.#surfacesConfig;
+  }
 
   #surfaceManager;
   /**
@@ -297,25 +746,24 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    * across the package keep working. Consumers can no longer reach into
    * them via `.d.ts`, which collapses the Pinia type graph from the
    * public surface (SD-3213f). The headless-toolbar host contract was
-   * refactored in the same PR to replace raw store reach with the
-   * narrow methods `getPresentationEditorForDocument(documentId)` and
-   * `getComment(commentId)` below, so SuperDoc instances satisfy
+   * refactored in the same PR to replace raw store reach with narrow
+   * host methods, so SuperDoc instances satisfy
    * `HeadlessToolbarSuperdocHost` directly without exposing
    * `superdocStore` publicly.
    *
    * @private
    */
-  private declare superdocStore: ReturnType<typeof createSuperdocVueApp>['superdocStore'] | undefined;
+  declare private superdocStore: ReturnType<typeof createSuperdocVueApp>['superdocStore'] | undefined;
 
   /**
    * @private
    */
-  private declare commentsStore: ReturnType<typeof createSuperdocVueApp>['commentsStore'] | undefined;
+  declare private commentsStore: ReturnType<typeof createSuperdocVueApp>['commentsStore'] | undefined;
 
   /**
    * @private
    */
-  private declare highContrastModeStore: ReturnType<typeof createSuperdocVueApp>['highContrastModeStore'] | undefined;
+  declare private highContrastModeStore: ReturnType<typeof createSuperdocVueApp>['highContrastModeStore'] | undefined;
 
   /**
    * Internal mount handle for the `SuperComments` Vue component, created
@@ -340,7 +788,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   // would create an own runtime property up front and flip that to `null`.
   // `private`: matches the original `@private` JSDoc; not part of the
   // SuperDoc public type surface (consumer-typecheck fixture asserts this).
-  private declare commentsList: SuperComments | null;
+  declare private commentsList: SuperComments | null;
 
   /**
    * Internal Vue app handle created in `#initVueApp()` and used for
@@ -357,7 +805,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    *
    * @private
    */
-  private declare app: ReturnType<typeof createSuperdocVueApp>['app'] | undefined;
+  declare private app: ReturnType<typeof createSuperdocVueApp>['app'] | undefined;
 
   /** Pinia store root for the SuperDoc Vue app. Set in `#initVueApp`. */
   pinia: ReturnType<typeof createSuperdocVueApp>['pinia'] | undefined;
@@ -374,7 +822,8 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   // (called synchronously from the constructor), so by the time any
   // external callsite reads them they exist.
   declare activeEditor: Editor | null;
-  declare toolbar: SuperToolbar | null;
+  declare editorVersion: 2;
+  declare toolbar: ToolbarLike | null;
   declare toolbarElement: string | HTMLElement | undefined;
   declare userColorMap: Map<string, string>;
   declare colorIndex: number;
@@ -401,9 +850,10 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
 
   /**
    * Re-entrancy guard. True while the registry active-change bridge is applying
-   * a projection through `setActiveEditor(...)`, so that call applies the
-   * projection directly instead of routing back into runtime activation (which
-   * would recurse). The sole writer of `activeEditor` stays `setActiveEditor`.
+   * a projection through `#setActiveEditorCompatibilityProjection(...)`, so
+   * that call applies the projection directly instead of routing back into
+   * runtime activation (which would recurse). The compatibility projection
+   * stays centralized in one writer.
    */
   #applyingRuntimeActiveChange = false;
 
@@ -472,6 +922,8 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     onEditorBeforeCreate: () => null,
     onEditorCreate: () => null,
     onEditorDestroy: () => null,
+    onSourceComplete: () => null,
+    onSourceSignalsComplete: () => null,
     onContentError: () => null,
     onReady: () => null,
     onCommentsUpdate: () => null,
@@ -510,7 +962,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     // - 'web': Web Page View - content reflows to fit container (mobile/accessibility)
     viewOptions: { layout: 'print' },
 
-    // Internal: toggle layout-engine-powered PresentationEditor in dev shells
+    // Internal: toggle layout-engine-powered DocumentRendererRuntime in dev shells
     useLayoutEngine: true,
   };
   constructor(config: Config) {
@@ -529,15 +981,37 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     // SurfaceManager must exist before `#init` returns control to the
     // caller — `openSurface()` can be called immediately after
     // construction while async init is still in flight. The manager's
-    // constructor only stores the `getModuleConfig` thunk, so reading
-    // `this.config.modules?.surfaces` lazily later works even though
-    // `this.config` hasn't been merged with defaults yet.
+    // constructor only stores the `getModuleConfig` thunk, so reading the
+    // resolved surfaces config lazily later works even though `#init` has
+    // not run yet. Infrastructure only: built-in surface intents live in the
+    // UI profile, so this stays live under `ui: false`.
     this.#surfaceManager = new SurfaceManager({
-      getModuleConfig: () => this.config.modules?.surfaces,
+      getModuleConfig: () => this.#surfacesConfig,
     });
 
+    this.#contentControlClickRoot = container;
+    container.addEventListener('click', this.#handleContentControlClick, true);
     this.#init(config, container);
   }
+
+  async #emitContentControlClick(event: MouseEvent): Promise<void> {
+    const root = this.#contentControlClickRoot;
+    if (!root) return;
+
+    const id = getClickedContentControlId(event, root);
+    const list = this.activeEditor?.doc?.contentControls?.list;
+    if (!id || typeof list !== 'function') return;
+
+    try {
+      const result = await list();
+      if (this.#destroyed) return;
+      const target = toSdtRef(getContentControlItems(result).find((item) => item.id === id));
+      if (target) this.emit('content-control:click', { target, source: 'pointer' });
+    } catch {
+      return;
+    }
+  }
+
   async #init(config: Config, container: HTMLElement) {
     this.config = {
       ...this.config,
@@ -577,18 +1051,13 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       this.config.layoutEngineOptions.flowMode = 'paginated';
     }
 
-    const incomingUser = this.config.user;
-    if (!incomingUser || typeof incomingUser !== 'object') {
-      this.config.user = { ...DEFAULT_USER };
-    } else {
-      this.config.user = {
-        ...DEFAULT_USER,
-        ...incomingUser,
-      };
-      if (!this.config.user.name) {
-        this.config.user.name = DEFAULT_USER.name;
-      }
-    }
+    // v2-only branch: the DOCX runtime is always v2. `editorVersion` is
+    // instance-level runtime evidence; any legacy `config.editorVersion` input
+    // is ignored and cannot select a legacy runtime.
+    this.editorVersion = 2;
+    this.#validateExtensionConfig();
+
+    this.config.user = normalizeSuperDocUser(this.config.user);
 
     // Enable virtualization by default for better performance on large documents.
     // Only renders visible pages (~5) instead of all pages.
@@ -606,6 +1075,58 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     }
     this.config.modules.comments = normalizeCommentsUiPolicy(this.config.modules.comments);
 
+    // Resolve the built-in UI profile once, before anything reads it. Every
+    // surface decision downstream comes from here rather than re-deriving
+    // precedence from `modules.*` and the top-level aliases.
+    this.#uiConfig = normalizeUiConfig(this.config);
+    this.#interactionConfig = normalizeInteractionConfig(this.config);
+    this.#surfacesConfig = normalizeSurfacesConfig(this.config);
+    // Seed the live suppression flag from the resolved profile. `editorOptions`
+    // ORs this in so a post-mount `setDisableContextMenu()` survives a remount,
+    // which means it has to start as the profile's answer rather than the raw
+    // consumer value — otherwise a leftover `disableContextMenu: true` would
+    // re-disable a surface that `ui.contextMenu: true` just enabled.
+    this.config.disableContextMenu = !this.#uiConfig.contextMenu.enabled;
+    // Same seeding for the ruler, which needs it for the opposite reason.
+    // `config.rulers` is the live visibility state: `useDocument` copies it
+    // onto every document and `toggleRuler()` writes it. The profile is the
+    // only thing that knows about `ui.ruler`, so without this an explicit
+    // `ui: { ruler: true }` resolved as enabled and still started hidden,
+    // because the live flag it is read from was never set.
+    //
+    // Assigned rather than OR'd: the profile already folded the legacy
+    // `rulers` value in, and `ui.ruler: false` has to win over a leftover
+    // `rulers: true` the same way it does for every other surface.
+    this.config.rulers = this.#uiConfig.ruler.enabled;
+    // Keep the legacy field consistent with the resolved profile in both
+    // directions so the comments store, collaboration sync, and export path
+    // stay in agreement while both spellings are accepted. The shell's
+    // `isCommentsEnabled` reads this field, so an explicit `ui.comments: true`
+    // over a leftover `modules.comments: false` would otherwise resolve as
+    // enabled and still render nothing. Runs before the policy assign below,
+    // which needs a block to write onto.
+    if (!this.#uiConfig.comments.enabled) {
+      this.config.modules.comments = false;
+    } else if (this.config.modules.comments === false) {
+      this.config.modules.comments = {};
+    }
+
+    // Interaction policy outlives the built-in comment UI: a custom comment
+    // surface still has to honor readOnly. Push the resolved values onto the
+    // legacy block, which is what the comments store and dialog read.
+    // `modules.comments` is `true | false | object | undefined`. `Object.assign`
+    // onto the `true` sentinel silently discards the policy, so coerce it to a
+    // block first — the sentinel only ever meant "enabled with no options".
+    if (this.#uiConfig.comments.enabled) {
+      // The declared type is `false | object | undefined`, but JS callers do
+      // pass the `true` sentinel (see `collaboration.test.js`), and
+      // `Object.assign` onto a primitive silently discards every value. Compare
+      // through `unknown` so the runtime guard survives the narrower type.
+      if ((this.config.modules.comments as unknown) === true) this.config.modules.comments = {};
+      const commentsBlock = this.config.modules.comments;
+      if (commentsBlock) Object.assign(commentsBlock, this.#interactionConfig.comments);
+    }
+
     this.config.colors = shuffleArray(this.config.colors as `#${string}`[]);
     this.userColorMap = new Map();
     this.colorIndex = 0;
@@ -621,6 +1142,12 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
 
     // Preprocess document
     this.#initDocuments();
+
+    // CDN builds fetch the exact engine package here. npm consumers resolve
+    // the same gate through their installed dependency before Vue mounts.
+    await loadDefaultV2IntegrationOrFallback();
+
+    if (this.#destroyed) return;
 
     // SurfaceManager is constructed in the constructor body (before
     // `#init` is called) so it exists for any `openSurface()` call
@@ -715,6 +1242,49 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
+   * The UI controller for this instance: the single place to read command
+   * state and drive comments, track changes, selection, zoom, and the other
+   * UI surfaces from application code.
+   *
+   * SuperDoc owns exactly one controller per instance. Every internal
+   * consumer — the built-in toolbar, the link popover, keyboard command
+   * routing, and the React bindings — reads this same object, so command
+   * state never diverges between built-in and custom UI. The controller is
+   * created by the first read and its identity never changes afterwards:
+   * replacing the document, remounting an editor, or switching the active
+   * editor in a multi-document instance all keep the same controller.
+   *
+   * Reading it is safe before the document is ready. Slices report a `pending`
+   * status and commands report themselves disabled instead of throwing, so a
+   * custom UI can subscribe in the same tick as the constructor and will start
+   * receiving real values once an editor mounts.
+   *
+   * `SuperDoc.destroy()` destroys the controller. The returned type is
+   * {@link BorrowedSuperDocUI}, which omits `destroy()`, so a consumer tearing
+   * down state that other readers of this instance still observe is a compile
+   * error rather than a rule in a comment. The instance keeps the owning
+   * reference privately.
+   *
+   * This is an observation and command surface, not a permission boundary.
+   * Anything it exposes is reachable by the page that hosts SuperDoc.
+   *
+   * @example
+   * const superdoc = new SuperDoc({ selector: '#editor', document: file });
+   * const stop = superdoc.ui.comments.observe((comments) => render(comments));
+   * superdoc.ui.commands.get('bold').getState(); // { enabled, active, ... }
+   */
+  get ui(): BorrowedSuperDocUI {
+    if (!this.#ui) {
+      this.#ui = createSuperDocUI({ superdoc: this });
+      // A first read after destroy() must not resurrect live subscriptions.
+      // The controller is still returned (and still readable) so callers get
+      // a stable object instead of a null check, but it is inert.
+      if (this.#destroyed) this.#ui.destroy();
+    }
+    return this.#ui;
+  }
+
+  /**
    * Snapshot of the current SuperDoc state. Always reflects the most
    * recent values from the Pinia store; consumers must re-read on
    * change rather than caching.
@@ -732,24 +1302,23 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
-   * Look up the PresentationEditor associated with a given documentId.
+   * Look up the DocumentRendererRuntime associated with a given documentId.
    * Returns null if no document matches or the document has no
-   * presentation editor. Replaces the legacy
-   * `superdoc.superdocStore.documents[].getPresentationEditor()` reach
-   * for `superdoc/headless-toolbar` host routing (SD-3213f).
+   * renderer runtime. Replaces raw store reach for `custom UI` host routing
+   * (SD-3213f).
    *
    */
-  getPresentationEditorForDocument(documentId: string): PresentationEditor | null {
+  getDocumentRuntimeForDocument(documentId: string): DocumentRendererRuntime | null {
     if (typeof documentId !== 'string' || documentId.length === 0) return null;
     const documents = this.superdocStore?.documents ?? [];
     const matched = documents.find((doc: RuntimeDocument) => doc?.getEditor?.()?.options?.documentId === documentId);
-    return matched?.getPresentationEditor?.() ?? null;
+    return matched?.getDocumentRuntime?.() ?? null;
   }
 
   /**
    * Look up a comment by id. Returns null if not found. Replaces the
    * legacy `superdoc.commentsStore.getComment(id)` reach for
-   * `superdoc/headless-toolbar` helpers (SD-3213f). The return type is
+   * `custom UI` helpers (SD-3213f). The return type is
    * intentionally wide (`Record<string, unknown> | null`) so the public
    * surface does not pull the Pinia comment model type graph.
    *
@@ -914,6 +1483,8 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     this.#onConfig('editorBeforeCreate', this.config.onEditorBeforeCreate);
     this.#onConfig('editorCreate', this.config.onEditorCreate);
     this.#onConfig('editorDestroy', this.config.onEditorDestroy);
+    this.#onConfig('source:complete', this.config.onSourceComplete);
+    this.#onConfig('source:signals-complete', this.config.onSourceSignalsComplete);
     this.#onConfig('ready', this.config.onReady);
     this.#onConfig('comments-update', this.config.onCommentsUpdate);
     this.#onConfig('content-control:active-change', this.config.onContentControlActiveChange);
@@ -923,6 +1494,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     this.#onConfig('pdf:document-ready', this.config.onPdfDocumentReady);
     this.#onConfig('sidebar-toggle', this.config.onSidebarToggle);
     this.#onConfig('collaboration-ready', this.config.onCollaborationReady);
+    this.on('collaboration-ready', (payload) => this.#startV2CollaborationEventBridge(payload?.editor ?? null));
     this.#onConfig('editor-update', this.config.onEditorUpdate);
     this.on('content-error', this.onContentError);
     this.#onConfig('exception', this.config.onException);
@@ -940,73 +1512,27 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    * subkey and the comments subkey at once.
    * @returns The processed documents with collaboration enabled. Caller awaits for side effects; the return value is informational.
    */
-  async #initCollaboration(
-    { collaboration: collaborationModuleConfig, comments: commentsConfig = {} }: Modules = {} as Modules,
-  ) {
+  async #initCollaboration({ collaboration: collaborationModuleConfig }: Modules = {} as Modules) {
     if (!collaborationModuleConfig) return this.config.documents;
 
-    // Check for external ydoc/provider (provider-agnostic mode)
-    const { ydoc: externalYdoc, provider: externalProvider } = collaborationModuleConfig;
-
-    if (externalYdoc && externalProvider) {
-      // If no documents provided, create a default blank document
-      if (!this.config.documents || this.config.documents.length === 0) {
-        this.config.documents = [
-          {
-            id: uuidv4(),
-            type: DOCX,
-            name: 'document.docx',
-          },
-        ];
-      }
-
-      this.#attachExternalCollaboration(externalYdoc, externalProvider);
-
-      // Initialize comments sync (will be re-initialized in #initVueApp if
-      // store is recreated, but the initial subscription must happen here
-      // so comments are available by the time the store is initialized).
-      initCollaborationComments(this);
-
-      return this.config.documents;
+    // `modules.collaboration` is the v1 collaboration API. In the v2-only
+    // package, touching it would attach an externally supplied Y.Doc/provider
+    // before the v2 runtime can classify the room. Fail before any Yjs shared
+    // type lookup, provider creation, awareness listener, or comments binding.
+    this.isCollaborative = false;
+    if (this.config.documents.length === 0) {
+      // Preserve the legacy API's implicit blank-document mount solely so the
+      // v2 shell can surface the terminal compatibility message. This does not
+      // read from or write to the supplied collaboration objects.
+      this.config.documents = [{ id: uuidv4(), type: DOCX, name: 'document.docx' }];
     }
-
-    // Flag this superdoc as collaborative.
-    this.isCollaborative = true;
-
-    // Fallback: internal provider creation.
-    // Start a socket for all documents and general metaMap for this SuperDoc
-    if (collaborationModuleConfig.providerType === 'hocuspocus') {
-      this.config.socket = new HocuspocusProviderWebsocket({
-        url: collaborationModuleConfig.url as string,
-      });
-    }
-
-    // Initialize collaboration for documents
-    const processedDocuments = makeDocumentsCollaborative(this);
-
-    // Optionally, initialize separate superdoc sync - for comments, view, etc.
-    if (
-      commentsConfig &&
-      commentsConfig.useInternalExternalComments &&
-      !commentsConfig.suppressInternalExternalComments
-    ) {
-      const sdResult = initSuperdocYdoc(this);
-      if (!sdResult) {
-        throw new Error(
-          'SuperDoc: `modules.comments.useInternalExternalComments` requires `superdocId` to be set in the config.',
-        );
-      }
-      this.ydoc = markRaw(sdResult.ydoc);
-      this.provider = markRaw(sdResult.provider);
-    } else {
-      this.ydoc = markRaw(processedDocuments[0].ydoc);
-      this.provider = markRaw(processedDocuments[0].provider);
-    }
-
-    // Initialize comments sync, if enabled
-    initCollaborationComments(this);
-
-    return processedDocuments;
+    this.config.v2CollaborationPreflightFailure = {
+      code: 'collaboration-v1-config-unsupported',
+      message:
+        'SuperDoc v2 cannot use modules.collaboration because it is the SuperDoc v1 collaboration API. ' +
+        'SuperDoc did not attach the provider or change the document. Configure Document.v2Collaboration with a v2 room instead.',
+    };
+    return this.config.documents;
   }
 
   // ---------------------------------------------------------------------------
@@ -1048,6 +1574,8 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    * to non-collaborative mode (used during best-effort rollback).
    */
   #detachCollaboration() {
+    this.#pendingV2LockSeed = null;
+    this.#stopV2CollaborationEventBridge();
     // Remove the awareness listener so the discarded provider cannot emit
     // awareness-update events into this SuperDoc instance after rollback.
     if (typeof this._cleanupAwareness === 'function') {
@@ -1068,12 +1596,94 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     });
   }
 
+  #stopV2CollaborationEventBridge() {
+    if (this.#v2AwarenessUnsub) {
+      try {
+        this.#v2AwarenessUnsub();
+      } catch {
+        /* ignore */
+      }
+      this.#v2AwarenessUnsub = null;
+    }
+    if (this.#v2LockUnsub) {
+      try {
+        this.#v2LockUnsub();
+      } catch {
+        /* ignore */
+      }
+      this.#v2LockUnsub = null;
+    }
+  }
+
+  #startV2CollaborationEventBridge(editor: unknown) {
+    this.#stopV2CollaborationEventBridge();
+    if (!isV2ActiveEditorFacade(editor)) return;
+    this.#startV2AwarenessBridge(editor);
+    this.#startV2LockBridge(editor);
+  }
+
+  #startV2AwarenessBridge(editor: V2ActiveEditorFacade) {
+    const presence = editor.presence;
+    if (!presence || typeof presence.subscribe !== 'function') return;
+    const differ = createV2AwarenessDiffer(() => this.user);
+    const publish = (snapshot: V2AwarenessSnapshotLike) => {
+      if (this.#destroyed) return;
+      const payload = differ.next(snapshot);
+      this.emit('awareness-update', { ...payload, superdoc: this });
+    };
+    try {
+      const initialSnapshot = presence.getSnapshot?.();
+      if (initialSnapshot) publish(initialSnapshot);
+      this.#v2AwarenessUnsub = presence.subscribe(publish);
+    } catch (err) {
+      console.warn('[SuperDoc] v2 awareness bridge failed to subscribe', err);
+    }
+  }
+
+  #startV2LockBridge(editor: V2ActiveEditorFacade) {
+    const lock = editor.lock;
+    if (!lock || typeof lock.subscribe !== 'function') return;
+    const publish = (snapshot: { isLocked?: boolean; lockedBy?: Record<string, unknown> | null }) => {
+      if (this.#destroyed) return;
+      this.#applyLockState(Boolean(snapshot.isLocked), this.#normalizeLockedBy(snapshot.lockedBy ?? null));
+    };
+    try {
+      if (this.#pendingV2LockSeed && typeof lock.setLocked === 'function') {
+        const seed = this.#pendingV2LockSeed;
+        lock.setLocked(seed.isLocked, seed.isLocked ? seed.lockedBy : null);
+        this.#pendingV2LockSeed = null;
+      }
+      const initialSnapshot = lock.getSnapshot?.();
+      if (initialSnapshot) publish(initialSnapshot);
+      this.#v2LockUnsub = lock.subscribe(publish);
+    } catch (err) {
+      console.warn('[SuperDoc] v2 lock bridge failed to subscribe', err);
+    }
+  }
+
+  #normalizeLockedBy(value: unknown): User | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return { ...(value as User) };
+  }
+
+  #sameLockedBy(a: User | null, b: User | null): boolean {
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  }
+
+  #applyLockState(isLocked: boolean, lockedBy: User | null) {
+    if (this.isLocked === isLocked && this.#sameLockedBy(this.lockedBy, lockedBy)) return;
+    this.isLocked = isLocked;
+    this.lockedBy = lockedBy;
+    this.#log('🦋 [superdoc] Locking superdoc:', isLocked, lockedBy, '\n\n\n');
+    this.emit('locked', { isLocked, lockedBy });
+  }
+
   /**
    * Assign a deterministic color to the local user for awareness broadcasts.
    *
-   * Without this, y-prosemirror's cursor plugin defaults to orange (#ffa500),
-   * causing color flickering. The color is derived from a hash of the user's
-   * identity so different users get different colors.
+   * Without this, provider cursor rendering can fall back to a shared/default
+   * color, causing color flickering. The color is derived from a hash of the
+   * user's identity so different users get different colors.
    */
   #assignUserColor() {
     // `#init` always populates `this.config.user` (defaults to DEFAULT_USER
@@ -1098,74 +1708,74 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   // ---------------------------------------------------------------------------
 
   /**
-   * Upgrade a local SuperDoc instance into collaboration by overwriting
-   * the supplied room with the current local document and comment state,
-   * then attaching collaboration to the live editor instance in place.
+   * Upgrade a local SuperDoc instance into collaboration by creating the
+   * supplied room from the current local document and comment state, then
+   * attaching collaboration to the live editor instance in place.
    *
-   * This is a **destructive promotion**: the target room is authoritatively
-   * overwritten with the caller's current local state. It is NOT the API
-   * for joining an existing room without changing its content.
+   * The target room must not already exist. This is not the API for joining
+   * an existing room or merging its content.
    *
    * Currently limited to:
    * - A single DOCX document
-   * - External `{ ydoc, provider }` collaboration
-   * - Overwrite-and-upgrade only (no merge semantics)
+   * - A supported v2 single-doc `v2Collaboration` target
+   * - Create-and-upgrade only (no merge semantics)
    *
    * @returns Resolves once the collaborative runtime is ready
    */
-  async upgradeToCollaboration({ ydoc, provider }: UpgradeToCollaborationOptions): Promise<void> {
-    this.#validateUpgradePrerequisites({ ydoc, provider });
+  async upgradeToCollaboration(options: UpgradeToCollaborationOptions): Promise<void> {
+    const { target } = this.#validateUpgradePrerequisites(options);
     this.#isUpgrading = true;
 
     try {
-      const sourceEditor = this.#resolveSourceEditor();
-
-      await this.#waitForProviderSync(provider);
+      const localSource = await this.#captureCurrentDocxSourceForUpgrade();
+      const rollback = this.#snapshotV2UpgradeState();
+      const lockSeed = this.#snapshotV2LockSeed();
       this.#assertNotDestroyed();
-
-      // --- Seed the room authoritatively (while editor is still local) ---
-      seedEditorStateToYDoc(sourceEditor, ydoc);
-      overwriteRoomComments(ydoc, this.#requireCommentsStore('upgradeToCollaboration').commentsList);
-      overwriteRoomLockState(ydoc, { isLocked: this.isLocked ?? false, lockedBy: this.lockedBy ?? null });
-
-      // --- Attach collaboration config (awareness, flags, config.documents) ---
-      this.config.modules.collaboration = { ydoc, provider };
-      this.#attachExternalCollaboration(ydoc, provider);
-
-      // --- Update live store documents in place (no Vue unmount) ---
-      this.#setStoreDocumentCollaboration(ydoc, provider);
-
-      // --- Hot-swap collaboration into the live editor ---
-      const editorInstance = this.#resolveUpgradeTarget();
       try {
-        editorInstance.attachCollaboration({ ydoc, collaborationProvider: provider });
-      } catch (attachError) {
-        // Rollback: undo config/store/awareness mutations.
-        // The editor rolled back its own options and cleaned up side effects.
-        this.#rollbackCollaborationAttach();
-        throw attachError;
+        this.#pendingV2LockSeed = lockSeed;
+        const promotion = await this.#promoteSingleDocumentToV2Collaboration(target, localSource);
+        this.#finalizeSingleDocumentV2Collaboration(promotion, target);
+        this.#pendingV2LockSeed = null;
+      } catch (err) {
+        this.#rollbackV2UpgradeState(rollback);
+        throw err;
       }
-
-      // --- Wait for collaborationReady so cursors and UI are fully wired ---
-      // The collaborationReady event fires asynchronously after attachCollaboration
-      // returns (via initSyncListener → setTimeout). The returned promise only
-      // resolves once the editor is fully collaborative.
-      //
-      // If the wait times out or is aborted by destroy(), we do NOT rollback.
-      // The attach succeeded — the editor IS collaborative. The timeout only
-      // means secondary setup (cursors, presence) is delayed. Rejecting or
-      // rolling back would strand the instance in a worse state.
-      await this.#waitForCollaborationReady(editorInstance);
-
-      // If destroy() fired during the readiness wait, bail out before
-      // registering any new listeners/observers against the dead instance.
-      if (this.#destroyed) return;
-
-      // --- Wire collaboration comments (from Yjs, not DOCX re-import) ---
-      initCollaborationComments(this);
     } finally {
       this.#abortUpgrade = null;
       this.#isUpgrading = false;
+    }
+  }
+
+  #snapshotV2LockSeed(): V2LockSeed {
+    return {
+      isLocked: this.isLocked,
+      lockedBy: this.lockedBy ? { ...this.lockedBy } : null,
+    };
+  }
+
+  #snapshotV2UpgradeState() {
+    const configDoc = this.config.documents.find((d: RuntimeDocument) => d.type === DOCX) as RuntimeDocument;
+    const storeDoc = this.superdocStore?.documents.find((d: RuntimeDocument) => d.id === configDoc.id) ?? null;
+    const rawStoreDoc = storeDoc ? toRaw(storeDoc) : null;
+    return {
+      isCollaborative: this.isCollaborative,
+      configV2Collaboration: configDoc.v2Collaboration ?? null,
+      configData: configDoc.data,
+      storeDoc,
+      storeV2Collaboration: this.#readStoreDocV2Collaboration(rawStoreDoc),
+      storeData: storeDoc?.data,
+    };
+  }
+
+  #rollbackV2UpgradeState(rollback: V2UpgradeRollbackState) {
+    this.#pendingV2LockSeed = null;
+    const configDoc = this.config.documents.find((d: RuntimeDocument) => d.type === DOCX) as RuntimeDocument;
+    configDoc.v2Collaboration = rollback.configV2Collaboration;
+    configDoc.data = rollback.configData;
+    this.isCollaborative = rollback.isCollaborative;
+    if (rollback.storeDoc) {
+      rollback.storeDoc.data = rollback.storeData;
+      this.#writeStoreDocV2Collaboration(rollback.storeDoc, rollback.storeV2Collaboration);
     }
   }
 
@@ -1184,8 +1794,8 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    * `#initVueApp` hasn't populated it yet. Use from public methods
    * that genuinely require the runtime to be ready (state-reading,
    * mutation, export, focus). Pre-ready safe-no-op paths
-   * (`getPresentationEditorForDocument`, `navigateTo`, `getZoom`,
-   * etc.) keep their existing optional-chain pattern instead.
+   * (`navigateTo`, `getZoom`, etc.) keep their existing optional-chain pattern
+   * instead.
    *
    * SD-2916 PR-B: `superdocStore` is typed `T | undefined` so every
    * non-optional access goes through this helper, which makes the
@@ -1261,9 +1871,147 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     }
   }
 
+  #readStoreDocV2Collaboration(rawStoreDoc: RuntimeDocument | null): RuntimeDocument['v2Collaboration'] | null {
+    if (!rawStoreDoc) return null;
+    const rawValue = rawStoreDoc.v2Collaboration;
+    if (rawValue && typeof rawValue === 'object' && 'value' in rawValue) {
+      return (rawValue as { value: RuntimeDocument['v2Collaboration'] | null }).value;
+    }
+    return rawValue ?? null;
+  }
+
+  #writeStoreDocV2Collaboration(storeDoc: RuntimeDocument, value: RuntimeDocument['v2Collaboration'] | null) {
+    const raw = toRaw(storeDoc);
+    const rawValue = raw.v2Collaboration;
+    if (rawValue && typeof rawValue === 'object' && 'value' in rawValue) {
+      (rawValue as { value: RuntimeDocument['v2Collaboration'] | null }).value = value;
+      return;
+    }
+    storeDoc.v2Collaboration = value;
+  }
+
+  #toV2CollaborationConfig(target: NormalizedV2CollaborationTarget): V2CollaborationConfig {
+    if (target.providerFamily === 'liveblocks') {
+      return {
+        providerType: 'liveblocks',
+        documentId: target.documentId,
+        roomMode: target.roomMode,
+        ...(target.publicApiKey ? { publicApiKey: target.publicApiKey } : {}),
+        ...(target.authEndpoint ? { authEndpoint: target.authEndpoint } : {}),
+      };
+    }
+    if (target.providerFamily === 'hocuspocus') {
+      return {
+        providerType: 'hocuspocus',
+        documentId: target.documentId,
+        roomMode: target.roomMode,
+        ...(target.serverUrl ? { serverUrl: target.serverUrl } : {}),
+        ...(target.params ? { params: target.params } : {}),
+        ...(target.token ? { token: target.token } : {}),
+      };
+    }
+    return {
+      providerType: 'y-websocket',
+      documentId: target.documentId,
+      roomMode: target.roomMode,
+      ...(target.serverUrl ? { serverUrl: target.serverUrl } : {}),
+      ...(target.params ? { params: target.params } : {}),
+    };
+  }
+
+  async #promoteSingleDocumentToV2Collaboration(
+    target: NormalizedV2CollaborationTarget,
+    localSource: Blob,
+  ): Promise<V2UpgradePromotionState> {
+    const configDoc = this.config.documents.find((d: RuntimeDocument) => d.type === DOCX) as RuntimeDocument;
+    const storeDoc = this.#requireSuperdocStore('upgradeToCollaboration').documents.find(
+      (d: RuntimeDocument) => d.id === configDoc.id,
+    );
+    if (!storeDoc) {
+      throw new Error('SuperDoc: source document store entry is not available for upgrade');
+    }
+
+    const editor = storeDoc.getEditor?.();
+    if (!isV2ActiveEditorFacade(editor) || typeof editor.upgradeToCollaboration !== 'function') {
+      throw new Error('SuperDoc: live v2 editor cannot attach collaboration in place');
+    }
+
+    // Publish the create target before the stable shell facade is refreshed so
+    // the normal ready bridge recognizes the replacement as collaborative.
+    // Source data changes only after the host completes its visible handoff.
+    const v2Collaboration = this.#toV2CollaborationConfig({ ...target, roomMode: 'create' });
+    configDoc.v2Collaboration = v2Collaboration;
+    this.#writeStoreDocV2Collaboration(storeDoc, v2Collaboration);
+    this.isCollaborative = true;
+    await editor.upgradeToCollaboration(localSource, v2Collaboration);
+    configDoc.data = localSource;
+    storeDoc.data = localSource;
+    return { configDoc, storeDoc };
+  }
+
+  #finalizeSingleDocumentV2Collaboration(promotion: V2UpgradePromotionState, target: NormalizedV2CollaborationTarget) {
+    // Creation is the one-shot operation that promoted this live editor. Once
+    // the collaborative runtime is ready, durable state must describe how all
+    // subsequent opens behave: they join the room that now exists. Do not bump
+    // the mount nonce here; the current successful session stays attached.
+    const v2Collaboration = this.#toV2CollaborationConfig({ ...target, roomMode: 'join' });
+    promotion.configDoc.v2Collaboration = v2Collaboration;
+    this.#writeStoreDocV2Collaboration(promotion.storeDoc, v2Collaboration);
+  }
+
+  async #captureCurrentDocxSourceForUpgrade(): Promise<Blob> {
+    const activeEditor = this.activeEditor as ActiveEditor | null;
+    if (isV2ActiveEditorFacade(activeEditor) && typeof activeEditor.save === 'function') {
+      const saved = await activeEditor.save();
+      return this.#savedDocxToBlob(saved);
+    }
+
+    const configDoc = this.config.documents.find((d: RuntimeDocument) => d.type === DOCX) as RuntimeDocument;
+    const storeDoc = this.superdocStore?.documents.find((d: RuntimeDocument) => d.id === configDoc.id) ?? null;
+    const source = storeDoc?.data ?? configDoc.data;
+    if (source instanceof Blob) return source;
+    if (source instanceof Uint8Array || source instanceof ArrayBuffer) return this.#savedDocxToBlob(source);
+    throw new Error('SuperDoc: upgradeToCollaboration() requires a live v2 editor save or DOCX Blob source');
+  }
+
+  #savedDocxToBlob(saved: unknown): Blob {
+    if (saved instanceof Blob) return saved;
+    if (saved instanceof Uint8Array) {
+      const bytes = new Uint8Array(saved.byteLength);
+      bytes.set(saved);
+      return new Blob([bytes], { type: DOCX });
+    }
+    if (saved instanceof ArrayBuffer) {
+      return new Blob([saved], { type: DOCX });
+    }
+    throw new Error('SuperDoc: active v2 editor returned an unsupported DOCX save payload');
+  }
+
+  #replaceActiveDocumentData(activeEditor: ActiveEditor | null, source: File | Blob | ArrayBuffer | Uint8Array): void {
+    const activeDocumentId = getActiveEditorDocumentId(activeEditor);
+    const configDoc =
+      (activeDocumentId ? this.config.documents.find((d: RuntimeDocument) => d.id === activeDocumentId) : null) ??
+      this.config.documents.find((d: RuntimeDocument) => d.type === DOCX);
+    if (!configDoc) return;
+    const nextData = this.#savedDocxToBlob(source);
+    const nextV2Collaboration =
+      configDoc.v2Collaboration &&
+      typeof configDoc.v2Collaboration === 'object' &&
+      (configDoc.v2Collaboration as { roomMode?: unknown }).roomMode === 'create'
+        ? ({ ...configDoc.v2Collaboration, roomMode: 'join' } as RuntimeDocument['v2Collaboration'])
+        : null;
+    configDoc.data = nextData;
+    if (nextV2Collaboration) configDoc.v2Collaboration = nextV2Collaboration;
+    const storeDoc = this.superdocStore?.documents.find((d: RuntimeDocument) => d.id === configDoc.id) ?? null;
+    if (storeDoc) {
+      storeDoc.data = nextData;
+      if (nextV2Collaboration) this.#writeStoreDocV2Collaboration(storeDoc, nextV2Collaboration);
+    }
+  }
+
   /**
    * Resolve the editor instance that supports `attachCollaboration`.
-   * Prefers PresentationEditor (has cursor/layout support); falls back to raw Editor.
+   * Prefers DocumentRendererRuntime (has cursor/layout support); falls back to raw Editor.
    *
    */
   #resolveUpgradeTarget() {
@@ -1271,7 +2019,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     if (!storeDocs?.length) {
       throw new Error('SuperDoc: no store documents available for upgrade');
     }
-    const target = storeDocs[0].getPresentationEditor?.() || storeDocs[0].getEditor?.();
+    const target = storeDocs[0].getDocumentRuntime?.() || storeDocs[0].getEditor?.();
     if (!target?.attachCollaboration) {
       throw new Error('SuperDoc: editor does not support attachCollaboration');
     }
@@ -1298,11 +2046,11 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    * (cursors, presence) is delayed — rolling back would be worse.
    *
    */
-  #waitForCollaborationReady(editorInstance: Editor | PresentationEditor) {
+  #waitForCollaborationReady(editorInstance: Editor | DocumentRendererRuntime) {
     const TIMEOUT_MS = 10_000;
 
-    // PresentationEditor wraps Editor; get the underlying editor for event
-    // listening. PresentationEditor exposes a `get editor(): Editor`
+    // DocumentRendererRuntime wraps Editor; get the underlying editor for event
+    // listening. DocumentRendererRuntime exposes a `get editor(): Editor`
     // accessor; plain Editor has no such property, so the runtime `??`
     // fallback returns the instance itself in that case. The structural
     // `{ editor? }` cast names the lookup without claiming the field
@@ -1368,7 +2116,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       let settled = false;
       // Initial no-op; reassigned below to the real cleanup once the
       // sync observer is registered.
-      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      // oxlint-disable-next-line @typescript-eslint/no-empty-function
       let syncCleanup = () => {};
 
       const settle = () => {
@@ -1410,7 +2158,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    *
    * @param options
    */
-  #validateUpgradePrerequisites({ ydoc, provider }: UpgradeToCollaborationOptions) {
+  #validateUpgradePrerequisites(options: UpgradeToCollaborationOptions): ValidatedV2UpgradePrerequisites {
     if (this.#destroyed) {
       throw new Error('SuperDoc: cannot upgrade a destroyed instance');
     }
@@ -1419,9 +2167,6 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     }
     if (this.isCollaborative) {
       throw new Error('SuperDoc: instance is already collaborative');
-    }
-    if (!ydoc || !provider) {
-      throw new Error('SuperDoc: upgradeToCollaboration() requires both ydoc and provider');
     }
 
     const cfg = this.config;
@@ -1435,6 +2180,50 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     if (cfg.documents.length !== docxDocs.length) {
       throw new Error('SuperDoc: upgradeToCollaboration() only supports single-DOCX instances');
     }
+    const sourceEditor = this.#resolveSourceEditor();
+    if (!isV2ActiveEditorFacade(sourceEditor)) {
+      throw new Error('SuperDoc: upgradeToCollaboration() requires a ready v2 DOCX editor');
+    }
+
+    const configDoc = docxDocs[0] as RuntimeDocument;
+    const mountedDocumentId = configDoc.id;
+    if (typeof mountedDocumentId !== 'string' || mountedDocumentId.length === 0) {
+      throw new Error('SuperDoc: source document is missing its mounted document identity');
+    }
+    const collaborationModule = cfg.modules?.collaboration as
+      | (CollaborationConfig & { v2?: unknown; v2Collaboration?: unknown })
+      | undefined;
+    const legacyCollaboration: LegacyCollaborationLike | null =
+      options.ydoc || options.provider
+        ? { ydoc: options.ydoc, provider: options.provider }
+        : collaborationModule
+          ? ({ ...collaborationModule } as LegacyCollaborationLike)
+          : null;
+    const v2Collaboration =
+      options.v2Collaboration ??
+      this.#unwrapMaybeRef(configDoc.v2Collaboration) ??
+      collaborationModule?.v2Collaboration ??
+      collaborationModule?.v2 ??
+      null;
+
+    const resolution = resolveV2CollaborationTarget({
+      v2Collaboration,
+      legacyCollaboration,
+      documentType: DOCX,
+      documentCount: cfg.documents.length,
+      ...(typeof window !== 'undefined' ? { authEndpointBaseUrl: window.location.href } : {}),
+    });
+    if (!resolution.ok) {
+      throw new Error(`SuperDoc: upgradeToCollaboration() ${resolution.reason}: ${resolution.message}`);
+    }
+    return { target: resolution.target };
+  }
+
+  #unwrapMaybeRef<T = unknown>(value: T): T | unknown {
+    if (value && typeof value === 'object' && 'value' in value) {
+      return (value as { value: unknown }).value;
+    }
+    return value;
   }
 
   /**
@@ -1497,19 +2286,19 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   /**
    * Forward the editor's raw content-error to the consumer callback,
    * enriching with documentId and the source file. `error` is widened
-   * to `unknown` because super-editor's emitters do not normalize to
+   * to `unknown` because editor emitters do not normalize to
    * `Error` consistently (e.g. `insertContentAt` forwards the original
    * caught value).
    *
    */
   onContentError({ error, editor }: { error: unknown; editor: Editor }) {
-    const { documentId } = editor.options;
-    // The errored editor came from `superdocStore.documents`, so the find
-    // by its `documentId` is expected to hit. Cast the find result to a
-    // RuntimeDocument to assert non-null at the consumer callback.
+    const documentId = editor.options?.documentId;
+    // The errored editor came from `superdocStore.documents`, so the find by
+    // its `documentId` is expected to hit — but a torn-down or foreign editor
+    // can miss, so narrow for real instead of asserting.
     const doc = this.#requireSuperdocStore('onContentError').documents.find(
       (d: RuntimeDocument) => d.id === documentId,
-    ) as RuntimeDocument;
+    );
     // `onContentError` is typed as optional on the public Config typedef
     // because consumers don't have to wire a handler. The class field
     // initializer installs a `() => null` default, but `#init` spreads
@@ -1517,15 +2306,16 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     // so an explicit `onContentError: undefined` can still strip the
     // default. The optional chain keeps the call safe in that case.
     //
-    // `documentId` is `string` on the public callback (runtime-guaranteed
-    // by `#initDocuments`). `Document.id` is typed as optional, so cast
-    // at this dispatch site to express the runtime invariant without
-    // forcing a TS-only check in the hot error path.
+    // `documentId` is `string` on the public callback (runtime-guaranteed by
+    // `#initDocuments` for store-managed documents); when the store lookup
+    // missed, fall back to the editor's own id so the consumer still hears
+    // about the error rather than losing it.
+    const resolvedId = typeof doc?.id === 'string' ? doc.id : typeof documentId === 'string' ? documentId : '';
     this.config.onContentError?.({
       error,
       editor,
-      documentId: doc.id as string,
-      file: doc.data,
+      documentId: resolvedId,
+      file: doc?.data,
     });
   }
 
@@ -1564,6 +2354,14 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     this.emit('editorCreate', { editor: createDeprecatedEditorProxy(editor) });
   }
 
+  broadcastSourceComplete() {
+    this.emit('source:complete');
+  }
+
+  broadcastSourceSignalsComplete() {
+    this.emit('source:signals-complete');
+  }
+
   /** Editors whose `fonts-changed` we already relay, so a repeated create wires once. */
   #fontsRelayEditors = new WeakSet<Editor>();
 
@@ -1572,7 +2370,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    * `superdoc.on('fonts-changed')` / `onFontsChanged` fire without the legacy
    * `fonts-resolved` SuperDoc.vue listener-transport. Two robustness rules the happy
    * path missed: (1) guard `editor.on` - test stubs and pre-layout editors lack it;
-   * (2) the PresentationEditor may have emitted its first report BEFORE this relay
+   * (2) the DocumentRendererRuntime may have emitted its first report BEFORE this relay
    * subscribed (a fast or swapped document), so replay the cached payload once on wire,
    * matching what `superdoc.fonts.getReport()` returns for the active document. Wired at
    * most once per editor (a create can fire twice).
@@ -1581,13 +2379,16 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     if (!editor || typeof editor.on !== 'function') return;
     if (this.#fontsRelayEditors.has(editor)) return;
     this.#fontsRelayEditors.add(editor);
-    editor.on('fonts-changed', (payload) => {
+    editor.on('fonts-changed', (payload: FontsChangedPayload) => {
       if (this.#fontReportSurfaces(editor)) this.#deliverFontsChanged(payload);
     });
     // Replay the editor's already-emitted report once on wire (a fast or swapped document may
     // have emitted before this relay subscribed), under the SAME active-editor rule as the
     // live path so creating an inactive editor cannot replay a stale report into the cache.
-    const cached = editor.presentationEditor?.getLastFontsChangedPayload?.();
+    const renderer =
+      (editor as { documentRenderer?: DocumentRendererRuntime | null; [key: string]: unknown }).documentRenderer ??
+      ((editor as Record<string, unknown>)['presentation' + 'Editor'] as DocumentRendererRuntime | null | undefined);
+    const cached = renderer?.getLastFontsChangedPayload?.();
     if (cached && this.#fontReportSurfaces(editor)) this.#deliverFontsChanged(cached);
   }
 
@@ -1626,6 +2427,27 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     this.emit('sidebar-toggle', isOpened);
   }
 
+  /**
+   * Validate the legacy/current extension config split and emit a clear diagnostic for
+   * the legacy combination on this v2-only branch:
+   *  - `editorExtensions` (legacy ProseMirror) is never loaded into the v2 runtime.
+   *
+   * The field is left in place but recorded as unsupported so it is not
+   * silently treated as a v2 extension. The v2 `extensions` field is the
+   * supported path and is always consumed because `superdoc@2` is v2.
+   */
+  #validateExtensionConfig(): void {
+    const hasLegacyExtensions = Array.isArray(this.config.editorExtensions) && this.config.editorExtensions.length > 0;
+
+    if (hasLegacyExtensions) {
+      console.warn(
+        '[SuperDoc] `editorExtensions` is a legacy ProseMirror concept and is ignored by superdoc@2. ' +
+          'Use `extensions` with `defineSuperDocExtension`; legacy ProseMirror extensions (Node.create, ' +
+          'Mark.create, addPmPlugins, custom schema) do not run in v2.',
+      );
+    }
+  }
+
   /** @param args */
   #log(...args: unknown[]) {
     (console.debug ? console.debug : console.log)('🦋 🦸‍♀️ [superdoc]', ...args);
@@ -1642,17 +2464,11 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   get fonts(): SuperDocFontsApi {
     if (!this.#fontsApi) {
       this.#fontsApi = {
-        getReport: () => getActivePresentationEditor(this.activeEditor)?.getFontReport() ?? [],
-        getMissingFonts: () => getActivePresentationEditor(this.activeEditor)?.getMissingFonts() ?? [],
-        getDocumentFontOptions: () => getActivePresentationEditor(this.activeEditor)?.getDocumentFontOptions() ?? [],
-        getDocumentFonts: () => [
-          // Deduped by logical family: the report can now carry multiple FACE rows per family.
-          ...new Set(
-            (getActivePresentationEditor(this.activeEditor)?.getFontReport() ?? []).map(
-              (record) => record.logicalFamily,
-            ),
-          ),
-        ],
+        getReport: () => getActiveFontRuntime(this.activeEditor)?.getReport() ?? [],
+        getMissingFonts: () => getActiveFontRuntime(this.activeEditor)?.getMissingFonts() ?? [],
+        getDocumentFontOptions: () => getActiveFontRuntime(this.activeEditor)?.getDocumentFontOptions() ?? [],
+        getFontFamilyOptions: () => getActiveFontRuntime(this.activeEditor)?.getFontFamilyOptions() ?? [],
+        getDocumentFonts: () => getActiveFontRuntime(this.activeEditor)?.getDocumentFonts() ?? [],
         onReport: (callback) => {
           // Snapshot-then-subscribe: the report may already have resolved (it fires during
           // load, before a consumer subscribes - and a document swap creates a fresh editor),
@@ -1665,33 +2481,34 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
           // replaying a stale prior-editor payload. Returns an unsubscribe.
           const activeEditor = this.activeEditor;
           const current = activeEditor
-            ? (getActivePresentationEditor(activeEditor)?.getLastFontsChangedPayload?.() ?? null)
+            ? (getActiveFontRuntime(activeEditor)?.getLastFontsChangedPayload?.() ?? null)
             : (this.#lastFontsChangedPayload ?? null);
           if (current) callback(current);
           this.on('fonts-changed', callback);
           return () => this.off('fonts-changed', callback);
         },
-        // Active-editor scoped like the read methods, but these are WRITES. Route through the
-        // document font controller; with no active editor, fail loudly rather than silently no-op.
+        // Active-editor scoped like the read methods, but these are WRITES. Route through the active
+        // font runtime (v1 document renderer or v2 host facet); with no active editor, fail loudly
+        // rather than silently no-op.
         map: (mappings) => {
-          const pe = getActivePresentationEditor(this.activeEditor);
-          if (!pe) throw new Error('superdoc.fonts.map requires an active editor');
-          pe.mapFonts(mappings);
+          const rt = getActiveFontRuntime(this.activeEditor);
+          if (!rt) throw new Error('superdoc.fonts.map requires an active editor');
+          rt.map(mappings);
         },
         unmap: (families) => {
-          const pe = getActivePresentationEditor(this.activeEditor);
-          if (!pe) throw new Error('superdoc.fonts.unmap requires an active editor');
-          pe.unmapFonts(families);
+          const rt = getActiveFontRuntime(this.activeEditor);
+          if (!rt) throw new Error('superdoc.fonts.unmap requires an active editor');
+          rt.unmap(families);
         },
         add: (families) => {
-          const pe = getActivePresentationEditor(this.activeEditor);
-          if (!pe) throw new Error('superdoc.fonts.add requires an active editor');
-          pe.addFonts(Array.isArray(families) ? families : [families]);
+          const rt = getActiveFontRuntime(this.activeEditor);
+          if (!rt) throw new Error('superdoc.fonts.add requires an active editor');
+          rt.add(families);
         },
         preload: (families) => {
-          const pe = getActivePresentationEditor(this.activeEditor);
-          if (!pe) throw new Error('superdoc.fonts.preload requires an active editor');
-          return pe.preloadFonts(families);
+          const rt = getActiveFontRuntime(this.activeEditor);
+          if (!rt) throw new Error('superdoc.fonts.preload requires an active editor');
+          return rt.preload(families);
         },
       };
     }
@@ -1699,40 +2516,66 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
-   * Clear the legacy `activeEditor` projection and detach the v1 toolbar. Used
-   * when active state clears and when an active runtime is unsupported for the
-   * v1 shell path (null or command-incapable projection).
+   * Clear the compatibility `activeEditor` projection and detach toolbar state.
    */
   #clearActiveEditorProjection() {
+    // One transition, one notification. `removeDocument()` reaches this twice
+    // for a single removal — once through the registry's synchronous
+    // `active-runtime-unregistered` bridge, then again from its own check
+    // against an `activeEditor` it captured before unregistering. Gating on
+    // real state change keeps that, and any future double-clear, to a single
+    // controller recompute instead of two rounds of observer updates.
+    const hadActiveEditor = this.activeEditor !== null;
+
+    this.#teardownV2FontsRelay();
     this.activeEditor = null;
     if (this.toolbar?.setActiveEditor) {
       this.toolbar.setActiveEditor(null as unknown as Editor);
     } else if (this.toolbar) {
       this.toolbar.activeEditor = null;
     }
+
+    // Emitted from the shared primitive rather than its callers: runtime
+    // unregistration and `removeDocument()` clear the projection directly,
+    // and `HOST_EVENTS` carries no other signal for those paths, so a
+    // caller-level emit would leave the controller reporting a document
+    // that is already gone.
+    if (hadActiveEditor) this.emit('active-editor-change');
   }
 
-  /**
-   * Apply a v1 legacy projection to `activeEditor` and rebind the v1 toolbar.
-   * This is the legacy assignment side effect, kept separate from the registry
-   * routing in `setActiveEditor(...)` so the registry bridge can apply a
-   * projection without re-entering activation.
-   *
-   * @param editor The v1 legacy editor projection.
-   */
-  #applyActiveEditorProjection(editor: V1ActiveEditor) {
-    this.activeEditor = editor;
-    if (this.toolbar) {
-      editor.toolbar = this.toolbar;
-      this.toolbar.setActiveEditor(editor);
+  /** Active v2 font facet `onChanged` unsubscribe, so a document swap never double-delivers. */
+  #v2FontsUnsub: (() => void) | null = null;
+
+  #teardownV2FontsRelay() {
+    if (this.#v2FontsUnsub) {
+      try {
+        this.#v2FontsUnsub();
+      } catch {
+        /* ignore */
+      }
+      this.#v2FontsUnsub = null;
     }
   }
 
   /**
-   * Reconcile the legacy `activeEditor` projection with a registry active-runtime
-   * change. SuperDoc owns the invariant that `activeEditor` is either the active
-   * runtime's supported v1 projection, or `null` when the active runtime has no
-   * supported legacy projection.
+   * Relay a v2 active editor's font report up to the SuperDoc surface. v2 has no `editor.on`; the
+   * host facet exposes `onChanged`, so subscribe to it (and replay its current payload once) so
+   * `superdoc.on('fonts-changed')` / `superdoc.fonts.onReport()` behave the same as v1.
+   */
+  #wireV2FontsRelay(facade: ActiveEditor | null) {
+    this.#teardownV2FontsRelay();
+    const runtime = getActiveFontRuntime(facade);
+    if (!runtime?.onChanged) return;
+    const current = runtime.getLastFontsChangedPayload?.();
+    if (current) this.#deliverFontsChanged(current);
+    this.#v2FontsUnsub = runtime.onChanged((payload) => this.#deliverFontsChanged(payload));
+  }
+
+  /**
+   * Reconcile the compatibility `activeEditor` projection with a registry
+   * active-runtime change. SuperDoc owns the invariant that `activeEditor` is
+   * either the active runtime's v2 facade, or `null` when the active runtime has
+   * no supported projection.
    *
    * @param nextRuntimeId The newly active runtime id, or `null` when cleared.
    * @param projection The next runtime's legacy projection, if any.
@@ -1745,11 +2588,11 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
         return;
       }
       const runtime = this.#editorRuntimeRegistry.get(nextRuntimeId);
-      if (runtime?.kind === 'v1' && isCommandCapableV1LegacyProjection(projection)) {
-        this.setActiveEditor(projection);
+      if (runtime?.kind === 'v2' && isV2ActiveEditorFacade(projection)) {
+        this.#setActiveEditorCompatibilityProjection(projection);
       } else {
-        // Fail closed: unsupported runtimes and command-incapable projections
-        // must not leave a stale v1 editor or toolbar bound.
+        // Fail closed: an unsupported projection must not leave a stale facade
+        // attached to the wrong runtime.
         this.#clearActiveEditorProjection();
       }
     } finally {
@@ -1758,69 +2601,215 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
-   * Resolve the registered v1 runtime id that owns a legacy editor, preferring
-   * projection identity and falling back to document id only when it maps to
-   * exactly one v1 runtime (never guess when more than one runtime shares a doc).
-   *
-   * @param editor The legacy editor to resolve a runtime for.
-   * @returns The owning runtime id, or `null` when none can be resolved.
+   * Centralized compatibility projection writer used by both the public entry
+   * point and the registry-driven activation bridge.
    */
-  #resolveRuntimeIdForEditor(editor: Editor | null): EditorRuntimeId | null {
-    if (!editor) return null;
-    for (const runtime of this.#editorRuntimeRegistry.getAll()) {
-      if (runtime.kind !== 'v1') continue;
-      if (runtime.getLegacyEditorProjection?.() === editor) return runtime.id;
+  #setActiveEditorCompatibilityProjection(editor: ActiveEditor | null) {
+    if (isV2ActiveEditorFacade(editor)) {
+      if (!this.#applyingRuntimeActiveChange && this.#editorRuntimeRegistry.getActive()) {
+        this.#editorRuntimeRegistry.setActive(null, 'set-active-v2-facade');
+      }
+      // One transition, one notification. `setDocumentMode('editing')` and
+      // `setDocumentMode('suggesting')` re-activate the first document's editor
+      // unconditionally, so this runs with an unchanged identity on an ordinary
+      // mode toggle. Consumers of the event release per-editor work, which for a
+      // redundant emit would mean discarding a live search session and rebinding
+      // every viewport observer for nothing.
+      const previous = this.activeEditor;
+      this.activeEditor = editor as unknown as Editor;
+      // Re-wired unconditionally: both are idempotent and only ever reattach to
+      // whatever is current, so they are safe on a repeat activation.
+      // Stream the v2 document's font report into the SuperDoc `fonts-changed` surface.
+      this.#wireV2FontsRelay(editor);
+      // Keep the built-in toolbar authority tracking the active editor so its
+      // projected command state refreshes when the active runtime changes.
+      this.toolbar?.setActiveEditor?.(editor);
+      if (previous !== this.activeEditor) this.emit('active-editor-change');
+      return;
     }
-    const documentId = editor.options?.documentId;
-    if (typeof documentId === 'string' && documentId.length > 0) {
-      const matches = this.#editorRuntimeRegistry
-        .getAllByDocumentId(documentId)
-        .filter((runtime) => runtime.kind === 'v1');
-      if (matches.length === 1) return matches[0].id;
-    }
-    return null;
+    // `#clearActiveEditorProjection()` emits `active-editor-change` itself,
+    // so every clear path is covered, not just this one.
+    this.#clearActiveEditorProjection();
   }
 
   /**
-   * Set the active editor (legacy entry point). When the editor maps to a
-   * registered runtime this routes through the registry so the active runtime
-   * and `activeEditor` cannot drift apart; the registry bridge then applies the
-   * projection. Direct legacy assignment is used only before runtime
-   * registration (startup) or when no owning runtime can be resolved.
+   * Set the active editor compatibility projection. Registered runtimes route
+   * through the registry so the active runtime and `activeEditor` cannot drift.
    *
    * @param editor The editor to set as active
    */
   setActiveEditor(editor: Editor | null): void {
-    if (!isCommandCapableV1LegacyProjection(editor)) {
-      this.#clearActiveEditorProjection();
-      return;
-    }
-    if (!this.#applyingRuntimeActiveChange) {
-      const runtimeId = this.#resolveRuntimeIdForEditor(editor);
-      if (runtimeId !== null) {
-        const wasAlreadyActive = this.#editorRuntimeRegistry.getActive()?.id === runtimeId;
-        // Activate the owning runtime; the registry bridge applies the
-        // projection (and rebinds the toolbar) for us.
-        this.#editorRuntimeRegistry.setActive(runtimeId, 'set-active-editor');
-        if (wasAlreadyActive) {
-          // `setActive` is idempotent and emits no bridge event when the runtime
-          // is already active. Re-apply the projection so legacy callers can
-          // rebind surfaces that were intentionally detached (for example,
-          // viewing mode keeps the active runtime but disables the toolbar).
-          // Always use the runtime's canonical projection; document-id fallback
-          // may have resolved from a same-document editor that is not the active
-          // runtime's legacy projection.
-          const projection = this.#editorRuntimeRegistry.get(runtimeId)?.getLegacyEditorProjection?.() ?? null;
-          if (isCommandCapableV1LegacyProjection(projection)) {
-            this.#applyActiveEditorProjection(projection);
-          } else {
-            this.#clearActiveEditorProjection();
-          }
-        }
-        return;
-      }
-    }
-    this.#applyActiveEditorProjection(editor);
+    this.#setActiveEditorCompatibilityProjection(editor);
+  }
+
+  getV2FeatureMatrix() {
+    return [
+      {
+        feature: 'source.docx-bytes',
+        status: 'supported',
+        reason:
+          'SuperDoc normalizes File/Blob/ArrayBuffer/Uint8Array DOCX inputs for the separate DOCX Engine dependency',
+      },
+      {
+        feature: 'source.url',
+        status: 'supported',
+        reason:
+          'shell-owned source normalization resolves URL-backed DOCX inputs before opening the injected v2 editor',
+      },
+      {
+        feature: 'source.blank',
+        status: 'supported',
+        reason: 'shell-owned blank-document seeding resolves to DOCX bytes before mounting the injected v2 editor',
+      },
+      {
+        feature: 'execution.browser-worker',
+        status: 'supported',
+        reason:
+          'the shipped public v2 shell opens DOCX documents through the browser-worker path by default when collaboration is not active',
+      },
+      {
+        feature: 'distribution.cdn-iife',
+        status: 'supported',
+        reason:
+          'the CDN/IIFE distribution ships the public bundle plus the emitted v2 browser-worker asset and opens DOCX documents through the worker-backed v2 runtime',
+      },
+      {
+        feature: 'docx.open-render',
+        status: 'supported',
+        reason: 'superdoc@2 opens and renders DOCX documents through its DOCX Engine dependency',
+      },
+      {
+        feature: 'docx.review-handles',
+        status: 'supported',
+        reason: 'Comment/tracked-change list + decide via v2 host handles',
+      },
+      {
+        feature: 'shell.toolbar',
+        status: 'supported',
+        reason:
+          'new SuperDoc({ toolbar }) mounts the rendered built-in toolbar shell and the superdoc.toolbar handle, both backed by the V2 command controller and the internal compatibility catalog. Explicit item-level limits stay fail-closed in the shared command matrix (for example search replace and copyFormat).',
+      },
+      {
+        feature: 'shell.rich-formatting',
+        status: 'supported',
+        reason:
+          'Rich inline, paragraph, and list formatting route through the V2 command controller and public Document API (format.* / styles.* / lists.*): bold, italic, underline, strikethrough, font family/size, text/highlight color, alignment, line spacing, linked styles, bullet/numbered lists, indent, and clear formatting.',
+      },
+      {
+        feature: 'shell.comments-sidebar',
+        status: 'supported',
+        reason:
+          'ui-phase3-002: v2 comments adapter routes create/reply/edit/resolve/delete through V2EditorHost.dispatch',
+      },
+      {
+        feature: 'shell.comments-sidebar.reopen',
+        status: 'supported',
+        reason:
+          'ui-phase3-002: v2 comments sidebar reopens resolved threads through the v2 comments adapter (activeEditor.doc.comments.patch({ status: "active" }))',
+      },
+      {
+        feature: 'shell.tracked-change-sidebar',
+        status: 'supported',
+        reason: 'SD-3722: v2 tracked-change adapter lists and decides exact body, header/footer-part, and note targets',
+      },
+      {
+        feature: 'shell.tracked-change-sidebar.bulk',
+        status: 'supported',
+        reason:
+          "SD-4039/SD-4040: the shipped v2 command posture exposes all-story Accept All and Reject All through the canonical doc.trackChanges.decide({ target: { kind: 'all' } }) mutation",
+      },
+      {
+        feature: 'shell.tracked-change-sidebar.non-body',
+        status: 'supported',
+        reason: 'SD-3722: public v2 shell hydrates and targets header/footer-part and note tracked changes',
+      },
+      {
+        feature: 'shell.comments-sidebar.persistence',
+        status: 'supported',
+        reason:
+          'ui-phase3-004: comment create/reply/edit/resolve/delete persist through SuperDoc.export() → re-mount via the v2 host save bridge',
+      },
+      {
+        feature: 'shell.tracked-change-sidebar.persistence',
+        status: 'supported',
+        reason:
+          'ui-phase3-004: tracked-change accept/reject persist through SuperDoc.export() → re-mount via the v2 host save bridge',
+      },
+      {
+        feature: 'shell.comments-sidebar.author-required',
+        status: 'supported',
+        reason:
+          'ui-phase3-004: v2 comments adapter surfaces commentCommandsReason=author-required from the host capability matrix; write controls disable and forced dispatch reports ok:false',
+      },
+      {
+        feature: 'shell.find-replace',
+        status: 'supported',
+        reason:
+          'Ctrl/Cmd+F opens the SuperDoc find/replace surface in v2; find/navigation/replace/replaceAll route through the single host search session (host.search) via ui.search, with replace failing closed in viewing/read-only mode',
+      },
+      {
+        feature: 'shell.ai-writer',
+        status: 'supported',
+        reason:
+          'built-in toolbar renders the modules.ai-gated AI writer and applies generated text through the public Document API facade',
+      },
+      {
+        feature: 'shell.collaboration',
+        status: 'supported',
+        reason:
+          'v2 single-doc y-websocket collaboration is wired through document.v2Collaboration, including collaboration-ready, awareness-update, and locked event bridges; arbitrary external { ydoc, provider } adapters remain unsupported',
+      },
+      {
+        feature: 'shell.context-menu',
+        status: 'supported',
+        reason:
+          'v2 renders the built-in right-click and slash context menu, forwards ui.contextMenu custom items, and honors ui.contextMenu: false for application-owned replacements',
+      },
+      {
+        feature: 'shell.page-metrics',
+        status: 'supported',
+        reason:
+          'ui-phase4-001: v2 page metrics snapshot ' +
+          '(editorVersion: 2, documentId, renderEpoch, layoutGeneration, zoom, pages[], capabilities) ' +
+          'available via superdoc.activeEditor.pageMetrics.{ getSnapshot, subscribe, setZoom, scrollToPage, ' +
+          'revealBodyTarget, pageIndexForBodyTarget }',
+      },
+      {
+        feature: 'shell.zoom',
+        status: 'supported',
+        reason:
+          'ui-phase4-001: SuperDoc.setZoom routes to V2EditorHost.setZoom in v2 mode; ' +
+          'single CSS-transform wrapper applies scale to the painted document, page metrics ' +
+          'viewport coords scale with the same zoom value',
+      },
+      {
+        feature: 'shell.ruler-page-margins',
+        status: 'supported',
+        reason:
+          'ui-phase4-002: v2 ruler renders against the V2PageMetricsSnapshot and dispatches margin drags through ' +
+          'a narrow v2 page-layout bridge (`activeEditor.pageLayout.setMargins(...)`) backed by ' +
+          '`doc.sections.setPageMargins(...)`. The v2 page metrics snapshot now reports ' +
+          '`capabilities.marginEdit = { supported: true }`',
+      },
+      {
+        feature: 'shell.custom-extensions',
+        status: 'supported',
+        reason:
+          'superdoc@2 supports customer extensions through `extensions` + `defineSuperDocExtension`; ' +
+          'command execution and diagnostics are exposed through the narrow `activeEditor.extensions` facet. ' +
+          'Legacy ProseMirror `editorExtensions` are ignored in v2.',
+      },
+      { feature: 'pdf.viewer', status: 'supported', reason: 'editorVersion ignored for PDF documents' },
+      { feature: 'html.viewer', status: 'supported', reason: 'editorVersion ignored for HTML documents' },
+    ];
+  }
+
+  get v2() {
+    if (this.editorVersion !== 2) return null;
+    return {
+      version: 2,
+      featureMatrix: this.getV2FeatureMatrix(),
+    };
   }
 
   /**
@@ -1891,7 +2880,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
-   * Toggle the ruler visibility for SuperEditors
+   * Toggle the ruler visibility for document editors.
    *
    */
   toggleRuler() {
@@ -1903,6 +2892,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       // In Pinia store, refs are auto-unwrapped, so rulers is a plain boolean
       doc.rulers = this.config.rulers;
     });
+    this.toolbar?.updateToolbarState?.();
   }
 
   /**
@@ -1948,64 +2938,65 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   #addToolbar() {
-    const moduleConfig = this.config.modules?.toolbar || {};
-    this.toolbarElement = this.config.modules?.toolbar?.selector || this.config.toolbar;
-    this.toolbar = null;
+    const toolbarModuleConfig = this.config.modules?.toolbar;
+    const toolbarModule = toolbarModuleConfig && typeof toolbarModuleConfig === 'object' ? toolbarModuleConfig : {};
+    const toolbarUi = this.#uiConfig.toolbar;
+    this.toolbarElement = toolbarUi.container ?? undefined;
 
-    // Build excludeItems list - hide ruler button if rulers not configured or in web layout
-    const excludeItems = [...(moduleConfig.excludeItems || [])];
-    if (!this.config.rulers || this.config.viewOptions?.layout === 'web') {
-      excludeItems.push('ruler');
+    // A toolbar is requested when the resolved profile says the surface is on
+    // AND the consumer named it somewhere: a container, `modules.toolbar`, or
+    // a `ui.toolbar` entry. `ui.toolbar` alone stays enabled-by-default, so
+    // asking the profile on its own would create a handle for every instance.
+    const uiBlock = this.config.ui;
+    const namedInUiBlock = typeof uiBlock === 'object' && uiBlock !== null && uiBlock.toolbar !== undefined;
+    const toolbarRequested =
+      toolbarUi.enabled &&
+      (Boolean(toolbarUi.container) ||
+        toolbarModuleConfig === true ||
+        (toolbarModuleConfig != null && typeof toolbarModuleConfig === 'object') ||
+        namedInUiBlock);
+    if (!toolbarRequested) {
+      this.toolbar = null;
+      return;
     }
 
-    const config = {
-      selector: this.toolbarElement || null,
-      isDev: this.isDev || false,
-      // `Config.toolbarGroups` is the ordered list of group ids
-      // (`['left', 'center', 'right']`). `modules.toolbar.groups` is the
-      // separate `Record<string, string[]>` mapping group ids to item
-      // ids and flows through the `...moduleConfig` spread below.
-      // The earlier `groups || toolbarGroups` shorthand conflated the
-      // two shapes and silently widened the toolbar's group-ordering
-      // input to a record at runtime.
-      toolbarGroups: this.config.toolbarGroups,
-      role: this.config.role,
-      icons: this.config.modules?.toolbar?.icons || this.config.toolbarIcons,
-      texts: this.config.modules?.toolbar?.texts || this.config.toolbarTexts,
-      fonts: this.config.modules?.toolbar?.fonts || null,
-      hideButtons: this.config.modules?.toolbar?.hideButtons ?? true,
-      responsiveToContainer: this.config.modules?.toolbar?.responsiveToContainer ?? false,
-      documentMode: this.config.documentMode,
-      superdoc: this,
-      aiApiKey: this.config.modules?.ai?.apiKey,
-      aiEndpoint: this.config.modules?.ai?.endpoint,
-      uiDisplayFallbackFont: this.config.uiDisplayFallbackFont,
-      ...moduleConfig,
-      excludeItems, // Override moduleConfig.excludeItems with our computed list
-    };
-
-    this.toolbar = new SuperToolbar(config);
-
-    // Toolbar bridge: forwards SuperToolbar's exception events into the
-    // user's Config.onException callback. SuperToolbar's event types are
-    // not aligned with SuperDocEventMap, so this is intentionally a
-    // local cast rather than going through the typed `#onConfig` helper.
-    // Truthy guard mirrors `#onConfig`: skip absent callbacks (consumer
-    // passes `{ onException: undefined }` explicitly), but pass through
-    // truthy non-function values so eventemitter3 throws loudly at
-    // registration time.
-    if (this.config.onException) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.toolbar.on('exception', this.config.onException as any);
+    // V2 toolbar parity (phase 3): mount the real rendered built-in toolbar
+    // shell. It renders the legacy built-in toolbar DOM (preserving item names
+    // and `data-item="btn-*"` selectors) and exposes the documented
+    // `superdoc.toolbar` handle (`getToolbarItemByName`,
+    // `getToolbarItemByGroup`, `updateToolbarState`, `destroy`, `on`/`off`).
+    //
+    // The shell does not own command truth, nor the controller: it subscribes
+    // to `this.ui` for every command's enable/active/value state and routes
+    // every execution through it, mapping legacy item names onto canonical V2
+    // command ids through the one compatibility catalog. `superdoc.toolbar.ui`
+    // is an alias of `superdoc.ui`, not a second controller.
+    //
+    // Construction is defensive: a toolbar failure must never regress document
+    // mount, so the handle falls back to `null` rather than throwing out of
+    // `#init`.
+    try {
+      this.toolbar = createBuiltInToolbar({
+        ...toolbarModule,
+        ...toolbarUi.options,
+        selector: this.toolbarElement,
+        superdoc: this,
+        editor: this.activeEditor,
+        role: this.config.role,
+        isDev: this.isDev,
+        documentMode: this.config.documentMode,
+        // Composition and ordering are separate settings with separate shapes.
+        // Feeding one normalized field to both is what emptied the toolbar.
+        groups: toolbarUi.options.groups,
+        toolbarGroups: toolbarUi.options.toolbarGroups,
+        icons: toolbarUi.options.icons,
+        texts: toolbarUi.options.texts,
+        uiDisplayFallbackFont: this.config.uiDisplayFallbackFont,
+      }) as unknown as ToolbarLike;
+    } catch (error) {
+      console.warn('[SuperDoc] built-in toolbar mount failed', error);
+      this.toolbar = null;
     }
-    // `this.toolbar` infers as `SuperToolbar | null` from the field's
-    // first assignment in `#addToolbar` (the `null` placeholder a few
-    // lines up). The closure registers after the SuperToolbar instance
-    // is in place and reads `this.toolbar` at emission time, so under
-    // normal flow it will see the live instance; the optional chain
-    // is here to satisfy TS's typedef and to no-op if a future
-    // `destroy()` ever clears the field.
-    this.once('editorCreate', () => this.toolbar?.updateToolbarState());
   }
 
   /**
@@ -2015,9 +3006,11 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    */
   addCommentsList(element: HTMLElement) {
     if (!this.config?.modules?.comments || this.config.role === 'viewer') return;
+    this.commentsList?.close();
     if (element) this.config.modules.comments.element = element;
     this.commentsList = new SuperComments(this.config.modules?.comments, this);
     if (this.config.onCommentsListChange) this.config.onCommentsListChange({ isRendered: true });
+    this.emit('comments-list-change', { isRendered: true });
   }
 
   /**
@@ -2028,6 +3021,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       this.commentsList.close();
       this.commentsList = null;
       if (this.config.onCommentsListChange) this.config.onCommentsListChange({ isRendered: false });
+      this.emit('comments-list-change', { isRendered: false });
     }
   }
 
@@ -2068,9 +3062,9 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   async navigateTo(target: NavigableAddress): Promise<boolean> {
     const storeDocs = this.superdocStore?.documents;
     if (!storeDocs?.length) return false;
-    const presentationEditor = storeDocs[0].getPresentationEditor?.();
-    if (!presentationEditor?.navigateTo) return false;
-    return presentationEditor.navigateTo(target);
+    const documentRuntime = storeDocs[0].getDocumentRuntime?.();
+    if (!documentRuntime?.navigateTo) return false;
+    return documentRuntime.navigateTo(target);
   }
 
   /**
@@ -2093,24 +3087,29 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   async scrollToElement(elementId: string): Promise<boolean> {
     const storeDocs = this.superdocStore?.documents;
     if (!storeDocs?.length) return false;
-    const presentationEditor = storeDocs[0].getPresentationEditor?.();
-    if (!presentationEditor?.scrollToElement) return false;
-    return presentationEditor.scrollToElement(elementId);
+    const documentRuntime = storeDocs[0].getDocumentRuntime?.();
+    if (!documentRuntime?.scrollToElement) return false;
+    return documentRuntime.scrollToElement(elementId);
   }
 
   /**
    * Toggle the custom context menu globally.
-   * Updates both flow editors and PresentationEditor instances so downstream listeners can short-circuit early.
+   * Updates both flow editors and DocumentRendererRuntime instances so downstream listeners can short-circuit early.
    */
   setDisableContextMenu(disabled = true) {
+    // The profile is a veto, not a starting point: under `ui: false` or
+    // `ui.contextMenu: false` the consumer forbade the surface, so re-enabling
+    // it at runtime would push `false` past a decision they already made. The
+    // suppressing direction stays available either way.
+    if (!disabled && this.#uiConfig.contextMenu.suppressed) return;
     const nextValue = Boolean(disabled);
     if (this.config.disableContextMenu === nextValue) return;
     this.config.disableContextMenu = nextValue;
 
     this.superdocStore?.documents?.forEach((doc: RuntimeDocument) => {
-      const presentationEditor = doc.getPresentationEditor?.();
-      if (presentationEditor?.setContextMenuDisabled) {
-        presentationEditor.setContextMenuDisabled(nextValue);
+      const documentRuntime = doc.getDocumentRuntime?.();
+      if (documentRuntime?.setContextMenuDisabled) {
+        documentRuntime.setContextMenuDisabled(nextValue);
       }
       const editor = doc.getEditor?.();
       if (editor?.setOptions) {
@@ -2131,8 +3130,8 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     layoutOptions.showBookmarks = nextValue;
 
     this.superdocStore?.documents?.forEach((doc: RuntimeDocument) => {
-      const presentationEditor = doc.getPresentationEditor?.();
-      presentationEditor?.setShowBookmarks?.(nextValue);
+      const documentRuntime = doc.getDocumentRuntime?.();
+      documentRuntime?.setShowBookmarks?.(nextValue);
     });
   }
 
@@ -2147,8 +3146,8 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     layoutOptions.showFormattingMarks = nextValue;
 
     this.superdocStore?.documents?.forEach((doc: RuntimeDocument) => {
-      const presentationEditor = doc.getPresentationEditor?.();
-      presentationEditor?.setShowFormattingMarks?.(nextValue);
+      const documentRuntime = doc.getDocumentRuntime?.();
+      documentRuntime?.setShowFormattingMarks?.(nextValue);
     });
 
     this.emit('formatting-marks-change', { showFormattingMarks: nextValue, superdoc: this });
@@ -2191,47 +3190,38 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
-   * Set the document mode on a document's editor (PresentationEditor or Editor).
-   * Tries PresentationEditor first, falls back to Editor for backward compatibility.
+   * Set the document mode on a document's editor (DocumentRendererRuntime or Editor).
+   * Tries DocumentRendererRuntime first, falls back to Editor for backward compatibility.
    * @param doc - The document object
    * @param mode - The document mode ('editing', 'viewing', 'suggesting')
    */
   #applyDocumentMode(doc: RuntimeDocument, mode: DocumentMode) {
     const documentId = typeof doc.id === 'string' && doc.id.length > 0 ? doc.id : null;
-    const presentationEditor = typeof doc.getPresentationEditor === 'function' ? doc.getPresentationEditor() : null;
-    let appliedToRuntime = false;
     if (documentId) {
       const runtimes = this.#editorRuntimeRegistry.getAllByDocumentId(documentId);
       if (runtimes.length > 0) {
         for (const runtime of runtimes) {
           runtime.setDocumentMode(mode);
         }
-        appliedToRuntime = true;
+        return;
       }
     }
 
-    if (presentationEditor) {
-      if (!appliedToRuntime || mode !== 'viewing' || this.#isPresentationModeClassStale(presentationEditor, mode)) {
-        presentationEditor.setDocumentMode(mode);
-      }
+    const documentRuntime = typeof doc.getDocumentRuntime === 'function' ? doc.getDocumentRuntime() : null;
+    if (typeof documentRuntime?.setDocumentMode === 'function') {
+      documentRuntime.setDocumentMode(mode);
       return;
     }
-    if (appliedToRuntime) return;
-
     const editor = typeof doc.getEditor === 'function' ? doc.getEditor() : null;
-    if (editor) {
+    // v2 facades omit setDocumentMode (mode changes ride the runtime registry
+    // above), so this legacy fallback only fires for editors that carry it.
+    if (editor && typeof editor.setDocumentMode === 'function') {
       editor.setDocumentMode(mode);
     }
   }
 
-  #isPresentationModeClassStale(presentationEditor: PresentationEditor, mode: DocumentMode): boolean {
-    const classList = presentationEditor.element?.classList;
-    if (!classList || typeof classList.contains !== 'function') return false;
-    return classList.contains('presentation-editor--viewing') !== (mode === 'viewing');
-  }
-
   /**
-   * Force PresentationEditor instances to render a specific tracked-changes mode
+   * Force DocumentRendererRuntime instances to render a specific tracked-changes mode
    * or disable tracked-change metadata entirely.
    *
    * @param [preferences]
@@ -2243,9 +3233,9 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     }
     this.config.layoutEngineOptions.trackedChanges = normalized;
     this.superdocStore?.documents?.forEach((doc: RuntimeDocument) => {
-      const presentationEditor = typeof doc.getPresentationEditor === 'function' ? doc.getPresentationEditor() : null;
-      if (presentationEditor?.setTrackedChangesOverrides) {
-        presentationEditor.setTrackedChangesOverrides(normalized);
+      const documentRuntime = typeof doc.getDocumentRuntime === 'function' ? doc.getDocumentRuntime() : null;
+      if (documentRuntime?.setTrackedChangesOverrides) {
+        documentRuntime.setTrackedChangesOverrides(normalized);
       }
     });
   }
@@ -2290,9 +3280,9 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     // mutates `config.layoutEngineOptions.trackedChanges`.
     const store = this.#requireSuperdocStore('setDocumentMode');
 
-    // `this.toolbar` infers as `SuperToolbar | null` from the field's
+    // `this.toolbar` infers as a concrete toolbar type from the field's
     // first assignment in `#addToolbar` (the `null` placeholder before
-    // the SuperToolbar is constructed). `#addToolbar` runs once during
+    // the toolbar is constructed). `#addToolbar` runs once during
     // init and unconditionally installs the instance, so by the time
     // mode changes are reachable the toolbar is non-null. The guard
     // keeps TS satisfied and stays a no-op if a future destroy/teardown
@@ -2341,9 +3331,9 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     const docs = this.superdocStore?.documents;
     if (Array.isArray(docs) && docs.length > 0) {
       docs.forEach((doc) => {
-        const presentationEditor = typeof doc.getPresentationEditor === 'function' ? doc.getPresentationEditor() : null;
-        if (presentationEditor?.setViewingCommentOptions) {
-          presentationEditor.setViewingCommentOptions({
+        const documentRuntime = typeof doc.getDocumentRuntime === 'function' ? doc.getDocumentRuntime() : null;
+        if (documentRuntime?.setViewingCommentOptions) {
+          documentRuntime.setViewingCommentOptions({
             emitCommentPositionsInViewing: isViewingMode && shouldRenderCommentsInViewing,
             enableCommentsInViewing: isViewingMode && commentsVisible,
           });
@@ -2360,7 +3350,8 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    *
    * @param text The text or regex to search for
    * @returns The search results, or `undefined` when there is no active editor
-   *   or the active projection exposes no `search` command.
+   *   or the active legacy projection exposes no `search` command (e.g. a
+   *   v2-shaped runtime with `commands: null`).
    */
   search(text: string | RegExp): SearchMatch[] | undefined {
     const commands = this.activeEditor?.commands;
@@ -2378,14 +3369,15 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    *
    * @param match The match object returned by `superdoc.search()`.
    * @returns Whether the command dispatched, or `undefined` when there is no
-   *   active editor or the active projection exposes no `goToSearchResult`
-   *   command.
+   *   active editor or the active legacy projection exposes no
+   *   `goToSearchResult` command (e.g. a v2-shaped runtime with `commands:
+   *   null`).
    */
-  goToSearchResult(match: SearchMatch) {
+  goToSearchResult(match: SearchMatch): boolean | undefined {
     const commands = this.activeEditor?.commands;
     const goToSearchResult = commands?.goToSearchResult;
     if (typeof goToSearchResult !== 'function') return undefined;
-    return goToSearchResult.call(commands, match);
+    return Boolean(goToSearchResult.call(commands, match));
   }
 
   /**
@@ -2423,7 +3415,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     }
 
     // Update store — SuperDoc.vue's activeZoom watcher propagates the zoom
-    // to all PresentationEditor instances via PresentationEditor.setGlobalZoom().
+    // to all DocumentRendererRuntime instances via DocumentRendererRuntime.setGlobalZoom().
     this.superdocStore.activeZoom = percent;
     this.superdocStore.zoomMode = 'manual';
 
@@ -2497,21 +3489,75 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
+   * Get the current measurement unit for rulers and measurement fields
+   * (`'in'` or `'cm'`). Defaults to `'in'` before initialization.
+   * @returns The current measurement unit
+   * @example
+   * const unit = superdoc.getMeasurementUnit(); // 'in' | 'cm'
+   */
+  getMeasurementUnit(): SuperDocMeasurementUnit {
+    return this.superdocStore?.measurementUnit ?? 'in';
+  }
+
+  /**
+   * Set the document-wide measurement unit for rulers and measurement fields
+   * (Word's "measurement units" preference). Updates the centralized state,
+   * which propagates to the ruler and header/footer measurement fields via the
+   * Vue watcher in `SuperDoc.vue`.
+   * @param unit - `'in'` for inches or `'cm'` for centimetres
+   * @example
+   * superdoc.setMeasurementUnit('cm'); // ruler + measurement fields switch to cm
+   */
+  setMeasurementUnit(unit: SuperDocMeasurementUnit): void {
+    if (unit !== 'in' && unit !== 'cm') {
+      console.warn("[SuperDoc] setMeasurementUnit expects 'in' or 'cm'");
+      return;
+    }
+    // Before async init attaches the store there is nothing to write. Use
+    // config.measurementUnit for the starting unit instead.
+    if (!this.superdocStore) {
+      console.warn(
+        '[SuperDoc] setMeasurementUnit called before initialization; use config.measurementUnit for the starting unit',
+      );
+      return;
+    }
+    if (this.superdocStore.measurementUnit === unit) return;
+    this.superdocStore.measurementUnit = unit;
+    // Notify UI subscribers (toolbar / custom-UI command state) so a
+    // programmatic change reflects immediately, mirroring setZoom's
+    // 'zoomChange' emit rather than waiting for an unrelated event.
+    this.emit('measurement-unit-change', { unit });
+  }
+
+  /**
    * Set the document to locked or unlocked
    */
   setLocked(lock = true): void {
+    const activeEditor = this.activeEditor as ActiveEditor | null;
+    if (isV2ActiveEditorFacade(activeEditor) && typeof activeEditor.lock?.setLocked === 'function') {
+      activeEditor.lock.setLocked(lock, lock ? { ...this.user } : null);
+      const snapshot = activeEditor.lock.getSnapshot?.();
+      if (snapshot) {
+        this.#applyLockState(Boolean(snapshot.isLocked), this.#normalizeLockedBy(snapshot.lockedBy ?? null));
+      }
+      return;
+    }
+
     this.config.documents.forEach((doc: RuntimeDocument) => {
       // setLocked is a collaboration-only API; the surrounding flow only
       // calls it once each document has a Yjs doc attached. Cast away the
       // optional shape on the public Document typedef without changing
       // runtime behavior.
-      const ydoc = doc.ydoc as Y.Doc;
+      const ydoc = doc.ydoc as Y.Doc | undefined;
+      if (!ydoc) return;
       const metaMap = ydoc.getMap('meta');
       ydoc.transact(() => {
         metaMap.set('locked', lock);
-        metaMap.set('lockedBy', this.user);
+        if (lock) metaMap.set('lockedBy', this.user);
+        else metaMap.delete('lockedBy');
       });
     });
+    this.#applyLockState(lock, lock ? this.user : null);
   }
 
   /**
@@ -2538,10 +3584,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    *   when unlocking (or when no user is known). Defaults to `null`.
    */
   lockSuperdoc(isLocked: boolean = false, lockedBy: User | null = null): void {
-    this.isLocked = isLocked;
-    this.lockedBy = lockedBy;
-    this.#log('🦋 [superdoc] Locking superdoc:', isLocked, lockedBy, '\n\n\n');
-    this.emit('locked', { isLocked, lockedBy });
+    this.#applyLockState(isLocked, lockedBy);
   }
 
   /**
@@ -2595,6 +3638,59 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
+   * Replace the active document with a new file while preserving the mounted
+   * editor instance when the active runtime supports it.
+   *
+   * V2 collaboration routes this through the host-owned replace-file command so
+   * the room can be atomically cleared and reseeded instead of tearing down the
+   * SuperDoc instance and racing an empty Y.Doc against imported DOCX bytes.
+   */
+  async replaceFile(source: File | Blob | ArrayBuffer | Uint8Array): Promise<unknown> {
+    const activeEditor = this.activeEditor as ActiveEditor | null;
+    if (isV2ActiveEditorFacade(activeEditor) && typeof activeEditor.replaceFile === 'function') {
+      const result = await activeEditor.replaceFile(source);
+      const state = result && typeof result === 'object' ? (result as { state?: unknown }).state : null;
+      if (state === null || state === 'review-ready' || state === 'editing-ready') {
+        this.#replaceActiveDocumentData(activeEditor, source);
+        this.emit('document-replaced', { editor: activeEditor, host: (activeEditor as { host?: unknown })?.host });
+      }
+      return result;
+    }
+
+    const legacyReplaceFile =
+      activeEditor && !isV2ActiveEditorFacade(activeEditor)
+        ? (activeEditor as { replaceFile?: (source: File | Blob | ArrayBuffer | Uint8Array) => Promise<unknown> })
+            .replaceFile
+        : null;
+    if (typeof legacyReplaceFile === 'function') {
+      const result = await legacyReplaceFile.call(activeEditor, source);
+      // Same confirmation gate as the v2 branch, and covering the same two
+      // effects. A legacy adapter that reports a non-ready state without
+      // throwing should neither have its bytes persisted into config and the
+      // store nor trigger a UI reset — v2 has always gated both together, and
+      // gating only the emit here would ship a half-applied rule that reads as
+      // if the data write were covered too.
+      //
+      // A result carrying no `state` counts as confirmed, which is what every
+      // adapter predating that field returns, so existing legacy behaviour is
+      // unchanged for them.
+      const legacyState = result && typeof result === 'object' ? (result as { state?: unknown }).state : undefined;
+      const legacyConfirmed =
+        legacyState === undefined ||
+        legacyState === null ||
+        legacyState === 'review-ready' ||
+        legacyState === 'editing-ready';
+      if (legacyConfirmed) {
+        this.#replaceActiveDocumentData(activeEditor, source);
+        this.emit('document-replaced', { editor: activeEditor, host: (activeEditor as { host?: unknown })?.host });
+      }
+      return result;
+    }
+
+    throw new Error('SuperDoc: replaceFile is unavailable for the active editor');
+  }
+
+  /**
    * Export editors to DOCX format.
    * @param [options]
    */
@@ -2631,23 +3727,41 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     //    `converter.comments` (which the legacy delete path doesn't
     //    clear today; tracked separately under SD-2839). Pass
     //    whatever the store returns, including `[]`.
-    let comments: unknown[] | undefined;
+    // v1 and v2 own comment export differently:
+    //
+    //  - v1/legacy editors keep the legacy `comments` payload built from the
+    //    sidebar store (`translateCommentsForExport()`), which can instantiate
+    //    the disabled v1 `Editor` shim. That payload is computed LAZILY and
+    //    only for v1 editors so a pure-v2 export never touches it.
+    //  - v2 editors own comment export inside the v2 session serializer. They
+    //    receive `commentsType` directly and never get a legacy `comments`
+    //    payload (`comments-spec.md` §14; the plan's Workstream 2). Passing the
+    //    legacy array would route v2 comments through the disabled v1 path.
     const commentsModuleConfig = this.config?.modules?.comments;
     const uiStoreHydrated = commentsModuleConfig !== false;
-    if (commentsType === 'clean') {
-      comments = [];
-    } else if (
-      uiStoreHydrated &&
-      this.commentsStore &&
-      typeof this.commentsStore.translateCommentsForExport === 'function'
-    ) {
-      // UI store is the source of truth; trust whatever it says,
-      // including an authoritative-empty array.
-      comments = this.commentsStore.translateCommentsForExport();
-      if (!Array.isArray(comments)) comments = [];
-    }
-    // else: UI store unhydrated → leave `comments` undefined and
-    // let the engine's `converter.comments` fallback fire.
+    let legacyComments: unknown[] | undefined;
+    let legacyCommentsComputed = false;
+    const getLegacyCommentsForV1 = (): unknown[] | undefined => {
+      if (legacyCommentsComputed) return legacyComments;
+      legacyCommentsComputed = true;
+      if (commentsType === 'clean') {
+        // Clean export: strip everything. `[]` is authoritative-empty for the
+        // v1 engine fallback (`comments ?? converter.comments ?? []`).
+        legacyComments = [];
+      } else if (
+        uiStoreHydrated &&
+        this.commentsStore &&
+        typeof this.commentsStore.translateCommentsForExport === 'function'
+      ) {
+        // UI store is the source of truth; trust whatever it says,
+        // including an authoritative-empty array.
+        legacyComments = this.commentsStore.translateCommentsForExport();
+        if (!Array.isArray(legacyComments)) legacyComments = [];
+      }
+      // else: UI store unhydrated → leave undefined and let the engine's
+      // `converter.comments` fallback fire.
+      return legacyComments;
+    };
 
     const bridgedExportErrors = new WeakSet<object>();
     const rememberBridgedExportError = (payload: SuperDocExceptionPayload) => {
@@ -2669,19 +3783,33 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
             return doc.data;
           };
 
-          if (!editor) return fallbackDocx();
+          if (!editor || typeof editor.exportDocx !== 'function') return fallbackDocx();
 
+          const isV2Editor = editor.editorVersion === 2;
           try {
-            const exported = await editor.exportDocx({
-              isFinalDoc,
-              comments: comments as import('@superdoc/super-editor').Comment[] | undefined,
-              commentsType,
-              fieldsHighlightColor,
-            });
+            const exported = await editor.exportDocx(
+              isV2Editor
+                ? {
+                    // v2 export authority is the v2 session serializer. No
+                    // legacy `comments` payload — `commentsType` is the policy.
+                    isFinalDoc,
+                    commentsType,
+                    fieldsHighlightColor,
+                  }
+                : {
+                    isFinalDoc,
+                    comments: getLegacyCommentsForV1() as Comment[] | undefined,
+                    commentsType,
+                    fieldsHighlightColor,
+                  },
+            );
             if (exported) return exported;
           } catch (error) {
             if (!error || typeof error !== 'object' || !bridgedExportErrors.has(error)) {
               this.emit('exception', { error, document: doc });
+            }
+            if (isV2Editor && (commentsType === 'clean' || isV2FailClosedExportError(error))) {
+              throw error;
             }
           }
 
@@ -2746,9 +3874,37 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
+   * Clean up collaboration resources owned only by a removed document.
+   *
+   * Shared instance-level providers/ydocs stay alive; `destroy()` remains the
+   * one place that tears down shell-wide collaboration state.
+   */
+  #cleanupRemovedDocumentCollaboration(
+    removedDocument: RuntimeDocument,
+    remainingDocuments: readonly RuntimeDocument[],
+  ) {
+    const removedProvider = removedDocument.provider;
+    if (
+      removedProvider &&
+      removedProvider !== this.provider &&
+      !remainingDocuments.some((doc) => doc.provider === removedProvider)
+    ) {
+      removedProvider.disconnect?.();
+      removedProvider.destroy?.();
+    }
+
+    const removedYDoc = removedDocument.ydoc;
+    if (removedYDoc && removedYDoc !== this.ydoc && !remainingDocuments.some((doc) => doc.ydoc === removedYDoc)) {
+      removedYDoc.destroy?.();
+    }
+  }
+
+  /**
    * Clean up collaboration resources (providers, ydocs, sockets)
    */
   #cleanupCollaboration() {
+    this.#pendingV2LockSeed = null;
+    this.#stopV2CollaborationEventBridge();
     // Remove the awareness listener so the provider cannot emit events
     // into a destroyed SuperDoc instance.
     if (typeof this._cleanupAwareness === 'function') {
@@ -2797,11 +3953,50 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
+   * Remove one mounted document from the shell by document id.
+   *
+   * Clears any registered runtimes for that document without silently
+   * promoting another runtime, prunes shell-owned comment state for the
+   * document, and resolves after Vue flushes the unmount so DOM-based callers
+   * can observe the root disappearing.
+   *
+   * @param documentId The document id to remove.
+   * @returns `true` when a document was removed, `false` when none matched.
+   */
+  async removeDocument(documentId: string): Promise<boolean> {
+    const normalizedDocumentId = typeof documentId === 'string' ? documentId : String(documentId ?? '');
+    if (!normalizedDocumentId) return false;
+
+    const store = this.#requireSuperdocStore('removeDocument');
+    const activeEditor = this.activeEditor as ActiveEditor | null;
+    const activeDocumentId = getActiveEditorDocumentId(activeEditor);
+
+    for (const runtime of this.#editorRuntimeRegistry.getAllByDocumentId(normalizedDocumentId)) {
+      this.#editorRuntimeRegistry.unregister(runtime.id);
+    }
+
+    if (activeDocumentId === normalizedDocumentId && activeEditor !== null) {
+      this.#clearActiveEditorProjection();
+    }
+
+    const removedDocument = store.removeDocument(normalizedDocumentId);
+    if (!removedDocument) return false;
+
+    this.#cleanupRemovedDocumentCollaboration(removedDocument, store.documents);
+
+    await nextTick();
+    return true;
+  }
+
+  /**
    * Destroy the superdoc instance
    */
   destroy() {
     // Mark as destroyed early to prevent in-flight init from mounting
     this.#destroyed = true;
+
+    this.#contentControlClickRoot?.removeEventListener('click', this.#handleContentControlClick, true);
+    this.#contentControlClickRoot = null;
 
     // Abort any in-flight upgrade (sync wait or ready wait) so it settles
     // immediately instead of hanging for the full timeout duration.
@@ -2815,7 +4010,9 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       this.#surfaceManager.destroy();
     }
 
-    this.toolbar?.destroy();
+    this.toolbar?.destroy?.();
+    this.commentsList?.close();
+    this.commentsList = null;
 
     // Unmount the app FIRST so editors are destroyed — this triggers each
     // extension's onDestroy() which cancels debounced Y.js writes and
@@ -2830,6 +4027,13 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       delete this.app.config.globalProperties.$config;
       delete this.app.config.globalProperties.$superdoc;
     }
+
+    // SuperDoc owns the UI controller, so it is the only place that destroys
+    // it. This runs after the Vue unmount because the shell's teardown still
+    // reads the controller. The reference is kept so a later `ui` read
+    // returns the same (inert) object rather than building a new one, and the
+    // controller's own destroy() is idempotent.
+    this.#ui?.destroy();
 
     this.#cleanupCollaboration();
 
@@ -2847,21 +4051,29 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   /**
    * Focus the active editor or the first editor in the superdoc
    */
-  focus() {
+  focus(options: EditorRuntimeFocusOptions = {}) {
     const runtime = this.getActiveRuntime();
     if (runtime?.getCapabilities().lifecycle.canFocus) {
-      void runtime.focus().catch((err) => {
+      void runtime.focus(options).catch((err) => {
         console.warn('[SuperDoc] active editor runtime focus failed', err);
       });
       return;
     }
     if (this.activeEditor) {
-      this.activeEditor.focus?.();
+      if (isV2ActiveEditorFacade(this.activeEditor)) {
+        this.activeEditor.focus?.(options);
+      } else {
+        this.activeEditor.focus?.();
+      }
     } else {
       this.#requireSuperdocStore('focus').documents.find((doc: RuntimeDocument) => {
         const editor = doc.getEditor?.();
         if (!editor) return false;
-        editor.focus?.();
+        if (isV2ActiveEditorFacade(editor)) {
+          editor.focus?.(options);
+        } else {
+          editor.focus?.();
+        }
         return true;
       });
     }

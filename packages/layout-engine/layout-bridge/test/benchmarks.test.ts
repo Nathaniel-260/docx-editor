@@ -2,7 +2,7 @@
  * Tests for TypingPerfBenchmark
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { TypingPerfBenchmark } from './benchmarks';
 
 describe('TypingPerfBenchmark', () => {

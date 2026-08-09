@@ -13,7 +13,7 @@
  * @module section-breaks-edge-cases.test
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import {
   createPMDocWithSections,
   createPMParagraph,

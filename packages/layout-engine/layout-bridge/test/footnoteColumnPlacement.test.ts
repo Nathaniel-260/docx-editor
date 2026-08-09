@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure, TableBlock, TableMeasure } from '@superdoc/contracts';
 import { incrementalLayout } from '../src/incrementalLayout';
 
@@ -167,5 +167,73 @@ describe('Footnotes in columns', () => {
     expect(tableFragment && 'columnIndex' in tableFragment ? tableFragment.columnIndex : undefined).toBe(1);
     expect(tableFragment?.x).toBeLessThan(columnTwoX);
     expect(footnoteFragment?.x).toBeCloseTo(columnTwoX, 2);
+  });
+
+  it('tags a list-item footnote body with the flow column of its reference', async () => {
+    const paragraphOne = makeParagraph('para-1', 'Column 1 text', 0);
+    const columnBreak: FlowBlock = { kind: 'columnBreak', id: 'col-break-1' };
+    const paragraphTwo = makeParagraph('para-2', 'Column 2 text', 40);
+
+    const listFootnote: FlowBlock = {
+      kind: 'list',
+      id: 'footnote-2-0-list',
+      listType: 'bullet',
+      items: [
+        {
+          id: 'footnote-2-0-list-item-0',
+          marker: { text: '\u2022', font: { family: 'Arial', size: 10 } } as never,
+          paragraph: makeParagraph('footnote-2-0-list-item-0', 'List note', 0) as never,
+        },
+      ],
+    };
+
+    const measureBlock = vi.fn(async (block: FlowBlock) => {
+      if (block.kind === 'columnBreak') {
+        return { kind: 'columnBreak' } as Measure;
+      }
+      if (block.kind === 'list') {
+        return {
+          kind: 'list' as const,
+          items: block.items.map((item) => ({
+            itemId: item.id,
+            markerWidth: 10,
+            markerTextWidth: 6,
+            indentLeft: 0,
+            paragraph: makeMeasure(10, 9) as never,
+          })),
+          totalHeight: 10,
+        } as unknown as Measure;
+      }
+      const textLength = block.kind === 'paragraph' ? (block.runs?.[0]?.text?.length ?? 1) : 1;
+      const lineHeight = block.id.startsWith('footnote-') ? 10 : 18;
+      return makeMeasure(lineHeight, textLength);
+    });
+
+    const columns = { count: 2, gap: 20 };
+    const margins = { top: 60, right: 60, bottom: 60, left: 60 };
+    const pageSize = { w: 600, h: 800 };
+
+    const result = await incrementalLayout(
+      [],
+      null,
+      [paragraphOne, columnBreak, paragraphTwo],
+      {
+        pageSize,
+        margins,
+        columns,
+        footnotes: {
+          refs: [{ id: '2', pos: 42 }],
+          blocksById: new Map([['2', [listFootnote]]]),
+        },
+      },
+      measureBlock,
+    );
+
+    const page = result.layout.pages[0];
+    const listFragment = page.fragments.find((fragment) => fragment.blockId === listFootnote.id);
+    expect(listFragment?.kind).toBe('list-item');
+    // The fragment carries its owning flow column so DOM band ids / note
+    // geometry group it under column 1, not the column-0 fallback.
+    expect(listFragment && 'columnIndex' in listFragment ? listFragment.columnIndex : undefined).toBe(1);
   });
 });

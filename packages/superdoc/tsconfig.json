@@ -6,25 +6,15 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "outDir": "dist",
-    "declarationMap": true,
+    "declarationMap": false,
+    "sourceMap": false,
     "skipLibCheck": true,
-    "baseUrl": "../..",
     "paths": {
-      "@core/*": ["packages/super-editor/src/editors/v1/core/*"],
-      "@extensions/*": ["packages/super-editor/src/editors/v1/extensions/*"],
-      "@features/*": ["packages/super-editor/src/editors/v1/features/*"],
-      "@components/*": ["packages/super-editor/src/editors/v1/components/*"],
-      "@helpers/*": ["packages/super-editor/src/editors/v1/core/helpers/*"],
-      "@converter/*": ["packages/super-editor/src/editors/v1/core/super-converter/*"],
-      "@tests/*": ["packages/super-editor/src/editors/v1/tests/*"],
-      "@translator": ["packages/super-editor/src/editors/v1/core/super-converter/v3/node-translator/"],
-      "@utils/*": ["packages/super-editor/src/editors/v1/utils/*"],
-      "@shared/*": ["shared/*"]
+      "@shared/*": ["../../shared/*"]
     }
   },
   "include": [
     "src",
-    "../super-editor/src",
     "../document-api/src",
     "../layout-engine/contracts/src",
     "../layout-engine/dom-contract/src",
@@ -50,9 +40,6 @@
     "../document-api/src/**/__tests__/**",
     "../layout-engine/**/*.test.*",
     "../layout-engine/**/*.spec.*",
-    "../layout-engine/**/__tests__/**",
-    "../super-editor/src/**/*.test.*",
-    "../super-editor/src/**/*.spec.*",
-    "../super-editor/src/**/__tests__/**"
+    "../layout-engine/**/__tests__/**"
   ]
 }

@@ -10,9 +10,9 @@
  * adjust paddingLeft instead of using textIndent for proper alignment.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vite-plus/test';
 import { createTestPainter as createDomPainter } from './_test-utils.js';
-import type { FlowBlock, Measure, Layout, Line } from '@superdoc/contracts';
+import type { FlowBlock, Measure, Layout, Line, TrackedChangesMode } from '@superdoc/contracts';
 
 describe('DomPainter hanging indent with tabs', () => {
   let container: HTMLDivElement;
@@ -2337,7 +2337,7 @@ describe('DomPainter hanging indent with tabs', () => {
   /**
    * SD-2415: Justified paragraphs with hanging indent.
    *
-   * The customer bug was visible character overlap in docs like LOI-copy.docx.
+   * The regression was visible character overlap in documents with hanging indents.
    * Mechanism: the painter was computing first-line `availableWidth` as the body-line
    * width (`fragment.width - paraIndentLeft`) instead of the widened first-line width
    * (`fragment.width`, since hanging extends the first line leftward). When
@@ -2493,5 +2493,149 @@ describe('DomPainter hanging indent with tabs', () => {
       // the first-line text at the fragment's left edge.
       expect(lineEl.style.paddingLeft).toBe('160px');
     });
+  });
+});
+
+/**
+ * Plan 5 — tracked list marker review rendering.
+ *
+ * Drives the full DomPainter (legacy `wordLayout.marker` paint path) for a list
+ * item whose marker carries tracked-change review metadata, and proves the
+ * marker glyph renders Word-like review color + underline with the review
+ * identity stamped, while the body run text stays independently styled.
+ */
+describe('DomPainter tracked list marker review (Plan 5)', () => {
+  let container: HTMLDivElement;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+  });
+
+  const paint = (markerTrackedChange: unknown, trackedChangesMode: TrackedChangesMode = 'review'): HTMLElement => {
+    const blockId = 'tracked-list-marker';
+    const block: FlowBlock = {
+      kind: 'paragraph',
+      id: blockId,
+      runs: [{ text: 'List item body', fontFamily: 'Arial', fontSize: 12, pmStart: 0, pmEnd: 14 }],
+      attrs: {
+        indent: { left: 360, firstLine: 0 },
+        trackedChangesMode,
+        trackedChangesEnabled: true,
+        wordLayout: {
+          marker: {
+            markerText: '1.',
+            justification: 'left',
+            suffix: 'tab',
+            run: { fontFamily: 'Arial', fontSize: 12, bold: false, italic: false },
+            ...(markerTrackedChange ? { trackedChange: markerTrackedChange } : {}),
+          },
+          indentLeftPx: 360,
+          firstLineIndentMode: true,
+        },
+      } as FlowBlock['attrs'],
+    };
+
+    const measure: Measure = {
+      kind: 'paragraph',
+      lines: [{ fromRun: 0, fromChar: 0, toRun: 0, toChar: 14, width: 120, ascent: 12, descent: 4, lineHeight: 20 }],
+      totalHeight: 20,
+    };
+
+    const layout: Layout = {
+      pageSize: { w: 400, h: 500 },
+      pages: [
+        {
+          number: 1,
+          fragments: [
+            {
+              kind: 'para',
+              blockId,
+              fromLine: 0,
+              toLine: 1,
+              x: 30,
+              y: 40,
+              width: 300,
+              pmStart: 0,
+              pmEnd: 14,
+              markerWidth: 20,
+              markerTextWidth: 12,
+            },
+          ],
+        },
+      ],
+    };
+
+    const painter = createDomPainter({ blocks: [block], measures: [measure], container });
+    painter.paint(layout, container);
+    return container.querySelector('.superdoc-line') as HTMLElement;
+  };
+
+  it('paints review color + underline and stamps review identity on an inserted list marker', () => {
+    const lineEl = paint({
+      id: 'tc-ins-1',
+      kind: 'insert',
+      type: 'paragraph-mark',
+      targetKind: 'list-item',
+      semanticColor: '#00853d',
+      author: 'Ada',
+    });
+    const markerEl = lineEl.querySelector('.superdoc-paragraph-marker') as HTMLElement;
+    expect(markerEl).toBeTruthy();
+    expect(markerEl.textContent).toBe('1.');
+
+    // Review identity stamped on the marker glyph carrier.
+    expect(markerEl.dataset.trackChangeId).toBe('tc-ins-1');
+    expect(markerEl.dataset.trackChangeKind).toBe('insert');
+    expect(markerEl.dataset.trackChangeMarker).toBe('list');
+    expect(markerEl.classList.contains('track-insert-dec')).toBe(true);
+
+    // Word-like marker glyph styling: paragraph foreground + review underline.
+    expect(markerEl.style.color).toBe('');
+    expect(markerEl.style.textDecorationLine).toBe('underline');
+    expect(markerEl.style.textDecorationColor).toBe('currentColor');
+    expect(markerEl.style.getPropertyValue('--sd-tracked-changes-insert-border')).toBe('#00853d');
+
+    // The oracle fails if marker styling/metadata disappears: assert non-empty.
+    expect(markerEl.style.textDecorationLine).not.toBe('');
+
+    // Body text must NOT inherit the marker-only review color/underline.
+    const bodyRun = Array.from(lineEl.querySelectorAll('span')).find((el) => el.textContent === 'List item body') as
+      | HTMLElement
+      | undefined;
+    expect(bodyRun).toBeTruthy();
+    expect(bodyRun!.style.color).not.toBe('#00853d');
+    expect(bodyRun!.style.textDecorationLine).not.toBe('underline');
+  });
+
+  it('leaves the marker glyph unstyled and unmarked for a normal (non-tracked) list item', () => {
+    const lineEl = paint(undefined);
+    const markerEl = lineEl.querySelector('.superdoc-paragraph-marker') as HTMLElement;
+    expect(markerEl).toBeTruthy();
+    expect(markerEl.textContent).toBe('1.');
+    expect(markerEl.dataset.trackChangeId).toBeUndefined();
+    expect(markerEl.classList.contains('track-insert-dec')).toBe(false);
+    expect(markerEl.style.color).toBe('');
+    expect(markerEl.style.textDecorationLine).toBe('');
+  });
+
+  it('preserves final-mode marker identity without leaking review color or underline', () => {
+    const lineEl = paint(
+      {
+        id: 'tc-ins-final',
+        kind: 'insert',
+        type: 'paragraph-mark',
+        targetKind: 'list-item',
+        semanticColor: '#00853d',
+      },
+      'final',
+    );
+    const markerEl = lineEl.querySelector('.superdoc-paragraph-marker') as HTMLElement;
+    expect(markerEl.dataset.trackChangeId).toBe('tc-ins-final');
+    expect(markerEl.classList.contains('track-insert-dec')).toBe(true);
+    expect(markerEl.classList.contains('normal')).toBe(true);
+    expect(markerEl.classList.contains('highlighted')).toBe(false);
+    expect(markerEl.style.color).toBe('');
+    expect(markerEl.style.textDecorationLine).toBe('');
   });
 });

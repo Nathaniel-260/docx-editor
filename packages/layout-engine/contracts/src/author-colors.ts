@@ -10,7 +10,7 @@
  * and stamps element-scoped CSS variables.
  *
  * This lives in `@superdoc/contracts` (the shared, publishable foundation) so
- * pm-adapter, super-editor, and the superdoc package can all import the
+ * document adapters and the superdoc package can all import the
  * resolver/types without leaking a private workspace specifier into the
  * published `.d.ts` surface. The painter must never invoke app callbacks or
  * import upstream SuperDoc packages — resolving on the data-preparation side
@@ -191,6 +191,9 @@ const stampBlockTrackedChangeColors = (
           applyColorToLayer(row.attrs.trackedChange, resolve);
         }
         for (const cell of row.cells) {
+          if (cell.attrs?.trackedChange) {
+            applyColorToLayer(cell.attrs.trackedChange, resolve);
+          }
           stampBlockTrackedChangeColors(cell.paragraph, resolve);
           if (Array.isArray(cell.blocks)) {
             for (const nested of cell.blocks) {
