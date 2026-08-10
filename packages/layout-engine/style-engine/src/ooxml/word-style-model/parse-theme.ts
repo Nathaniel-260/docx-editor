@@ -1,6 +1,7 @@
 /**
  * Editor-neutral translator for `word/theme/theme1.xml`. Produces a
- * concrete color palette plus the major/minor font scheme map.
+ * concrete color palette, major/minor font scheme, and DrawingML format
+ * matrix entries needed by downstream style references.
  */
 import { js2xml } from 'xml-js';
 
@@ -21,10 +22,11 @@ export interface WordThemeFontFamily {
   readonly cs?: string;
 }
 
-/** Authored DrawingML fill definitions, indexed by `a:fillRef/@idx`. */
+/** Authored DrawingML format definitions, indexed by the matching style reference. */
 export interface WordThemeFormatScheme {
   readonly fillStyles: readonly string[];
   readonly backgroundFillStyles: readonly string[];
+  readonly lineStyles?: readonly string[];
 }
 
 export const DEFAULT_WORD_THEME_PALETTE: WordThemeColorPalette = {
@@ -117,8 +119,12 @@ function parseFormatScheme(theme: OoxmlElement | null | undefined): WordThemeFor
     findChild(formatScheme, 'a:bgFillStyleLst')
       ?.elements?.filter((element) => element.type === 'element')
       .map(serializeElement) ?? [];
-  if (fillStyles.length === 0 && backgroundFillStyles.length === 0) return undefined;
-  return { fillStyles, backgroundFillStyles };
+  const lineStyles =
+    findChild(formatScheme, 'a:lnStyleLst')
+      ?.elements?.filter((element) => element.type === 'element')
+      .map(serializeElement) ?? [];
+  if (fillStyles.length === 0 && backgroundFillStyles.length === 0 && lineStyles.length === 0) return undefined;
+  return { fillStyles, backgroundFillStyles, lineStyles };
 }
 
 export interface ThemeParseResult {

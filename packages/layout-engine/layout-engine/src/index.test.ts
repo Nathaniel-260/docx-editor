@@ -5080,9 +5080,10 @@ describe('layoutHeaderFooter', () => {
       kind: 'drawing',
       id: 'footer-connector',
       drawingKind: 'vectorShape',
-      geometry: { width: 703, height: 8 },
-      effectExtent: { left: 3, top: 3, right: 5, bottom: 4 },
+      geometry: { width: 700, height: 7 },
+      effectExtent: { left: 0, top: 2, right: 5, bottom: 4 },
       shapeKind: 'line',
+      strokeLineCap: 'butt',
       attrs: {
         anchorParagraphId: carrier.id,
         wrap: { type: 'Inline' },
@@ -5098,12 +5099,12 @@ describe('layoutHeaderFooter', () => {
     const drawingMeasure: DrawingMeasure = {
       kind: 'drawing',
       drawingKind: 'vectorShape',
-      width: 703,
-      height: 8,
+      width: 700,
+      height: 7,
       scale: 1,
-      naturalWidth: 703,
-      naturalHeight: 8,
-      geometry: { width: 703, height: 8, rotation: 0, flipH: false, flipV: false },
+      naturalWidth: 700,
+      naturalHeight: 7,
+      geometry: { width: 700, height: 7, rotation: 0, flipH: false, flipV: false },
     };
 
     const layout = layoutHeaderFooter(
@@ -5119,16 +5120,16 @@ describe('layoutHeaderFooter', () => {
     const footerTextFragment = layout.pages[0].fragments.find((fragment) => fragment.blockId === footerText.id);
 
     expect(connectorFragment).toBeDefined();
-    // Fit decisions use the authored 695px line, while its 3px/5px effect area
-    // remains paintable outside the paragraph content box.
-    expect(connectorFragment?.x).toBe(-3);
-    expect(connectorFragment?.width).toBe(703);
+    // Fit decisions use the authored 695px line. The theme-resolved flat cap
+    // adds no endpoint overflow; only the authored right effect remains.
+    expect(connectorFragment?.x).toBe(0);
+    expect(connectorFragment?.width).toBe(700);
     expect(carrierFragment?.kind).toBe('para');
-    expect(carrierFragment?.y).toBe(24);
+    expect(carrierFragment?.y).toBe(23);
     // The line center (effect top + half the 1px authored box) sits on the text baseline.
-    expect(connectorFragment?.y).toBeCloseTo(24 + 12.8 - 3.5);
+    expect(connectorFragment?.y).toBeCloseTo(23 + 12.8 - 2.5);
     // The connector still reserves its original flow height; only its paint position changes.
-    expect(footerTextFragment?.y).toBe(56);
+    expect(footerTextFragment?.y).toBe(55);
   });
 
   it('throws when width is invalid', () => {

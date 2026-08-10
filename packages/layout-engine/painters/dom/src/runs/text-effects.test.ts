@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vite-plus/test';
 
-import { applyTextEffects, resolveTextReflectionTransform } from './text-effects.js';
+import { applyTextEffects, resolveTextReflectionMask, resolveTextReflectionTransform } from './text-effects.js';
 
 describe('applyTextEffects', () => {
   it('paints solid fill, outline, and directional shadow independently', () => {
@@ -21,6 +21,23 @@ describe('applyTextEffects', () => {
     expect(element.style.webkitTextStroke).toBe('1px #E97132');
     expect(element.style.textShadow).toContain('2.8284271247461903px 2.82842712474619px 0px');
     expect(element.style.textShadow).toContain('rgba(78, 167, 46, 0.5)');
+  });
+
+  it('composes glow and outer shadow instead of letting one overwrite the other', () => {
+    const element = document.createElement('span');
+
+    applyTextEffects(element, {
+      glow: { color: { color: '#E97132', alpha: 0.5 }, radius: 4 },
+      shadow: {
+        color: { color: '#000000' },
+        blurRadius: 2,
+        distance: 3,
+        direction: 90,
+      },
+    });
+
+    expect(element.style.textShadow).toContain('0px 0px 4px rgba(233, 113, 50, 0.5)');
+    expect(element.style.textShadow).toContain('0px 3px 2px #000000');
   });
 
   it('paints gradient text and a below-text reflection without changing font metrics', () => {
@@ -49,7 +66,7 @@ describe('applyTextEffects', () => {
       },
     });
 
-    expect(element.style.backgroundImage).toContain('linear-gradient(0deg');
+    expect(element.style.backgroundImage).toContain('linear-gradient(180deg');
     expect(element.style.backgroundClip).toBe('text');
     expect(element.style.color).toBe('transparent');
     // The non-browser test DOM has no Canvas 2D metrics, so reflection paint
@@ -80,6 +97,29 @@ describe('applyTextEffects', () => {
       transform: 'translate(0px, 86.298px) scale(1, -0.9)',
       maskDirection: 'bottom',
     });
+  });
+
+  it('anchors reflection opacity stops to glyph ink instead of empty line-box leading', () => {
+    const mask = resolveTextReflectionMask(
+      {
+        blurRadius: 0.66,
+        distance: 0,
+        direction: 90,
+        fadeDirection: 90,
+        startAlpha: 0.53,
+        startPosition: 0,
+        endAlpha: 0.003,
+        endPosition: 0.355,
+        scaleX: 1,
+        scaleY: -0.9,
+      },
+      { left: 0, top: 13.5, right: 180.3, bottom: 45.42 },
+      { width: 180.3, height: 59 },
+    );
+
+    expect(mask).toBe(
+      'linear-gradient(to top, rgba(0, 0, 0, 0.53) 13.58px, rgba(0, 0, 0, 0.003) 24.9116px, transparent 100%)',
+    );
   });
 
   it('paints reflection as generated content without duplicating selectable DOM text', () => {
@@ -124,7 +164,7 @@ describe('applyTextEffects', () => {
     expect(element.style.getPropertyValue('--sd-text-reflection-transform')).toBe(
       'translate(0px, 86.298px) scale(1, -0.9)',
     );
-    expect(element.style.getPropertyValue('--sd-text-reflection-mask')).toContain('to bottom');
+    expect(element.style.getPropertyValue('--sd-text-reflection-mask')).toContain('to top');
     expect(element.style.getPropertyValue('--sd-text-reflection-blur')).toBe('0.66px');
   });
 

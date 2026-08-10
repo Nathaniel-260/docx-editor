@@ -71,6 +71,8 @@ import {
   EMPTY_SDT_PLACEHOLDER_TEXT,
   effectiveTableCellSpacing,
   isEmptySdtPlaceholderRun,
+  isShapeTextBaselineWarp,
+  isShapeTextSingleBandEnvelopeWarp,
   LeaderDecoration,
   resolveAnchoredGraphicY,
   resolveBaseFontSizeForVerticalText,
@@ -5077,8 +5079,18 @@ async function measureDrawingBlock(
   let contentMeasures: TextboxContentMeasure[] | undefined;
   if (block.drawingKind === 'textboxShape' && Array.isArray(block.contentBlocks)) {
     const insets = block.textInsets ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    // Baseline-composed WordArt preserves the authored logical line. That
+    // includes textButton: its three boundaries compose adjacent baseline
+    // bands rather than a rectangular glyph envelope. Ordinary envelope
+    // presets and textboxes still use the available boundary as a wrap cap.
     const autoFitBoundaryWidth =
-      block.autoFit && block.textLayout?.wrap === 'none' && constraints.maxWidth > 0 ? constraints.maxWidth : undefined;
+      block.autoFit &&
+      block.textLayout?.wrap === 'none' &&
+      !isShapeTextBaselineWarp(block.textWarp) &&
+      !isShapeTextSingleBandEnvelopeWarp(block.textWarp) &&
+      constraints.maxWidth > 0
+        ? constraints.maxWidth
+        : undefined;
     // Text is laid out inside the untransformed shape and the drawing wrapper
     // applies rotation/scale afterwards, so use the geometry's local width.
     const contentWidth = resolveShapeTextContentMeasureWidth(
@@ -5097,12 +5109,27 @@ async function measureDrawingBlock(
       }),
     );
     if (block.autoFit) {
-      if (block.textLayout?.wrap === 'none' && autoFitBoundaryWidth != null) {
-        // Word expands an unwrapped `a:spAutoFit` textbox to the available
-        // layout boundary. This is observable even when the authored extent is
-        // much narrower: a visible shape outline spans the whole column and a
-        // centered paragraph is centered in that expanded box.
-        geometry.width = autoFitBoundaryWidth;
+      if (block.textLayout?.wrap === 'none' && constraints.maxWidth > 0) {
+        if (isShapeTextBaselineWarp(block.textWarp) || isShapeTextSingleBandEnvelopeWarp(block.textWarp)) {
+          // Baseline-composed WordArt uses one unwrapped logical line and sizes
+          // its frame from that natural advance. The frame may still be capped
+          // by its container; paint compresses the baseline only at that point.
+          const naturalContentWidth = contentMeasures.reduce((widest, measure) => {
+            if (measure.kind === 'paragraph') {
+              return Math.max(widest, ...measure.lines.map((line) => line.naturalWidth ?? line.width));
+            }
+            return Math.max(widest, measure.totalWidth);
+          }, 0);
+          geometry.width = Math.min(
+            constraints.maxWidth,
+            Math.max(1, insets.left + naturalContentWidth + insets.right),
+          );
+        } else {
+          // Ordinary unwrapped textboxes grow to the available boundary before
+          // composing their rectangular content. This is observable when a
+          // visible textbox outline spans the column around centered text.
+          geometry.width = constraints.maxWidth;
+        }
       }
       const contentHeight = block.contentBlocks.reduce((height, contentBlock, index) => {
         const contentMeasure = contentMeasures?.[index];

@@ -51,6 +51,30 @@ describe('createBlockImageContent fail-closed placeholder', () => {
   });
 });
 
+describe('createBlockImageContent picture outline', () => {
+  it('paints a centered frame without changing the image box model', () => {
+    const doc = document.implementation.createHTMLDocument('block-image-outline');
+    const block: ImageBlock = {
+      kind: 'image',
+      id: 'outlined-image',
+      src: 'data:image/png;base64,AAA',
+      width: 240,
+      height: 80,
+      outline: { color: '#4472C4', width: 2 },
+    };
+
+    const element = createBlockImageContent({ doc, block }) as HTMLImageElement;
+
+    expect(element.style.width).toBe('100%');
+    expect(element.style.height).toBe('100%');
+    expect(element.style.outlineWidth).toBe('2px');
+    expect(element.style.outlineStyle).toBe('solid');
+    expect(element.style.outlineColor).toBe('#4472C4');
+    expect(element.style.outlineOffset).toBe('-1px');
+    expect(element.style.borderWidth).toBe('');
+  });
+});
+
 describe('createDrawingImageElement', () => {
   const createDoc = (): Document => document.implementation.createHTMLDocument('drawing-image');
 

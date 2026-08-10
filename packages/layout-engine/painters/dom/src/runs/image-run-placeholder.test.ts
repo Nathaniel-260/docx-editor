@@ -49,3 +49,26 @@ describe('renderImageRun fail-closed placeholder', () => {
     expect(element?.dataset.pmEnd).toBe('5');
   });
 });
+
+describe('renderImageRun picture outline', () => {
+  it('paints the frame without adding a CSS border to the layout box', () => {
+    const doc = document.implementation.createHTMLDocument('inline-image-outline');
+    const run: ImageRun = {
+      kind: 'image',
+      src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      width: 120,
+      height: 48,
+      outline: { color: '#4472C4', width: 1 },
+    };
+
+    const element = renderImageRun(run, createContext(doc)) as HTMLImageElement;
+
+    expect(element.style.outlineWidth).toBe('1px');
+    expect(element.style.outlineStyle).toBe('solid');
+    expect(element.style.outlineColor).toBe('#4472C4');
+    expect(element.style.outlineOffset).toBe('-0.5px');
+    expect(element.style.borderWidth).toBe('');
+    expect(element.width).toBe(120);
+    expect(element.height).toBe(48);
+  });
+});

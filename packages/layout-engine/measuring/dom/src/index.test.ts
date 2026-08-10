@@ -4833,6 +4833,128 @@ describe('measureBlock', () => {
       expect(measure.contentMeasures?.[0].lines.length ?? 0).toBeGreaterThan(1);
     });
 
+    it('keeps a baseline-warp auto-fit shape on one logical line while growing its frame', async () => {
+      const block: DrawingBlock = {
+        kind: 'drawing',
+        id: 'autofit-baseline-warp',
+        drawingKind: 'textboxShape',
+        geometry: { width: 80, height: 80, rotation: 0 },
+        autoFit: true,
+        textInsets: { top: 0, right: 4, bottom: 0, left: 4 },
+        textLayout: { wrap: 'none', horizontalOverflow: 'overflow' },
+        textWarp: { preset: 'textArchUp' },
+        contentBlocks: [
+          {
+            kind: 'paragraph',
+            id: 'autofit-baseline-warp-paragraph',
+            runs: [
+              {
+                text: 'A deliberately long WordArt baseline that must not wrap',
+                fontFamily: 'Arial',
+                fontSize: 20,
+              },
+            ],
+          },
+        ],
+      };
+
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 200 }));
+
+      expect(measure.geometry.width).toBe(200);
+      expect(measure.contentMeasures?.[0].lines).toHaveLength(1);
+      expect(measure.geometry.height).toBe(measure.contentMeasures?.[0].totalHeight);
+    });
+
+    it('sizes short baseline-warp auto-fit shapes to their natural unwrapped advance', async () => {
+      const block: DrawingBlock = {
+        kind: 'drawing',
+        id: 'autofit-short-baseline-warp',
+        drawingKind: 'textboxShape',
+        geometry: { width: 80, height: 80, rotation: 0 },
+        autoFit: true,
+        textInsets: { top: 0, right: 4, bottom: 0, left: 4 },
+        textLayout: { wrap: 'none', horizontalOverflow: 'overflow' },
+        textWarp: { preset: 'textArchUp' },
+        contentBlocks: [
+          {
+            kind: 'paragraph',
+            id: 'autofit-short-baseline-warp-paragraph',
+            runs: [{ text: 'Arc', fontFamily: 'Arial', fontSize: 20 }],
+          },
+        ],
+      };
+
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 200 }));
+      const paragraph = measure.contentMeasures?.[0];
+
+      expect(paragraph?.kind).toBe('paragraph');
+      if (paragraph?.kind !== 'paragraph') throw new Error('expected paragraph measure');
+      expect(paragraph.lines).toHaveLength(1);
+      expect(measure.geometry.width).toBeCloseTo(paragraph.lines[0].width + 8);
+      expect(measure.geometry.width).toBeLessThan(200);
+    });
+
+    it('sizes short single-band envelope auto-fit shapes to their natural advance', async () => {
+      const block: DrawingBlock = {
+        kind: 'drawing',
+        id: 'autofit-short-single-band-envelope',
+        drawingKind: 'textboxShape',
+        geometry: { width: 80, height: 80, rotation: 0 },
+        autoFit: true,
+        textInsets: { top: 0, right: 4, bottom: 0, left: 4 },
+        textLayout: { wrap: 'none', horizontalOverflow: 'overflow' },
+        textWarp: { preset: 'textButton' },
+        contentBlocks: [
+          {
+            kind: 'paragraph',
+            id: 'autofit-short-single-band-envelope-paragraph',
+            runs: [{ text: 'Word Art', fontFamily: 'Arial', fontSize: 20 }],
+          },
+        ],
+      };
+
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 200 }));
+      const paragraph = measure.contentMeasures?.[0];
+
+      expect(paragraph?.kind).toBe('paragraph');
+      if (paragraph?.kind !== 'paragraph') throw new Error('expected paragraph measure');
+      expect(paragraph.lines).toHaveLength(1);
+      expect(measure.geometry.width).toBeCloseTo(paragraph.lines[0].width + 8);
+      expect(measure.geometry.width).toBeLessThan(200);
+    });
+
+    it('caps long textButton auto-fit shapes without recomposing the logical baseline', async () => {
+      const block: DrawingBlock = {
+        kind: 'drawing',
+        id: 'autofit-long-single-band-envelope',
+        drawingKind: 'textboxShape',
+        geometry: { width: 80, height: 80, rotation: 0 },
+        autoFit: true,
+        textInsets: { top: 0, right: 4, bottom: 0, left: 4 },
+        textLayout: { wrap: 'none', horizontalOverflow: 'overflow' },
+        textWarp: { preset: 'textButton' },
+        contentBlocks: [
+          {
+            kind: 'paragraph',
+            id: 'autofit-long-single-band-envelope-paragraph',
+            runs: [
+              {
+                text: 'Word Art that inserts as object and keeps extending beyond the available width',
+                fontFamily: 'Arial',
+                fontSize: 20,
+              },
+            ],
+          },
+        ],
+      };
+
+      const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 200 }));
+
+      expect(measure.geometry.width).toBeLessThanOrEqual(200);
+      expect(measure.geometry.width).toBeGreaterThan(190);
+      expect(measure.contentMeasures?.[0].lines).toHaveLength(1);
+    });
+
     it('measures textbox tables with canonical auto, atLeast, and exact row-height semantics', async () => {
       const measureVariant = async (rule: 'auto' | 'atLeast' | 'exact', value: number) => {
         const block: DrawingBlock = {
@@ -5063,14 +5185,15 @@ describe('measureBlock', () => {
         id: 'footer-connector',
         drawingKind: 'vectorShape',
         shapeKind: 'line',
-        geometry: { width: 703, height: 8, rotation: 0 },
-        effectExtent: { left: 3, top: 3, right: 5, bottom: 4 },
+        geometry: { width: 700, height: 8, rotation: 0 },
+        effectExtent: { left: 0, top: 3, right: 5, bottom: 4 },
         strokeColor: '#7CE0D3',
         strokeWidth: 6,
+        strokeLineCap: 'butt',
       };
 
       const measure = expectDrawingMeasure(await measureBlock(block, { maxWidth: 697, maxHeight: 100 }));
-      expect(measure.width).toBe(703);
+      expect(measure.width).toBe(700);
       expect(measure.height).toBe(8);
       expect(measure.scale).toBe(1);
     });

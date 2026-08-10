@@ -115,13 +115,14 @@ export function createGradient(
     gradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
     gradient.setAttribute('id', gradientId);
 
-    // Convert angle to x1, y1, x2, y2 coordinates
-    // OOXML angle is in degrees, 0 = left to right, 90 = bottom to top
+    // DrawingML measures the color-change vector clockwise: 0deg travels
+    // left-to-right and 90deg travels top-to-bottom in the page coordinate
+    // system (ECMA-376-1 20.1.8.41).
     const radians = (angle * Math.PI) / 180;
     const x1 = 50 - 50 * Math.cos(radians);
-    const y1 = 50 + 50 * Math.sin(radians);
+    const y1 = 50 - 50 * Math.sin(radians);
     const x2 = 50 + 50 * Math.cos(radians);
-    const y2 = 50 - 50 * Math.sin(radians);
+    const y2 = 50 + 50 * Math.sin(radians);
 
     gradient.setAttribute('x1', `${x1}%`);
     gradient.setAttribute('y1', `${y1}%`);

@@ -2,6 +2,7 @@ import type { ImageBlock, ImageDrawing } from '@superdoc/contracts';
 import { buildImageFilters, resolveImageOpacity } from '../runs/image-run.js';
 import { applyImageClipPath, readImageClipPathValue } from './image-clip-path.js';
 import { createRenderPlaceholder } from './render-placeholder.js';
+import { applyImageOutline } from './image-outline.js';
 import type { BuildImageHyperlinkAnchor } from './types.js';
 
 type BlockImageSource = ImageBlock | ImageDrawing;
@@ -71,6 +72,7 @@ export const createBlockImageContent = ({
   if (opacity != null) {
     img.style.opacity = opacity;
   }
+  applyImageOutline(img, block.outline);
 
   return buildImageHyperlinkAnchor?.(img, block.hyperlink, hyperlinkDisplay) ?? img;
 };

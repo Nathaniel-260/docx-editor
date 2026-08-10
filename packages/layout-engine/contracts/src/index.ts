@@ -718,6 +718,20 @@ export type ImageHyperlink = { url: string; tooltip?: string };
 export type ImageRunVerticalAlign = 'top' | 'bottom' | 'baseline';
 
 /**
+ * Paint-only frame authored on a DrawingML picture (`pic:spPr/a:ln`).
+ *
+ * The frame is intentionally separate from the image dimensions: DrawingML
+ * strokes are centered on the picture geometry and must not enlarge the
+ * layout box. Keeping this as a shared contract lets inline and anchored
+ * pictures use the same extraction and paint path.
+ */
+export type ImageOutline = {
+  color: string;
+  /** Physical CSS-pixel width resolved from `a:ln/@w`. */
+  width: number;
+};
+
+/**
  * Explicit fail-closed rendering metadata for content that keeps its authored
  * layout box but cannot be painted faithfully.
  *
@@ -770,6 +784,8 @@ export type ImageRun = {
   imageId?: string;
   /** Clip-path value for cropped images. */
   clipPath?: string;
+  /** DrawingML picture frame; paint-only and excluded from layout sizing. */
+  outline?: ImageOutline;
 
   /**
    * Spacing around the image (from DOCX distT/distB/distL/distR attributes).
@@ -1298,6 +1314,8 @@ export type ImageBlock = {
   height?: number;
   alt?: string;
   title?: string;
+  /** DrawingML picture frame; paint-only and excluded from layout sizing. */
+  outline?: ImageOutline;
   /** Visible fail-closed replacement when the image source cannot be painted. */
   placeholder?: RenderPlaceholder;
   /** DrawingML docPr/@id of the picture (used to target the Document API for interactive resize). */
@@ -1425,6 +1443,13 @@ export type TextOutlineEffect = {
   fill: FillColor;
 };
 
+/** Word 2010+ text glow (`w14:glow`). */
+export type TextGlowEffect = {
+  color: TextEffectColor;
+  /** Glow radius converted from EMU to CSS pixels. */
+  radius: number;
+};
+
 /** Word 2010+ outer text shadow (`w14:shadow`). */
 export type TextShadowEffect = {
   color: TextEffectColor;
@@ -1441,6 +1466,8 @@ export type TextReflectionEffect = {
   blurRadius: number;
   distance: number;
   direction: number;
+  /** Direction of the reflection opacity gradient; defaults to `direction`. */
+  fadeDirection?: number;
   startAlpha: number;
   startPosition: number;
   endAlpha: number;
@@ -1457,6 +1484,7 @@ export type TextReflectionEffect = {
 export type TextEffects = {
   fill?: FillColor;
   outline?: TextOutlineEffect;
+  glow?: TextGlowEffect;
   shadow?: TextShadowEffect;
   reflection?: TextReflectionEffect;
 };
@@ -1526,6 +1554,93 @@ export type ShapeTextLayout = {
   horizontalOverflow?: 'overflow' | 'clip';
   /** `a:bodyPr/@vertOverflow`. */
   verticalOverflow?: 'overflow' | 'clip' | 'ellipsis';
+};
+
+/** ECMA-376 Part 1 `ST_TextShapeType` preset text-warp vocabulary. */
+export const SHAPE_TEXT_WARP_PRESETS = [
+  'textNoShape',
+  'textPlain',
+  'textStop',
+  'textTriangle',
+  'textTriangleInverted',
+  'textChevron',
+  'textChevronInverted',
+  'textRingInside',
+  'textRingOutside',
+  'textArchUp',
+  'textArchDown',
+  'textCircle',
+  'textButton',
+  'textArchUpPour',
+  'textArchDownPour',
+  'textCirclePour',
+  'textButtonPour',
+  'textCurveUp',
+  'textCurveDown',
+  'textCanUp',
+  'textCanDown',
+  'textWave1',
+  'textWave2',
+  'textDoubleWave1',
+  'textWave4',
+  'textInflate',
+  'textDeflate',
+  'textInflateBottom',
+  'textDeflateBottom',
+  'textInflateTop',
+  'textDeflateTop',
+  'textDeflateInflate',
+  'textDeflateInflateDeflate',
+  'textFadeRight',
+  'textFadeLeft',
+  'textFadeUp',
+  'textFadeDown',
+  'textSlantUp',
+  'textSlantDown',
+  'textCascadeUp',
+  'textCascadeDown',
+] as const;
+
+export type ShapeTextWarpPreset = (typeof SHAPE_TEXT_WARP_PRESETS)[number];
+
+/**
+ * Presets represented by one path in the normative DrawingML preset geometry.
+ *
+ * These presets bend a single laid-out text baseline. Every other non-flat
+ * preset defines two or more boundaries and therefore warps a glyph envelope.
+ * Keeping the distinction in contracts lets measurement and paint apply the
+ * same composition model without depending on one another's implementation.
+ */
+const SHAPE_TEXT_BASELINE_WARP_PRESETS: ReadonlySet<ShapeTextWarpPreset> = new Set([
+  'textArchDown',
+  'textArchUp',
+  'textCircle',
+]);
+
+export function isShapeTextBaselineWarp(warp: ShapeTextWarp | undefined): boolean {
+  return warp != null && SHAPE_TEXT_BASELINE_WARP_PRESETS.has(warp.preset);
+}
+
+/**
+ * Envelope presets whose normative geometry contains one complete top/bottom
+ * path pair. Word auto-fits these to the text's natural width before applying
+ * the envelope, while still allowing the text to wrap once it reaches the
+ * available layout boundary.
+ */
+const SHAPE_TEXT_SINGLE_BAND_ENVELOPE_WARP_PRESETS: ReadonlySet<ShapeTextWarpPreset> = new Set(['textButton']);
+
+export function isShapeTextSingleBandEnvelopeWarp(warp: ShapeTextWarp | undefined): boolean {
+  return warp != null && SHAPE_TEXT_SINGLE_BAND_ENVELOPE_WARP_PRESETS.has(warp.preset);
+}
+
+/** Preserved `a:prstTxWarp` geometry and guide formulas from `a:bodyPr`. */
+export type ShapeTextWarp = {
+  preset: ShapeTextWarpPreset;
+  adjustments?: Array<{
+    name: string;
+    /** Raw DrawingML guide formula, for example `val 25000`. */
+    formula: string;
+  }>;
 };
 
 /** Resolve the line-breaking width for DrawingML textbox content. */
@@ -1716,6 +1831,7 @@ export type VectorShapeDrawing = DrawingBlockBase & {
   effectExtent?: EffectExtent;
   textContent?: ShapeTextContent;
   textLayout?: ShapeTextLayout;
+  textWarp?: ShapeTextWarp;
   textAlign?: string;
   textVerticalAlign?: 'top' | 'center' | 'bottom';
   textFlow?: 'horizontal' | 'vertical' | 'vertical-ideographic' | 'horizontal-ideographic' | 'bottom-to-top';
@@ -1745,6 +1861,7 @@ export type TextboxDrawing = DrawingBlockBase & {
   effectExtent?: EffectExtent;
   textContent?: ShapeTextContent;
   textLayout?: ShapeTextLayout;
+  textWarp?: ShapeTextWarp;
   textAlign?: string;
   textVerticalAlign?: 'top' | 'center' | 'bottom';
   textFlow?: 'horizontal' | 'vertical' | 'vertical-ideographic' | 'horizontal-ideographic' | 'bottom-to-top';

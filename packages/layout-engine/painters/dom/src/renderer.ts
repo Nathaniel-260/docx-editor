@@ -25,11 +25,13 @@ import type {
   ShapeGroupChild,
   ShapeGroupDrawing,
   ShapeTextContent,
+  ShapeTextWarp,
   SolidFillWithAlpha,
   SourceAnchor,
   TableBlock,
   TableFragment,
   TableMeasure,
+  TextEffectColor,
   TextboxDrawing,
   VectorShapeDrawing,
   VectorShapeStyle,
@@ -94,7 +96,7 @@ import {
   fragmentStyles,
   type PageStyles,
 } from './styles.js';
-import { applyAlphaToSVG, applyGradientToSVG, validateHexColor } from './svg-utils.js';
+import { applyAlphaToSVG, applyGradientToSVG, createGradient, validateHexColor } from './svg-utils.js';
 import {
   renderTableFragment as renderTableFragmentElement,
   type TableRenderDependencies,
@@ -133,7 +135,15 @@ import { renderImageFragment as renderImageFragmentElement } from './images/imag
 import { buildImageHyperlinkAnchor as buildSharedImageHyperlinkAnchor } from './images/hyperlink.js';
 import { applyStyles } from './utils/apply-styles.js';
 import { applyTrackedChangeDecorations, resolveTrackedChangesConfig } from './runs/tracked-changes.js';
-import { applyTextEffects } from './runs/text-effects.js';
+import { applyTextEffects, resolveTextReflectionPlacement } from './runs/text-effects.js';
+import {
+  pointAtPath,
+  pointAtWarpParameter,
+  resolveWordArtAdjacentBandBaseline,
+  resolveWordArtWarpGeometry,
+  resolveWordArtWarpPath,
+  type WordArtWarpGeometry,
+} from './shapes/wordart-warp.js';
 import { applyLayoutIdentityDataset } from './utils/layout-identity.js';
 import { applySourceAnchorDataset } from './utils/source-anchor.js';
 
@@ -888,7 +898,134 @@ function collectLineTabsForSnapshot(lineEl: HTMLElement): PaintSnapshotTabStyle[
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function averagePoints(first: { x: number; y: number }, second: { x: number; y: number }): { x: number; y: number } {
+  return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+}
+
+type WordArtInkBounds = { left: number; top: number; right: number; bottom: number };
+type WordArtLineMetrics = {
+  fontAscent: number;
+  fontDescent: number;
+  actualAscent: number;
+  actualDescent: number;
+};
+
+function wordArtGeometryBounds(geometry: WordArtWarpGeometry, offsetX = 0): WordArtInkBounds {
+  const points = geometry.paths.flat();
+  return {
+    left: offsetX + Math.min(...points.map((point) => point.x)),
+    top: Math.min(...points.map((point) => point.y)),
+    right: offsetX + Math.max(...points.map((point) => point.x)),
+    bottom: Math.max(...points.map((point) => point.y)),
+  };
+}
+
+function wordArtEnvelopeInkBounds(
+  geometry: WordArtWarpGeometry,
+  sourceHeight: number,
+  sourceInkTop: number,
+  sourceInkBottom: number,
+  offsetX = 0,
+): WordArtInkBounds {
+  const topPath = geometry.paths[0];
+  const bottomPath = geometry.paths[geometry.paths.length - 1];
+  const safeHeight = Math.max(1, sourceHeight);
+  const verticalRange = [
+    Math.max(0, Math.min(1, sourceInkTop / safeHeight)),
+    Math.max(0, Math.min(1, sourceInkBottom / safeHeight)),
+  ];
+  const points = Array.from({ length: 129 }, (_, index) => {
+    const progress = index / 128;
+    const top = pointAtWarpParameter(topPath, progress);
+    const bottom = pointAtWarpParameter(bottomPath, progress);
+    return verticalRange.map((verticalProgress) => ({
+      x: offsetX + top.x + (bottom.x - top.x) * verticalProgress,
+      y: top.y + (bottom.y - top.y) * verticalProgress,
+    }));
+  }).flat();
+
+  return {
+    left: Math.min(...points.map((point) => point.x)),
+    top: Math.min(...points.map((point) => point.y)),
+    right: Math.max(...points.map((point) => point.x)),
+    bottom: Math.max(...points.map((point) => point.y)),
+  };
+}
+
+function wordArtBaselineInkBounds(
+  path: readonly { x: number; y: number }[],
+  pathLength: number,
+  textWidth: number,
+  textAnchor: 'start' | 'middle' | 'end',
+  metrics: WordArtLineMetrics,
+  offsetX = 0,
+): WordArtInkBounds {
+  const anchorDistance = textAnchor === 'middle' ? pathLength / 2 : textAnchor === 'end' ? pathLength : 0;
+  const startDistance =
+    anchorDistance - (textAnchor === 'middle' ? textWidth / 2 : textAnchor === 'end' ? textWidth : 0);
+  const visibleStart = Math.max(0, startDistance);
+  const visibleEnd = Math.min(pathLength, startDistance + textWidth);
+  const from = pathLength > 0 ? visibleStart / pathLength : 0;
+  const to = pathLength > 0 ? Math.max(visibleStart, visibleEnd) / pathLength : 1;
+  const points = Array.from({ length: 129 }, (_, index) => {
+    const progress = from + ((to - from) * index) / 128;
+    const before = pointAtPath(path, Math.max(0, progress - 0.001));
+    const after = pointAtPath(path, Math.min(1, progress + 0.001));
+    const tangentLength = Math.max(0.001, Math.hypot(after.x - before.x, after.y - before.y));
+    const normal = {
+      x: (after.y - before.y) / tangentLength,
+      y: -(after.x - before.x) / tangentLength,
+    };
+    const point = pointAtPath(path, progress);
+    return [
+      {
+        x: offsetX + point.x + normal.x * metrics.actualAscent,
+        y: point.y + normal.y * metrics.actualAscent,
+      },
+      {
+        x: offsetX + point.x - normal.x * metrics.actualDescent,
+        y: point.y - normal.y * metrics.actualDescent,
+      },
+    ];
+  }).flat();
+
+  return {
+    left: Math.min(...points.map((point) => point.x)),
+    top: Math.min(...points.map((point) => point.y)),
+    right: Math.max(...points.map((point) => point.x)),
+    bottom: Math.max(...points.map((point) => point.y)),
+  };
+}
+
+function sliceWordArtEnvelopeGeometry(geometry: WordArtWarpGeometry, from: number, to: number): WordArtWarpGeometry {
+  const top = geometry.paths[0];
+  const bottom = geometry.paths[geometry.paths.length - 1];
+  const interpolateBoundary = (verticalProgress: number) =>
+    Array.from({ length: 129 }, (_, index) => {
+      const horizontalProgress = index / 128;
+      const topPoint = pointAtWarpParameter(top, horizontalProgress);
+      const bottomPoint = pointAtWarpParameter(bottom, horizontalProgress);
+      return {
+        x: topPoint.x + (bottomPoint.x - topPoint.x) * verticalProgress,
+        y: topPoint.y + (bottomPoint.y - topPoint.y) * verticalProgress,
+      };
+    });
+  return { kind: 'envelope', paths: [interpolateBoundary(from), interpolateBoundary(to)] };
+}
 const WORDART_LINE_FILL_RATIO = 0.9;
+
+function svgEffectColor(value: TextEffectColor): string | undefined {
+  const color = validateHexColor(value.color);
+  if (!color) return undefined;
+  if (value.alpha == null || value.alpha >= 1) return color;
+  const normalized = color.slice(1);
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  const alpha = Math.max(0, Math.min(1, value.alpha));
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
 // Comment highlight color tokens moved to CommentHighlightDecorator.
 
 /**
@@ -920,6 +1057,7 @@ export class DomPainter {
   private sectionPageCounts = new Map<number, number>();
   private linkIdCounter = 0; // Counter for generating unique link IDs
   private shapeImageFillCounter = 0;
+  private wordArtPathCounter = 0;
   private sdtLabelsRendered = new Set<string>(); // Tracks SDT labels rendered across pages
 
   /**
@@ -2569,10 +2707,40 @@ export class DomPainter {
         this.applyFragmentWrapperZIndex(fragmentEl, fragment);
       }
       fragmentEl.style.position = 'absolute';
-      fragmentEl.style.overflow = this.shapeTextAllowsOverflow(block) ? 'visible' : 'hidden';
+      const isVectorShape = block.drawingKind === 'vectorShape' || block.drawingKind === 'textboxShape';
+      const hasEffectExtent =
+        isVectorShape &&
+        ((block.effectExtent?.left ?? 0) > 0 ||
+          (block.effectExtent?.top ?? 0) > 0 ||
+          (block.effectExtent?.right ?? 0) > 0 ||
+          (block.effectExtent?.bottom ?? 0) > 0);
+      const allowsShapeInkOverflow = isVectorShape && (block.shapeKind === 'line' || hasEffectExtent);
+      fragmentEl.style.overflow = this.shapeTextAllowsOverflow(block) || allowsShapeInkOverflow ? 'visible' : 'hidden';
       const inlineBackgroundColor = block.attrs?.inlineBackgroundColor;
       if (typeof inlineBackgroundColor === 'string' && inlineBackgroundColor.length > 0) {
-        fragmentEl.style.backgroundColor = inlineBackgroundColor;
+        const sourceExtent = block.attrs?.sourceExtent as { width?: unknown; height?: unknown } | undefined;
+        const hasSyntheticWidth = sourceExtent?.width === 0;
+        const hasSyntheticHeight = sourceExtent?.height === 0;
+        if (!hasSyntheticWidth && !hasSyntheticHeight) {
+          fragmentEl.style.backgroundColor = inlineBackgroundColor;
+        } else {
+          // A degenerate DrawingML line is coerced to a 1px SVG viewport so the
+          // browser can paint it. That paint-only pixel is not part of the
+          // authored inline run bounds and must not enlarge `w:shd`.
+          const scale = fragment.scale ?? 1;
+          const syntheticWidth = hasSyntheticWidth ? scale : 0;
+          const syntheticHeight = hasSyntheticHeight ? scale : 0;
+          const background = this.doc.createElement('div');
+          background.classList.add('superdoc-inline-run-background');
+          background.style.position = 'absolute';
+          background.style.pointerEvents = 'none';
+          background.style.left = `${syntheticWidth / 2}px`;
+          background.style.top = `${syntheticHeight / 2}px`;
+          background.style.width = `${Math.max(0, fragment.width - syntheticWidth)}px`;
+          background.style.height = `${Math.max(0, fragment.height - syntheticHeight)}px`;
+          background.style.backgroundColor = inlineBackgroundColor;
+          fragmentEl.appendChild(background);
+        }
       }
 
       // SD-3521: project canonical textbox interaction metadata onto the
@@ -2804,6 +2972,11 @@ export class DomPainter {
    */
   private applyPhysicalStrokeSemantics(svgElement: SVGElement, block: ShapeTextDrawingWithEffects): void {
     if (typeof block.strokeColor !== 'string' || !(Number(block.strokeWidth) > 0)) return;
+    svgElement.style.setProperty('--superdoc-authored-stroke-color', block.strokeColor);
+    const inactiveStrokeColor = this.mixResolvedHexColorWithWhite(block.strokeColor, 0.5);
+    if (inactiveStrokeColor) {
+      svgElement.style.setProperty('--superdoc-inactive-stroke-color', inactiveStrokeColor);
+    }
     const dashArray = block.strokeDashArray?.filter((value) => Number.isFinite(value) && value > 0);
     svgElement.querySelectorAll<SVGElement>('[stroke]:not([stroke="none"])').forEach((element) => {
       element.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -2811,6 +2984,27 @@ export class DomPainter {
       if (block.strokeLineJoin) element.setAttribute('stroke-linejoin', block.strokeLineJoin);
       if (block.strokeLineCap) element.setAttribute('stroke-linecap', block.strokeLineCap);
     });
+  }
+
+  /**
+   * Produce a stable 8-bit preview color for inactive header/footer graphics.
+   * CSS color-mix() retains fractional sRGB channels and Chromium floors some
+   * half-channel values during rasterization; Word rounds those channels. Keep
+   * the authored color separate and expose the rounded blend as a paint hint.
+   */
+  private mixResolvedHexColorWithWhite(color: string, whiteRatio: number): string | null {
+    const match = /^#([0-9a-f]{6})$/i.exec(color.trim());
+    if (!match) return null;
+    const source = match[1];
+    const ratio = Math.max(0, Math.min(1, whiteRatio));
+    const channel = (offset: number): string => {
+      const value = Number.parseInt(source.slice(offset, offset + 2), 16);
+      return Math.round(value + (255 - value) * ratio)
+        .toString(16)
+        .padStart(2, '0')
+        .toUpperCase();
+    };
+    return `#${channel(0)}${channel(2)}${channel(4)}`;
   }
 
   /** Paint a DrawingML picture fill through the existing SVG geometry. */
@@ -2955,6 +3149,7 @@ export class DomPainter {
         block.textInsets,
         width,
         height,
+        block.textWarp,
         context,
       );
     }
@@ -2980,6 +3175,20 @@ export class DomPainter {
     context?: FragmentRenderContext,
   ): Element {
     const contentMeasures = fragment?.contentMeasures ?? block.contentMeasures;
+    if (this.shouldUseWordArtTextRenderer(block)) {
+      const paragraphMeasure = contentMeasures?.find((measure) => measure.kind === 'paragraph');
+      return this.createWordArtTextElement(
+        block.textContent!,
+        block.textAlign ?? 'center',
+        block.textInsets,
+        width,
+        height,
+        block.textWarp,
+        context,
+        paragraphMeasure?.kind === 'paragraph' ? paragraphMeasure.lines : undefined,
+      );
+    }
+
     if (!Array.isArray(contentMeasures) || contentMeasures.length === 0) {
       return this.hasShapeTextContent(block.textContent)
         ? this.createShapeTextElement(block, width, height, 1, 1, context)
@@ -3113,7 +3322,9 @@ export class DomPainter {
   }
 
   private shouldUseWordArtTextRenderer(block: VectorShapeDrawing | TextboxDrawing): boolean {
-    return block.attrs?.isWordArt === true && this.hasShapeTextContent(block.textContent);
+    const authoredWarp = block.textWarp?.preset;
+    const hasVisibleWarp = authoredWarp !== undefined && authoredWarp !== 'textNoShape';
+    return (block.attrs?.isWordArt === true || hasVisibleWarp) && this.hasShapeTextContent(block.textContent);
   }
 
   private createWordArtTextElement(
@@ -3122,7 +3333,9 @@ export class DomPainter {
     textInsets: { top: number; right: number; bottom: number; left: number } | undefined,
     width: number,
     height: number,
+    textWarp?: ShapeTextWarp,
     context?: FragmentRenderContext,
+    measuredLines?: Line[],
   ): SVGSVGElement {
     const svg = this.doc!.createElementNS(SVG_NS, 'svg');
     svg.classList.add('superdoc-wordart-text');
@@ -3140,12 +3353,69 @@ export class DomPainter {
     const insets = textInsets ?? { top: 0, right: 0, bottom: 0, left: 0 };
     const availableWidth = Math.max(1, width - insets.left - insets.right);
     const availableHeight = Math.max(1, height - insets.top - insets.bottom);
-    const lines = this.buildWordArtLines(textContent, context);
+    const bodyWarpGeometry = textWarp
+      ? resolveWordArtWarpGeometry(textWarp, availableWidth, availableHeight, insets.top)
+      : null;
+    // A one-path preset is a baseline transform, so Word composes its text as
+    // one continuous run along that path. Textbox measurement may wrap the
+    // same source text for a rectangular fallback, but carrying those visual
+    // line breaks into a baseline warp creates multiple independent arches.
+    const lines = this.buildWordArtLines(
+      textContent,
+      context,
+      bodyWarpGeometry?.kind === 'envelope' ? measuredLines : undefined,
+    );
     const lineCount = Math.max(lines.length, 1);
     const lineHeight = availableHeight / lineCount;
-    const fontSize = Math.max(1, lineHeight * WORDART_LINE_FILL_RATIO);
+    const naturalLineWidths = lines.map((line) => this.measureWordArtLineWidth(line));
+    const widestNaturalLine = Math.max(1, ...naturalLineWidths);
     const textAnchor = this.getWordArtTextAnchor(textAlign);
     const textX = this.getWordArtTextX(textAlign, insets.left, availableWidth);
+    const baselineBoundary = bodyWarpGeometry?.kind === 'baseline' ? bodyWarpGeometry.paths[0] : undefined;
+    const baselineFirst = baselineBoundary?.[0];
+    const baselineLast = baselineBoundary?.[baselineBoundary.length - 1];
+    const hasClosedBaseline =
+      baselineFirst != null &&
+      baselineLast != null &&
+      Math.hypot(baselineLast.x - baselineFirst.x, baselineLast.y - baselineFirst.y) <= 1;
+    let defs: SVGDefsElement | undefined;
+
+    const usesAdjacentBandBaselines = textWarp?.preset === 'textButton' && bodyWarpGeometry?.paths.length === 3;
+
+    if (bodyWarpGeometry?.kind === 'envelope' && !usesAdjacentBandBaselines) {
+      const envelope = this.createWordArtEnvelopeMesh(
+        lines,
+        bodyWarpGeometry,
+        svg,
+        textAlign,
+        0,
+        textWarp?.preset === 'textDeflateInflate' ||
+          textWarp?.preset === 'textDeflateInflateDeflate' ||
+          textWarp?.preset === 'textButtonPour'
+          ? 'distributed-pairs'
+          : 'first-pair',
+      );
+      if (envelope) {
+        envelope.element.setAttribute('transform', `translate(${insets.left} 0)`);
+        svg.dataset.superdocWordartWarp = textWarp!.preset;
+        svg.dataset.superdocWordartWarpFidelity = 'spec-envelope-mesh';
+        const parts = lines.flat();
+        const reflection = this.createWordArtReflection(
+          envelope.element,
+          parts,
+          {
+            left: envelope.ink.left + insets.left,
+            top: envelope.ink.top,
+            right: envelope.ink.right + insets.left,
+            bottom: envelope.ink.bottom,
+          },
+          svg,
+        );
+        if (reflection) svg.appendChild(reflection);
+        svg.appendChild(envelope.element);
+        return svg;
+      }
+    }
 
     lines.forEach((parts, lineIndex) => {
       if (parts.length === 0) {
@@ -3154,32 +3424,758 @@ export class DomPainter {
 
       const textEl = this.doc!.createElementNS(SVG_NS, 'text');
       textEl.setAttribute('xml:space', 'preserve');
-      textEl.setAttribute('x', String(textX));
-      textEl.setAttribute('y', String(insets.top + lineHeight * (lineIndex + 0.5)));
       textEl.setAttribute('text-anchor', textAnchor);
-      textEl.setAttribute('dominant-baseline', 'middle');
-      textEl.setAttribute('font-size', String(fontSize));
-      textEl.setAttribute('textLength', String(availableWidth));
-      textEl.setAttribute('lengthAdjust', 'spacingAndGlyphs');
+      // `a:prstTxWarp` changes glyph geometry; it does not replace the
+      // authored `w:sz` typography with the shape's measured line height.
+      // Using the line box here made every non-flat preset balloon to the
+      // auto-fit frame height (often >2x Word's glyph size). Preserve the
+      // largest authored size as the line strut and let per-run tspans retain
+      // their own sizes below. The proportional fallback is only for malformed
+      // or legacy payloads that genuinely carry no run size.
+      const authoredLineFontSize = parts.reduce(
+        (largest, part) => Math.max(largest, part.formatting?.fontSize ?? 0),
+        0,
+      );
+      const lineFontSize =
+        authoredLineFontSize > 0 ? authoredLineFontSize : Math.max(1, lineHeight * WORDART_LINE_FILL_RATIO);
+      const lineMetrics = this.measureWordArtLineMetrics(parts, lineFontSize);
+      textEl.setAttribute('font-size', String(lineFontSize));
+      const lineTop = insets.top + lineIndex * lineHeight;
+      // A one-path preset bends the laid-out text baseline. Its coordinate
+      // system is the line box, not the entire shape frame. Using the frame's
+      // empty vertical area exaggerates every arch/ring whenever a one-line
+      // WordArt object lives in a tall shape (a common `a:spAutoFit` pattern).
+      const warpLineHeight =
+        bodyWarpGeometry?.kind === 'baseline'
+          ? Math.min(
+              lineHeight,
+              // Closed text paths rotate ink through a full circuit. Word maps
+              // their tight text rectangle from the em square; using browser
+              // font bounds adds platform-specific ascent/descent twice around
+              // the ring and inflates its diameter.
+              hasClosedBaseline ? lineFontSize : lineMetrics.fontAscent + lineMetrics.fontDescent,
+            )
+          : lineHeight;
+      const baselineSideInset = 0;
+      const warpLineWidth = Math.max(1, availableWidth - baselineSideInset * 2);
+      const warpOffsetX = insets.left + baselineSideInset;
+      const warpLineTop =
+        lineTop +
+        (bodyWarpGeometry?.kind === 'baseline'
+          ? Math.max(0, (lineMetrics.fontAscent - lineMetrics.fontDescent) / 2)
+          : 0);
+      const adjacentBand =
+        usesAdjacentBandBaselines && bodyWarpGeometry
+          ? resolveWordArtAdjacentBandBaseline(bodyWarpGeometry, lineIndex)
+          : null;
+      const resolvedGeometry =
+        adjacentBand?.geometry ??
+        (bodyWarpGeometry?.kind === 'envelope'
+          ? sliceWordArtEnvelopeGeometry(bodyWarpGeometry, lineIndex / lineCount, (lineIndex + 1) / lineCount)
+          : textWarp
+            ? resolveWordArtWarpGeometry(textWarp, warpLineWidth, warpLineHeight, warpLineTop)
+            : null);
+      const resolvedWarp =
+        adjacentBand?.path ??
+        (textWarp ? resolveWordArtWarpPath(textWarp, warpLineWidth, warpLineHeight, warpLineTop) : null);
+      let textHost: SVGTextElement | SVGTextPathElement = textEl;
+      let baselineTextWidth = naturalLineWidths[lineIndex] ?? widestNaturalLine;
 
-      parts.forEach((part) => {
+      if (resolvedGeometry?.kind === 'envelope') {
+        const naturalWidth = naturalLineWidths[lineIndex] ?? widestNaturalLine;
+        const unusedWidth = Math.max(0, widestNaturalLine - naturalWidth);
+        const horizontalOffset =
+          textAlign === 'right' || textAlign === 'r' ? unusedWidth : textAlign === 'center' ? unusedWidth / 2 : 0;
+        const envelope = this.createWordArtEnvelopeGroup(parts, resolvedGeometry, svg, {
+          start: horizontalOffset / widestNaturalLine,
+          end: (horizontalOffset + naturalWidth) / widestNaturalLine,
+        });
+        envelope.setAttribute('transform', `translate(${insets.left} 0)`);
+        svg.dataset.superdocWordartWarp = textWarp!.preset;
+        svg.dataset.superdocWordartWarpFidelity = 'spec-envelope-affine';
+        const reflection = this.createWordArtReflection(
+          envelope,
+          parts,
+          wordArtGeometryBounds(resolvedGeometry, insets.left),
+          svg,
+        );
+        if (reflection) svg.appendChild(reflection);
+        svg.appendChild(envelope);
+        return;
+      }
+
+      if (resolvedWarp) {
+        defs ??= this.doc!.createElementNS(SVG_NS, 'defs');
+        if (!defs.parentNode) svg.appendChild(defs);
+        const pathId = `superdoc-wordart-path-${this.wordArtPathCounter++}`;
+        const path = this.doc!.createElementNS(SVG_NS, 'path');
+        path.setAttribute('id', pathId);
+        path.setAttribute('d', resolvedWarp.d);
+        path.setAttribute('transform', `translate(${warpOffsetX} 0)`);
+        path.setAttribute('fill', 'none');
+        defs.appendChild(path);
+
+        const textPath = this.doc!.createElementNS(SVG_NS, 'textPath');
+        textPath.setAttribute('href', `#${pathId}`);
+        textPath.setAttribute(
+          'startOffset',
+          textAlign === 'right' || textAlign === 'r' ? '100%' : textAlign === 'center' ? '50%' : '0%',
+        );
+        const baselinePath = resolvedGeometry?.kind === 'baseline' ? resolvedGeometry.paths[0] : undefined;
+        const firstPoint = baselinePath?.[0];
+        const lastPoint = baselinePath?.[baselinePath.length - 1];
+        const isClosedPath =
+          firstPoint != null &&
+          lastPoint != null &&
+          Math.hypot(lastPoint.x - firstPoint.x, lastPoint.y - firstPoint.y) <= 1;
+        // DrawingML maps the tight, laid-out text rectangle onto the authored
+        // warp boundary. Preserve natural advance while it fits. On an open
+        // path, terminal glyphs rotate around the boundary normals, so reserve
+        // their painted ascent plus half-descender at both ends; otherwise the
+        // browser places their ink outside the same tight rectangle Word uses.
+        // Closed paths have no terminal edge and may consume their full circuit.
+        const terminalInkReserve = isClosedPath ? 0 : 2 * (lineMetrics.actualAscent + lineMetrics.actualDescent / 2);
+        const availablePathLength = Math.max(1, resolvedWarp.length - terminalInkReserve);
+        baselineTextWidth = Math.min(baselineTextWidth, availablePathLength);
+        if (baselineTextWidth < (naturalLineWidths[lineIndex] ?? widestNaturalLine)) {
+          textPath.setAttribute('textLength', String(baselineTextWidth));
+          textPath.setAttribute('lengthAdjust', 'spacingAndGlyphs');
+        }
+        textEl.appendChild(textPath);
+        textHost = textPath;
+        svg.dataset.superdocWordartWarp = textWarp!.preset;
+        svg.dataset.superdocWordartWarpFidelity = 'spec-baseline';
+      } else {
+        textEl.setAttribute('x', String(textX));
+        textEl.setAttribute('y', String(insets.top + lineHeight * (lineIndex + 0.5)));
+        textEl.setAttribute('dominant-baseline', 'middle');
+        textEl.setAttribute('textLength', String(availableWidth));
+        textEl.setAttribute('lengthAdjust', 'spacingAndGlyphs');
+      }
+
+      parts.forEach((part, partIndex) => {
         const tspan = this.doc!.createElementNS(SVG_NS, 'tspan');
         tspan.setAttribute('xml:space', 'preserve');
+        tspan.dataset.superdocWordartPartIndex = String(partIndex);
         tspan.textContent = part.text;
-        this.applyWordArtTextFormatting(tspan, part.formatting);
-        textEl.appendChild(tspan);
+        this.applyWordArtTextFormatting(tspan, part.formatting, svg);
+        textHost.appendChild(tspan);
       });
 
+      const baselineInk =
+        resolvedGeometry?.kind === 'baseline' && resolvedWarp
+          ? wordArtBaselineInkBounds(
+              resolvedGeometry.paths[0],
+              resolvedWarp.length,
+              baselineTextWidth,
+              textAnchor,
+              lineMetrics,
+              warpOffsetX,
+            )
+          : null;
+      const reflection = this.createWordArtReflection(
+        textEl,
+        parts,
+        baselineInk ?? {
+          left: insets.left,
+          top: insets.top + lineIndex * lineHeight + lineHeight * 0.1,
+          right: insets.left + availableWidth,
+          bottom: insets.top + lineIndex * lineHeight + lineHeight * 0.9,
+        },
+        svg,
+      );
+      if (reflection) svg.appendChild(reflection);
       svg.appendChild(textEl);
     });
 
     return svg;
   }
 
+  private createWordArtEnvelopeGroup(
+    parts: Array<{ text: string; formatting?: ShapeTextContent['parts'][number]['formatting'] }>,
+    geometry: WordArtWarpGeometry,
+    svg: SVGSVGElement,
+    horizontalRange: { start: number; end: number },
+  ): SVGGElement {
+    const group = this.doc!.createElementNS(SVG_NS, 'g');
+    group.classList.add('superdoc-wordart-envelope');
+    group.setAttribute('role', 'img');
+    group.setAttribute('aria-label', parts.map((part) => part.text).join(''));
+
+    const canvas = this.doc!.createElement('canvas');
+    const context = canvas.getContext('2d');
+    const graphemes = parts.flatMap((part, partIndex) =>
+      Array.from(part.text).map((text) => ({ text, formatting: part.formatting, partIndex })),
+    );
+    const measure = (entry: (typeof graphemes)[number]) => {
+      const fontSize = Math.max(1, entry.formatting?.fontSize ?? 12);
+      if (context) {
+        context.font = `${entry.formatting?.italic ? 'italic ' : ''}${entry.formatting?.bold ? 'bold ' : ''}${fontSize}px ${entry.formatting?.fontFamily ?? 'Arial'}`;
+      }
+      const metrics = context?.measureText(entry.text);
+      return {
+        advance: Math.max(0.01, metrics?.width ?? fontSize * (entry.text === ' ' ? 0.33 : 0.55)),
+        ascent: metrics?.fontBoundingBoxAscent || metrics?.actualBoundingBoxAscent || fontSize * 0.8,
+        descent: metrics?.fontBoundingBoxDescent || metrics?.actualBoundingBoxDescent || fontSize * 0.2,
+      };
+    };
+    const metrics = graphemes.map(measure);
+    const totalAdvance = metrics.reduce((sum, entry) => sum + entry.advance, 0);
+    const ascent = Math.max(1, ...metrics.map((entry) => entry.ascent));
+    const descent = Math.max(0, ...metrics.map((entry) => entry.descent));
+    const sourceHeight = Math.max(1, ascent + descent);
+    const sourceBaseline = (ascent - descent) / 2;
+    const topPath = geometry.paths[0];
+    const bottomPath = geometry.paths[geometry.paths.length - 1];
+    let consumed = 0;
+
+    graphemes.forEach((entry, index) => {
+      const entryMetrics = metrics[index];
+      const normalizedStart = totalAdvance > 0 ? consumed / totalAdvance : 0;
+      consumed += entryMetrics.advance;
+      const normalizedEnd = totalAdvance > 0 ? consumed / totalAdvance : 1;
+      const start = horizontalRange.start + normalizedStart * (horizontalRange.end - horizontalRange.start);
+      const end = horizontalRange.start + normalizedEnd * (horizontalRange.end - horizontalRange.start);
+      const center = (start + end) / 2;
+      const topCenter = pointAtWarpParameter(topPath, center);
+      const bottomCenter = pointAtWarpParameter(bottomPath, center);
+      const startCenter = averagePoints(pointAtWarpParameter(topPath, start), pointAtWarpParameter(bottomPath, start));
+      const endCenter = averagePoints(pointAtWarpParameter(topPath, end), pointAtWarpParameter(bottomPath, end));
+      const targetCenter = averagePoints(topCenter, bottomCenter);
+      const horizontal = {
+        x: (endCenter.x - startCenter.x) / entryMetrics.advance,
+        y: (endCenter.y - startCenter.y) / entryMetrics.advance,
+      };
+      const vertical = {
+        x: (bottomCenter.x - topCenter.x) / sourceHeight,
+        y: (bottomCenter.y - topCenter.y) / sourceHeight,
+      };
+
+      // Spaces contribute their authored advance to the envelope but need no
+      // paint node. This preserves Word's stretch without creating empty SVG
+      // text boxes that distort reflection/filter bounds.
+      if (/^\s+$/u.test(entry.text)) return;
+      const glyph = this.doc!.createElementNS(SVG_NS, 'text');
+      glyph.setAttribute('xml:space', 'preserve');
+      glyph.setAttribute('x', String(-entryMetrics.advance / 2));
+      glyph.setAttribute('y', String(sourceBaseline));
+      glyph.setAttribute(
+        'transform',
+        `matrix(${horizontal.x} ${horizontal.y} ${vertical.x} ${vertical.y} ${targetCenter.x} ${targetCenter.y})`,
+      );
+      glyph.setAttribute('aria-hidden', 'true');
+      glyph.dataset.superdocWordartPartIndex = String(entry.partIndex);
+      glyph.textContent = entry.text;
+      this.applyWordArtTextFormatting(glyph, entry.formatting, svg);
+      group.appendChild(glyph);
+    });
+    return group;
+  }
+
+  /**
+   * Approximates DrawingML's point-wise text-envelope transform with narrow
+   * vector strips. Each strip maps a slice of the unwarped text block between
+   * the authored upper and lower guide paths. Unlike a per-glyph affine
+   * transform, this bends the glyph outlines themselves while preserving SVG
+   * text paint (fills, outlines, glow and shadow) and browser font shaping.
+   */
+  private createWordArtEnvelopeMesh(
+    lines: Array<Array<{ text: string; formatting?: ShapeTextContent['parts'][number]['formatting'] }>>,
+    geometry: WordArtWarpGeometry,
+    svg: SVGSVGElement,
+    textAlign: string,
+    partIndexOffset = 0,
+    pathMode: 'first-pair' | 'distributed-pairs' = 'first-pair',
+    sharedSourceWidth?: number,
+  ): { element: SVGGElement; ink: WordArtInkBounds } | null {
+    const canvas = this.doc!.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context || geometry.paths.length < 2) return null;
+
+    if (pathMode === 'distributed-pairs' && geometry.paths.length > 2) {
+      const completePairCount = Math.floor(geometry.paths.length / 2);
+      const renderedPairCount = Math.min(completePairCount, Math.max(1, lines.length));
+      const group = this.doc!.createElementNS(SVG_NS, 'g');
+      group.classList.add('superdoc-wordart-envelope', 'superdoc-wordart-envelope-mesh');
+      group.setAttribute('role', 'img');
+      group.setAttribute(
+        'aria-label',
+        lines
+          .flat()
+          .map((part) => part.text)
+          .join(''),
+      );
+      group.dataset.superdocWordartReflectable = 'true';
+      group.dataset.superdocWordartEnvelopeBands = String(renderedPairCount);
+      const commonSourceWidth = Math.max(
+        1,
+        ...lines.map((parts) =>
+          parts.reduce((width, part) => {
+            const fontSize = Math.max(1, part.formatting?.fontSize ?? 12);
+            context.font = `${part.formatting?.italic ? 'italic ' : ''}${part.formatting?.bold ? 'bold ' : ''}${fontSize}px ${part.formatting?.fontFamily ?? 'Arial'}`;
+            const graphemeCount = Array.from(part.text).length;
+            return (
+              width +
+              context.measureText(part.text).width +
+              Math.max(0, graphemeCount - 1) * (part.formatting?.letterSpacing ?? 0)
+            );
+          }, 0),
+        ),
+      );
+      const allPoints = geometry.paths.flat();
+      const geometryLeft = Math.min(...allPoints.map((point) => point.x));
+      const geometryRight = Math.max(...allPoints.map((point) => point.x));
+      const geometryWidth = Math.max(0.001, geometryRight - geometryLeft);
+
+      let lineIndex = 0;
+      let nextPartIndex = partIndexOffset;
+      let ink: WordArtInkBounds | null = null;
+      for (let renderedIndex = 0; renderedIndex < renderedPairCount; renderedIndex += 1) {
+        // Multi-band presets order their boundary pairs from top to bottom.
+        // Assign successive laid-out lines to successive bands; jumping from
+        // the first to the last pair bends a two-line ButtonPour subtitle on
+        // the lower arc instead of placing it on the authored center shelf.
+        const pairIndex = renderedIndex;
+        const pairLines =
+          renderedIndex === renderedPairCount - 1 ? lines.slice(lineIndex) : lines.slice(lineIndex, lineIndex + 1);
+        const pairPaths = [geometry.paths[pairIndex * 2], geometry.paths[pairIndex * 2 + 1]];
+        const pairPoints = pairPaths.flat();
+        const pairLeft = Math.min(...pairPoints.map((point) => point.x));
+        const pairRight = Math.max(...pairPoints.map((point) => point.x));
+        const pairWidth = Math.max(0.001, pairRight - pairLeft);
+        const hasParallelHorizontalGuides = pairPaths.every(
+          (path) => Math.max(...path.map((point) => point.y)) - Math.min(...path.map((point) => point.y)) < 0.001,
+        );
+        // ButtonPour's middle pair is a horizontal guide shelf inside the
+        // shared shape coordinate system, not a horizontal clipping window.
+        // Word preserves the unwarped text body's natural horizontal scale on
+        // that shelf. Give the shelf the common source width and center it in
+        // the shape; curved pairs keep their authored endpoint geometry.
+        const shelfLeft = geometryLeft + (geometryWidth - commonSourceWidth) / 2;
+        const normalizedPairPaths = hasParallelHorizontalGuides
+          ? pairPaths.map((path) =>
+              path.map((point) => ({
+                x: shelfLeft + ((point.x - pairLeft) / pairWidth) * commonSourceWidth,
+                y: point.y,
+              })),
+            )
+          : pairPaths;
+        const pairGeometry: WordArtWarpGeometry = {
+          kind: 'envelope',
+          paths: normalizedPairPaths,
+        };
+        const band = this.createWordArtEnvelopeMesh(
+          pairLines,
+          pairGeometry,
+          svg,
+          textAlign,
+          nextPartIndex,
+          'first-pair',
+          commonSourceWidth,
+        );
+        if (!band) return null;
+        band.element.removeAttribute('role');
+        band.element.removeAttribute('aria-label');
+        group.appendChild(band.element);
+        ink = ink
+          ? {
+              left: Math.min(ink.left, band.ink.left),
+              top: Math.min(ink.top, band.ink.top),
+              right: Math.max(ink.right, band.ink.right),
+              bottom: Math.max(ink.bottom, band.ink.bottom),
+            }
+          : band.ink;
+        nextPartIndex += pairLines.flat().length;
+        lineIndex += pairLines.length;
+      }
+      return ink ? { element: group, ink } : null;
+    }
+
+    const measuredLines = lines.map((parts) => {
+      const metrics = parts.map((part) => {
+        const fontSize = Math.max(1, part.formatting?.fontSize ?? 12);
+        context.font = `${part.formatting?.italic ? 'italic ' : ''}${part.formatting?.bold ? 'bold ' : ''}${fontSize}px ${part.formatting?.fontFamily ?? 'Arial'}`;
+        const measured = context.measureText(part.text);
+        const letterSpacing = part.formatting?.letterSpacing ?? 0;
+        const graphemeCount = Array.from(part.text).length;
+        const authoredSpacing = Math.max(0, graphemeCount - 1) * letterSpacing;
+        return {
+          text: part.text,
+          advance: Math.max(0.01, measured.width + authoredSpacing),
+          actualLeft: measured.actualBoundingBoxLeft || 0,
+          actualRight: (measured.actualBoundingBoxRight || measured.width) + authoredSpacing,
+          fontAscent: measured.fontBoundingBoxAscent || measured.actualBoundingBoxAscent || fontSize * 0.8,
+          fontDescent: measured.fontBoundingBoxDescent || measured.actualBoundingBoxDescent || fontSize * 0.2,
+          actualAscent: measured.actualBoundingBoxAscent || measured.fontBoundingBoxAscent || fontSize * 0.8,
+          actualDescent: measured.actualBoundingBoxDescent || measured.fontBoundingBoxDescent || fontSize * 0.2,
+        };
+      });
+      let cursor = 0;
+      let inkLeft = Number.POSITIVE_INFINITY;
+      let inkRight = Number.NEGATIVE_INFINITY;
+      for (const metric of metrics) {
+        const hasInk = /\S/u.test(metric.text);
+        if (hasInk) {
+          inkLeft = Math.min(inkLeft, cursor - metric.actualLeft);
+          inkRight = Math.max(inkRight, cursor + metric.actualRight);
+        }
+        // ECMA-376 §20.1.9.19 defines the source as the tightest text
+        // rectangle with no whitespace except authored space characters.
+        // Canvas ink bounds intentionally omit those characters, so retain
+        // their advance only when they occur at a run edge or form the run.
+        if (/^\s/u.test(metric.text)) inkLeft = Math.min(inkLeft, cursor);
+        if (/\s$/u.test(metric.text)) inkRight = Math.max(inkRight, cursor + metric.advance);
+        cursor += metric.advance;
+      }
+      if (!Number.isFinite(inkLeft) || !Number.isFinite(inkRight)) {
+        inkLeft = 0;
+        inkRight = cursor;
+      }
+      return {
+        parts,
+        metrics,
+        inkLeft,
+        width: Math.max(0.01, inkRight - inkLeft),
+        fontAscent: Math.max(1, ...metrics.map((entry) => entry.fontAscent)),
+        fontDescent: Math.max(0, ...metrics.map((entry) => entry.fontDescent)),
+        actualAscent: Math.max(1, ...metrics.map((entry) => entry.actualAscent)),
+        actualDescent: Math.max(0, ...metrics.map((entry) => entry.actualDescent)),
+      };
+    });
+    const sourceWidth = Math.max(1, sharedSourceWidth ?? 0, ...measuredLines.map((line) => line.width));
+    // DrawingML first lays out each line on its font line box, then §20.1.9.19
+    // maps the tight rectangle around that laid-out block. Advancing directly
+    // by visible glyph ink makes consecutive lines overlap before the warp
+    // whenever the font has leading (the normal case), which pushes both lines
+    // through the wrong vertical portion of an envelope.
+    const firstLine = measuredLines[0];
+    const sourceTightTop = firstLine.fontAscent - firstLine.actualAscent;
+    let sourceBoxTop = 0;
+    const sourceBaselines = measuredLines.map((line) => {
+      const baseline = sourceBoxTop + line.fontAscent - sourceTightTop;
+      sourceBoxTop += line.fontAscent + line.fontDescent;
+      return baseline;
+    });
+    const lastLine = measuredLines[measuredLines.length - 1];
+    const sourceHeight = Math.max(1, sourceBaselines[sourceBaselines.length - 1] + lastLine.actualDescent);
+    const defs = (svg.querySelector('defs') as SVGDefsElement | null) ?? this.doc!.createElementNS(SVG_NS, 'defs');
+    if (!defs.parentNode) svg.insertBefore(defs, svg.firstChild);
+    const sourceId = `superdoc-wordart-mesh-source-${this.wordArtPathCounter++}`;
+    const source = this.doc!.createElementNS(SVG_NS, 'g');
+    source.setAttribute('id', sourceId);
+    let partIndex = partIndexOffset;
+
+    measuredLines.forEach((line, lineIndex) => {
+      const unusedWidth = Math.max(0, sourceWidth - line.width);
+      const lineInkX =
+        textAlign === 'right' || textAlign === 'r' ? unusedWidth : textAlign === 'center' ? unusedWidth / 2 : 0;
+      const text = this.doc!.createElementNS(SVG_NS, 'text');
+      text.setAttribute('xml:space', 'preserve');
+      // Normalize the authored glyph ink to the source rectangle origin.
+      // Bearings and overhangs therefore participate in the warp instead of
+      // surviving as browser-specific padding on either side.
+      text.setAttribute('x', String(lineInkX - line.inkLeft));
+      text.setAttribute('y', String(sourceBaselines[lineIndex]));
+      text.setAttribute('text-anchor', 'start');
+      line.parts.forEach((part) => {
+        const tspan = this.doc!.createElementNS(SVG_NS, 'tspan');
+        tspan.setAttribute('xml:space', 'preserve');
+        tspan.dataset.superdocWordartPartIndex = String(partIndex++);
+        tspan.textContent = part.text;
+        this.applyWordArtTextFormatting(tspan, part.formatting, svg);
+        text.appendChild(tspan);
+      });
+      source.appendChild(text);
+    });
+    defs.appendChild(source);
+
+    const mesh = this.doc!.createElementNS(SVG_NS, 'g');
+    mesh.classList.add('superdoc-wordart-envelope', 'superdoc-wordart-envelope-mesh');
+    mesh.setAttribute('role', 'img');
+    mesh.setAttribute(
+      'aria-label',
+      lines
+        .flat()
+        .map((part) => part.text)
+        .join(''),
+    );
+    mesh.dataset.superdocWordartReflectable = 'true';
+    const topPath = geometry.paths[0];
+    // ECMA-376 §20.1.9.19 defines successive paths as the top and bottom
+    // boundaries of a warp band. Multi-band presets are split above before
+    // reaching this primitive, so one mesh always consumes one adjacent pair.
+    const bottomPath = geometry.paths[1];
+    // Four source pixels per strip keeps curvature within a fraction of a
+    // glyph while bounding DOM cost for very wide decorative text.
+    const stripCount = Math.max(24, Math.min(96, Math.ceil(sourceWidth / 4)));
+    for (let index = 0; index < stripCount; index += 1) {
+      const sourceX0 = (sourceWidth * index) / stripCount;
+      const sourceX1 = (sourceWidth * (index + 1)) / stripCount;
+      const sourceDx = Math.max(0.001, sourceX1 - sourceX0);
+      const u0 = index / stripCount;
+      const u1 = (index + 1) / stripCount;
+      const top0 = pointAtWarpParameter(topPath, u0);
+      const top1 = pointAtWarpParameter(topPath, u1);
+      const bottom0 = pointAtWarpParameter(bottomPath, u0);
+      const bottom1 = pointAtWarpParameter(bottomPath, u1);
+      const triangles = [
+        {
+          points: `${sourceX0},0 ${sourceX1},0 ${sourceX0},${sourceHeight}`,
+          matrix: {
+            a: (top1.x - top0.x) / sourceDx,
+            b: (top1.y - top0.y) / sourceDx,
+            c: (bottom0.x - top0.x) / sourceHeight,
+            d: (bottom0.y - top0.y) / sourceHeight,
+            e: top0.x - ((top1.x - top0.x) / sourceDx) * sourceX0,
+            f: top0.y - ((top1.y - top0.y) / sourceDx) * sourceX0,
+          },
+        },
+        {
+          points: `${sourceX1},0 ${sourceX1},${sourceHeight} ${sourceX0},${sourceHeight}`,
+          matrix: {
+            a: (bottom1.x - bottom0.x) / sourceDx,
+            b: (bottom1.y - bottom0.y) / sourceDx,
+            c: (bottom1.x - top1.x) / sourceHeight,
+            d: (bottom1.y - top1.y) / sourceHeight,
+            e: top1.x - ((bottom1.x - bottom0.x) / sourceDx) * sourceX1,
+            f: top1.y - ((bottom1.y - bottom0.y) / sourceDx) * sourceX1,
+          },
+        },
+      ];
+
+      triangles.forEach(({ points, matrix }) => {
+        const clipId = `superdoc-wordart-mesh-clip-${this.wordArtPathCounter++}`;
+        const clip = this.doc!.createElementNS(SVG_NS, 'clipPath');
+        clip.setAttribute('id', clipId);
+        clip.setAttribute('clipPathUnits', 'userSpaceOnUse');
+        const polygon = this.doc!.createElementNS(SVG_NS, 'polygon');
+        polygon.setAttribute('points', points);
+        clip.appendChild(polygon);
+        defs.appendChild(clip);
+
+        const triangle = this.doc!.createElementNS(SVG_NS, 'g');
+        triangle.setAttribute(
+          'transform',
+          `matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ${matrix.e} ${matrix.f})`,
+        );
+        const use = this.doc!.createElementNS(SVG_NS, 'use');
+        use.setAttribute('href', `#${sourceId}`);
+        use.setAttribute('clip-path', `url(#${clipId})`);
+        triangle.appendChild(use);
+        mesh.appendChild(triangle);
+      });
+    }
+    this.promoteUniformWordArtEnvelopeFilter(source, mesh);
+    return {
+      element: mesh,
+      ink: wordArtEnvelopeInkBounds({ ...geometry, paths: [topPath, bottomPath] }, sourceHeight, 0, sourceHeight),
+    };
+  }
+
+  /**
+   * DrawingML composes glow and shadow after the text outline has been
+   * deformed by the warp. The envelope renderer repeats a clipped source
+   * through many transformed `<use>` elements; leaving a CSS filter on that
+   * source clips and transforms the effect independently in every mesh strip.
+   * Promote a shared run filter to the completed mesh so the browser paints
+   * one effect around the final warped silhouette. Mixed run effects remain on
+   * their source runs because collapsing them would change authored styling.
+   */
+  private promoteUniformWordArtEnvelopeFilter(source: SVGGElement, mesh: SVGGElement): void {
+    const paintedParts = Array.from(
+      source.querySelectorAll<SVGTextContentElement>('[data-superdoc-wordart-part-index]'),
+    );
+    if (paintedParts.length === 0) return;
+
+    const filters = paintedParts.map((part) => part.style.filter.trim());
+    const sharedFilter = filters[0];
+    if (!sharedFilter || filters.some((filter) => filter !== sharedFilter)) return;
+
+    for (const part of paintedParts) part.style.removeProperty('filter');
+    mesh.style.filter = sharedFilter;
+    mesh.dataset.superdocWordartEffectComposition = 'post-warp';
+  }
+
+  private measureWordArtLineMetrics(
+    parts: Array<{ text: string; formatting?: ShapeTextContent['parts'][number]['formatting'] }>,
+    fallbackFontSize: number,
+  ): WordArtLineMetrics {
+    const canvas = this.doc!.createElement('canvas');
+    const context = canvas.getContext('2d');
+    let fontAscent = 0;
+    let fontDescent = 0;
+    let actualAscent = 0;
+    let actualDescent = 0;
+    for (const part of parts) {
+      const fontSize = Math.max(1, part.formatting?.fontSize ?? fallbackFontSize);
+      if (context) {
+        context.font = `${part.formatting?.italic ? 'italic ' : ''}${part.formatting?.bold ? 'bold ' : ''}${fontSize}px ${part.formatting?.fontFamily ?? 'Arial'}`;
+      }
+      const measured = context?.measureText(part.text);
+      fontAscent = Math.max(fontAscent, measured?.fontBoundingBoxAscent || fontSize * 0.8);
+      fontDescent = Math.max(fontDescent, measured?.fontBoundingBoxDescent || fontSize * 0.2);
+      actualAscent = Math.max(actualAscent, measured?.actualBoundingBoxAscent || fontSize * 0.8);
+      actualDescent = Math.max(actualDescent, measured?.actualBoundingBoxDescent || fontSize * 0.2);
+    }
+
+    return {
+      fontAscent: Math.max(1, fontAscent),
+      fontDescent: Math.max(0, fontDescent),
+      actualAscent: Math.max(1, actualAscent),
+      actualDescent: Math.max(0, actualDescent),
+    };
+  }
+
+  private measureWordArtLineWidth(
+    parts: Array<{ text: string; formatting?: ShapeTextContent['parts'][number]['formatting'] }>,
+  ): number {
+    const canvas = this.doc!.createElement('canvas');
+    const context = canvas.getContext('2d');
+    return parts.reduce((width, part) => {
+      const fontSize = Math.max(1, part.formatting?.fontSize ?? 12);
+      if (context) {
+        context.font = `${part.formatting?.italic ? 'italic ' : ''}${part.formatting?.bold ? 'bold ' : ''}${fontSize}px ${part.formatting?.fontFamily ?? 'Arial'}`;
+      }
+      const measuredWidth = context?.measureText(part.text).width ?? fontSize * part.text.length * 0.55;
+      const letterSpacing = part.formatting?.letterSpacing ?? 0;
+      return width + measuredWidth + Math.max(0, Array.from(part.text).length - 1) * letterSpacing;
+    }, 0);
+  }
+
+  private createWordArtReflection(
+    source: SVGGraphicsElement,
+    parts: Array<{ text: string; formatting?: ShapeTextContent['parts'][number]['formatting'] }>,
+    ink: WordArtInkBounds,
+    svg: SVGSVGElement,
+  ): SVGGraphicsElement | null {
+    const reflectedParts = parts.filter((part) => part.formatting?.textEffects?.reflection != null);
+    if (reflectedParts.length === 0) return null;
+
+    const authoredReflection = reflectedParts[0].formatting!.textEffects!.reflection!;
+    const clone = source.cloneNode(true) as SVGGraphicsElement;
+    Array.from(clone.querySelectorAll<SVGElement>('[data-superdoc-wordart-part-index]')).forEach((element) => {
+      const index = Number(element.dataset.superdocWordartPartIndex);
+      if (parts[index]?.formatting?.textEffects?.reflection == null) element.remove();
+      else element.removeAttribute('data-superdoc-wordart-reflection');
+    });
+    if (!clone.textContent && source.dataset.superdocWordartReflectable !== 'true') return null;
+
+    const placement = resolveTextReflectionPlacement(authoredReflection, ink);
+    const sourceTransform = source.getAttribute('transform');
+    clone.setAttribute(
+      'transform',
+      `translate(${placement.translateX} ${placement.translateY}) scale(${authoredReflection.scaleX} ${authoredReflection.scaleY})${sourceTransform ? ` ${sourceTransform}` : ''}`,
+    );
+    clone.setAttribute('aria-hidden', 'true');
+    clone.style.pointerEvents = 'none';
+    clone.style.userSelect = 'none';
+    clone.style.opacity = '1';
+    if (authoredReflection.blurRadius > 0) {
+      clone.style.filter = `${clone.style.filter ? `${clone.style.filter} ` : ''}blur(${authoredReflection.blurRadius}px)`;
+    }
+
+    const defs = (svg.querySelector('defs') as SVGDefsElement | null) ?? this.doc!.createElementNS(SVG_NS, 'defs');
+    if (!defs.parentNode) svg.insertBefore(defs, svg.firstChild);
+    const gradientId = `superdoc-wordart-reflection-gradient-${this.wordArtPathCounter++}`;
+    const maskId = `superdoc-wordart-reflection-mask-${this.wordArtPathCounter++}`;
+    const gradient = this.doc!.createElementNS(SVG_NS, 'linearGradient');
+    gradient.setAttribute('id', gradientId);
+    gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+    const reflectedXs = [
+      placement.translateX + authoredReflection.scaleX * ink.left,
+      placement.translateX + authoredReflection.scaleX * ink.right,
+    ];
+    const reflectedYs = [
+      placement.translateY + authoredReflection.scaleY * ink.top,
+      placement.translateY + authoredReflection.scaleY * ink.bottom,
+    ];
+    const reflected = {
+      left: Math.min(...reflectedXs),
+      top: Math.min(...reflectedYs),
+      right: Math.max(...reflectedXs),
+      bottom: Math.max(...reflectedYs),
+    };
+    const gradientVectors = {
+      top: [reflected.left, reflected.bottom, reflected.left, reflected.top],
+      bottom: [reflected.left, reflected.top, reflected.left, reflected.bottom],
+      left: [reflected.right, reflected.top, reflected.left, reflected.top],
+      right: [reflected.left, reflected.top, reflected.right, reflected.top],
+    } as const;
+    const [x1, y1, x2, y2] = gradientVectors[placement.maskDirection];
+    gradient.setAttribute('x1', String(x1));
+    gradient.setAttribute('y1', String(y1));
+    gradient.setAttribute('x2', String(x2));
+    gradient.setAttribute('y2', String(y2));
+    const appendStop = (position: number, alpha: number): void => {
+      const stop = this.doc!.createElementNS(SVG_NS, 'stop');
+      stop.setAttribute('offset', `${Math.max(0, Math.min(1, position)) * 100}%`);
+      stop.setAttribute('stop-color', 'white');
+      stop.setAttribute('stop-opacity', String(Math.max(0, Math.min(1, alpha))));
+      gradient.appendChild(stop);
+    };
+    appendStop(authoredReflection.startPosition, authoredReflection.startAlpha);
+    appendStop(authoredReflection.endPosition, authoredReflection.endAlpha);
+    defs.appendChild(gradient);
+
+    const mask = this.doc!.createElementNS(SVG_NS, 'mask');
+    mask.setAttribute('id', maskId);
+    mask.setAttribute('maskUnits', 'userSpaceOnUse');
+    mask.setAttribute('maskContentUnits', 'userSpaceOnUse');
+    // SVG masks have a default region of x/y=-10%, width/height=120%.
+    // With user-space content near the bottom of a WordArt viewBox that
+    // default clips almost the entire reflected clone even when the mask
+    // rectangle itself covers the reflected ink. Own the region explicitly,
+    // and include enough padding for the authored Gaussian blur.
+    const maskPadding = Math.max(0, authoredReflection.blurRadius * 3);
+    mask.setAttribute('x', String(reflected.left - maskPadding));
+    mask.setAttribute('y', String(reflected.top - maskPadding));
+    mask.setAttribute('width', String(Math.max(0.001, reflected.right - reflected.left + maskPadding * 2)));
+    mask.setAttribute('height', String(Math.max(0.001, reflected.bottom - reflected.top + maskPadding * 2)));
+    const maskRect = this.doc!.createElementNS(SVG_NS, 'rect');
+    maskRect.setAttribute('x', String(reflected.left));
+    maskRect.setAttribute('y', String(reflected.top));
+    maskRect.setAttribute('width', String(Math.max(0.001, reflected.right - reflected.left)));
+    maskRect.setAttribute('height', String(Math.max(0.001, reflected.bottom - reflected.top)));
+    maskRect.setAttribute('fill', `url(#${gradientId})`);
+    mask.appendChild(maskRect);
+    defs.appendChild(mask);
+    const reflection = this.doc!.createElementNS(SVG_NS, 'g');
+    reflection.setAttribute('mask', `url(#${maskId})`);
+    reflection.setAttribute('aria-hidden', 'true');
+    reflection.appendChild(clone);
+    reflection.dataset.superdocWordartReflection =
+      reflectedParts.length === parts.length ? 'painted' : 'mixed-run-approximation';
+    svg.dataset.superdocWordartReflection = reflection.dataset.superdocWordartReflection;
+    return reflection;
+  }
+
   private buildWordArtLines(
     textContent: ShapeTextContent,
     context?: FragmentRenderContext,
+    measuredLines?: Line[],
   ): Array<Array<{ text: string; formatting?: ShapeTextContent['parts'][number]['formatting'] }>> {
+    if (measuredLines && measuredLines.length > 0) {
+      const resolvedParts = textContent.parts.map((part) => ({
+        text: part.isLineBreak ? '' : this.resolveShapeTextPartText(part, context),
+        formatting: part.formatting,
+      }));
+      const measured = measuredLines
+        .map((line) => {
+          const result: Array<{ text: string; formatting?: ShapeTextContent['parts'][number]['formatting'] }> = [];
+          for (let runIndex = line.fromRun; runIndex <= line.toRun; runIndex += 1) {
+            const part = resolvedParts[runIndex];
+            if (!part) continue;
+            const from = runIndex === line.fromRun ? line.fromChar : 0;
+            const to = runIndex === line.toRun ? line.toChar : part.text.length;
+            const text = part.text.slice(from, to);
+            if (text) result.push({ text, formatting: part.formatting });
+          }
+          return result;
+        })
+        .filter((line) => line.length > 0);
+      if (measured.length > 0) return measured;
+    }
+
     const lines: Array<Array<{ text: string; formatting?: ShapeTextContent['parts'][number]['formatting'] }>> = [[]];
 
     textContent.parts.forEach((part) => {
@@ -3254,6 +4250,7 @@ export class DomPainter {
   private applyWordArtTextFormatting(
     element: SVGTextElement | SVGTSpanElement,
     formatting?: ShapeTextContent['parts'][number]['formatting'],
+    svg?: SVGSVGElement,
   ): void {
     if (!formatting) {
       return;
@@ -3267,6 +4264,9 @@ export class DomPainter {
     if (formatting.fontFamily) {
       element.setAttribute('font-family', formatting.fontFamily);
     }
+    if (formatting.fontSize != null && Number.isFinite(formatting.fontSize) && formatting.fontSize > 0) {
+      element.setAttribute('font-size', String(formatting.fontSize));
+    }
     if (formatting.color) {
       const validatedColor = validateHexColor(formatting.color);
       if (validatedColor) {
@@ -3275,6 +4275,77 @@ export class DomPainter {
     }
     if (formatting.letterSpacing != null) {
       element.setAttribute('letter-spacing', String(formatting.letterSpacing));
+    }
+
+    const effects = formatting.textEffects;
+    if (!effects) return;
+
+    if (effects.fill === null) {
+      element.setAttribute('fill', 'none');
+    } else if (typeof effects.fill === 'string') {
+      const fill = validateHexColor(effects.fill);
+      if (fill) element.setAttribute('fill', fill);
+    } else if (effects.fill?.type === 'solidWithAlpha') {
+      const fill = validateHexColor(effects.fill.color);
+      if (fill) {
+        element.setAttribute('fill', fill);
+        element.setAttribute('fill-opacity', String(Math.max(0, Math.min(1, effects.fill.alpha))));
+      }
+    } else if (effects.fill?.type === 'gradient' && svg) {
+      const gradientId = `superdoc-wordart-gradient-${this.wordArtPathCounter++}`;
+      const gradient = createGradient(effects.fill, gradientId);
+      if (gradient) {
+        let defs = svg.querySelector('defs');
+        if (!defs) {
+          defs = this.doc!.createElementNS(SVG_NS, 'defs');
+          svg.insertBefore(defs, svg.firstChild);
+        }
+        defs.appendChild(gradient);
+        element.setAttribute('fill', `url(#${gradientId})`);
+      }
+    }
+
+    if (effects.outline?.width && effects.outline.width > 0) {
+      const outlineFill = effects.outline.fill;
+      const outlineColor =
+        typeof outlineFill === 'string'
+          ? validateHexColor(outlineFill)
+          : outlineFill?.type === 'solidWithAlpha'
+            ? svgEffectColor(outlineFill)
+            : undefined;
+      if (outlineColor) {
+        element.setAttribute('stroke', outlineColor);
+        element.setAttribute('stroke-width', String(effects.outline.width));
+        element.setAttribute('paint-order', 'stroke fill');
+      }
+    }
+
+    const filters: string[] = [];
+    if (effects.glow?.radius && effects.glow.radius > 0) {
+      const color = svgEffectColor(effects.glow.color);
+      if (color) filters.push(`drop-shadow(0px 0px ${effects.glow.radius}px ${color})`);
+    }
+    if (effects.shadow) {
+      const color = svgEffectColor(effects.shadow.color);
+      if (color) {
+        const radians = (effects.shadow.direction * Math.PI) / 180;
+        const x =
+          Math.abs(Math.cos(radians) * effects.shadow.distance) < 1e-10
+            ? 0
+            : Math.cos(radians) * effects.shadow.distance;
+        const y =
+          Math.abs(Math.sin(radians) * effects.shadow.distance) < 1e-10
+            ? 0
+            : Math.sin(radians) * effects.shadow.distance;
+        filters.push(`drop-shadow(${x}px ${y}px ${effects.shadow.blurRadius}px ${color})`);
+      }
+    }
+    if (filters.length > 0) element.style.filter = filters.join(' ');
+
+    if (effects.reflection) {
+      // The line-level compositor mirrors only the authored runs and applies
+      // their shared DrawingML fade mask after all tspans have been assembled.
+      element.dataset.superdocWordartReflection = 'source';
     }
   }
 
@@ -3517,7 +4588,12 @@ export class DomPainter {
         const y2 = isHorizontal ? height / 2 : height;
         const axisPaint = isHorizontal || isVertical ? ' shape-rendering="crispEdges"' : '';
 
-        return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        // DrawingML maps line endpoints independently onto the authored xfrm
+        // extents. Do not let SVG's default meet behavior letterbox the line
+        // when responsive page scaling produces a fractional CSS dimension.
+        // Stroke width remains physical because applyPhysicalStrokeSemantics
+        // adds vector-effect="non-scaling-stroke" below.
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
   <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${strokeWidth}"${axisPaint} />
 </svg>`;
       }

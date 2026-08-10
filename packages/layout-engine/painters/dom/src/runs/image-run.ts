@@ -7,6 +7,7 @@ import { applyRunDataAttributes } from './hash.js';
 import { sanitizeUrl } from './links.js';
 import { isValidImageDataUrl } from '@superdoc/url-validation';
 import { calculateRotatedBounds, normalizeRotation } from '@superdoc/geometry-utils';
+import { applyImageOutline } from '../images/image-outline.js';
 
 /**
  * Maximum resize multiplier for image metadata.
@@ -322,6 +323,7 @@ export const renderImageRun = (
   if (opacity != null) {
     img.style.opacity = opacity;
   }
+  applyImageOutline(img, run.outline);
 
   // When clipPath is set, scale makes the img paint outside its box;
   // wrap in a clip container so only the cropped portion occupies space in the document.
