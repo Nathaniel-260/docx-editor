@@ -25,7 +25,7 @@ test('canvas system dependency installer guards apt commands with timeout and di
 test('workflows use the guarded canvas dependency installer instead of raw apt commands', async () => {
   const workflowCandidates = [
     { path: '.github/workflows/ci-superdoc.yml', requiresInstaller: true },
-    { path: '.github/workflows/v2-public-validation.yml', requiresInstaller: false },
+    { path: '.github/workflows/validate.yml', requiresInstaller: false },
   ];
   const workflowFiles = [];
   for (const candidate of workflowCandidates) {

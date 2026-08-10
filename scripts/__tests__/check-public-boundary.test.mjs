@@ -1202,7 +1202,7 @@ test('still judges a transformer that keeps the traversal', () => {
 
 test('anchors a PHP filesystem call at the runner cwd', () => {
   // PHP resolves a relative path from the process working directory, and
-  // ci-examples.yml launches the Laravel example from its own root. Only shell
+  // examples.yml launches the Laravel example from its own root. Only shell
   // had a language-level cwd rule, so this escape was resolved from the deeper
   // `routes/` directory and reported clean.
   const cases = {

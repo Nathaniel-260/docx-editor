@@ -1,4 +1,4 @@
-name: DOCX privacy
+name: DOCX Privacy
 
 # Every .docx in this repository is a ZIP archive, so text-based scans and
 # secret scanners never see inside one. A fixture copied from a real document

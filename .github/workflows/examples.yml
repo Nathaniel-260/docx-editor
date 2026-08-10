@@ -1,4 +1,4 @@
-name: CI Examples
+name: Examples
 
 on:
   pull_request:
@@ -26,7 +26,7 @@ jobs:
         with:
           filters: |
             examples:
-              - '.github/workflows/ci-examples.yml'
+              - '.github/workflows/examples.yml'
               - '.nvmrc'
               - 'examples/**'
               - 'go-links/**'

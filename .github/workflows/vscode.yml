@@ -1,4 +1,4 @@
-name: CI VS Code Extension
+name: VS Code
 
 permissions:
   contents: read
@@ -8,6 +8,7 @@ on:
     paths:
       - 'apps/vscode-ext/**'
       - 'packages/superdoc/src/**'
+      - '.github/workflows/vscode.yml'
   workflow_dispatch:
 
 concurrency:

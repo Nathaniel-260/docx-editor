@@ -1,4 +1,4 @@
-name: "SuperDoc: Dispatch OSS Push To Orbit"
+name: Sync to Orbit
 
 on:
   push:

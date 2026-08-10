@@ -1,4 +1,4 @@
-name: Check .d.ts shadows
+name: Declarations
 
 # Always-run gate for the rule documented in scripts/check-dts-shadows.mjs:
 # no sibling .ts + .d.ts files under packages/. Lives in its own workflow so
@@ -9,7 +9,7 @@ on:
     paths:
       - 'packages/**'
       - 'scripts/check-dts-shadows.mjs'
-      - '.github/workflows/check-dts-shadows.yml'
+      - '.github/workflows/declarations.yml'
   merge_group:
   workflow_dispatch:
 

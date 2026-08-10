@@ -2233,8 +2233,7 @@ test('the test entrypoints stay on vp rather than drifting back to vitest', () =
     'scripts/test.mjs',
     'scripts/test-cov.mjs',
     'scripts/oss-local-ci.mjs',
-    '.github/workflows/ci-coverage.yml',
-    '.github/workflows/v2-public-validation.yml',
+    '.github/workflows/validate.yml',
   ];
   // ci-superdoc stays covered in Orbit, but the standalone projection removes
   // it and runs v2-public-validation instead. Treating the private workflow as

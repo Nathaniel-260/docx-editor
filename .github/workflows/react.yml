@@ -1,4 +1,4 @@
-name: CI React
+name: React
 
 permissions:
   contents: read
@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - 'packages/react/**'
+      - '.github/workflows/react.yml'
   workflow_dispatch:
 
 concurrency:

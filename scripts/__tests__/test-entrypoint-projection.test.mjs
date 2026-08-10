@@ -59,7 +59,16 @@ function planLocalCi({ privateWorkspaces, docsV1RouteScripts = privateWorkspaces
     'package.json',
     `${JSON.stringify({ name: 'local-ci-plan-fixture', packageManager: 'pnpm@10.25.0', private: true })}\n`,
   );
-  writeFixtureFile(repoDir, '.github/workflows/v2-public-validation.yml', 'name: CI V2 Public\n');
+  writeFixtureFile(repoDir, '.github/workflows/validate.yml', 'name: Validate\n');
+  for (const workflowPath of [
+    '.github/workflows/declarations.yml',
+    '.github/workflows/document-api.yml',
+    '.github/workflows/examples.yml',
+    '.github/workflows/react.yml',
+    '.github/workflows/vscode.yml',
+  ]) {
+    writeFixtureFile(repoDir, workflowPath, `name: ${workflowPath}\n`);
+  }
   writeFixtureFile(
     repoDir,
     'apps/docs/package.json',
@@ -77,7 +86,14 @@ function planLocalCi({ privateWorkspaces, docsV1RouteScripts = privateWorkspaces
     writeFixtureFile(repoDir, 'apps/cli/package.json', '{}\n');
     writeFixtureFile(repoDir, 'apps/mcp/package.json', '{}\n');
     writeFixtureFile(repoDir, 'packages/sdk/package.json', '{}\n');
-    writeFixtureFile(repoDir, '.github/workflows/ci-superdoc.yml', 'name: CI SuperDoc\n');
+    for (const workflowPath of [
+      '.github/workflows/ci-docs.yml',
+      '.github/workflows/ci-mcp.yml',
+      '.github/workflows/ci-sdk.yml',
+      '.github/workflows/ci-superdoc.yml',
+    ]) {
+      writeFixtureFile(repoDir, workflowPath, `name: ${workflowPath}\n`);
+    }
   }
 
   const result = spawnSync(process.execPath, ['scripts/oss-local-ci.mjs', '--plan'], {
@@ -115,8 +131,12 @@ test('the local CI plan skips only stages owned by omitted private workspaces', 
   }
   assert.doesNotMatch(projectedPlan, /lane ci-sdk-mcp/u);
   assert.match(projectedPlan, /lane ci-superdoc: CI V2 Public shared core/u);
-  assert.match(projectedPlan, /workflow: \.github\/workflows\/v2-public-validation\.yml/u);
+  assert.match(projectedPlan, /workflow: \.github\/workflows\/validate\.yml/u);
   assert.doesNotMatch(projectedPlan, /workflow: \.github\/workflows\/ci-superdoc\.yml/u);
+  for (const publicWorkflow of ['declarations', 'document-api', 'examples', 'react', 'vscode']) {
+    assert.match(projectedPlan, new RegExp(`\\.github/workflows/${publicWorkflow}\\.yml`, 'u'));
+  }
+  assert.doesNotMatch(projectedPlan, /workflow: \.github\/workflows\/ci-docs\.yml/u);
 
   const orbitPlan = planLocalCi({ privateWorkspaces: true });
   assert.doesNotMatch(orbitPlan, /docs-collections/u);
@@ -126,6 +146,9 @@ test('the local CI plan skips only stages owned by omitted private workspaces', 
   assert.match(orbitPlan, /lane ci-sdk-mcp/u);
   assert.match(orbitPlan, /lane ci-superdoc: CI SuperDoc/u);
   assert.match(orbitPlan, /workflow: \.github\/workflows\/ci-superdoc\.yml/u);
+  for (const orbitWorkflow of ['declarations', 'document-api', 'examples', 'react', 'vscode', 'ci-docs']) {
+    assert.match(orbitPlan, new RegExp(`\\.github/workflows/${orbitWorkflow}\\.yml`, 'u'));
+  }
 
   const mixedPlan = planLocalCi({ privateWorkspaces: true, docsV1RouteScripts: false });
   assert.match(mixedPlan, /lane ci-sdk-mcp/u);

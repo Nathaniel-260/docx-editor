@@ -778,7 +778,7 @@ const LANGUAGE_CWD_ANCHORED_CALLEES = new Map([
     '.php',
     new Set([
       // PHP's filesystem surface, for the same reason. PHP resolves a relative
-      // path from the process working directory, and `ci-examples.yml` launches
+      // path from the process working directory, and `examples.yml` launches
       // the Laravel example from its own root, so a `file_get_contents(
       // '../../../../labs/private.docx')` in `routes/web.php` really does reach
       // the private parent while the guard resolved it from the deeper `routes/`
@@ -936,7 +936,7 @@ const RUNNER_WORKING_DIRECTORIES = [
   // `pnpm --filter <pkg> test` selects a package and runs its script from that
   // package's root, the same as a recursive run. One entry per lane that tests a
   // package this way, resolved from each package.json's `name`:
-  //   ci-react.yml, ci-vscode-ext.yml,
+  //   react.yml, vscode.yml,
   //   ci-docs.yml, and ci-superdoc.yml's memory-profiling step.
   // `packages/superdoc/tests/cdn-smoke/` is the same shape and was already above.
   ['packages/react/', 'packages/react'],
