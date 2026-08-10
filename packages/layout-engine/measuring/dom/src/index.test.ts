@@ -977,6 +977,49 @@ describe('measureBlock', () => {
       expect(measure.lines[0].maxWidth).toBe(maxWidth - textStartPx);
     });
 
+    it('uses resolved list text start when an explicit suffix tab lands before indentLeft', async () => {
+      const maxWidth = 200;
+      const resolvedTextStartPx = 42;
+      const indentLeft = 90;
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'wordlayout-list-suffix-tab-before-indent',
+        runs: [
+          {
+            text: 'List item text should budget the first line from the rendered suffix tab',
+            fontFamily: 'Times New Roman',
+            fontSize: 16,
+          },
+        ],
+        attrs: {
+          indent: { left: indentLeft, hanging: 66 },
+          wordLayout: {
+            indentLeftPx: indentLeft,
+            textStartPx: indentLeft,
+            tabsPx: [resolvedTextStartPx],
+            marker: {
+              markerText: '•',
+              glyphWidthPx: 6,
+              markerBoxWidthPx: 66,
+              gutterWidthPx: 8,
+              suffix: 'tab',
+              run: {
+                fontFamily: 'Times New Roman',
+                fontSize: 16,
+                bold: false,
+                italic: false,
+                letterSpacing: 0,
+              },
+            },
+          },
+        },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, maxWidth));
+
+      expect(measure.lines[0].maxWidth).toBe(maxWidth - resolvedTextStartPx);
+    });
+
     it('uses shared resolver output when only marker.textStartX exists in standard mode', async () => {
       const maxWidth = 200;
       const textStartX = 96; // First-line text start after marker + tab

@@ -761,6 +761,7 @@ const renderResolvedLines = (
       resolvedLine.isListFirstLine ? resolvedMarker : undefined,
       markerTextWidth,
       resolvedLine.indentOffset,
+      resolvedLine.resolvedListTextStartPx,
     );
     const lineEl = renderLine({
       block,
@@ -1060,8 +1061,12 @@ const resolveResolvedListParagraphMarkOffset = (
   marker: ResolvedParagraphContent['marker'] | undefined,
   markerTextWidth: number | undefined,
   indentOffset: number,
+  resolvedListTextStartPx: number | undefined,
 ): number | undefined => {
   if (!marker) return undefined;
+  if (typeof resolvedListTextStartPx === 'number' && Number.isFinite(resolvedListTextStartPx)) {
+    return resolvedListTextStartPx;
+  }
   if (typeof indentOffset === 'number' && Number.isFinite(indentOffset) && indentOffset > 0) {
     return indentOffset;
   }

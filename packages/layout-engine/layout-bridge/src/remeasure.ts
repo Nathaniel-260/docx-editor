@@ -1736,13 +1736,17 @@ export function remeasureParagraph(
     },
   );
   const effectiveTextStartPx = resolvedTextStartPx ?? textStartPx;
+  const hasResolvedTextStartPx = typeof resolvedTextStartPx === 'number' && Number.isFinite(resolvedTextStartPx);
+  const shouldUseListTextStartWidth =
+    typeof effectiveTextStartPx === 'number' &&
+    (hasResolvedTextStartPx ? effectiveTextStartPx !== indentLeft : effectiveTextStartPx > indentLeft);
   // If numbering defines only a firstLine indent with no left/hanging, treat it as a hanging-style layout:
   // don't shrink available width in columns (matches Word which positions marker + tab but leaves normal text width).
   // IMPORTANT: If a list marker is present, the marker+tab are rendered inline, so we MUST
   // shrink the first-line width to match the painter's availableWidth.
   const treatAsHanging = !wordLayout?.marker && effectiveTextStartPx && indentLeft === 0 && indentHanging === 0;
   const firstLineWidth =
-    typeof effectiveTextStartPx === 'number' && effectiveTextStartPx > indentLeft && !treatAsHanging
+    shouldUseListTextStartWidth && !treatAsHanging
       ? Math.max(1, maxWidth - effectiveTextStartPx - indentRight)
       : Math.max(1, contentWidth - effectiveFirstLineOffset);
   const tabStops = buildTabStopsPx(indent as ParagraphIndent | undefined, attrs?.tabs, attrs?.tabIntervalTwips);

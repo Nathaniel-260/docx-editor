@@ -240,6 +240,37 @@ const resolveExplicitStandardTextStartPx = (
   return undefined;
 };
 
+const resolveExplicitStandardSuffixTabPx = (
+  tabsPx: readonly number[] | undefined,
+  markerContentEndPx: number,
+  explicitTextStartPx: number | undefined,
+): number | undefined => {
+  if (explicitTextStartPx == null) {
+    return undefined;
+  }
+
+  const explicitTabsAfterMarker = tabsPx
+    ?.filter((tabStopPx) => {
+      return Number.isFinite(tabStopPx) && tabStopPx > markerContentEndPx;
+    })
+    .sort((a, b) => a - b);
+
+  if (!explicitTabsAfterMarker?.length) {
+    return undefined;
+  }
+
+  if (explicitTextStartPx > markerContentEndPx) {
+    return explicitTabsAfterMarker.find((tabStopPx) => tabStopPx < explicitTextStartPx);
+  }
+
+  if (explicitTextStartPx > 0) {
+    const nextDefaultTabStopPx = getNextDefaultTabStopPx(markerContentEndPx);
+    return explicitTabsAfterMarker.find((tabStopPx) => tabStopPx < nextDefaultTabStopPx);
+  }
+
+  return undefined;
+};
+
 /**
  * Resolves full marker geometry for a list prefix on a paragraph line.
  *
@@ -338,20 +369,32 @@ export function resolveListMarkerGeometry(
     };
   }
 
-  // Standard hanging-indent: text lands at the hanging-indent text start (indent.left),
-  // NOT at the next paragraph tab stop. Paragraph tab stops in tabsPx are for inline
-  // w:tab characters later in the run — they must not be consumed here.
+  // Standard hanging-indent: text usually lands at the hanging-indent text start
+  // (indent.left), not the next paragraph tab stop. A valid explicit paragraph
+  // tab between the marker and that inherited text start is the marker suffix
+  // stop; later tabs are for inline w:tab characters and must not be consumed.
   //
   // Gap: w:doNotUseIndentAsNumberingTabStop and w:noTabHangInd can opt out of this
   // behavior, but those compat flags are not yet plumbed through the word-layout
   // contract. Until they are, this unconditionally assumes the default Word mode.
   // That is correct for the vast majority of documents.
   const gutterWidthPx = Math.max(getNonNegativeFiniteNumber(marker.gutterWidthPx) ?? 0, LIST_MARKER_GAP);
-  const explicitTextStartPx = resolveExplicitStandardTextStartPx(
-    getFiniteNumber(wordLayout?.textStartPx),
+  const wordTextStartPx = getFiniteNumber(wordLayout?.textStartPx);
+  const explicitSuffixTabPx = resolveExplicitStandardSuffixTabPx(
+    wordLayout?.tabsPx,
     markerContentEndPx,
-    gutterWidthPx,
+    wordTextStartPx,
   );
+  if (explicitSuffixTabPx != null) {
+    return {
+      markerStartPx,
+      markerTextWidthPx,
+      textStartPx: explicitSuffixTabPx,
+      suffixWidthPx: explicitSuffixTabPx - markerContentEndPx,
+    };
+  }
+
+  const explicitTextStartPx = resolveExplicitStandardTextStartPx(wordTextStartPx, markerContentEndPx, gutterWidthPx);
   if (explicitTextStartPx != null) {
     return {
       markerStartPx,

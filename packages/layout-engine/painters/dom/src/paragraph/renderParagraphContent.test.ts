@@ -728,6 +728,64 @@ describe('renderParagraphContent', () => {
     expect(markerEl?.style.right).toBe('6px');
   });
 
+  it('passes the resolved list text start to paragraph marks when it lands before indentOffset', () => {
+    const doc = document.implementation.createHTMLDocument('paragraph-content');
+    const frameEl = doc.createElement('div');
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'resolved-list-paragraph-mark',
+      runs: [{ text: 'abc', fontFamily: 'Arial', fontSize: 16 }],
+    };
+    const lineInput = line(0);
+    const resolvedContent: ResolvedParagraphContent = {
+      lines: [
+        {
+          line: lineInput,
+          lineIndex: 0,
+          availableWidth: 158,
+          skipJustify: true,
+          paddingLeftPx: 0,
+          paddingRightPx: 0,
+          textIndentPx: 0,
+          isListFirstLine: true,
+          resolvedListTextStartPx: 42,
+          hasExplicitSegmentPositioning: true,
+          indentOffset: 90,
+        },
+      ],
+      marker: {
+        text: '•',
+        justification: 'left',
+        suffix: 'tab',
+        markerStartPx: -10,
+        suffixWidthPx: 46,
+        firstLinePaddingLeftPx: -10,
+        run: { fontFamily: 'Arial', fontSize: 16 },
+      },
+    };
+    let paragraphMarkLeftOffsetOverride: number | undefined;
+
+    renderParagraphContent({
+      doc,
+      frameEl,
+      block,
+      measure: { kind: 'paragraph', lines: [lineInput], totalHeight: 20 },
+      containerKind: 'body-fragment',
+      width: 200,
+      localStartLine: 0,
+      localEndLine: 1,
+      markerTextWidth: 6,
+      resolvedContent,
+      applySdtDataset: () => {},
+      renderLine: (input) => {
+        paragraphMarkLeftOffsetOverride = input.paragraphMarkLeftOffsetOverride;
+        return doc.createElement('div');
+      },
+    });
+
+    expect(paragraphMarkLeftOffsetOverride).toBe(42);
+  });
+
   it('converts the final paragraph mark for resolved content', () => {
     const doc = document.implementation.createHTMLDocument('paragraph-content');
     const frameEl = doc.createElement('div');

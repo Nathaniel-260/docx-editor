@@ -2103,8 +2103,12 @@ async function measureParagraphBlock(
     },
   );
   const effectiveTextStartPx = resolvedTextStartPx ?? textStartPx;
+  const hasResolvedTextStartPx = typeof resolvedTextStartPx === 'number' && Number.isFinite(resolvedTextStartPx);
+  const shouldUseListTextStartWidth =
+    typeof effectiveTextStartPx === 'number' &&
+    (hasResolvedTextStartPx ? effectiveTextStartPx !== indentLeft : effectiveTextStartPx > indentLeft);
 
-  if (typeof effectiveTextStartPx === 'number' && effectiveTextStartPx > indentLeft) {
+  if (shouldUseListTextStartWidth) {
     // textStartPx indicates where text actually starts on the first line (after marker + tab/space).
     // Available width = from textStartPx to right margin.
     initialAvailableWidth = Math.max(1, maxWidth - effectiveTextStartPx - indentRight);

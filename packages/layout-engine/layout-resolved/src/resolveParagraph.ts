@@ -338,7 +338,8 @@ export function resolveParagraphContent(
         : typeof wordLayout?.textStartPx === 'number' && Number.isFinite(wordLayout.textStartPx)
           ? wordLayout.textStartPx
           : undefined;
-    const resolvedListTextStartForSegments = shouldUseResolvedListTextStart ? listFirstLineTextStartPx : undefined;
+    const resolvedListTextStartForSegments =
+      hasListFirstLineMarker && listFirstLineTextStartPx != null ? listFirstLineTextStartPx : undefined;
     const listIndentOffset = isFirstLineOfPara
       ? (resolvedListTextStartForSegments ?? fallbackListTextStartPx ?? indentLeft)
       : indentLeft;

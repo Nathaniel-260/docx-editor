@@ -9,6 +9,7 @@ import { LIST_MARKER_GAP, SPACE_SUFFIX_GAP_PX, DEFAULT_TAB_INTERVAL_PX } from '.
 
 describe('resolveListTextStartPx', () => {
   const mockMeasureMarkerText = (text: string): number => text.length * 8; // 8px per character
+  const twipsToPx = (twips: number): number => twips / 15;
 
   describe('edge cases and validation', () => {
     it('returns undefined when no marker present', () => {
@@ -371,9 +372,9 @@ describe('resolveListTextStartPx', () => {
       expect(result).toBeCloseTo(18.9333333333, 8);
     });
 
-    it('ignores paragraph tab stops when textStartPx is present', () => {
-      // Regression: tabsPx must NOT override textStartPx in standard hanging-indent mode.
-      // Paragraph tabs are for inline w:tab characters, not list-prefix positioning.
+    it('ignores later paragraph tab stops when textStartPx is present', () => {
+      // Regression: tabs after the inherited text start are for inline w:tab
+      // characters, not list-prefix positioning.
       const wordLayout: MinimalWordLayout = {
         marker: { glyphWidthPx: 10, suffix: 'tab' },
         textStartPx: 24,
@@ -384,6 +385,142 @@ describe('resolveListTextStartPx', () => {
       const result = resolveListTextStartPx(wordLayout, 24, 0, 18, mockMeasureMarkerText);
 
       expect(result).toBe(24);
+    });
+
+    it('uses an explicit suffix tab between the marker and inherited hanging text start (SD-4103)', () => {
+      const wordLayout: MinimalWordLayout = {
+        marker: {
+          glyphWidthPx: 6,
+          suffix: 'tab',
+        },
+        textStartPx: 90, // inherited numbering left: 1350 twips
+        tabsPx: [42], // explicit paragraph tab: 630 twips
+      };
+
+      const geometry = resolveListMarkerGeometry(wordLayout, 90, 0, 66, mockMeasureMarkerText);
+
+      expect(geometry).toEqual({
+        markerStartPx: 24, // inherited left 1350 twips - direct hanging 990 twips
+        markerTextWidthPx: 6,
+        textStartPx: 42,
+        suffixWidthPx: 12,
+      });
+    });
+
+    it('aligns the direct-left control and inherited-left repro paragraph from SD-4103', () => {
+      const marker: MinimalMarker = { glyphWidthPx: 6, suffix: 'tab' };
+      const controlLayout: MinimalWordLayout = {
+        marker,
+        textStartPx: 42, // direct left: 630 twips
+        tabsPx: [42],
+      };
+      const reproLayout: MinimalWordLayout = {
+        marker,
+        textStartPx: 90, // inherited numbering left: 1350 twips
+        tabsPx: [42], // explicit paragraph tab: 630 twips
+      };
+
+      const controlTextStart = resolveListTextStartPx(controlLayout, 42, 0, 18, mockMeasureMarkerText);
+      const reproTextStart = resolveListTextStartPx(reproLayout, 90, 0, 66, mockMeasureMarkerText);
+
+      expect(controlTextStart).toBe(42);
+      expect(reproTextStart).toBe(controlTextStart);
+    });
+
+    it('aligns representative Bullet Points.docx rows at the explicit 630-twip suffix tab', () => {
+      const marker: MinimalMarker = { glyphWidthPx: 6, suffix: 'tab' };
+      const expectedTextStartPx = twipsToPx(630);
+      const cases = [
+        {
+          label: 'direct left 630, hanging 270',
+          indentLeft: twipsToPx(630),
+          hanging: twipsToPx(270),
+          textStart: twipsToPx(630),
+        },
+        {
+          label: 'inherited left 1350, direct hanging 990',
+          indentLeft: twipsToPx(1350),
+          hanging: twipsToPx(990),
+          textStart: twipsToPx(1350),
+        },
+        {
+          label: 'direct left 720, inherited hanging 360',
+          indentLeft: twipsToPx(720),
+          hanging: twipsToPx(360),
+          textStart: twipsToPx(720),
+        },
+        {
+          label: 'direct left 360, firstLine 0',
+          indentLeft: twipsToPx(360),
+          hanging: 0,
+          textStart: twipsToPx(360),
+        },
+        {
+          label: 'direct left 648, hanging 288',
+          indentLeft: twipsToPx(648),
+          hanging: twipsToPx(288),
+          textStart: twipsToPx(648),
+        },
+      ];
+
+      for (const scenario of cases) {
+        const wordLayout: MinimalWordLayout = {
+          marker,
+          textStartPx: scenario.textStart,
+          tabsPx: [expectedTextStartPx],
+        };
+
+        const result = resolveListTextStartPx(
+          wordLayout,
+          scenario.indentLeft,
+          0,
+          scenario.hanging,
+          mockMeasureMarkerText,
+        );
+
+        expect(result, scenario.label).toBeCloseTo(expectedTextStartPx, 8);
+      }
+    });
+
+    it('ignores paragraph tabs before the marker glyph when choosing the marker suffix stop', () => {
+      const wordLayout: MinimalWordLayout = {
+        marker: { glyphWidthPx: 6, suffix: 'tab' },
+        textStartPx: 90,
+        tabsPx: [26],
+      };
+
+      const result = resolveListTextStartPx(wordLayout, 90, 0, 66, mockMeasureMarkerText);
+
+      expect(result).toBe(90);
+    });
+
+    it('uses an explicit suffix tab before the next default stop when firstLine=0 overruns the indent target', () => {
+      const wordLayout: MinimalWordLayout = {
+        marker: { glyphWidthPx: 6, suffix: 'tab' },
+        textStartPx: 24, // direct left: 360 twips
+        tabsPx: [42], // explicit paragraph tab: 630 twips
+      };
+
+      const geometry = resolveListMarkerGeometry(wordLayout, 24, 0, 0, mockMeasureMarkerText);
+
+      expect(geometry).toEqual({
+        markerStartPx: 24,
+        markerTextWidthPx: 6,
+        textStartPx: 42,
+        suffixWidthPx: 12,
+      });
+    });
+
+    it('ignores far-right inline tabs when firstLine=0 overruns the indent target', () => {
+      const wordLayout: MinimalWordLayout = {
+        marker: { glyphWidthPx: 6, suffix: 'tab' },
+        textStartPx: 24,
+        tabsPx: [192],
+      };
+
+      const result = resolveListTextStartPx(wordLayout, 24, 0, 0, mockMeasureMarkerText);
+
+      expect(result).toBe(48);
     });
 
     it('ignores numbering-tab metadata drift in tabsPx', () => {

@@ -1586,6 +1586,34 @@ describe('remeasureParagraph', () => {
       expect(measure.lines[1].maxWidth).toBe(90);
     });
 
+    it('uses resolved list text start when an explicit suffix tab lands before indentLeft', () => {
+      const block = createBlock([textRun('A'.repeat(60))], {
+        indent: { left: 90, hanging: 66 },
+        wordLayout: {
+          indentLeftPx: 90,
+          textStartPx: 90,
+          tabsPx: [42],
+          marker: {
+            markerText: '•',
+            glyphWidthPx: 6,
+            markerBoxWidthPx: 66,
+            gutterWidthPx: 8,
+            justification: 'left',
+            suffix: 'tab',
+            run: {
+              fontFamily: 'Arial',
+              fontSize: 16,
+            },
+          },
+        },
+      } as ParagraphBlock['attrs']);
+      const measure = remeasureParagraph(block, 200);
+
+      expect(measure.lines.length).toBeGreaterThan(1);
+      expect(measure.lines[0].maxWidth).toBe(158);
+      expect(measure.lines[1].maxWidth).toBe(110);
+    });
+
     it('remeasures SD-3426 first-line list tabs from the rendered tab stop', () => {
       const block = createBlock([textRun('A'.repeat(60))], {
         indent: { left: 0, firstLine: 48 },

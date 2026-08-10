@@ -2482,6 +2482,65 @@ describe('resolveLayout', () => {
       expect(content.lines[0].isListFirstLine).toBe(true);
     });
 
+    it('uses resolved list text start as the first-line indent offset when a suffix tab lands before indentLeft', () => {
+      const layout: Layout = {
+        pageSize: { w: 612, h: 792 },
+        pages: [
+          {
+            number: 1,
+            fragments: [
+              {
+                kind: 'para',
+                blockId: 'p1',
+                fromLine: 0,
+                toLine: 1,
+                x: 72,
+                y: 100,
+                width: 200,
+                markerWidth: 66,
+                markerTextWidth: 6,
+              },
+            ],
+          },
+        ],
+      };
+      const blocks: FlowBlock[] = [
+        {
+          kind: 'paragraph',
+          id: 'p1',
+          runs: [{ kind: 'text', text: 'List item text' }],
+          attrs: {
+            indent: { left: 90, hanging: 66 },
+            wordLayout: {
+              textStartPx: 90,
+              tabsPx: [42],
+              marker: {
+                markerText: '•',
+                markerBoxWidthPx: 66,
+                glyphWidthPx: 6,
+                justification: 'left',
+                suffix: 'tab',
+                run: { fontFamily: 'Arial', fontSize: 12 },
+              },
+            },
+          },
+        },
+      ];
+      const measures: Measure[] = [
+        {
+          kind: 'paragraph',
+          lines: [makeLine({ maxWidth: 158, segments: [{ runIndex: 0, fromChar: 0, toChar: 14, width: 96, x: 0 }] })],
+          totalHeight: 20,
+        },
+      ];
+
+      const result = resolveLayout({ layout, flowMode: 'paginated', blocks, measures });
+      const content = (result.pages[0].items[0] as any).content;
+
+      expect(content.lines[0].resolvedListTextStartPx).toBe(42);
+      expect(content.lines[0].indentOffset).toBe(42);
+    });
+
     it('preserves increasing first-line marker anchor for nested RTL list levels', () => {
       const layout: Layout = {
         pageSize: { w: 612, h: 792 },
