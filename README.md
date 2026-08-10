@@ -91,9 +91,8 @@ browse [open issues](https://github.com/superdoc/docx-editor/issues), or join
 
 ## Contributors
 
-<!-- contrib.rocks does not yet resolve the renamed superdoc/docx-editor repository, so the image uses the previous repository name. -->
 <a href="https://github.com/superdoc/docx-editor/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=superdoc-dev/superdoc" alt="SuperDoc contributors" />
+  <img src="https://contrib.rocks/image?repo=superdoc/docx-editor" alt="SuperDoc contributors" />
 </a>
 
 ## License
