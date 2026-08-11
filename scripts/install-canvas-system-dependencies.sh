@@ -9,6 +9,16 @@ apt_opts=(
   -o Dpkg::Use-Pty=0
 )
 
+canvas_packages=(
+  build-essential
+  libcairo2-dev
+  libpango1.0-dev
+  libjpeg-dev
+  libgif-dev
+  librsvg2-dev
+  libpixman-1-dev
+)
+
 if [ -n "${APT_ARCHIVE_CACHE_DIR:-}" ]; then
   mkdir -p "${APT_ARCHIVE_CACHE_DIR}"
   apt_opts+=(-o "Dir::Cache::Archives=${APT_ARCHIVE_CACHE_DIR}")
@@ -47,12 +57,18 @@ run_apt() {
   exit "${status}"
 }
 
+missing_packages=()
+for package in "${canvas_packages[@]}"; do
+  if ! dpkg-query --show --showformat='${db:Status-Status}' "$package" 2>/dev/null | grep -qx installed; then
+    missing_packages+=("$package")
+  fi
+done
+
+if ((${#missing_packages[@]} == 0)); then
+  echo "Canvas system dependencies are already installed."
+  exit 0
+fi
+
 run_apt "apt-get update" update
 run_apt "apt-get install canvas system dependencies" install -y --no-install-recommends \
-  build-essential \
-  libcairo2-dev \
-  libpango1.0-dev \
-  libjpeg-dev \
-  libgif-dev \
-  librsvg2-dev \
-  libpixman-1-dev
+  "${missing_packages[@]}"

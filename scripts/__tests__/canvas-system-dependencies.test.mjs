@@ -14,6 +14,8 @@ async function readRepoFile(relativePath) {
 test('canvas system dependency installer guards apt commands with timeout and diagnostics', async () => {
   const content = await readRepoFile('scripts/install-canvas-system-dependencies.sh');
 
+  assert.ok(content.includes("dpkg-query --show --showformat='${db:Status-Status}'"));
+  assert.ok(content.includes('Canvas system dependencies are already installed.'));
   assert.ok(content.includes('APT_COMMAND_TIMEOUT:-10m'));
   assert.ok(content.includes('timeout "${apt_timeout}" sudo apt-get'));
   assert.ok(content.includes('Acquire::Retries=3'));
