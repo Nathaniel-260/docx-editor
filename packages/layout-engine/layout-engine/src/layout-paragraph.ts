@@ -436,6 +436,13 @@ export type ParagraphLayoutContext = {
    */
   layoutOnlyAnchorCarrier?: boolean;
   /**
+   * Keep positioned objects on the page that owns this zero-height carrier.
+   * A carrier immediately before a forcing sectPr belongs to the preceding
+   * section; moving its object for page-fit would insert an extra page before
+   * the section break and detach it from its authored paragraph anchor.
+   */
+  preserveAnchorCarrierPage?: boolean;
+  /**
    * True when a split line-break carrier carries paragraph spacing that should
    * remain in the flow. The carrier reserves one line plus spacing instead of
    * using the standalone line-break measure, which would double-count the soft
@@ -651,6 +658,7 @@ export function layoutParagraphBlock(ctx: ParagraphLayoutContext, anchors?: Para
 
   let paragraphOrigins = resolveParagraphOrigins();
   if (
+    !ctx.preserveAnchorCarrierPage &&
     shouldAdvanceForParagraphRelativeDrawing(
       anchors?.anchoredDrawings,
       previewState,

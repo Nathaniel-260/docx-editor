@@ -2595,7 +2595,12 @@ function* layoutDocumentSteps(
       if (!measure) {
         throw new Error(`layoutDocument: missing measure for block ${block.id}`);
       }
-      if (sectionBoundaryFillerBlockIds.has(block.id)) {
+      const sectionBoundaryAnchoredDrawings = block.kind === 'paragraph' ? anchoredByParagraph.get(index) : undefined;
+      const isSectionBoundaryAnchorCarrier =
+        sectionBoundaryFillerBlockIds.has(block.id) &&
+        sectionBoundaryAnchoredDrawings != null &&
+        sectionBoundaryAnchoredDrawings.length > 0;
+      if (sectionBoundaryFillerBlockIds.has(block.id) && !isSectionBoundaryAnchorCarrier) {
         layoutLog(`[Layout] Skipping section-boundary filler block ${index} (${block.kind}) - ID: ${block.id}`);
         continue;
       }
@@ -2946,7 +2951,7 @@ function* layoutDocumentSteps(
           continue;
         }
 
-        const anchorsForPara = anchoredByParagraph.get(index);
+        const anchorsForPara = sectionBoundaryAnchoredDrawings ?? anchoredByParagraph.get(index);
         const tablesForPara = anchoredTablesByParagraph.get(index);
         if (
           isSyntheticExplicitPageBreakRemnant(blocks, index) &&
@@ -3160,7 +3165,12 @@ function* layoutDocumentSteps(
             getFootnoteRefCountForBlockId,
             getFootnoteBandOverhead,
             getFootnoteAnchorsForBlockId,
-            layoutOnlyAnchorCarrier: splitCarrierMode === 'layoutOnly',
+            // A section-boundary filler paragraph can still be the coordinate
+            // base for a paragraph-relative DrawingML object. Register that
+            // object, but keep the carrier itself out of normal flow so it
+            // cannot add a line or change Word-compatible pagination.
+            layoutOnlyAnchorCarrier: splitCarrierMode === 'layoutOnly' || isSectionBoundaryAnchorCarrier,
+            preserveAnchorCarrierPage: isSectionBoundaryAnchorCarrier,
             collapseSplitLineBreakCarrier: splitCarrierMode === 'spaced',
             positionedFrameAffectsFlow: !options.nonFlowPositionedParagraphFrameIds?.has(block.id),
           },

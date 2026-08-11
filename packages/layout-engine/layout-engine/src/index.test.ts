@@ -3688,6 +3688,73 @@ describe('layoutDocument', () => {
       expect(layout.pages[1].fragments[0].blockId).toBe('p2');
     });
 
+    it('places a paragraph-anchored image whose empty carrier precedes a sectPr marker', () => {
+      const blocks: FlowBlock[] = [
+        { kind: 'paragraph', id: 'p1', runs: [{ text: 'Content', fontFamily: 'Arial', fontSize: 12 }] },
+        {
+          kind: 'image',
+          id: 'anchored-image',
+          src: 'data:image/png;base64,AA==',
+          width: 120,
+          height: 80,
+          anchor: {
+            isAnchored: true,
+            hRelativeFrom: 'page',
+            vRelativeFrom: 'paragraph',
+            offsetH: 160,
+            offsetV: 8,
+          },
+          wrap: { type: 'TopAndBottom', distTop: 0, distBottom: 0, distLeft: 0, distRight: 0 },
+          attrs: { anchorParagraphId: 'image-carrier' },
+        },
+        {
+          kind: 'paragraph',
+          id: 'image-carrier',
+          runs: [{ text: '', fontFamily: 'Arial', fontSize: 12 }],
+        },
+        {
+          kind: 'paragraph',
+          id: 'sectPr-marker',
+          runs: [{ text: '', fontFamily: 'Arial', fontSize: 12 }],
+          attrs: { sectPrMarker: true },
+        },
+        {
+          kind: 'sectionBreak',
+          id: 'sb1',
+          type: 'nextPage',
+          margins: {},
+          pageSize: { w: 612, h: 792 },
+          columns: { count: 1, gap: 0 },
+          attrs: { source: 'sectPr' },
+        },
+        { kind: 'paragraph', id: 'p2', runs: [{ text: 'After', fontFamily: 'Arial', fontSize: 12 }] },
+      ];
+      const measures: Measure[] = [
+        // Put the carrier close enough to the page bottom that the generic
+        // paragraph-relative fit guard would move the image to an extra page.
+        // A section-boundary carrier must remain attached to the preceding
+        // section instead.
+        makeMeasure([580]),
+        { kind: 'image', width: 120, height: 80 },
+        makeMeasure([16]),
+        makeMeasure([16]),
+        { kind: 'sectionBreak' },
+        makeMeasure([20]),
+      ];
+
+      const layout = layoutDocument(blocks, measures, {
+        pageSize: { w: 612, h: 792 },
+        margins: { top: 72, right: 72, bottom: 72, left: 72 },
+      });
+      const allFragmentIds = layout.pages.flatMap((page) => page.fragments.map((fragment) => fragment.blockId));
+
+      expect(allFragmentIds).toContain('anchored-image');
+      expect(allFragmentIds).not.toContain('image-carrier');
+      expect(allFragmentIds).not.toContain('sectPr-marker');
+      expect(layout.pages).toHaveLength(2);
+      expect(layout.pages[0]?.fragments.some((fragment) => fragment.blockId === 'anchored-image')).toBe(true);
+    });
+
     it('keeps empty tracked section-break marker paragraph before forced section break', () => {
       const blocks: FlowBlock[] = [
         { kind: 'paragraph', id: 'p1', runs: [{ text: 'Content', fontFamily: 'Arial', fontSize: 12 }] },
