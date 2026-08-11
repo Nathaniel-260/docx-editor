@@ -4,19 +4,52 @@ permissions:
   contents: read
 
 on:
+  workflow_call:
   pull_request:
     paths:
+      - '.nvmrc'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'packages/react/**'
+      - 'packages/superdoc/**'
       - '.github/workflows/react.yml'
   workflow_dispatch:
 
 concurrency:
-  group: ci-react-${{ github.event.pull_request.number }}
+  # The workflow also runs as a child of Validate. Including the caller name
+  # keeps that required run from cancelling a standalone focused run.
+  group: ${{ github.workflow }}-ci-react-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  validate:
-    name: CI React / validate
+  detect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      react: ${{ github.event_name != 'pull_request' || steps.filter.outputs.react == 'true' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            react:
+              - '.nvmrc'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'packages/react/**'
+              - 'packages/superdoc/**'
+              - '.github/workflows/react.yml'
+
+  check:
+    needs: detect
+    if: needs.detect.outputs.react == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +65,7 @@ jobs:
         run: pnpm run check:pnpm-config
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build superdoc (dependency)
         run: pnpm run build:superdoc
@@ -48,3 +81,24 @@ jobs:
 
       - name: Test
         run: pnpm --filter @superdoc-dev/react test
+
+  validate:
+    name: CI React / validate
+    if: always()
+    needs: [detect, check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ needs.detect.result }}" != "success" ]]; then
+            echo "Detect job did not succeed (result: ${{ needs.detect.result }})."
+            exit 1
+          fi
+          if [[ "${{ needs.detect.outputs.react }}" != "true" ]]; then
+            echo "React CI skipped: no relevant paths changed."
+            exit 0
+          fi
+          if [[ "${{ needs.check.result }}" != "success" ]]; then
+            echo "Check job did not succeed (result: ${{ needs.check.result }})."
+            exit 1
+          fi

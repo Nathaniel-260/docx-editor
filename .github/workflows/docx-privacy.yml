@@ -6,6 +6,7 @@ name: DOCX Privacy
 # taxonomy straight into a public commit.
 
 on:
+  workflow_call:
   workflow_dispatch:
   pull_request:
   merge_group:
@@ -16,7 +17,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: docx-privacy-${{ github.ref }}
+  # The workflow also runs as a child of Validate. Including the caller name
+  # keeps that required run from cancelling a standalone focused run.
+  group: ${{ github.workflow }}-docx-privacy-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

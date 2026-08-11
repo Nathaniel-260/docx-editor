@@ -1,5 +1,5 @@
-# AIDEV-NOTE: The standalone OSS projection omits CLI, MCP, and SDK workspaces;
-# their validation remains in Orbit instead of being duplicated here.
+# AIDEV-NOTE: This is the required public-repository gate. Every validation
+# lane that can run after projection must feed the final `validate` job.
 name: Validate
 
 on:
@@ -15,10 +15,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
-    name: CI V2 Public / validate
+  preflight:
+    name: Preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Validate pnpm ownership
+        run: pnpm run check:pnpm-config
+      - name: Validate Vite+ ownership
+        run: pnpm run check:vite-plus
+      - name: Validate the public CI contract
+        run: pnpm run check:public-ci
+
+  core:
+    name: Core
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
@@ -27,8 +46,6 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      - name: Validate pnpm ownership
-        run: pnpm run check:pnpm-config
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Check formatting
@@ -39,15 +56,168 @@ jobs:
         run: pnpm run build:superdoc
       - name: Typecheck public workspace
         run: pnpm run type-check
+      - name: Validate removed dependency patches
+        run: pnpm run check:removed-patches
+      - name: Validate release scripts
+        run: pnpm run check:release-scripts
       - name: Validate workflow paths
         run: pnpm run check:workflow-paths:tests && pnpm run check:workflow-paths
+      - name: Validate consumer installs
+        run: pnpm run check:consumer-install
       - name: Validate public boundary
         run: pnpm run check:public-boundary:tests && pnpm run check:public-boundary
       - name: Validate SuperDoc package surface
         run: pnpm check:public:superdoc --skip-build
-      - name: Test SuperDoc
-        run: pnpm --filter superdoc exec vp test run
+      - name: Validate font curation
+        run: pnpm --filter @superdoc/fonts --fail-if-no-match run check:families
+
+  packages:
+    name: Packages
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Install canvas system dependencies
+        run: bash scripts/install-canvas-system-dependencies.sh
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build SuperDoc
+        run: pnpm run build:superdoc
+      - name: Test other Vitest packages
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+          SUPERDOC_V2_RUNTIME_MODE: source
+          VITEST_MAX_WORKERS: '1'
+          VITEST_MIN_WORKERS: '1'
+        run: pnpm exec vp test run '--project=!*super-editor*'
+      - name: Test Bun packages
+        run: |
+          pnpm -r --parallel \
+            --filter @superdoc/document-api \
+            --filter @superdoc/layout-engine \
+            --filter @superdoc/style-engine \
+            --filter @superdoc/geometry-utils \
+            --filter @superdoc/word-layout \
+            --filter @superdoc/common \
+            --filter @superdoc/font-utils \
+            --filter @superdoc/url-validation \
+            test
+      - name: Test slow layout cases
+        run: pnpm test:slow
+      - name: Install Chromium for the CDN smoke test
+        run: pnpm --filter @superdoc/cdn-smoke-test exec playwright install --with-deps chromium
+      - name: Test the CDN build
+        working-directory: packages/superdoc/tests/cdn-smoke
+        run: pnpm test
+
+  docs:
+    name: Docs
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Typecheck docs
         run: pnpm --filter @superdoc/docs typecheck
+      - name: Test docs fixtures
+        run: pnpm --filter @superdoc/docs test:fixtures
+      - name: Test migration catalog
+        run: pnpm --filter @superdoc/docs test:migration-catalog
+      - name: Test migration explorer
+        run: pnpm --filter @superdoc/docs test:migration-explorer
+      - name: Test migration explorer contrast
+        run: pnpm --filter @superdoc/docs test:migration-explorer-contrast
+      - name: Test migration snippet contracts
+        run: pnpm --filter @superdoc/docs test:migration-snippets:contract
+      - name: Test docs links
+        run: pnpm --filter @superdoc/docs test:links
+      - name: Test docs redirects
+        run: pnpm --filter @superdoc/docs test:redirects
       - name: Build docs
         run: pnpm --filter @superdoc/docs build
+      - name: Validate docs links
+        run: pnpm --filter @superdoc/docs check:links
+      - name: Validate docs redirects
+        env:
+          DOCS_REDIRECT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: pnpm --filter @superdoc/docs check:redirects
+      - name: Test the static docs export
+        run: pnpm --filter @superdoc/docs test:export
+      - name: Test the migration agent prompt
+        run: pnpm --filter @superdoc/docs test:migration-agent-prompt
+      - name: Check docs formatting
+        run: pnpm exec vp fmt --check apps/docs
+
+  declarations:
+    uses: ./.github/workflows/declarations.yml
+
+  document-api:
+    needs: preflight
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/document-api.yml
+
+  examples:
+    needs: preflight
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/examples.yml
+
+  react:
+    needs: preflight
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/react.yml
+
+  vscode:
+    needs: preflight
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/vscode.yml
+
+  docx-privacy:
+    needs: preflight
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/docx-privacy.yml
+
+  validate:
+    name: CI V2 Public / validate
+    if: always()
+    needs: [preflight, core, packages, docs, declarations, document-api, examples, react, vscode, docx-privacy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" == "true" ]]; then
+            echo "One or more required public CI jobs did not succeed."
+            exit 1
+          fi

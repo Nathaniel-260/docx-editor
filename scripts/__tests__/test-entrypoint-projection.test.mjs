@@ -130,8 +130,12 @@ test('the local CI plan skips only stages owned by omitted private workspaces', 
     assert.doesNotMatch(projectedPlan, new RegExp(`\\b${stageId}\\b`, 'u'));
   }
   assert.doesNotMatch(projectedPlan, /lane ci-sdk-mcp/u);
-  assert.match(projectedPlan, /lane ci-superdoc: CI V2 Public shared core/u);
+  assert.match(projectedPlan, /lane ci-superdoc: CI V2 Public validation/u);
   assert.match(projectedPlan, /workflow: \.github\/workflows\/validate\.yml/u);
+  assert.match(projectedPlan, /\bpublic-ci\b/u);
+  for (const stageId of ['release-scripts', 'workflow-paths', 'consumer-install', 'public-boundary', 'slow-tests']) {
+    assert.match(projectedPlan, new RegExp(`\\b${stageId}\\b`, 'u'));
+  }
   assert.doesNotMatch(projectedPlan, /workflow: \.github\/workflows\/ci-superdoc\.yml/u);
   for (const publicWorkflow of ['declarations', 'document-api', 'examples', 'react', 'vscode']) {
     assert.match(projectedPlan, new RegExp(`\\.github/workflows/${publicWorkflow}\\.yml`, 'u'));

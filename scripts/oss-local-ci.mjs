@@ -20,8 +20,8 @@ const publicV2Workflow = '.github/workflows/validate.yml';
 const orbitSuperdocWorkflowAvailable = existsSync(path.join(repoRoot, orbitSuperdocWorkflow));
 const superdocWorkflow = orbitSuperdocWorkflowAvailable
   ? orbitSuperdocWorkflow
-  : `${publicV2Workflow} (standalone core; extended lanes run locally and in Orbit)`;
-const superdocLaneTitle = orbitSuperdocWorkflowAvailable ? 'CI SuperDoc' : 'CI V2 Public shared core';
+  : `${publicV2Workflow} (required public aggregate)`;
+const superdocLaneTitle = orbitSuperdocWorkflowAvailable ? 'CI SuperDoc' : 'CI V2 Public validation';
 
 function resolveOrbitWorkflow(workflowPaths, laneTitle) {
   const paths = Array.isArray(workflowPaths) ? workflowPaths : [workflowPaths];
@@ -58,6 +58,7 @@ const LANES = [
       // makes running them here possible at all.
       { id: 'pnpm-config', title: 'pnpm config ownership', ...sh('pnpm run check:pnpm-config') },
       { id: 'vite-plus', title: 'Vite+ toolchain guard', ...sh('pnpm run check:vite-plus') },
+      { id: 'public-ci', title: 'Public CI coverage contract', ...sh('pnpm run check:public-ci') },
       {
         id: 'install',
         title: 'Install dependencies',
@@ -78,6 +79,7 @@ const LANES = [
       // own the other v2-public-validation steps reported in the metadata.
       { id: 'pnpm-config', title: 'pnpm config ownership', ...sh('pnpm run check:pnpm-config') },
       { id: 'vite-plus', title: 'Vite+ toolchain guard', ...sh('pnpm run check:vite-plus') },
+      { id: 'public-ci', title: 'Public CI coverage contract', ...sh('pnpm run check:public-ci') },
       { id: 'lint', title: 'Lint', ...sh('NODE_OPTIONS=--max-old-space-size=4096 pnpm run lint') },
       { id: 'format', title: 'Format check', ...sh('pnpm run format:check') },
       { id: 'build', title: 'Build', ...sh('pnpm run build') },
@@ -89,6 +91,26 @@ const LANES = [
         id: 'removed-patches',
         title: 'Removed dependency patches stay unnecessary',
         ...sh('pnpm run check:removed-patches'),
+      },
+      {
+        id: 'release-scripts',
+        title: 'Release script checks',
+        ...sh('pnpm run check:release-scripts'),
+      },
+      {
+        id: 'workflow-paths',
+        title: 'Workflow path filter checks',
+        ...sh('pnpm run check:workflow-paths:tests && pnpm run check:workflow-paths'),
+      },
+      {
+        id: 'consumer-install',
+        title: 'Consumer install checks',
+        ...sh('pnpm run check:consumer-install'),
+      },
+      {
+        id: 'public-boundary',
+        title: 'Public boundary checks',
+        ...sh('pnpm run check:public-boundary:tests && pnpm run check:public-boundary'),
       },
       {
         id: 'public-interface',
@@ -123,6 +145,7 @@ const LANES = [
           ].join(' '),
         ),
       },
+      { id: 'slow-tests', title: 'Run slow layout tests', ...sh('pnpm test:slow') },
       ...(sdkAvailable
         ? [
             {
@@ -185,7 +208,7 @@ const LANES = [
     workflow: resolveOrbitWorkflow('.github/workflows/ci-docs.yml', 'extended docs validation'),
     // Mirrors every step of that workflow in Orbit. Availability guards remove
     // only stages owned by private workspaces that the exporter omits; the
-    // projected repository runs v2-public-validation instead.
+    // projected repository runs the required public aggregate instead.
     stages: [
       { id: 'docs-pnpm-config', title: 'Check pnpm config', ...sh('pnpm run check:pnpm-config') },
       { id: 'docs-typecheck', title: 'Typecheck docs', ...sh('pnpm --filter @superdoc/docs typecheck') },

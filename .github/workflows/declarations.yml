@@ -5,6 +5,7 @@ name: Declarations
 # every package change is covered even when the wider CI filter skips it.
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - 'packages/**'

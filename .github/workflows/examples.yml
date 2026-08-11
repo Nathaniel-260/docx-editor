@@ -1,12 +1,18 @@
 name: Examples
 
 on:
+  workflow_call:
   pull_request:
   merge_group:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ci-examples-${{ github.event.pull_request.number || github.run_id }}
+  # The workflow also runs as a child of Validate. Including the caller name
+  # keeps that required run from cancelling a standalone focused run.
+  group: ${{ github.workflow }}-ci-examples-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
