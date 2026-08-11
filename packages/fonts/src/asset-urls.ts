@@ -31,8 +31,7 @@ export const BUNDLED_FONT_ASSET_URLS: Readonly<Record<string, string>> = Object.
   'Gelasio-Italic.woff2': new URL('../assets/Gelasio-Italic.woff2', import.meta.url).href,
   'Gelasio-Regular.woff2': new URL('../assets/Gelasio-Regular.woff2', import.meta.url).href,
   'InconsolataSemiExpanded-Bold.woff2': new URL('../assets/InconsolataSemiExpanded-Bold.woff2', import.meta.url).href,
-  'InconsolataSemiExpanded-Regular.woff2': new URL('../assets/InconsolataSemiExpanded-Regular.woff2', import.meta.url)
-    .href,
+  'InconsolataSemiExpanded-Regular.woff2': new URL('../assets/InconsolataSemiExpanded-Regular.woff2', import.meta.url).href,
   'LiberationMono-Bold.woff2': new URL('../assets/LiberationMono-Bold.woff2', import.meta.url).href,
   'LiberationMono-BoldItalic.woff2': new URL('../assets/LiberationMono-BoldItalic.woff2', import.meta.url).href,
   'LiberationMono-Italic.woff2': new URL('../assets/LiberationMono-Italic.woff2', import.meta.url).href,
@@ -42,8 +41,7 @@ export const BUNDLED_FONT_ASSET_URLS: Readonly<Record<string, string>> = Object.
   'LiberationSans-Italic.woff2': new URL('../assets/LiberationSans-Italic.woff2', import.meta.url).href,
   'LiberationSans-Regular.woff2': new URL('../assets/LiberationSans-Regular.woff2', import.meta.url).href,
   'LiberationSansNarrow-Bold.woff2': new URL('../assets/LiberationSansNarrow-Bold.woff2', import.meta.url).href,
-  'LiberationSansNarrow-BoldItalic.woff2': new URL('../assets/LiberationSansNarrow-BoldItalic.woff2', import.meta.url)
-    .href,
+  'LiberationSansNarrow-BoldItalic.woff2': new URL('../assets/LiberationSansNarrow-BoldItalic.woff2', import.meta.url).href,
   'LiberationSansNarrow-Italic.woff2': new URL('../assets/LiberationSansNarrow-Italic.woff2', import.meta.url).href,
   'LiberationSansNarrow-Regular.woff2': new URL('../assets/LiberationSansNarrow-Regular.woff2', import.meta.url).href,
   'LiberationSerif-Bold.woff2': new URL('../assets/LiberationSerif-Bold.woff2', import.meta.url).href,

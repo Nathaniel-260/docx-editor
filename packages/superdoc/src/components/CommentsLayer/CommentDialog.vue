@@ -330,6 +330,7 @@ const commentsAreReadOnly = () => getConfig.value?.readOnly === true;
 // Reply pill → expanded editor toggle
 const isReplying = ref(false);
 const isSubmittingReply = ref(false);
+const isSubmittingNewComment = ref(false);
 const startReply = () => {
   if (commentsAreReadOnly()) return readOnlyMutationOutcome();
   if (isV2WriteDisabled.value) {
@@ -749,6 +750,16 @@ const handleAddComment = async () => {
     }
   }
 
+  // Scoped to isPendingNewComment: this fallthrough is also reached by the
+  // legacy (non-v2) reply-to-existing-thread path, which has its own
+  // disabled-state handling and must not be silently no-op'd by this flag.
+  if (isPendingNewComment.value) {
+    if (isSubmittingNewComment.value) {
+      return { ok: false, reason: 'comment-submit-in-flight' };
+    }
+    isSubmittingNewComment.value = true;
+  }
+
   const options = {
     documentId: props.comment.fileId,
     isInternal: pendingComment.value ? pendingComment.value.isInternal : isInternal.value,
@@ -768,10 +779,18 @@ const handleAddComment = async () => {
   if (!pendingComment.value && currentCommentText.value) {
     comment.setText({ text: currentCommentText.value, suppressUpdate: true });
   }
-  Promise.resolve(addComment({ superdoc: proxy.$superdoc, comment })).finally(() => {
-    isReplying.value = false;
-    nextTick(() => emit('resize'));
-  });
+  // Deferred into .then() so a synchronous throw from addComment (e.g. the
+  // legacy/v1 branch) rejects instead of escaping before the flag resets.
+  Promise.resolve()
+    .then(() => addComment({ superdoc: proxy.$superdoc, comment }))
+    .catch((err) => {
+      console.error('[SuperDoc] addComment failed', err);
+    })
+    .finally(() => {
+      isSubmittingNewComment.value = false;
+      isReplying.value = false;
+      nextTick(() => emit('resize'));
+    });
 };
 
 const isV2Mode = computed(() => proxy.$superdoc?.activeEditor?.editorVersion === 2);
@@ -1291,8 +1310,8 @@ watch(isV2WriteDisabled, (isDisabled) => {
         <button
           class="sd-button primary reply-btn-primary"
           @click.stop.prevent="handleAddComment"
-          :disabled="!hasTextContent"
-          :class="{ 'sd-is-disabled': !hasTextContent }"
+          :disabled="!hasTextContent || isSubmittingNewComment"
+          :class="{ 'sd-is-disabled': !hasTextContent || isSubmittingNewComment }"
         >
           Comment
         </button>
