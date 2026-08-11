@@ -39,6 +39,8 @@ const HISTORICAL_DEFAULTS = Object.freeze({
   toolbar: true,
   comments: true,
   contextMenu: true,
+  // The blocking loader the document renders behind while it opens.
+  loading: true,
   // Opt-in surfaces: historically off unless configured.
   search: false,
   linkPopover: false,
@@ -127,6 +129,7 @@ function withoutCommentPolicy(options) {
  *   toolbar: { enabled: boolean, container: string | HTMLElement | null, options: Record<string, unknown> },
  *   comments: { enabled: boolean, options: Record<string, unknown> },
  *   contextMenu: { enabled: boolean, suppressed: boolean, options: Record<string, unknown> },
+ *   loading: { enabled: boolean },
  *   search: { enabled: boolean, options: Record<string, unknown> },
  *   linkPopover: { enabled: boolean, suppressed: boolean, options: Record<string, unknown> },
  *   ruler: { enabled: boolean, suppressed: boolean, container: string | HTMLElement | null },
@@ -296,6 +299,16 @@ export function normalizeUiConfig(config = {}) {
       // spellings carry the same shape (`customItems`, `menuProvider`,
       // `includeDefaultItems`), so a single merged bag is what the menu reads.
       options: allDisabled ? {} : mergeDefined(legacyContextMenu, options('contextMenu')),
+    },
+
+    loading: {
+      // No legacy spelling to reconcile: the loader has only ever been on, so
+      // the historical default carries it and `ui.loading` / `ui: false` are
+      // the only inputs that turn it off.
+      //
+      // Presentation only. The loader's visibility is still owned by the host's
+      // readiness model; this decides whether SuperDoc draws anything for it.
+      enabled: enabled('loading'),
     },
 
     search: {

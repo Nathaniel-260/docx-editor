@@ -19,6 +19,10 @@ describe('normalizeUiConfig', () => {
       expect(ui.contentControls.enabled).toBe(true);
     });
 
+    it('draws the loading overlay', () => {
+      expect(normalizeUiConfig({}).loading.enabled).toBe(true);
+    });
+
     it('leaves the opt-in surfaces off', () => {
       const ui = normalizeUiConfig({});
 
@@ -46,6 +50,16 @@ describe('normalizeUiConfig', () => {
       for (const surface of BUILT_IN_SURFACES) {
         expect(ui[surface].enabled, `${surface} should be disabled`).toBe(false);
       }
+    });
+
+    it('turns the loading overlay off through either spelling', () => {
+      // The surface has no legacy field, so these two inputs are the whole
+      // truth table for disabling it.
+      expect(normalizeUiConfig({ ui: false }).loading.enabled).toBe(false);
+      expect(normalizeUiConfig({ ui: { loading: false } }).loading.enabled).toBe(false);
+      // An unrelated surface opting out must not take the loader with it.
+      expect(normalizeUiConfig({ ui: { comments: false } }).loading.enabled).toBe(true);
+      expect(normalizeUiConfig({ ui: { loading: true } }).loading.enabled).toBe(true);
     });
 
     it('reports no toolbar container or options', () => {

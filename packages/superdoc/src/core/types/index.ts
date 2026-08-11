@@ -3266,6 +3266,19 @@ export interface UIConfig {
   /** Built-in right-click and slash context menu. Enabled by default. */
   contextMenu?: boolean | ContextMenuConfig;
   /**
+   * Built-in loading overlay shown while a document opens. Enabled by default.
+   * Set to `false` to show your own loading UI instead.
+   *
+   * This only decides whether SuperDoc draws the overlay. It does not change
+   * how long a document takes to open, and it does not affect loading UI the
+   * host renders (such as `renderLoading` in `@superdoc-dev/react`).
+   *
+   * The built-in overlay also masks the document while it opens. Turning it
+   * off hands that responsibility to your UI: keep yours up until `onReady`,
+   * and around a replacement await `superdoc.replaceFile(...)`.
+   */
+  loading?: boolean;
+  /**
    * Built-in find/replace surface. Disabled by default. Enabling it lets
    * SuperDoc intercept Cmd+F / Ctrl+F; `editor.ui.search` stays available to
    * custom UI either way.

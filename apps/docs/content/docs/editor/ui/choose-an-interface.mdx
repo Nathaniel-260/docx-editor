@@ -26,7 +26,7 @@ All three examples below load `/contract.docx`. Copy the [tracked-changes fixtur
 
 ## Built-in
 
-Surfaces you say nothing about keep their historical defaults. The toolbar, comments, context menu, link popover, and content controls render; search and the ruler are opt-in, so add `ui: { search: true }` or `ui: { ruler: true }` when you want them.
+Surfaces you say nothing about keep their historical defaults. The toolbar, comments, context menu, link popover, content controls, and the loading overlay render; search and the ruler are opt-in, so add `ui: { search: true }` or `ui: { ruler: true }` when you want them.
 
 Search is worth opting into whenever the built-in toolbar renders. The toolbar draws its Search button either way, and that button opens the find/replace surface, so leaving `search` off produces a control that is visible, enabled, and does nothing when clicked.
 
@@ -53,6 +53,10 @@ The panel starts empty against the fixture above, which carries no comments. Sel
 Each `ui` key is independent, so a partial object is additive: naming `comments` says nothing about the toolbar. Turn off only the surfaces you have actually rebuilt, because a surface you disable without replacing leaves the reader with less than SuperDoc would have given them.
 
 This is also where the difference between rendering and permission matters most. `ui` decides what SuperDoc draws; `interaction` decides what a person may do. Your own comments panel is not bound by the built-in one's absence, so state the policy rather than inferring it.
+
+The loading overlay is the one surface where turning it off transfers a responsibility rather than just removing pixels. `ui: { loading: false }` stops SuperDoc drawing the overlay it shows while a document opens. The overlay also masks the document underneath while it renders, so without it your UI owns that window. Keep your own loading state up until `onReady`, and around a replacement await `superdoc.replaceFile(...)` rather than assuming it returns instantly. A replacement reopens the document, so the built-in overlay returns for it unless you have turned it off.
+
+In React, `renderLoading` and `ui.loading` are independent. `renderLoading` is your loading UI and SuperDoc hides it once the instance reports ready; `ui.loading` controls SuperDoc's own. Pass `ui={{ loading: false }}` alongside `renderLoading` so the two do not appear one after the other.
 
 The two comment policies answer different questions. `readOnly` refuses every write, including create, reply, and delete. `allowResolve` refuses only the resolve and reopen transition, leaving replies alone. Both default to permissive, so a panel that should not write needs `readOnly: true` said out loud.
 

@@ -2150,6 +2150,11 @@ const editorOptions = (doc) => {
     jsonOverride: proxy.$superdoc.config.jsonOverride,
     viewOptions: proxy.$superdoc.config.viewOptions,
     contained: proxy.$superdoc.config.contained,
+    // Presentation only: the shell resolves this to `enabled` and the host
+    // keeps owning when the loader would be visible. `false` is what the shell
+    // reads as "draw nothing", so pass the flag straight through rather than
+    // omitting it, which resolves back to on.
+    documentLoading: proxy.$superdoc.uiConfig.loading.enabled,
     // Resolved across both spellings, and already `undefined` for a surface
     // that is unconfigured or suppressed, so the `enabled` gate that used to
     // stand here is now carried by the value itself.
