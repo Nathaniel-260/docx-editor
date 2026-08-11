@@ -11,6 +11,7 @@ if (!response.ok) throw new Error(`The sample document returned ${response.statu
 const params = new URLSearchParams(window.location.search);
 const roomMode = params.get('mode') === 'create' ? 'create' : 'join';
 const userName = params.get('user') ?? 'Browser user';
+const collaborationPort = 1234 + Number(import.meta.env.VITE_SUPERDOC_EXAMPLE_PORT_OFFSET ?? '0');
 
 const superdoc = new SuperDoc({
   selector: '#editor',
@@ -22,7 +23,7 @@ const superdoc = new SuperDoc({
       v2Collaboration: {
         providerType: 'hocuspocus',
         documentId: 'example-room',
-        serverUrl: 'ws://127.0.0.1:1234',
+        serverUrl: `ws://127.0.0.1:${collaborationPort}`,
         roomMode,
       },
     },

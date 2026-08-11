@@ -1,6 +1,7 @@
 import { Server } from '@hocuspocus/server';
 
-const server = Server.configure({ port: 1234 });
+const port = 1234 + Number(process.env.VITE_SUPERDOC_EXAMPLE_PORT_OFFSET ?? '0');
+const server = Server.configure({ port });
 await server.listen();
 
 const stop = async () => {
