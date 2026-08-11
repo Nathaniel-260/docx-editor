@@ -6660,6 +6660,247 @@ describe('requirePageBoundary edge cases', () => {
       expect(p3.width).toBeCloseTo(550);
     });
 
+    it('uses the wider explicit column after a nextColumn section break', () => {
+      const columns = { count: 2, gap: 0, widths: [272.6666666666667, 365.4], equalWidth: false };
+      const toTwoColumns: SectionBreakBlock = {
+        kind: 'sectionBreak',
+        id: 'sb-two-columns',
+        type: 'continuous',
+        columns,
+        margins: {},
+      };
+      const nextColumn: SectionBreakBlock = {
+        kind: 'sectionBreak',
+        id: 'sb-next-column',
+        type: 'nextColumn',
+        columns,
+        margins: {},
+      };
+
+      const blocks: FlowBlock[] = [
+        { kind: 'paragraph', id: 'lead', runs: [] },
+        toTwoColumns,
+        { kind: 'paragraph', id: 'left-signature', runs: [] },
+        nextColumn,
+        { kind: 'paragraph', id: 'right-signature', runs: [] },
+      ];
+      const measures: Measure[] = [
+        makeMeasure([40]),
+        { kind: 'sectionBreak' },
+        makeMeasure([40]),
+        { kind: 'sectionBreak' },
+        makeMeasure([40]),
+      ];
+
+      const layout = layoutDocument(blocks, measures, {
+        pageSize: { w: 800, h: 792 },
+        margins: { top: 72, right: 80, bottom: 72, left: 80 },
+      });
+      const page = layout.pages[0];
+      const lead = page.fragments.find((fragment) => fragment.blockId === 'lead') as ParaFragment;
+      const left = page.fragments.find((fragment) => fragment.blockId === 'left-signature') as ParaFragment;
+      const right = page.fragments.find((fragment) => fragment.blockId === 'right-signature') as ParaFragment;
+
+      expect(left.x).toBeCloseTo(80);
+      expect(left.y).toBeCloseTo(lead.y + 40);
+      expect(left.width).toBeCloseTo(272.6666666666667);
+      expect(right.x).toBeCloseTo(80 + 272.6666666666667);
+      expect(right.y).toBeCloseTo(lead.y + 40);
+      expect(right.width).toBeCloseTo(365.4);
+    });
+
+    it('starts first-section nextColumn seeds in the destination column', () => {
+      const columns = { count: 2, gap: 0, widths: [272.6666666666667, 365.4], equalWidth: false };
+      const seed: SectionBreakBlock = {
+        kind: 'sectionBreak',
+        id: 'section-seed-right-column',
+        type: 'continuous',
+        columns,
+        margins: {},
+        attrs: { isFirstSection: true, initialColumnIndex: 1 },
+      };
+
+      const layout = layoutDocument(
+        [seed, { kind: 'paragraph', id: 'right-signature', runs: [] }],
+        [{ kind: 'sectionBreak' }, makeMeasure([40])],
+        {
+          pageSize: { w: 800, h: 792 },
+          margins: { top: 72, right: 80, bottom: 72, left: 80 },
+        },
+      );
+
+      const page = layout.pages[0];
+      const right = page.fragments.find((fragment) => fragment.blockId === 'right-signature') as ParaFragment;
+      expect(right.x).toBeCloseTo(80 + 272.6666666666667);
+      expect(right.width).toBeCloseTo(365.4);
+    });
+
+    it('advances past a sectPr marker paragraph between continuous and nextColumn', () => {
+      // OOXML shape: a continuous two-column section owns left-column content
+      // plus an empty sectPr carrier, then nextColumn starts right-column content.
+      const columns = { count: 2, gap: 0, widths: [272.6666666666667, 365.4], equalWidth: false };
+      const layout = layoutDocument(
+        [
+          {
+            kind: 'sectionBreak',
+            id: 'sb-two-columns',
+            type: 'continuous',
+            columns,
+            margins: {},
+            attrs: { source: 'sectPr', sectionIndex: 5, typeIsExplicit: true },
+          },
+          { kind: 'paragraph', id: 'left-signature', runs: [] },
+          { kind: 'paragraph', id: 'continuous-marker', runs: [], attrs: { sectPrMarker: true } },
+          {
+            kind: 'sectionBreak',
+            id: 'sb-next-column',
+            type: 'nextColumn',
+            columns,
+            margins: {},
+            attrs: { source: 'sectPr', sectionIndex: 6, typeIsExplicit: true },
+          },
+          { kind: 'paragraph', id: 'right-signature', runs: [] },
+        ],
+        [{ kind: 'sectionBreak' }, makeMeasure([40]), makeMeasure([0]), { kind: 'sectionBreak' }, makeMeasure([40])],
+        {
+          pageSize: { w: 816, h: 1056 },
+          margins: { top: 44.27, right: 88.27, bottom: 49.2, left: 89.6 },
+        },
+      );
+
+      const page = layout.pages[0];
+      const left = page.fragments.find((fragment) => fragment.blockId === 'left-signature') as ParaFragment;
+      const right = page.fragments.find((fragment) => fragment.blockId === 'right-signature') as ParaFragment;
+      expect(left.x).toBeCloseTo(89.6);
+      expect(left.width).toBeCloseTo(272.6666666666667);
+      expect(right.x).toBeCloseTo(89.6 + 272.6666666666667);
+      expect(right.y).toBeCloseTo(left.y);
+      expect(right.width).toBeCloseTo(365.4);
+    });
+
+    it('does not render or consume a measured empty sectPr marker before nextColumn', () => {
+      const columns = { count: 2, gap: 0, widths: [272.6666666666667, 365.4], equalWidth: false };
+      const layout = layoutDocument(
+        [
+          {
+            kind: 'sectionBreak',
+            id: 'sb-two-columns',
+            type: 'continuous',
+            columns,
+            margins: {},
+            attrs: { source: 'sectPr', sectionIndex: 5, typeIsExplicit: true },
+          },
+          { kind: 'paragraph', id: 'left-signature', runs: [] },
+          { kind: 'paragraph', id: 'continuous-marker', runs: [], attrs: { sectPrMarker: true } },
+          {
+            kind: 'sectionBreak',
+            id: 'sb-next-column',
+            type: 'nextColumn',
+            columns,
+            margins: {},
+            attrs: { source: 'sectPr', sectionIndex: 6, typeIsExplicit: true },
+          },
+          { kind: 'paragraph', id: 'right-signature', runs: [] },
+        ],
+        [
+          { kind: 'sectionBreak' },
+          makeMeasure([40]),
+          makeMeasure([19.3967]),
+          { kind: 'sectionBreak' },
+          makeMeasure([40]),
+        ],
+        {
+          pageSize: { w: 816, h: 1056 },
+          margins: { top: 44.27, right: 88.27, bottom: 49.2, left: 89.6 },
+        },
+      );
+
+      const page = layout.pages[0];
+      const marker = page.fragments.find((fragment) => fragment.blockId === 'continuous-marker');
+      const left = page.fragments.find((fragment) => fragment.blockId === 'left-signature') as ParaFragment;
+      const right = page.fragments.find((fragment) => fragment.blockId === 'right-signature') as ParaFragment;
+      expect(marker).toBeUndefined();
+      expect(right.x).toBeCloseTo(89.6 + 272.6666666666667);
+      expect(right.y).toBeCloseTo(left.y);
+    });
+
+    it('keeps nextColumn content beside a tall left column near the page bottom', () => {
+      const columns = { count: 2, gap: 0, widths: [272.6666666666667, 365.4], equalWidth: false };
+      const layout = layoutDocument(
+        [
+          { kind: 'paragraph', id: 'lead', runs: [] },
+          {
+            kind: 'sectionBreak',
+            id: 'sb-two-columns',
+            type: 'continuous',
+            columns,
+            margins: {},
+          },
+          { kind: 'paragraph', id: 'left-signature', runs: [] },
+          {
+            kind: 'sectionBreak',
+            id: 'sb-next-column',
+            type: 'nextColumn',
+            columns,
+            margins: {},
+          },
+          { kind: 'paragraph', id: 'right-signature', runs: [] },
+        ],
+        [
+          makeMeasure([40]),
+          { kind: 'sectionBreak' },
+          // Tall left column near the page bottom. Restarting the mid-page region
+          // at maxCursorY would leave no room for the right column on this page.
+          makeMeasure([200]),
+          { kind: 'sectionBreak' },
+          makeMeasure([40]),
+        ],
+        {
+          pageSize: { w: 800, h: 400 },
+          margins: { top: 72, right: 80, bottom: 72, left: 80 },
+        },
+      );
+
+      expect(layout.pages).toHaveLength(1);
+      const page = layout.pages[0];
+      const left = page.fragments.find((fragment) => fragment.blockId === 'left-signature') as ParaFragment;
+      const right = page.fragments.find((fragment) => fragment.blockId === 'right-signature') as ParaFragment;
+      expect(right).toBeDefined();
+      expect(right.x).toBeCloseTo(80 + 272.6666666666667);
+      expect(right.y).toBeCloseTo(left.y);
+      expect(right.width).toBeCloseTo(365.4);
+    });
+
+    it('activates pending multi-column geometry on nextColumn when still single-column', () => {
+      const columns = { count: 2, gap: 0, widths: [272.6666666666667, 365.4], equalWidth: false };
+      const layout = layoutDocument(
+        [
+          { kind: 'paragraph', id: 'lead', runs: [] },
+          {
+            kind: 'sectionBreak',
+            id: 'sb-next-column',
+            type: 'nextColumn',
+            columns,
+            margins: {},
+          },
+          { kind: 'paragraph', id: 'right-signature', runs: [] },
+        ],
+        [makeMeasure([40]), { kind: 'sectionBreak' }, makeMeasure([40])],
+        {
+          pageSize: { w: 800, h: 792 },
+          margins: { top: 72, right: 80, bottom: 72, left: 80 },
+        },
+      );
+
+      expect(layout.pages).toHaveLength(1);
+      const page = layout.pages[0];
+      const lead = page.fragments.find((fragment) => fragment.blockId === 'lead') as ParaFragment;
+      const right = page.fragments.find((fragment) => fragment.blockId === 'right-signature') as ParaFragment;
+      expect(right.x).toBeCloseTo(80 + 272.6666666666667);
+      expect(right.y).toBeCloseTo(lead.y + 40);
+      expect(right.width).toBeCloseTo(365.4);
+    });
+
     it('keeps the current explicit column after a manual column break when only later per-column gaps differ', () => {
       const toExplicitColumns: FlowBlock = {
         kind: 'sectionBreak',

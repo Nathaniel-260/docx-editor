@@ -280,6 +280,38 @@ describe('scheduleSectionBreak', () => {
         expect(result.decision.forcePageBreak).toBe(true);
         expect(result.state.pendingColumns).toEqual({ count: 1, gap: 0 });
       });
+
+      it('nextColumn section break advances by column without forcing a mid-page region', () => {
+        const columns = { count: 2, gap: 0, widths: [272.6666666666667, 365.4], equalWidth: false };
+        const state = createSectionState({ activeColumns: { count: 1, gap: 0 } });
+        const block = createSectionBreak({
+          type: 'nextColumn',
+          columns,
+        });
+
+        const result = scheduleSectionBreak(block, state, BASE_MARGINS);
+
+        expect(result.decision.forceColumnBreak).toBe(true);
+        expect(result.decision.forcePageBreak).toBe(false);
+        expect(result.decision.forceMidPageRegion).toBe(false);
+        expect(result.state.pendingColumns).toEqual(columns);
+      });
+
+      it('nextColumn section break advances by column without forcing a page break', () => {
+        const columns = { count: 2, gap: 0, widths: [272.6666666666667, 365.4], equalWidth: false };
+        const state = createSectionState({ activeColumns: columns });
+        const block = createSectionBreak({
+          type: 'nextColumn',
+          columns,
+        });
+
+        const result = scheduleSectionBreak(block, state, BASE_MARGINS);
+
+        expect(result.decision.forceColumnBreak).toBe(true);
+        expect(result.decision.forcePageBreak).toBe(false);
+        expect(result.decision.forceMidPageRegion).toBe(false);
+        expect(result.state.pendingColumns).toEqual(columns);
+      });
     });
   });
 

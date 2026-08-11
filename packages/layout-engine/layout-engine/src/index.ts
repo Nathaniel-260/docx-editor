@@ -769,6 +769,12 @@ const normalizeNonNegativeInteger = (value: unknown, fallback: number): number =
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 };
 
+const normalizeInitialColumnIndex = (columns: ColumnLayout | undefined, value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const columnCount = resolveColumnCount(columns);
+  return Math.max(0, Math.min(Math.floor(value), columnCount - 1));
+};
+
 /**
  * A DOCX pageBreakBefore paragraph only requires that the paragraph start on a
  * new page. If pagination has already advanced to the top of a fresh page
@@ -1289,7 +1295,12 @@ function* layoutDocumentSteps(
     state: SectionState,
     baseMargins: { top: number; bottom: number; left: number; right: number },
   ): {
-    decision: { forcePageBreak: boolean; forceMidPageRegion: boolean; requiredParity?: 'even' | 'odd' };
+    decision: {
+      forcePageBreak: boolean;
+      forceColumnBreak?: boolean;
+      forceMidPageRegion: boolean;
+      requiredParity?: 'even' | 'odd';
+    };
     state: SectionState;
   } => {
     if (typeof scheduleSectionBreakExport === 'function') {
@@ -1481,6 +1492,14 @@ function* layoutDocumentSteps(
           forceMidPageRegion: false,
           ...(block.requiredPageParity ? { requiredParity: block.requiredPageParity } : {}),
         },
+        state: next,
+      };
+    }
+    if (sectionType === 'nextColumn') {
+      next.pendingColumns = getColumnConfig();
+      // See scheduleSectionBreak('nextColumn'): advance column, never mid-page restart.
+      return {
+        decision: { forcePageBreak: false, forceColumnBreak: true, forceMidPageRegion: false },
         state: next,
       };
     }
@@ -2467,6 +2486,14 @@ function* layoutDocumentSteps(
         activeSectionPageCounterStart = activePageCounter;
       }
     }
+
+    const initialColumnIndex = normalizeInitialColumnIndex(activeColumns, effectiveBlock.attrs?.initialColumnIndex);
+    if (initialColumnIndex !== null && initialColumnIndex > 0) {
+      const state = paginator.ensurePage();
+      if (state.page.fragments.length === 0) {
+        state.columnIndex = initialColumnIndex;
+      }
+    }
   };
 
   const preAppliedInitialSectionBreakIndices = new Set<number>();
@@ -2878,6 +2905,22 @@ function* layoutDocumentSteps(
             // place and snapshot the pending section contract now.
             state = paginator.startNewPage({ replaceCurrentPage: true });
           }
+        }
+
+        if (breakInfo.forceColumnBreak) {
+          const state = paginator.ensurePage();
+          // advanceColumn starts a new page when the active layout has only one
+          // column (columnIndex is already the last). Activate pending multi-column
+          // geometry first so nextColumn advances within the page.
+          const pendingRegionColumns = updatedState.pendingColumns;
+          if (
+            pendingRegionColumns &&
+            resolveColumnCount(pendingRegionColumns) > 1 &&
+            resolveColumnCount(getActiveColumnsForState(state)) < 2
+          ) {
+            startMidPageRegion(state, pendingRegionColumns);
+          }
+          paginator.advanceColumn(state);
         }
 
         continue;
@@ -3404,12 +3447,24 @@ function* layoutDocumentSteps(
       }
 
       // Column break: advance to next column or start new page if in last column
-      // Corresponds to DOCX <w:br w:type="column"/>
+      // Corresponds to DOCX <w:br w:type="column"/>. Section `nextColumn` advances
+      // via forceColumnBreak on the sectionBreak path instead.
       if (block.kind === 'columnBreak') {
         if (measure.kind !== 'columnBreak') {
           throw new Error(`layoutDocument: expected columnBreak measure for block ${block.id}`);
         }
         const state = paginator.ensurePage();
+        // Activate pending multi-column geometry first so a column break that also
+        // introduced columns advances within the page instead of startNewPage()-ing
+        // from a 1-col layout.
+        if (
+          pendingColumns &&
+          resolveColumnCount(pendingColumns) > 1 &&
+          resolveColumnCount(getActiveColumnsForState(state)) < 2
+        ) {
+          startMidPageRegion(state, pendingColumns);
+          pendingColumns = null;
+        }
         const activeCols = getActiveColumnsForState(state);
 
         if (state.columnIndex < resolveColumnCount(activeCols) - 1) {

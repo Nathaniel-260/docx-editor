@@ -96,4 +96,25 @@ describe('section-boundary layout eligibility', () => {
       true,
     ]);
   });
+
+  it('omits invisible sectPr markers before non-forcing section breaks', () => {
+    const blocks = [
+      { kind: 'paragraph', id: 'left-signature', runs: [{ kind: 'text', text: 'left' }] },
+      { kind: 'paragraph', id: 'sectPr-marker', runs: [], attrs: { sectPrMarker: true } },
+      {
+        kind: 'sectionBreak',
+        id: 'next-column',
+        type: 'nextColumn',
+        attrs: { source: 'sectPr' },
+      },
+      { kind: 'paragraph', id: 'right-signature', runs: [{ kind: 'text', text: 'right' }] },
+    ] as FlowBlock[];
+
+    expect(blocks.map((_, index) => doesFlowBlockProduceLayoutFragment(blocks, index))).toEqual([
+      true,
+      false,
+      false,
+      true,
+    ]);
+  });
 });

@@ -81,6 +81,78 @@ describe('incrementalLayout semantic flow', () => {
     expect(paragraphFragment?.width).toBe(semanticContentWidth);
   });
 
+  it('preserves explicit fixed-width columns for semantic nextColumn sections', async () => {
+    const semanticMargins = { top: 44, right: 88, bottom: 49, left: 90 };
+    const semanticPageWidth = 816;
+    const columns = { count: 2, gap: 0, widths: [272.67, 365.4], equalWidth: false };
+    const continuous: SectionBreakBlock = {
+      kind: 'sectionBreak',
+      id: 'sb-continuous',
+      type: 'continuous',
+      pageSize: { w: 816, h: 1056 },
+      margins: semanticMargins,
+      columns,
+      attrs: { sectionIndex: 5, source: 'sectPr' },
+    };
+    const left = makeParagraph('left-signature', 'By: ____ Name: Left Signer');
+    const marker: FlowBlock = {
+      kind: 'paragraph',
+      id: 'continuous-marker',
+      runs: [],
+      attrs: { sectPrMarker: true },
+    };
+    const nextColumn: SectionBreakBlock = {
+      kind: 'sectionBreak',
+      id: 'sb-next-column',
+      type: 'nextColumn',
+      pageSize: { w: 816, h: 1056 },
+      margins: semanticMargins,
+      columns,
+      attrs: { sectionIndex: 6, source: 'sectPr' },
+    };
+    const right = makeParagraph('right-signature', 'By: ____ Name: ____________________');
+
+    const measureWidths: number[] = [];
+    const measureBlock = vi.fn(async (block: FlowBlock, constraints: { maxWidth: number; maxHeight: number }) => {
+      if (block.kind !== 'paragraph') {
+        throw new Error(`Unexpected block kind in test measure: ${block.kind}`);
+      }
+      measureWidths.push(constraints.maxWidth);
+      return makeParagraphMeasure(40, 12, constraints.maxWidth);
+    });
+
+    const result = await incrementalLayout(
+      [],
+      null,
+      [continuous, left, marker, nextColumn, right],
+      {
+        flowMode: 'semantic',
+        pageSize: { w: semanticPageWidth, h: 1056 },
+        margins: semanticMargins,
+        semantic: {
+          contentWidth: semanticPageWidth - (semanticMargins.left + semanticMargins.right),
+          marginTop: semanticMargins.top,
+          marginBottom: semanticMargins.bottom,
+        },
+      },
+      measureBlock,
+    );
+
+    const fragments = result.layout.pages.flatMap((page) => page.fragments);
+    const leftFragment = fragments.find((fragment) => fragment.kind === 'para' && fragment.blockId === left.id);
+    const markerFragment = fragments.find((fragment) => fragment.kind === 'para' && fragment.blockId === marker.id);
+    const rightFragment = fragments.find((fragment) => fragment.kind === 'para' && fragment.blockId === right.id);
+
+    expect(measureWidths).toEqual([272.67, 272.67, 365.4]);
+    expect(leftFragment).toBeDefined();
+    expect(markerFragment).toBeUndefined();
+    expect(rightFragment).toBeDefined();
+    expect(leftFragment?.width).toBeCloseTo(272.67);
+    expect(rightFragment?.x).toBeCloseTo(semanticMargins.left + 272.67);
+    expect(rightFragment?.y).toBeCloseTo(leftFragment!.y);
+    expect(rightFragment?.width).toBeCloseTo(365.4);
+  });
+
   it('skips header/footer layout work in semantic flow mode', async () => {
     const paragraph = makeParagraph('body-1', 'Body content');
     const headerParagraph = makeParagraph('header-1', 'Header content');

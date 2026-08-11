@@ -1970,7 +1970,7 @@ export type SectionVerticalAlign = 'top' | 'center' | 'bottom' | 'both';
 export type SectionBreakBlock = {
   kind: 'sectionBreak';
   id: BlockId;
-  type?: 'continuous' | 'nextPage' | 'evenPage' | 'oddPage';
+  type?: 'continuous' | 'nextColumn' | 'nextPage' | 'evenPage' | 'oddPage';
   /**
    * Physical page parity required for a `nextPage` break. Word derives this
    * when distinct odd/even headers are enabled and the new section explicitly
@@ -2820,6 +2820,9 @@ export const shouldSkipParagraphDuringLayout = (blocks: FlowBlock[], index: numb
 
   const previous = index > 0 ? blocks[index - 1] : null;
   const next = index < blocks.length - 1 ? blocks[index + 1] : null;
+  if (isInvisibleSectionBoundaryMarkerBlock(block) && next?.kind === 'sectionBreak' && next.type === 'nextColumn') {
+    return true;
+  }
   if (block.attrs?.sectPrMarker === true && next?.kind === 'sectionBreak') {
     // A paragraph-level sectPr is carried by the paragraph mark. Word folds
     // that empty carrier into forcing boundaries, the authored empty line

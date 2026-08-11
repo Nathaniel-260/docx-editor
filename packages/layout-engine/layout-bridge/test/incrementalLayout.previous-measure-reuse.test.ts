@@ -232,4 +232,59 @@ describe('incrementalLayout previous-measure reuse', () => {
     expect(introMeasure.lines?.[0]?.width).toBe(260);
     expect(bodyMeasure.lines?.[0]?.width).toBe(120);
   });
+
+  it('measures paragraphs after nextColumn at the target explicit column width', async () => {
+    const options = {
+      pageSize: { w: 816, h: 1056 },
+      margins: { top: 44, right: 88, bottom: 49, left: 90 },
+      columns: { count: 1, gap: 0 },
+    };
+    const contentWidth = 816 - (90 + 88);
+    const columns = { count: 2, gap: 0, widths: [272.67, 365.4], equalWidth: false };
+
+    const continuous: SectionBreakBlock = {
+      kind: 'sectionBreak',
+      id: 'sb-continuous',
+      type: 'continuous',
+      columns,
+      margins: options.margins,
+      attrs: { sectionIndex: 5, source: 'sectPr' },
+    };
+    const left = makeParagraph('left', 'By: ____ Name: Left Signer');
+    const nextColumn: SectionBreakBlock = {
+      kind: 'sectionBreak',
+      id: 'sb-next-column',
+      type: 'nextColumn',
+      columns,
+      margins: options.margins,
+      attrs: { sectionIndex: 6, source: 'sectPr' },
+    };
+    const right = makeParagraph('right', 'By: ____ Name: ____________________');
+
+    const measureWidths: number[] = [];
+    const measureBlock = vi.fn(async (block: FlowBlock, constraints: { maxWidth: number; maxHeight: number }) => {
+      if (block.kind === 'paragraph') measureWidths.push(constraints.maxWidth);
+      return {
+        kind: 'paragraph',
+        lines: [
+          {
+            fromRun: 0,
+            fromChar: 0,
+            toRun: 0,
+            toChar: 1,
+            width: constraints.maxWidth,
+            ascent: 8,
+            descent: 2,
+            lineHeight: 10,
+          },
+        ],
+        totalHeight: 10,
+      } satisfies ParagraphMeasure;
+    });
+
+    await incrementalLayout([], null, [continuous, left, nextColumn, right], options, measureBlock);
+
+    expect(measureWidths).toEqual([272.67, 365.4]);
+    expect(contentWidth).toBe(638);
+  });
 });

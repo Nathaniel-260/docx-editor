@@ -2,13 +2,16 @@ import {
   areValidPageCheckpointDependencyClasses,
   cloneColumnLayout,
   collectSectionBoundaryFillerBlockIds,
+  columnRenderLayoutsEqual,
   doesFlowBlockProduceLayoutFragment,
   formatSectionPageNumberText,
   getColumnGeometry,
+  getColumnWidth,
   getColumnX,
   isPageRelativeAnchor,
   normalizeColumnLayout,
   rescaleColumnWidths,
+  resolveColumnCount,
 } from '@superdoc/contracts';
 import type {
   NonFlowingPageRelativeAnchorDependencyProof,
@@ -630,6 +633,26 @@ const resolveMaxColumnWidth = (contentWidth: number, columns?: ColumnLayout): nu
   if (!columns || columns.count <= 1) return contentWidth;
   const normalized = normalizeColumnsForFootnotes(columns, contentWidth);
   return normalized.width;
+};
+
+const measurementWidthForColumn = (
+  contentWidth: number,
+  columns: ColumnLayout | undefined,
+  columnIndex: number,
+): number => {
+  if (!columns || resolveColumnCount(columns) <= 1) return contentWidth;
+  return getColumnWidth(getColumnGeometry(normalizeColumnsForFootnotes(columns, contentWidth)), columnIndex);
+};
+
+const advanceMeasurementColumnIndex = (columns: ColumnLayout | undefined, currentColumnIndex: number): number => {
+  const columnCount = resolveColumnCount(columns);
+  return currentColumnIndex < columnCount - 1 ? currentColumnIndex + 1 : 0;
+};
+
+const normalizeMeasurementColumnIndex = (columns: ColumnLayout | undefined, value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const columnCount = resolveColumnCount(columns);
+  return Math.max(0, Math.min(Math.floor(value), columnCount - 1));
 };
 
 const normalizeColumnsForFootnotes = (input: ColumnLayout | undefined, contentWidth: number): NormalizedColumns => {
@@ -7452,6 +7475,12 @@ const DEFAULT_MARGINS = { top: 72, right: 72, bottom: 72, left: 72 };
 export const normalizeMargin = (value: number | undefined, fallback: number): number =>
   Number.isFinite(value) ? (value as number) : fallback;
 
+const hasExplicitColumnWidths = (columns: ColumnLayout | undefined): boolean =>
+  Array.isArray(columns?.widths) && columns.widths.some((width) => Number.isFinite(width) && width > 0);
+
+const shouldPreserveSemanticFlowColumns = (block: SectionBreakBlock): boolean =>
+  block.type === 'nextColumn' || hasExplicitColumnWidths(block.columns);
+
 /**
  * Rewrites section break blocks so that `layoutDocument` uses the semantic page
  * dimensions instead of the per-section DOCX page sizes. Without this, each
@@ -7471,6 +7500,7 @@ function rewriteSectionBreaksForSemanticFlow(blocks: FlowBlock[], options: Layou
   return blocks.map((block) => {
     if (block.kind !== 'sectionBreak') return block;
     const sb = block as SectionBreakBlock;
+    const preserveColumns = shouldPreserveSemanticFlowColumns(sb);
     return {
       ...sb,
       pageSize: { w: semanticPageSize.w, h: semanticPageSize.h },
@@ -7481,7 +7511,7 @@ function rewriteSectionBreaksForSemanticFlow(blocks: FlowBlock[], options: Layou
         bottom: semanticMargins?.bottom,
         left: semanticMargins?.left,
       },
-      columns: { count: 1, gap: 0 },
+      columns: preserveColumns ? cloneColumnLayout(sb.columns) : { count: 1, gap: 0 },
     };
   });
 }
@@ -7495,8 +7525,10 @@ function rewriteSectionBreaksForSemanticFlow(blocks: FlowBlock[], options: Layou
  * text clipping in table cells with `overflow: hidden` (SD-1962).
  *
  * This function returns a per-block constraint array so each block is measured at its own
- * section's content width. Section breaks act as state transitions: each break defines the
- * constraints for subsequent content blocks until the next break.
+ * section column width. Section breaks act as state transitions: each break defines the
+ * constraints for subsequent content blocks until the next break. `nextColumn` / explicit
+ * `columnBreak` advance the active column index so unequal columns are measured at the
+ * destination column width, not the section max.
  *
  * @param options - Layout options containing default page size, margins, and columns
  * @param blocks - Array of flow blocks (content + section breaks)
@@ -7514,35 +7546,75 @@ function computePerSectionConstraints(
     bottom: normalizeMargin(options.margins?.bottom, DEFAULT_MARGINS.bottom),
     left: normalizeMargin(options.margins?.left, DEFAULT_MARGINS.left),
   };
-  const defaultContentWidth = pageSize.w - (defaultMargins.left + defaultMargins.right);
-  const defaultContentHeight = pageSize.h - (defaultMargins.top + defaultMargins.bottom);
-  const defaultConstraints = {
-    maxWidth: resolveMaxColumnWidth(defaultContentWidth, options.columns),
-    maxHeight: defaultContentHeight,
+  let currentPageSize = pageSize;
+  let currentMargins = defaultMargins;
+  let currentColumns: ColumnLayout | undefined = options.columns;
+  let currentColumnIndex = 0;
+  const contentWidthOf = () => currentPageSize.w - (currentMargins.left + currentMargins.right);
+  const contentHeightOf = () => currentPageSize.h - (currentMargins.top + currentMargins.bottom);
+  let current = {
+    maxWidth: measurementWidthForColumn(contentWidthOf(), currentColumns, currentColumnIndex),
+    maxHeight: contentHeightOf(),
   };
 
-  let current = defaultConstraints;
   const result: Array<{ maxWidth: number; maxHeight: number }> = [];
 
   for (const block of blocks) {
     if (block.kind === 'sectionBreak') {
       const sb = block as SectionBreakBlock;
-      const sectionPageSize = sb.pageSize ?? pageSize;
-      const sectionMargins = {
-        top: normalizeMargin(sb.margins?.top, defaultMargins.top),
-        right: normalizeMargin(sb.margins?.right, defaultMargins.right),
-        bottom: normalizeMargin(sb.margins?.bottom, defaultMargins.bottom),
-        left: normalizeMargin(sb.margins?.left, defaultMargins.left),
+      const previousColumns = currentColumns;
+      if (sb.pageSize) currentPageSize = sb.pageSize;
+      currentMargins = {
+        top: normalizeMargin(sb.margins?.top, currentMargins.top),
+        right: normalizeMargin(sb.margins?.right, currentMargins.right),
+        bottom: normalizeMargin(sb.margins?.bottom, currentMargins.bottom),
+        left: normalizeMargin(sb.margins?.left, currentMargins.left),
       };
-      const contentWidth = sectionPageSize.w - (sectionMargins.left + sectionMargins.right);
-      const contentHeight = sectionPageSize.h - (sectionMargins.top + sectionMargins.bottom);
+      currentColumns = ooXmlSectionColumns(sb.columns);
+      const initialColumnIndex = sb.attrs?.isFirstSection
+        ? normalizeMeasurementColumnIndex(currentColumns, sb.attrs?.initialColumnIndex)
+        : null;
+      if (initialColumnIndex !== null) {
+        currentColumnIndex = initialColumnIndex;
+      } else if (sb.type === 'nextColumn') {
+        currentColumnIndex = advanceMeasurementColumnIndex(currentColumns, currentColumnIndex);
+      } else if (sb.type === 'nextPage' || sb.type === 'evenPage' || sb.type === 'oddPage') {
+        currentColumnIndex = 0;
+      } else if (!columnRenderLayoutsEqual(previousColumns, currentColumns)) {
+        currentColumnIndex = 0;
+      }
+      const contentWidth = contentWidthOf();
+      const contentHeight = contentHeightOf();
       if (contentWidth > 0 && contentHeight > 0) {
         current = {
-          maxWidth: resolveMaxColumnWidth(contentWidth, ooXmlSectionColumns(sb.columns)),
+          maxWidth: measurementWidthForColumn(contentWidth, currentColumns, currentColumnIndex),
           maxHeight: contentHeight,
         };
       }
+      result.push(current);
+      continue;
     }
+
+    if (block.kind === 'columnBreak') {
+      result.push(current);
+      currentColumnIndex = advanceMeasurementColumnIndex(currentColumns, currentColumnIndex);
+      current = {
+        maxWidth: measurementWidthForColumn(contentWidthOf(), currentColumns, currentColumnIndex),
+        maxHeight: current.maxHeight,
+      };
+      continue;
+    }
+
+    if (block.kind === 'pageBreak') {
+      result.push(current);
+      currentColumnIndex = 0;
+      current = {
+        maxWidth: measurementWidthForColumn(contentWidthOf(), currentColumns, currentColumnIndex),
+        maxHeight: current.maxHeight,
+      };
+      continue;
+    }
+
     result.push(current);
   }
 

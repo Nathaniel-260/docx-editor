@@ -26,6 +26,7 @@ export type SectionState = {
 
 export type BreakDecision = {
   forcePageBreak: boolean;
+  forceColumnBreak?: boolean;
   forceMidPageRegion: boolean;
   requiredParity?: 'even' | 'odd';
 };
@@ -293,6 +294,15 @@ export function scheduleSectionBreak(
           forceMidPageRegion: false,
           ...(block.requiredPageParity ? { requiredParity: block.requiredPageParity } : {}),
         },
+        state: next,
+      };
+    }
+    case 'nextColumn': {
+      next.pendingColumns = getColumnConfig(block.columns);
+      // Word `w:type="nextColumn"` starts this section in the next column on the
+      // same page; restarting a mid-page region first can orphan the column.
+      return {
+        decision: { forcePageBreak: false, forceColumnBreak: true, forceMidPageRegion: false },
         state: next,
       };
     }
