@@ -71,16 +71,16 @@ jobs:
         run: pnpm run build:superdoc
 
       - name: Lint
-        run: pnpm --filter @superdoc-dev/react lint
+        run: pnpm --filter @superdoc/react lint
 
       - name: Type check
-        run: pnpm --filter @superdoc-dev/react type-check
+        run: pnpm --filter @superdoc/react type-check
 
       - name: Build
-        run: pnpm --filter @superdoc-dev/react build
+        run: pnpm --filter @superdoc/react build
 
       - name: Test
-        run: pnpm --filter @superdoc-dev/react test
+        run: pnpm --filter @superdoc/react test
 
   validate:
     name: CI React / validate

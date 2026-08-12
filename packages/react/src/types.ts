@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { SuperDoc } from 'superdoc';
 
 /**
- * Types for @superdoc-dev/react
+ * Types for @superdoc/react
  *
  * Core types are extracted from the SuperDoc constructor parameter type,
  * ensuring they stay in sync with the superdoc package.
@@ -142,7 +142,7 @@ type ExplicitCallbackProps =
   | 'onViewportChange';
 
 // V2 branch: there is no `editorVersion` / `editorIntegration` React prop.
-// `@superdoc-dev/react` wraps `superdoc@2`, which always runs the DOCX Engine
+// `@superdoc/react` wraps `superdoc@2`, which always runs the DOCX Engine
 // editor. Customer runtime selection was removed, so these props no longer
 // exist on the public component surface.
 

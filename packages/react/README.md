@@ -1,18 +1,18 @@
-# @superdoc-dev/react
+# @superdoc/react
 
 Official React wrapper for the SuperDoc browser editor.
 
 ## Install
 
 ```bash
-npm install @superdoc-dev/react react react-dom
+npm install @superdoc/react react react-dom
 ```
 
 ## Quick start
 
 ```tsx
-import { SuperDocEditor } from '@superdoc-dev/react';
-import '@superdoc-dev/react/style.css';
+import { SuperDocEditor } from '@superdoc/react';
+import '@superdoc/react/style.css';
 
 export function Editor({ document }: { document: File }) {
   return <SuperDocEditor document={document} />;

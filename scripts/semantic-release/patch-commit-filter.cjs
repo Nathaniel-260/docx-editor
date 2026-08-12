@@ -57,7 +57,14 @@ function patchCommitFilter(includePaths) {
     const originalParse = mod.exports.parse;
     mod.exports.parse = (config, options) => {
       const repoRoot = path.resolve(options.cwd, '..', '..');
-      const expandedPaths = includePaths.map((p) => path.join(repoRoot, p));
+
+      // The `--` is load-bearing. Without it git resolves each entry as a
+      // revision first and aborts the entire log with "no such path in the
+      // working tree" the moment one path no longer exists. git-log-parser then
+      // yields nothing, semantic-release counts zero commits, and the run exits
+      // 0 with "no new version is released" — a stale path silently disables
+      // the release instead of failing.
+      const expandedPaths = ['--', ...includePaths.map((p) => path.join(repoRoot, p))];
 
       if (Array.isArray(config._)) {
         config._.push(...expandedPaths);

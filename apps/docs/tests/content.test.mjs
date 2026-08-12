@@ -857,7 +857,9 @@ test('the React quickstart owns one stable SuperDoc v2 lifecycle', async () => {
   assert.match(example, /superdocRef\.current\?\.export\(/u);
   assert.match(example, /active = false/u);
   assert.match(example, /superdoc\.destroy\(\)/u);
-  assert.doesNotMatch(example, /@superdoc-dev\/react|ProseMirror/u);
+  // Both wrapper names: the package moved to the @superdoc scope, and this
+  // quickstart must not reach for the wrapper under either identity.
+  assert.doesNotMatch(example, /@superdoc(?:-dev)?\/react|ProseMirror/u);
 });
 
 test('the comment-thread example uses direct targets and current revision guards', async () => {

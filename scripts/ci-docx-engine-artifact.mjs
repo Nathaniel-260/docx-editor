@@ -100,7 +100,7 @@ function findSuperdocConsumerRoots() {
         ...manifest.devDependencies,
         ...manifest.peerDependencies,
       };
-      return Boolean(dependencies.superdoc || dependencies['@superdoc-dev/react']);
+      return Boolean(dependencies.superdoc || dependencies['@superdoc/react']);
     });
 }
 

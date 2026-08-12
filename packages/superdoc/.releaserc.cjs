@@ -10,7 +10,6 @@ const {
  */
 const SUPERDOC_PACKAGES = [
   'packages/superdoc',
-  'packages/super-editor',
   'packages/layout-engine',
   'packages/word-layout',
   'packages/preset-geometry',
@@ -24,7 +23,10 @@ Object.keys(require.cache)
     const parse = require.cache[moduleName].exports.parse;
     require.cache[moduleName].exports.parse = (config, options) => {
       const repoRoot = path.resolve(options.cwd, '..', '..');
-      const packagePaths = SUPERDOC_PACKAGES.map((p) => path.join(repoRoot, p));
+
+      // `--` keeps git from resolving these as revisions; a path that no longer
+      // exists otherwise aborts the whole log and reads as zero commits.
+      const packagePaths = ['--', ...SUPERDOC_PACKAGES.map((p) => path.join(repoRoot, p))];
 
       if (Array.isArray(config._)) {
         config._.push(...packagePaths);

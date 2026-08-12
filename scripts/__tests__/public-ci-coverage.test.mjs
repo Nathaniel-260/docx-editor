@@ -27,10 +27,10 @@ const reusableWorkflows = new Map([
   [
     'react.yml',
     [
-      'pnpm --filter @superdoc-dev/react lint',
-      'pnpm --filter @superdoc-dev/react type-check',
-      'pnpm --filter @superdoc-dev/react build',
-      'pnpm --filter @superdoc-dev/react test',
+      'pnpm --filter @superdoc/react lint',
+      'pnpm --filter @superdoc/react type-check',
+      'pnpm --filter @superdoc/react build',
+      'pnpm --filter @superdoc/react test',
     ],
   ],
   [

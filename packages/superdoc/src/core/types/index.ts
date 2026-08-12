@@ -3271,7 +3271,7 @@ export interface UIConfig {
    *
    * This only decides whether SuperDoc draws the overlay. It does not change
    * how long a document takes to open, and it does not affect loading UI the
-   * host renders (such as `renderLoading` in `@superdoc-dev/react`).
+   * host renders (such as `renderLoading` in `@superdoc/react`).
    *
    * The built-in overlay also masks the document while it opens. Turning it
    * off hands that responsibility to your UI: keep yours up until `onReady`,

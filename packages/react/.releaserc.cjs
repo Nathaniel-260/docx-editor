@@ -15,7 +15,6 @@ const {
 require('../../scripts/semantic-release/patch-commit-filter.cjs')([
   'packages/react',
   'packages/superdoc',
-  'packages/super-editor',
   'packages/layout-engine',
   'packages/word-layout',
   'packages/preset-geometry',
@@ -85,7 +84,7 @@ config.plugins.push([
   '@semantic-release/github',
   {
     successComment:
-      ':tada: This ${issue.pull_request ? "PR" : "issue"} is included in **@superdoc-dev/react** v${nextRelease.version}\n\nThe release is available on [GitHub release](https://github.com/superdoc/docx-editor/releases/tag/${nextRelease.gitTag})',
+      ':tada: This ${issue.pull_request ? "PR" : "issue"} is included in **@superdoc/react** v${nextRelease.version}\n\nThe release is available on [GitHub release](https://github.com/superdoc/docx-editor/releases/tag/${nextRelease.gitTag})',
     successCommentCondition: shouldCommentOnRelease ? undefined : false,
   },
 ]);

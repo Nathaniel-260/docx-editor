@@ -304,14 +304,14 @@ const LANES = [
     ),
     stages: [
       { id: 'react-build-superdoc', title: 'Build superdoc for React', ...sh('pnpm run build:superdoc') },
-      { id: 'react-lint', title: 'Lint React package', ...sh('pnpm --filter @superdoc-dev/react lint') },
+      { id: 'react-lint', title: 'Lint React package', ...sh('pnpm --filter @superdoc/react lint') },
       {
         id: 'react-typecheck',
         title: 'Typecheck React package',
-        ...sh('pnpm --filter @superdoc-dev/react type-check'),
+        ...sh('pnpm --filter @superdoc/react type-check'),
       },
-      { id: 'react-build', title: 'Build React package', ...sh('pnpm --filter @superdoc-dev/react build') },
-      { id: 'react-test', title: 'Test React package', ...sh('pnpm --filter @superdoc-dev/react test') },
+      { id: 'react-build', title: 'Build React package', ...sh('pnpm --filter @superdoc/react build') },
+      { id: 'react-test', title: 'Test React package', ...sh('pnpm --filter @superdoc/react test') },
       { id: 'vscode-lint', title: 'Lint VS Code extension', ...sh('pnpm --filter superdoc-vscode-ext lint') },
       {
         id: 'vscode-typecheck',
