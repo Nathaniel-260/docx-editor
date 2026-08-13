@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const packageRoot = path.resolve(__dirname, '..');
-const distRoot = path.join(packageRoot, 'dist');
+const { npmDistRoot: distRoot } = require('./build-output-paths.cjs');
 const styleTargets = [
   { file: 'style.css', importLine: '@import "@superdoc/docx-engine/style.css";' },
   { file: 'style.layered.css', importLine: '@import "@superdoc/docx-engine/style.css" layer(superdoc);' },

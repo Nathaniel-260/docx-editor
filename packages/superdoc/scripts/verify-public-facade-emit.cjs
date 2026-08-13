@@ -59,7 +59,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
-const distRoot = path.resolve(__dirname, '..', 'dist');
+const { npmDistRoot: distRoot } = require('./build-output-paths.cjs');
 const PUBLIC_DIST = path.join(distRoot, 'superdoc', 'src', 'public');
 const PUBLIC_SRC = path.resolve(__dirname, '..', 'src', 'public');
 

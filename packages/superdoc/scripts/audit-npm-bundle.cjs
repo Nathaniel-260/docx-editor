@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const distRoot = path.resolve(__dirname, '..', 'dist');
+const { npmDistRoot: distRoot } = require('./build-output-paths.cjs');
 const prosemirrorFingerprint = 'ProseMirror expects the CSS white-space property to be set';
 const failures = [];
 

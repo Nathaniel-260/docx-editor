@@ -40,7 +40,7 @@ const path = require('node:path');
 // from the same config so the two scripts cannot drift.
 const typeSurface = require('./type-surface.config.cjs');
 
-const distRoot = path.resolve(__dirname, '..', 'dist');
+const { npmDistRoot: distRoot } = require('./build-output-paths.cjs');
 
 // SD-2859: strict is the default. The audit fails the build on any
 // FAIL-level finding so a regression in the published declaration

@@ -6,6 +6,7 @@ import { defineConfig } from 'vite';
 import { version } from './package.json';
 import { resolveExactEngineVersion } from './cdn-engine-version.js';
 import { getAliases, getV2Resolution } from './vite.config.js';
+import { headlessImportGuardPlugin } from './vite.v2-runtime-mode.mjs';
 import layeredCssPlugin from './vite-plugin-layered-css.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -32,9 +33,12 @@ const fontSystemAliases = [
 // because of its size; PDF viewing requires the ESM + import-map path.
 export default defineConfig(({ command }) => {
   const v2Resolution = getV2Resolution(command);
-  const plugins = [vue(), layeredCssPlugin()];
+  const plugins = [headlessImportGuardPlugin(v2Resolution.mode), vue(), layeredCssPlugin()].filter(Boolean);
   const engineVersion = readExactEngineVersion();
   const engineCdnBaseUrl = process.env.SUPERDOC_ENGINE_CDN_BASE_URL?.trim() || '';
+  const cdnOutDir = process.env.SUPERDOC_PUBLIC_CDN_OUT_DIR
+    ? path.resolve(process.env.SUPERDOC_PUBLIC_CDN_OUT_DIR)
+    : path.resolve(here, 'dist-cdn');
 
   return {
     define: {
@@ -53,7 +57,7 @@ export default defineConfig(({ command }) => {
     },
     build: {
       ...(process.argv.includes('--watch') && { watch: { buildDelay: 300 } }),
-      outDir: 'dist-cdn',
+      outDir: cdnOutDir,
       emptyOutDir: true,
       target: 'es2022',
       cssCodeSplit: false,

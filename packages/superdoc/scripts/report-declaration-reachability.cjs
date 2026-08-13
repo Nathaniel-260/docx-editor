@@ -33,7 +33,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const packageRoot = path.resolve(__dirname, '..');
-const distRoot = path.join(packageRoot, 'dist');
+const { npmDistRoot: distRoot, resolvePackageOutputPath } = require('./build-output-paths.cjs');
 
 if (!fs.existsSync(distRoot)) {
   console.error('[report-declaration-reachability] dist/ not found; run the build first.');
@@ -66,14 +66,14 @@ const selfPackageTypeMap = new Map();
 for (const [subpath, value] of Object.entries(exportsMap)) {
   const [target] = collectTypesTargets(value);
   if (!target) continue;
-  selfPackageTypeMap.set(subpath, path.resolve(packageRoot, target));
+  selfPackageTypeMap.set(subpath, resolvePackageOutputPath(target));
 }
 
 // Build the seed set: every typed exports entry, resolved to a dist path.
 const typedExports = [];
 for (const [subpath, value] of Object.entries(exportsMap)) {
   for (const targetPath of collectTypesTargets(value)) {
-    const target = path.resolve(packageRoot, targetPath);
+    const target = resolvePackageOutputPath(targetPath);
     if (!fs.existsSync(target)) {
       console.error(`[report-declaration-reachability] exports['${subpath}'].types target missing: ${targetPath}`);
       process.exit(1);

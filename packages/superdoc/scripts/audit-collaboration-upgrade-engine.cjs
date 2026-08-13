@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const packageRoot = path.resolve(__dirname, '..');
-const distRoot = path.join(packageRoot, 'dist');
+const { npmDistRoot: distRoot } = require('./build-output-paths.cjs');
 const runtimeEntries = ['collaboration-upgrade-engine.es.js', 'collaboration-upgrade-engine.cjs'];
 const declarationEntries = [
   'superdoc/src/public/collaboration-upgrade-engine.d.ts',

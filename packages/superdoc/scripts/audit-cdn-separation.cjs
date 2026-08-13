@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const packageRoot = path.resolve(__dirname, '..');
-const distRoot = path.join(packageRoot, 'dist-cdn');
+const { cdnDistRoot: distRoot } = require('./build-output-paths.cjs');
 const v2Root = path.resolve(packageRoot, '../../../v2');
 const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
 const engineDependency = packageJson.dependencies?.['@superdoc/docx-engine'];

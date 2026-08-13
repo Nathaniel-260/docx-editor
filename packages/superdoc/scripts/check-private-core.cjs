@@ -23,7 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const PKG_DIR = path.resolve(__dirname, '..');
-const DIST = path.join(PKG_DIR, 'dist');
+const { npmDistRoot: DIST } = require('./build-output-paths.cjs');
 const SUPERDOC_ROOT = path.resolve(PKG_DIR, '..', '..', '..');
 const V2_ROOT = path.join(SUPERDOC_ROOT, 'v2');
 

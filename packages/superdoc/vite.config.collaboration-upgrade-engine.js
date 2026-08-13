@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
 import { version } from './package.json';
-import { resolveSuperDocV2RuntimeMode } from './vite.v2-runtime-mode.mjs';
+import { headlessImportGuardPlugin, resolveSuperDocV2RuntimeMode } from './vite.v2-runtime-mode.mjs';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const V2_ROOT = path.resolve(PACKAGE_ROOT, '../../../v2');
@@ -53,18 +53,22 @@ export default defineConfig(({ command }) => {
     v2Root: V2_ROOT,
     layoutEngineRoot: LAYOUT_ENGINE_ROOT,
   });
+  const npmOutDir = process.env.SUPERDOC_PUBLIC_NPM_OUT_DIR
+    ? path.resolve(process.env.SUPERDOC_PUBLIC_NPM_OUT_DIR)
+    : path.resolve(PACKAGE_ROOT, 'dist');
 
   return {
     define: {
       __APP_VERSION__: JSON.stringify(version),
     },
-    plugins: [assertUpgradeEngineModuleBoundary()],
+    plugins: [headlessImportGuardPlugin(v2Resolution.mode), assertUpgradeEngineModuleBoundary()].filter(Boolean),
     resolve: {
       alias: v2Resolution.aliases,
       conditions: v2Resolution.conditions,
       preserveSymlinks: false,
     },
     build: {
+      outDir: npmOutDir,
       target: 'node20',
       minify: false,
       sourcemap: false,

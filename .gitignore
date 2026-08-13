@@ -1,6 +1,7 @@
 logs
 *.log
 .cache
+.build-artifacts/
 .vite
 .DS_Store
 .temp
@@ -33,10 +34,6 @@ lerna-debug.log*
 packages/word-layout/tests/**/*.js
 packages/word-layout/tests/**/*.d.ts
 packages/word-layout/tests/**/*.map
-
-# Transient prepack manifest backup (sanitize-pack-manifest.cjs); left behind
-# only when a pack is interrupted — never commit it.
-.package.json.prepack-backup
 
 # Playwright
 test-results
@@ -96,3 +93,12 @@ packages/sdk/tools/*.json
 .prqrc.json
 tmp/
 .tmp/
+
+# superdoc-build-timing.v1 evidence payloads (never part of artifact identity)
+build-timing/
+
+# Content receipts written after verified public builds and sealed packing.
+build-receipts/
+.ci-docx-engine/
+.ci-superdoc-artifact/
+superdoc-build-artifact.json.gz

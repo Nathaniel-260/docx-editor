@@ -29,6 +29,15 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
+import {
+  ENGINE_EXPECTED_RECEIPT_DIGEST_ENV,
+  observeEngineInputIdentity,
+  readDeclaredEngineVersion,
+  resolveEngineInputContract,
+  verifyInstalledEngine,
+  verifyPreparedEngine,
+} from '../../scripts/engine-prepared-input.mjs';
+
 export const PACKAGE_MODE = 'package';
 export const SOURCE_MODE = 'source';
 
@@ -146,61 +155,48 @@ export function buildSourceModeAliases({ v2Root, layoutEngineRoot }) {
 
 /**
  * Build the package-mode local-substitute alias set: maps the `@superdoc/docx-engine`
- * product subpaths and private `@superdoc/headless` package subpaths onto built
- * local dists. This is used only when the engine package is not node-installed
- * (Orbit reproducing release behavior); a real public clone resolves through
- * node_modules and needs no aliases. Crucially this points at `dist/`, never
- * `src/`.
+ * product subpaths onto the verified prepared local dist. This is used only in
+ * an Orbit checkout (reproducing release behavior); a real public clone
+ * resolves through node_modules and needs no aliases. Crucially this points at
+ * `dist/`, never `src/`, and never at the private `@superdoc/headless`
+ * package: the published engine intentionally has no headless surface, and
+ * production public source is forbidden from importing it.
  *
  * @param {string} v2Dist absolute path to `superdoc/v2/dist`
- * @param {string} [headlessDist] absolute path to `superdoc/v2/headless/dist`
  */
-export function buildPackageModeDistAliases(v2Dist, headlessDist = path.join(path.dirname(v2Dist), 'headless', 'dist')) {
+export function buildPackageModeDistAliases(v2Dist) {
   return [
     {
       find: /^@superdoc\/docx-engine\/collaboration-upgrade-engine$/,
       replacement: path.join(v2Dist, 'collaboration-upgrade-engine.js'),
     },
-    { find: /^@superdoc\/headless\/contracts$/, replacement: path.join(headlessDist, 'contracts/index.js') },
-    { find: /^@superdoc\/headless\/browser$/, replacement: path.join(headlessDist, 'browser.js') },
-    { find: /^@superdoc\/headless\/host$/, replacement: path.join(headlessDist, 'host.js') },
-    // Unit 4 (worker collaboration): dist substitutes for the collaboration
-    // worker entry/opener subpaths (Orbit reproducing release behavior).
-    { find: /^@superdoc\/headless\/worker\/collaboration-entry$/, replacement: path.join(headlessDist, 'worker/browser-collaboration-worker-entry.js') },
-    { find: /^@superdoc\/headless\/worker\/collaboration$/, replacement: path.join(headlessDist, 'worker/collaboration-worker-opener.js') },
-    { find: /^@superdoc\/headless\/extensions$/, replacement: path.join(headlessDist, 'extensions/index.js') },
-    { find: /^@superdoc\/headless$/, replacement: path.join(headlessDist, 'index.js') },
     { find: '@superdoc/docx-engine/style.css', replacement: path.join(v2Dist, 'style.css') },
     { find: /^@superdoc\/docx-engine$/, replacement: path.join(v2Dist, 'docx-engine.es.js') },
   ];
 }
 
-// Whether `@superdoc/docx-engine` is installed in `node_modules` reachable from
-// `packageRoot` (so the production bundler can resolve it through normal
-// node_modules resolution). We deliberately do NOT use `require.resolve(...)`
-// here: when the build runs under a tsx-patched loader (Vite 7), tsx's
-// workspace-aware resolver reports the private `superdoc/v2` SOURCE workspace
-// as resolvable even though it is not linked into `node_modules`. Rollup does
-// not have that resolver, so it then fails on `@superdoc/docx-engine`. Walking
-// `node_modules/@superdoc/docx-engine` matches exactly what the bundler can follow: a
-// real public clone (package installed) returns true; the Orbit checkout
-// (package not installed, separate workspace) returns false and falls through
-// to the built `superdoc/v2/dist` substitute aliases below.
-function canNodeResolveV2(packageRoot) {
-  let dir = packageRoot;
-  for (;;) {
-    const nodeV2Root = path.join(dir, 'node_modules', '@superdoc', 'docx-engine');
-    if (
-      existsSync(path.join(nodeV2Root, 'package.json')) &&
-      existsSync(path.join(nodeV2Root, 'dist', 'docx-engine.es.js')) &&
-      existsSync(path.join(nodeV2Root, 'dist', 'collaboration-upgrade-engine.js'))
-    ) {
-      return true;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return false;
-    dir = parent;
-  }
+/**
+ * Package-mode gate: the private `@superdoc/headless` package must never
+ * resolve in package mode. A future public import of it must fail here with a
+ * clear boundary error instead of silently broadening the prepared engine
+ * contract. Returns null in source mode (Orbit dev keeps its aliases).
+ */
+export function headlessImportGuardPlugin(mode) {
+  if (mode !== PACKAGE_MODE) return null;
+  return {
+    name: 'superdoc-package-mode-headless-guard',
+    enforce: 'pre',
+    resolveId(source) {
+      if (source === '@superdoc/headless' || source.startsWith('@superdoc/headless/')) {
+        throw new Error(
+          `[v2-runtime-mode] package mode must not resolve ${source}: the published engine has no headless surface. ` +
+            'Public source may only consume @superdoc/docx-engine through its approved seams. ' +
+            'If a legitimate package-mode dependency is being introduced, it must be explicitly sealed and verified ' +
+            'as a pre-public component first (see docs/superdoc-build-inventory.md).',
+        );
+      }
+    },
+  };
 }
 
 /**
@@ -245,32 +241,53 @@ export function resolveSuperDocV2RuntimeMode({ command, env = process.env, packa
     return { mode, reason, aliases, conditions: ['source'] };
   }
 
-  // package mode
-  const v2Dist = path.join(v2Root, 'dist');
-  if (existsSync(path.join(v2Dist, 'docx-engine.es.js'))) {
-    const headlessDist = path.join(v2Root, 'headless', 'dist');
+  // package mode: explicit installed-versus-prepared input contracts. File
+  // existence is not a valid readiness state; both contracts verify identity
+  // and content before any alias is returned.
+  const contract = resolveEngineInputContract({ env, v2Root });
+  const expectedVersion = readDeclaredEngineVersion(packageRoot);
+
+  if (contract.mode === 'prepared') {
+    const verified = verifyPreparedEngine({
+      v2Root,
+      expectedVersion,
+      surfaces: ['dist'],
+      expectedReceiptDigest: env[ENGINE_EXPECTED_RECEIPT_DIGEST_ENV] ?? null,
+      currentInputIdentity: observeEngineInputIdentity({ v2Root }),
+    });
+    const surfaceRoot = verified.surfaces.dist.root;
     const aliases = [
-      ...buildPackageModeDistAliases(v2Dist, headlessDist),
+      ...buildPackageModeDistAliases(surfaceRoot),
       { find: /^@superdoc\/dom-contract$/, replacement: path.resolve(layoutEngineRoot, 'dom-contract/src/index.ts') },
     ];
     assertNoSrcAliases(aliases, v2Root);
-    return { mode, reason: `${reason} (local superdoc/v2/dist substitute)`, aliases, conditions: [] };
+    return {
+      mode,
+      reason: `${reason} (verified prepared engine ${verified.engineVersion}; ${contract.reason})`,
+      aliases,
+      conditions: [],
+      engineInput: {
+        contract: 'prepared',
+        engineVersion: verified.engineVersion,
+        receiptDigest: verified.receipt.digest,
+        surfaceRoots: { dist: surfaceRoot },
+      },
+    };
   }
 
-  if (canNodeResolveV2(packageRoot)) {
-    // Normal node resolution handles `@superdoc/docx-engine`; only the dom-contract alias
-    // for the public layout-engine remains (that is a public package).
-    const aliases = [
-      { find: /^@superdoc\/dom-contract$/, replacement: path.resolve(layoutEngineRoot, 'dom-contract/src/index.ts') },
-    ];
-    return { mode, reason: `${reason} (node-resolved @superdoc/docx-engine)`, aliases, conditions: [] };
-  }
-
-  throw new Error(
-    `[v2-runtime-mode] package mode could not resolve @superdoc/docx-engine: it is not installed and no built ${v2Dist} exists. ` +
-      'Install @superdoc/docx-engine, or run `pnpm run build:superdoc` from superdoc/public for a local substitute, ' +
-      'or use SUPERDOC_V2_RUNTIME_MODE=source for Orbit dev.',
-  );
+  const verified = verifyInstalledEngine({ packageRoot, expectedVersion });
+  // Normal node resolution handles `@superdoc/docx-engine`; only the dom-contract alias
+  // for the public layout-engine remains (that is a public package).
+  const aliases = [
+    { find: /^@superdoc\/dom-contract$/, replacement: path.resolve(layoutEngineRoot, 'dom-contract/src/index.ts') },
+  ];
+  return {
+    mode,
+    reason: `${reason} (verified installed engine ${verified.engineVersion}; ${contract.reason})`,
+    aliases,
+    conditions: [],
+    engineInput: { contract: 'installed', engineVersion: verified.engineVersion, engineRoot: verified.engineRoot },
+  };
 }
 
 /**

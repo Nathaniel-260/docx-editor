@@ -11,7 +11,7 @@ const typeSurface = require('./type-surface.config.cjs');
 
 // Verify that vite-plugin-dts generated the expected type entry points.
 // Path aliases are resolved by vite-plugin-dts via tsconfig.json paths.
-const distRoot = path.resolve(__dirname, '..', 'dist');
+const { npmDistRoot: distRoot } = require('./build-output-paths.cjs');
 const packageRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const binExtension = process.platform === 'win32' ? '.cmd' : '';

@@ -16,6 +16,7 @@ import { preserveV2WorkerAssetPlugin } from './vite-plugin-v2-worker-asset.mjs';
 import { version } from './package.json';
 import sourceResolve from '../../vite.sourceResolve';
 import {
+  headlessImportGuardPlugin,
   resolveEnginePackageRoot,
   resolveSuperDocV2RuntimeMode,
 } from './vite.v2-runtime-mode.mjs';
@@ -50,8 +51,7 @@ const visualizerConfig = {
   open: true
 }
 
-function resolveV2DistRelativeImportsPlugin(v2Root) {
-  const v2DistRoot = path.resolve(v2Root, 'dist');
+function resolveV2DistRelativeImportsPlugin(v2DistRoot) {
   const isRelativeImport = (specifier) => specifier.startsWith('./') || specifier.startsWith('../');
   const normalizeId = (id) => {
     let clean = id.split('?')[0];
@@ -138,6 +138,10 @@ export const getAliases = (command, v2Resolution = getV2Resolution(command)) => 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode, command }) => {
   const v2Resolution = getV2Resolution(command);
+  const npmOutDir = process.env.SUPERDOC_PUBLIC_NPM_OUT_DIR
+    ? path.resolve(process.env.SUPERDOC_PUBLIC_NPM_OUT_DIR)
+    : path.resolve(__dirname, 'dist');
+  const engineDistRoot = v2Resolution.engineInput?.surfaceRoots?.dist ?? path.resolve(V2_ROOT, 'dist');
   const disableTrackedChangeLoading = resolveDisableTrackedChangeLoading({
     command,
     runtimeMode: v2Resolution.mode,
@@ -149,7 +153,8 @@ export default defineConfig(({ mode, command }) => {
   const skipDts = process.env.SUPERDOC_SKIP_DTS === '1';
   const stringDecoderEntry = stdlibRequire.resolve('string_decoder/lib/string_decoder.js');
   const plugins = [
-    resolveV2DistRelativeImportsPlugin(V2_ROOT),
+    headlessImportGuardPlugin(v2Resolution.mode),
+    resolveV2DistRelativeImportsPlugin(engineDistRoot),
     // Rolldown treats trailing-slash imports (`punycode/`, `string_decoder/`) as
     // directory paths and fails to load them. node-stdlib-browser and
     // readable-stream use that form. The optimizeDeps fix below only covers dep
@@ -181,7 +186,7 @@ export default defineConfig(({ mode, command }) => {
         'src/dev/**',
         'src/components/SuperToolbar/**',
       ],
-      outDir: 'dist',
+      outDir: npmOutDir,
       // vite-plugin-dts still gathers diagnostics for this mixed JS/Vue source
       // tree, but we do not use this build as the authoritative type-check gate.
       // Keep declaration generation enabled and silence the plugin's diagnostic
@@ -192,7 +197,7 @@ export default defineConfig(({ mode, command }) => {
       targets: [
         {
           src: 'node_modules/pdfjs-dist/web/images/*',
-          dest: 'dist/images',
+          dest: path.join(npmOutDir, 'images'),
         },
       ],
       hook: 'writeBundle'
@@ -216,12 +221,13 @@ export default defineConfig(({ mode, command }) => {
   ].filter(Boolean);
   if (mode !== 'test') plugins.push(nodePolyfills());
   const isDev = command === 'serve';
+  // Package mode may read only the verified prepared engine dist. The private
+  // headless dist is intentionally NOT allowed: production public source is
+  // forbidden from importing it and the published engine has no headless
+  // surface (see headlessImportGuardPlugin).
   const v2FsAllow = v2Resolution.mode === 'source'
     ? [V2_ROOT]
-    : [
-        path.resolve(V2_ROOT, 'dist'),
-        path.resolve(V2_ROOT, 'headless', 'dist'),
-      ];
+    : [engineDistRoot];
 
   // Use emoji marker instead of ANSI colors to avoid reporter layout issues
   const projectLabel = '🦋 @superdoc';
@@ -265,6 +271,7 @@ export default defineConfig(({ mode, command }) => {
       },
     },
     build: {
+      outDir: npmOutDir,
       target: 'es2022',
       cssCodeSplit: false,
       lib: {

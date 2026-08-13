@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const packageRoot = path.resolve(__dirname, '..');
+const { resolvePackageOutputPath } = require('./build-output-paths.cjs');
 const packageJson = require(path.join(packageRoot, 'package.json'));
 
 // Subpaths that are deliberately runtime-only with no type contract.
@@ -54,7 +55,7 @@ for (const [subpath, value] of Object.entries(packageJson.exports || {})) {
     continue;
   }
   for (const target of collectTypesTargets(value)) {
-    if (!fs.existsSync(path.resolve(packageRoot, target))) {
+    if (!fs.existsSync(resolvePackageOutputPath(target))) {
       violations.push({ subpath, reason: `\`types\` target does not exist: ${target}` });
     }
   }
