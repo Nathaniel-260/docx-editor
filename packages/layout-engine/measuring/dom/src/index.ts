@@ -2534,15 +2534,19 @@ async function measureParagraphBlock(
     }
   }
   let runIndexMap = runsToProcess.map((_, index) => index);
+  let runCharOffsetMap = runsToProcess.map(() => 0);
   if (runsToProcess.some((run) => isTextRun(run) && typeof run.text === 'string' && run.text.includes('\t'))) {
     const expandedRuns: Run[] = [];
     const expandedRunIndexMap: number[] = [];
+    const expandedRunCharOffsetMap: number[] = [];
     for (let runIndex = 0; runIndex < runsToProcess.length; runIndex += 1) {
       const run = runsToProcess[runIndex];
       const originalRunIndex = runIndexMap[runIndex] ?? runIndex;
+      const originalRunCharOffset = runCharOffsetMap[runIndex] ?? 0;
       if (!isTextRun(run) || typeof run.text !== 'string' || !run.text.includes('\t')) {
         expandedRuns.push(run);
         expandedRunIndexMap.push(originalRunIndex);
+        expandedRunCharOffsetMap.push(originalRunCharOffset);
         continue;
       }
       const textRun = run as TextRun;
@@ -2560,6 +2564,7 @@ async function measureParagraphBlock(
               pmEnd: cursor,
             });
             expandedRunIndexMap.push(originalRunIndex);
+            expandedRunCharOffsetMap.push(originalRunCharOffset + i - buffer.length);
             buffer = '';
           }
           const tabRun: TabRun = {
@@ -2575,6 +2580,7 @@ async function measureParagraphBlock(
           };
           expandedRuns.push(tabRun);
           expandedRunIndexMap.push(originalRunIndex);
+          expandedRunCharOffsetMap.push(originalRunCharOffset + i);
           cursor += 1;
           continue;
         }
@@ -2589,23 +2595,28 @@ async function measureParagraphBlock(
           pmEnd: cursor,
         });
         expandedRunIndexMap.push(originalRunIndex);
+        expandedRunCharOffsetMap.push(originalRunCharOffset + text.length - buffer.length);
       }
     }
     runsToProcess = expandedRuns;
     runIndexMap = expandedRunIndexMap;
+    runCharOffsetMap = expandedRunCharOffsetMap;
   }
   if (hasRenderableParagraphContent) {
     const filteredRuns: Run[] = [];
     const filteredRunIndexMap: number[] = [];
+    const filteredRunCharOffsetMap: number[] = [];
     for (let runIndex = 0; runIndex < runsToProcess.length; runIndex += 1) {
       const run = runsToProcess[runIndex];
       if (isBookmarkMarkerRun(run)) continue;
       filteredRuns.push(run);
       filteredRunIndexMap.push(runIndexMap[runIndex] ?? runIndex);
+      filteredRunCharOffsetMap.push(runCharOffsetMap[runIndex] ?? 0);
     }
     if (filteredRuns.length > 0) {
       runsToProcess = filteredRuns;
       runIndexMap = filteredRunIndexMap;
+      runCharOffsetMap = filteredRunCharOffsetMap;
     }
   }
   const totalTabRuns = runsToProcess.reduce(
@@ -4390,13 +4401,23 @@ async function measureParagraphBlock(
 
   if (runIndexMap.some((value, index) => value !== index)) {
     for (const line of lines) {
-      line.fromRun = runIndexMap[line.fromRun] ?? line.fromRun;
-      line.toRun = runIndexMap[line.toRun] ?? line.toRun;
+      const measuredFromRun = line.fromRun;
+      const measuredToRun = line.toRun;
+      line.fromRun = runIndexMap[measuredFromRun] ?? measuredFromRun;
+      line.fromChar += runCharOffsetMap[measuredFromRun] ?? 0;
+      line.toRun = runIndexMap[measuredToRun] ?? measuredToRun;
+      line.toChar += runCharOffsetMap[measuredToRun] ?? 0;
       if (line.segments) {
-        line.segments = line.segments.map((segment) => ({
-          ...segment,
-          runIndex: runIndexMap[segment.runIndex] ?? segment.runIndex,
-        }));
+        line.segments = line.segments.map((segment) => {
+          const measuredRunIndex = segment.runIndex;
+          const charOffset = runCharOffsetMap[measuredRunIndex] ?? 0;
+          return {
+            ...segment,
+            runIndex: runIndexMap[measuredRunIndex] ?? measuredRunIndex,
+            fromChar: segment.fromChar + charOffset,
+            toChar: segment.toChar + charOffset,
+          };
+        });
       }
       if (line.inlineImageAlignments) {
         line.inlineImageAlignments = line.inlineImageAlignments.map((alignment) => ({

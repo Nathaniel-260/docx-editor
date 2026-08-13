@@ -13,7 +13,7 @@ import type {
   InlineBoxSpan,
   CellBorders,
 } from '@superdoc/contracts';
-import { EMPTY_SDT_PLACEHOLDER_TEXT } from '@superdoc/contracts';
+import { EMPTY_SDT_PLACEHOLDER_TEXT, expandRunsForInlineNewlines } from '@superdoc/contracts';
 import { resolvePhysicalFamily } from '@superdoc/font-system';
 
 const expectParagraphMeasure = (measure: Measure): ParagraphMeasure => {
@@ -33,6 +33,15 @@ const extractLineText = (block: FlowBlock, line: ParagraphMeasure['lines'][numbe
     parts.push(run.text.slice(start, end));
   }
   return parts.join('');
+};
+
+const extractSegmentText = (block: FlowBlock, line: ParagraphMeasure['lines'][number]): string[] => {
+  if (block.kind !== 'paragraph') return [];
+  const runs = expandRunsForInlineNewlines(block.runs);
+  return (line.segments ?? []).map((segment) => {
+    const run = runs[segment.runIndex];
+    return run && 'text' in run ? run.text.slice(segment.fromChar, segment.toChar) : '';
+  });
 };
 
 const expectImageMeasure = (measure: Measure): ImageMeasure => {
@@ -2702,6 +2711,209 @@ describe('measureBlock', () => {
         expect(tabRun.width).toBeGreaterThan(0);
         // Width should move text to position near 200px
         expect(tabRun.width).toBeLessThan(200);
+      }
+    });
+
+    it('keeps literal-tab segment coordinates aligned with authored run boundaries', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'sd-3886-literal-tab-run-boundary',
+        runs: [
+          { text: '1.2\tName. ', fontFamily: 'Arial', fontSize: 16, bold: true },
+          { text: 'Body', fontFamily: 'Arial', fontSize: 16 },
+        ],
+        attrs: { tabs: [{ pos: 480, val: 'start' }] },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      const paintedSegments = extractSegmentText(block, measure.lines[0]);
+
+      expect(paintedSegments.join('')).toBe('1.2Name. Body');
+      expect(paintedSegments.at(-1)).toBe('Body');
+      expect(measure.lines[0]).toMatchObject({ fromRun: 0, fromChar: 0, toRun: 1, toChar: 4 });
+    });
+
+    it.each([
+      { label: 'at the start', literal: '\tName', visibleRanges: [[1, 5]] },
+      { label: 'at the end', literal: 'Name\t', visibleRanges: [[0, 4]] },
+      {
+        label: 'multiple times',
+        literal: 'A\tB\tC',
+        visibleRanges: [
+          [0, 1],
+          [2, 3],
+          [4, 5],
+        ],
+      },
+      {
+        label: 'consecutively',
+        literal: 'A\t\tB',
+        visibleRanges: [
+          [0, 1],
+          [3, 4],
+        ],
+      },
+    ])('preserves source coordinates when a literal tab occurs $label', async ({ label, literal, visibleRanges }) => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: `literal-tab-${label.replaceAll(' ', '-')}`,
+        runs: [
+          {
+            text: literal,
+            fontFamily: 'Arial',
+            fontSize: 16,
+            bold: true,
+            pmStart: 100,
+            pmEnd: 100 + literal.length,
+          },
+          {
+            text: 'Tail',
+            fontFamily: 'Arial',
+            fontSize: 16,
+            pmStart: 100 + literal.length,
+            pmEnd: 104 + literal.length,
+          },
+        ],
+        attrs: {
+          tabs: [
+            { pos: 480, val: 'start' },
+            { pos: 960, val: 'start' },
+          ],
+        },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      const line = measure.lines[0];
+      const literalSegments = line.segments?.filter((segment) => segment.runIndex === 0) ?? [];
+      const tailSegment = line.segments?.at(-1);
+
+      expect(measure.lines).toHaveLength(1);
+      expect(extractSegmentText(block, line).join('')).toBe(`${literal.replaceAll('\t', '')}Tail`);
+      expect(literalSegments.map(({ fromChar, toChar }) => [fromChar, toChar])).toEqual(visibleRanges);
+      expect(tailSegment).toMatchObject({ runIndex: 1, fromChar: 0, toChar: 4 });
+      expect(line).toMatchObject({ fromRun: 0, fromChar: 0, toRun: 1, toChar: 4 });
+    });
+
+    it('keeps literal-tab coordinates aligned across wrapping and an adjacent run', async () => {
+      const body = 'BodyTextThatWrapsAcrossSeveralLines';
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'literal-tab-wrapping',
+        runs: [
+          { text: '1.2\tHeading', fontFamily: 'Arial', fontSize: 16, bold: true },
+          { text: body, fontFamily: 'Arial', fontSize: 16 },
+        ],
+        attrs: { tabs: [{ pos: 480, val: 'start' }] },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 110));
+      const paintedText = measure.lines.flatMap((line) => extractSegmentText(block, line)).join('');
+
+      expect(measure.lines.length).toBeGreaterThan(1);
+      expect(paintedText).toBe(`1.2Heading${body}`);
+      expect(paintedText.match(/1\.2/g)).toHaveLength(1);
+      expect(measure.lines.flatMap((line) => line.segments ?? []).some((segment) => segment.runIndex === 1)).toBe(true);
+    });
+
+    it('composes literal-tab remapping with inline-newline expansion', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'literal-tab-inline-newline',
+        runs: [
+          { text: 'First\n1.2\tHeading', fontFamily: 'Arial', fontSize: 16, bold: true },
+          { text: 'Body', fontFamily: 'Arial', fontSize: 16 },
+        ],
+        attrs: { tabs: [{ pos: 480, val: 'start' }] },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      const paintedLines = measure.lines.map((line) => extractSegmentText(block, line).join(''));
+
+      expect(paintedLines).toEqual(['First', '1.2HeadingBody']);
+      expect(paintedLines.join('').match(/1\.2/g)).toHaveLength(1);
+      expect(measure.lines[1].segments?.at(-1)).toMatchObject({ runIndex: 3, fromChar: 0, toChar: 4 });
+    });
+
+    it('preserves authored run indexes when bookmark markers surround a literal tab', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'literal-tab-bookmark-markers',
+        runs: [
+          {
+            text: '\u200B',
+            fontFamily: 'Arial',
+            fontSize: 16,
+            dataAttrs: { 'data-bookmark-marker': 'start', 'data-bookmark-id': '3886' },
+          },
+          { text: '1.2\tHeading', fontFamily: 'Arial', fontSize: 16, bold: true },
+          {
+            text: '\u200B',
+            fontFamily: 'Arial',
+            fontSize: 16,
+            dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '3886' },
+          },
+          { text: 'Body', fontFamily: 'Arial', fontSize: 16 },
+        ],
+        attrs: { tabs: [{ pos: 480, val: 'start' }] },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+      const line = measure.lines[0];
+
+      expect(extractSegmentText(block, line).join('')).toBe('1.2HeadingBody');
+      expect(line.segments?.filter((segment) => segment.runIndex === 1).map((segment) => segment.fromChar)).toEqual([
+        0, 4,
+      ]);
+      expect(line.segments?.at(-1)).toMatchObject({ runIndex: 3, fromChar: 0, toChar: 4 });
+    });
+
+    it.each([
+      { val: 'start' as const },
+      { val: 'center' as const },
+      { val: 'end' as const, leader: 'dot' as const },
+      { val: 'decimal' as const },
+    ])('matches canonical tab geometry for a $val-aligned tab stop', async ({ val, leader }) => {
+      const attrs = { tabs: [{ pos: 2400, val, ...(leader ? { leader } : {}) }] };
+      const literalBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: `literal-${val}-tab`,
+        runs: [{ text: 'Label\t12.34', fontFamily: 'Arial', fontSize: 16 }],
+        attrs,
+      };
+      const canonicalBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: `canonical-${val}-tab`,
+        runs: [
+          { text: 'Label', fontFamily: 'Arial', fontSize: 16 },
+          { kind: 'tab', text: '\t', tabIndex: 0 },
+          { text: '12.34', fontFamily: 'Arial', fontSize: 16 },
+        ],
+        attrs,
+      };
+
+      const [literalMeasure, canonicalMeasure] = await Promise.all([
+        measureBlock(literalBlock, 400).then(expectParagraphMeasure),
+        measureBlock(canonicalBlock, 400).then(expectParagraphMeasure),
+      ]);
+      const literalValue = literalMeasure.lines[0].segments?.find(
+        (segment) =>
+          extractSegmentText(literalBlock, { ...literalMeasure.lines[0], segments: [segment] })[0] === '12.34',
+      );
+      const canonicalValue = canonicalMeasure.lines[0].segments?.find((segment) => segment.runIndex === 2);
+
+      expect(extractSegmentText(literalBlock, literalMeasure.lines[0]).join('')).toBe('Label12.34');
+      expect(literalValue?.x).toBeCloseTo(canonicalValue?.x ?? Number.NaN, 3);
+      expect(literalMeasure.lines[0].width).toBeCloseTo(canonicalMeasure.lines[0].width, 3);
+      if (leader) {
+        expect(literalMeasure.lines[0].leaders?.[0]).toMatchObject({ style: leader });
+        expect(literalMeasure.lines[0].leaders?.[0]?.from).toBeCloseTo(
+          canonicalMeasure.lines[0].leaders?.[0]?.from ?? Number.NaN,
+          3,
+        );
+        expect(literalMeasure.lines[0].leaders?.[0]?.to).toBeCloseTo(
+          canonicalMeasure.lines[0].leaders?.[0]?.to ?? Number.NaN,
+          3,
+        );
       }
     });
 
