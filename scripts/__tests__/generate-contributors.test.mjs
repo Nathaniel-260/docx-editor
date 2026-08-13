@@ -15,7 +15,7 @@ function jsonResponse(body) {
   });
 }
 
-test("refreshes contributors after the public export reaches main", async () => {
+test("opens contributor updates for review without auto-merging them", async () => {
   const workflow = (
     await readFile(
       fileURLToPath(
@@ -34,16 +34,9 @@ test("refreshes contributors after the public export reaches main", async () => 
   );
   assert.doesNotMatch(workflow, /pull_request_target:/u);
   assert.match(workflow, /timeout-minutes:\s*45/u);
-  assert.match(workflow, /check_name='CI V2 Public \/ validate'/u);
-  assert.match(workflow, /completed:success/u);
-  assert.match(
-    workflow,
-    /for attempt in 1 2 3; do\s+deadline=\$\(\(SECONDS \+ 2400\)\)\s+check_state=missing\s+pr_head=/u,
-  );
-  assert.match(workflow, /current_head.*!=.*pr_head/u);
-  assert.match(workflow, /gh pr merge "\$pr_url" \\\n\s+--admin/u);
-  assert.match(workflow, /--match-head-commit "\$pr_head"/u);
-  assert.doesNotMatch(workflow, /gh pr merge[^\n]*--auto/u);
+  assert.match(workflow, /gh pr create/u);
+  assert.doesNotMatch(workflow, /gh pr merge/u);
+  assert.doesNotMatch(workflow, /check-runs/u);
 });
 
 test("combines branch histories and counts each person once per unique commit", async () => {
