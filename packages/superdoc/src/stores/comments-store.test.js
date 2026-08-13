@@ -2408,6 +2408,74 @@ describe('comments-store v2 tracked-change hydration', () => {
   });
 });
 
+describe('comments-store getComment id resolution', () => {
+  let store;
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    const superdocStore = useSuperdocStore();
+    superdocStore.documents = [
+      { id: 'doc-1', type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    ];
+    store = useCommentsStore();
+  });
+
+  // Real Word comment ids and tracked-change rows' raw OOXML `w:id` (exposed
+  // as `importedId`) are independent numbering sequences that can collide on
+  // the same small integer (e.g. comment "2" and a tracked-change insert with
+  // w:id="2" elsewhere in the same document). `getComment` must resolve the
+  // real comment, never the unrelated tracked-change row, regardless of which
+  // one happens to appear first in `commentsList`.
+  it('resolves a real comment over a colliding tracked-change importedId, even when the tracked-change row sorts first', () => {
+    const trackedChangeRow = makeTrackedChangeRow({
+      commentId: 'tc|main:document.xml|ins|wId:2',
+      importedId: '2',
+      trackedChangeText: '8 months',
+    });
+    const realComment = useComment(makeOpenRow({ commentId: '2', commentText: 'We should have a 1 month cushion...' }));
+    // Tracked-change row intentionally placed BEFORE the real comment: this
+    // is the exact array order that reproduced the misattribution bug (the
+    // old `.find()` matched importedId=='2' on the tracked-change row before
+    // ever reaching the real comment's commentId=='2').
+    store.commentsList = [trackedChangeRow, realComment];
+
+    const resolved = store.getComment('2');
+
+    expect(resolved.commentId).toBe('2');
+    expect(resolved.trackedChange).not.toBe(true);
+    expect(resolved.commentText).toBe('We should have a 1 month cushion...');
+  });
+
+  it('still resolves a tracked-change row by importedId when there is no commentId collision', () => {
+    const trackedChangeRow = makeTrackedChangeRow({
+      commentId: 'tc|main:document.xml|ins|wId:7',
+      importedId: '7',
+      trackedChangeText: 'no collision here',
+    });
+    store.commentsList = [trackedChangeRow];
+
+    expect(store.getComment('7')).toBe(trackedChangeRow);
+  });
+
+  it('keeps commentsList precedence when reviewDirectoryList contains a colliding alias', () => {
+    const trackedChangeRow = makeTrackedChangeRow({
+      commentId: 'tc|main:document.xml|ins|wId:2',
+      importedId: '2',
+      trackedChangeText: 'directory collision',
+    });
+    const realComment = useComment(makeOpenRow({ commentId: '2', commentText: 'Live sidebar comment' }));
+
+    store.commentsList = [realComment];
+    store.reviewDirectoryList = [trackedChangeRow];
+
+    const resolved = store.getComment('2');
+
+    expect(resolved).toBe(realComment);
+    expect(resolved.commentId).toBe('2');
+    expect(resolved.trackedChange).not.toBe(true);
+  });
+});
+
 describe('comments-store committed review-window apply', () => {
   let store;
   let superdoc;

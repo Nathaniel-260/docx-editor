@@ -500,22 +500,22 @@ export const useCommentsStore = defineStore('comments', () => {
    */
   const getComment = (id) => {
     if (id === undefined || id === null) return null;
-    const directMatch = commentsList.value.find(
-      (c) =>
-        c.commentId == id ||
-        c.importedId == id ||
-        c.trackedChangeAnchorKey == id ||
-        (c?.trackedChange && buildTrackedChangeImportedPositionId(c.importedId) == id),
+    // Real Word comment ids and tracked-change rows' raw OOXML `w:id` (exposed
+    // here as `importedId`) are independent numbering sequences that commonly
+    // collide on the same small integer (e.g. comment "2" and tracked-change
+    // insert w:id="2" in the same document). Resolve primary ids before alias
+    // ids inside each backing list so a tracked-change alias never wins over a
+    // real comment that lives in that same list, while preserving the existing
+    // cross-list precedence of commentsList before reviewDirectoryList.
+    const byPrimaryId = (c) => c.commentId == id;
+    const byAliasId = (c) =>
+      c.importedId == id ||
+      c.trackedChangeAnchorKey == id ||
+      (c?.trackedChange && buildTrackedChangeImportedPositionId(c.importedId) == id);
+    const findIn = (list) => list.find(byPrimaryId) ?? list.find(byAliasId);
+    return (
+      findIn(commentsList.value) ?? findIn(reviewDirectoryList.value) ?? getTrackedChangeCommentByPositionAlias(id)
     );
-    if (directMatch) return directMatch;
-    const directoryMatch = reviewDirectoryList.value.find(
-      (c) =>
-        c.commentId == id ||
-        c.importedId == id ||
-        c.trackedChangeAnchorKey == id ||
-        (c?.trackedChange && buildTrackedChangeImportedPositionId(c.importedId) == id),
-    );
-    return directoryMatch || getTrackedChangeCommentByPositionAlias(id);
   };
 
   const getThreadParent = (comment) => {
