@@ -8,10 +8,10 @@ import { useCommentsStore } from '../../stores/comments-store.js';
 describe('CommentInput.vue', () => {
   let commentsStore;
 
-  const mountInput = () =>
+  const mountInput = (users = []) =>
     mount(CommentInput, {
       props: {
-        users: [],
+        users,
         config: { readOnly: false },
         includeHeader: false,
         comment: {},
@@ -22,6 +22,7 @@ describe('CommentInput.vue', () => {
     setActivePinia(createPinia());
     commentsStore = useCommentsStore();
     commentsStore.currentCommentText = '';
+    commentsStore.currentCommentMentions = [];
   });
 
   it('renders the native composer as a compact non-resizable field', () => {
@@ -44,5 +45,39 @@ describe('CommentInput.vue', () => {
     await textarea.setValue('Line one\nLine two');
 
     expect(commentsStore.currentCommentText).toBe('<p>Line one<br>Line two</p>');
+  });
+
+  it('stores configured user selections as structured mention identities', async () => {
+    const wrapper = mountInput([{ id: 'u1', name: 'Internal Reviewer', email: 'internal@example.com' }]);
+    const textarea = wrapper.find('textarea.superdoc-field');
+
+    await textarea.setValue('@Int');
+    await wrapper.get('[data-sd-comment-mention-option="u1"]').trigger('mousedown');
+
+    expect(commentsStore.currentCommentText).toBe('<p>@Internal Reviewer</p>');
+    expect(commentsStore.currentCommentMentions).toEqual([
+      { id: 'u1', name: 'Internal Reviewer', email: 'internal@example.com' },
+    ]);
+  });
+
+  it('selects eligible users from the keyboard and excludes viewers', async () => {
+    const wrapper = mountInput([
+      { id: 'viewer', name: 'Read Only', email: 'viewer@example.com', role: 'viewer' },
+      { id: 'external', name: 'External Reviewer', email: 'external@example.com' },
+    ]);
+    const textarea = wrapper.find('textarea.superdoc-field');
+
+    await textarea.setValue('@');
+
+    expect(wrapper.findAll('[role="option"]').map((option) => option.text())).toEqual([
+      'External Reviewerexternal@example.com',
+    ]);
+
+    await textarea.trigger('keydown', { key: 'Enter' });
+
+    expect(commentsStore.currentCommentText).toBe('<p>@External Reviewer</p>');
+    expect(commentsStore.currentCommentMentions).toEqual([
+      { id: 'external', name: 'External Reviewer', email: 'external@example.com' },
+    ]);
   });
 });

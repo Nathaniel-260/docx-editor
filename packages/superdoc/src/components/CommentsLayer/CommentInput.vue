@@ -1,3 +1,7 @@
+<script>
+let commentInputSequence = 0;
+</script>
+
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -32,17 +36,23 @@ const props = defineProps({
   },
 });
 const commentsStore = useCommentsStore();
-const { currentCommentText } = storeToRefs(commentsStore);
+const { currentCommentText, currentCommentMentions } = storeToRefs(commentsStore);
 const inputRef = ref(null);
+const mentionStart = ref(null);
+const mentionQuery = ref('');
+const highlightedMentionIndex = ref(0);
+const mentionListId = `sd-comment-mention-list-${++commentInputSequence}`;
 
 const handleFocusChange = (focused) => emit('focus', focused);
 
+const getInputElement = () => inputRef.value;
+
 const focus = (options) => {
-  inputRef.value?.focus?.(options);
+  getInputElement()?.focus?.(options);
 };
 
 const syncInputHeight = () => {
-  const input = inputRef.value;
+  const input = getInputElement();
   if (!input) return;
 
   input.style.height = `${TEXTAREA_MIN_HEIGHT}px`;
@@ -93,6 +103,96 @@ const commentDraft = computed({
   },
 });
 
+const displayName = (user) => user?.name?.trim() || user?.email?.trim() || '';
+const userKey = (user) => String(user?.id ?? user?.email ?? user?.name ?? '');
+const isViewer = (user) =>
+  user?.role === 'viewer' ||
+  user?.access === 'viewer' ||
+  (typeof user?.access === 'object' && user.access?.role === 'viewer');
+const mentionIdentity = (user) => ({
+  ...(user?.id != null ? { id: user.id } : {}),
+  ...(user?.name != null ? { name: user.name } : {}),
+  ...(user?.email != null ? { email: user.email } : {}),
+});
+
+const mentionSuggestions = computed(() => {
+  if (mentionStart.value == null) return [];
+  const needle = mentionQuery.value.toLocaleLowerCase();
+  return props.users
+    .filter((user) => !isViewer(user) && displayName(user))
+    .filter((user) => {
+      const name = displayName(user).toLocaleLowerCase();
+      const email = user?.email?.toLocaleLowerCase() ?? '';
+      return !needle || name.startsWith(needle) || email.startsWith(needle);
+    })
+    .slice(0, 8);
+});
+const mentionListOpen = computed(() => mentionSuggestions.value.length > 0);
+const activeMentionOptionId = computed(() => {
+  const user = mentionSuggestions.value[highlightedMentionIndex.value];
+  return user ? `${mentionListId}-${userKey(user)}` : undefined;
+});
+
+const updateMentionQuery = (caret) => {
+  const beforeCaret = commentDraft.value.slice(0, caret);
+  const match = /(?:^|\s)@([^\s@]{0,40})$/.exec(beforeCaret);
+  mentionStart.value = match ? caret - match[1].length - 1 : null;
+  mentionQuery.value = match?.[1] ?? '';
+  highlightedMentionIndex.value = 0;
+};
+
+const onInput = (event) => {
+  currentCommentMentions.value = currentCommentMentions.value.filter((user) =>
+    commentDraft.value.includes(`@${displayName(user)}`),
+  );
+  updateMentionQuery(event.target.selectionStart ?? commentDraft.value.length);
+  syncInputHeight();
+};
+
+const selectMention = (user) => {
+  if (mentionStart.value == null) return;
+  const start = mentionStart.value;
+  const caret = inputRef.value?.selectionStart ?? commentDraft.value.length;
+  const token = `@${displayName(user)}`;
+  const identity = mentionIdentity(user);
+  commentDraft.value = `${commentDraft.value.slice(0, start)}${token}${commentDraft.value.slice(caret)}`;
+  if (!currentCommentMentions.value.some((selected) => userKey(selected) === userKey(identity))) {
+    currentCommentMentions.value = [...currentCommentMentions.value, identity];
+  }
+  mentionStart.value = null;
+  mentionQuery.value = '';
+  nextTick(() => {
+    const nextCaret = start + token.length;
+    inputRef.value?.focus();
+    inputRef.value?.setSelectionRange(nextCaret, nextCaret);
+    syncInputHeight();
+  });
+};
+
+const onKeydown = (event) => {
+  if (!mentionListOpen.value) return;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    event.stopPropagation();
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    highlightedMentionIndex.value =
+      (highlightedMentionIndex.value + direction + mentionSuggestions.value.length) % mentionSuggestions.value.length;
+    return;
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    const user = mentionSuggestions.value[highlightedMentionIndex.value];
+    if (user) selectMention(user);
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    mentionStart.value = null;
+  }
+};
+
 onMounted(scheduleInputHeightSync);
 watch(currentCommentText, scheduleInputHeightSync);
 
@@ -104,16 +204,49 @@ defineExpose({ focus });
     <CommentHeader v-if="includeHeader" :config="config" :comment="comment" :is-pending-input="true" />
 
     <div class="comment-entry" :class="{ 'sd-input-active': isFocused }">
-      <textarea
-        ref="inputRef"
-        class="superdoc-field"
-        placeholder="Add a comment"
-        v-model="commentDraft"
-        rows="1"
-        @input="syncInputHeight"
-        @focus="handleFocusChange(true)"
-        @blur="handleFocusChange(false)"
-      ></textarea>
+      <div class="comment-composer">
+        <textarea
+          ref="inputRef"
+          v-model="commentDraft"
+          class="superdoc-field"
+          role="combobox"
+          aria-autocomplete="list"
+          :aria-expanded="mentionListOpen"
+          :aria-controls="mentionListOpen ? mentionListId : undefined"
+          :aria-activedescendant="activeMentionOptionId"
+          data-sd-comment-mention-input
+          data-sd-comment-text
+          placeholder="Add a comment"
+          rows="1"
+          @input="onInput"
+          @keydown="onKeydown"
+          @focus="handleFocusChange(true)"
+          @blur="handleFocusChange(false)"
+        />
+        <div
+          v-if="mentionListOpen"
+          :id="mentionListId"
+          class="comment-mention-list"
+          role="listbox"
+          data-sd-comment-mention-list
+        >
+          <button
+            v-for="(user, index) in mentionSuggestions"
+            :id="`${mentionListId}-${userKey(user)}`"
+            :key="userKey(user)"
+            type="button"
+            class="comment-mention-option"
+            :class="{ 'comment-mention-option--active': index === highlightedMentionIndex }"
+            role="option"
+            :aria-selected="index === highlightedMentionIndex"
+            :data-sd-comment-mention-option="userKey(user)"
+            @mousedown.prevent="selectMention(user)"
+          >
+            <span class="comment-mention-option__name">{{ displayName(user) }}</span>
+            <span v-if="user.email" class="comment-mention-option__email">{{ user.email }}</span>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -125,6 +258,11 @@ defineExpose({ focus });
   width: 100%;
   max-width: 100%;
   transition: all 250ms ease;
+}
+
+.comment-composer {
+  position: relative;
+  min-width: 0;
 }
 
 .superdoc-field {
@@ -149,5 +287,48 @@ defineExpose({ focus });
   outline: none;
   border-color: #4f7cff;
   box-shadow: 0 0 0 2px rgba(79, 124, 255, 0.16);
+}
+
+.comment-mention-list {
+  position: absolute;
+  z-index: 100;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  overflow-y: auto;
+  max-height: 192px;
+  padding: 4px;
+  border: 1px solid #d7d7d7;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.comment-mention-option {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 5px;
+  color: #1f1f1f;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.comment-mention-option--active,
+.comment-mention-option:hover {
+  background: #eef3ff;
+}
+
+.comment-mention-option__name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.comment-mention-option__email {
+  color: #666;
+  font-size: 11px;
 }
 </style>

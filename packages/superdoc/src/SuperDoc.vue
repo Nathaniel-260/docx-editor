@@ -1852,6 +1852,17 @@ const onV2LinkClick = (payload) => {
   linkPopover.handleLinkClick(payload);
 };
 
+const onV2CommentCreated = async (payload) => {
+  try {
+    await commentsStore.announceV2CommentCreated?.({
+      superdoc: proxy.$superdoc,
+      commentId: payload?.commentId,
+    });
+  } catch (err) {
+    console.warn('[SuperDoc][v2] context-menu comment reconciliation failed', err);
+  }
+};
+
 const recollectV2GeometryIfActive = (options = undefined) => {
   if (!isV2Mode.value) return;
   if (!v2GeometryPublisher.getLastPayload()) return;
@@ -3446,6 +3457,7 @@ const whiteboardInteractive = computed(() => whiteboardEnabled.value);
             @v2-selection-changed="onV2SelectionChanged"
             @v2-host-event="(event) => onV2HostEvent(doc, event)"
             @v2-link-click="onV2LinkClick"
+            @v2-comment-created="onV2CommentCreated"
             @v2-page-metrics="onV2PageMetrics"
           />
 

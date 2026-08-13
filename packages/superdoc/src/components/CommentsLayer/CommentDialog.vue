@@ -76,6 +76,7 @@ const {
   floatingCommentsOffset,
   pendingComment,
   currentCommentText,
+  currentCommentMentions,
   isDebugging,
   editingCommentId,
   editorCommentPositions,
@@ -418,6 +419,7 @@ watch(isDialogActive, (active) => {
   if (!active) {
     if (isReplying.value || isEditingCommentInThisThread()) {
       currentCommentText.value = '';
+      currentCommentMentions.value = [];
       editingCommentId.value = null;
     }
     textExpanded.value = false;
@@ -735,6 +737,7 @@ const handleAddComment = async () => {
         superdoc: proxy.$superdoc,
         parentCommentId,
         text: currentCommentText.value,
+        ...(currentCommentMentions.value.length ? { mentions: currentCommentMentions.value } : {}),
       });
       if (!outcome?.ok) {
         // Plan §4.1: keep reply editor open and typed text intact for retry.
@@ -743,6 +746,7 @@ const handleAddComment = async () => {
       }
       isReplying.value = false;
       currentCommentText.value = '';
+      currentCommentMentions.value = [];
       nextTick(() => emit('resize'));
       return outcome;
     } finally {
@@ -1115,6 +1119,7 @@ const handleOverflowSelect = (value, comment) => {
   switch (value) {
     case 'edit':
       currentCommentText.value = comment?.commentText?.value ?? comment?.commentText ?? '';
+      currentCommentMentions.value = Array.isArray(comment?.mentions) ? [...comment.mentions] : [];
       activeComment.value = props.comment.commentId;
       if (props.floatingInstanceId) {
         setActiveFloatingCommentInstance(props.floatingInstanceId);
@@ -1190,7 +1195,7 @@ const usersFiltered = computed(() => {
   const users = proxy.$superdoc.users;
 
   if (props.comment.isInternal === true) {
-    return users.filter((user) => user.access?.role === 'internal');
+    return users.filter((user) => user.access === 'internal' || user.access?.role === 'internal');
   }
 
   return users;
@@ -1466,7 +1471,7 @@ watch(isV2WriteDisabled, (isDisabled) => {
             <div class="reply-input-wrapper">
               <CommentInput
                 :ref="setEditCommentInputRef(comment.commentId)"
-                :users="usersFiltered"
+                :users="[]"
                 :config="getConfig"
                 :include-header="false"
                 :comment="comment"
@@ -1785,7 +1790,7 @@ watch(isV2WriteDisabled, (isDisabled) => {
   background: var(--sd-ui-comments-input-bg, #ffffff);
   margin-top: 4px;
   max-height: 150px;
-  overflow-y: auto;
+  overflow: visible;
 }
 .new-comment-input-wrapper:focus-within {
   border-color: var(--sd-ui-comments-input-focus-border, #4f7cff);
@@ -1848,7 +1853,7 @@ watch(isV2WriteDisabled, (isDisabled) => {
   padding: 8.5px 10.5px;
   background: var(--sd-ui-comments-input-bg, #ffffff);
   max-height: 150px;
-  overflow-y: auto;
+  overflow: visible;
 }
 .reply-input-wrapper:focus-within {
   border-color: var(--sd-ui-comments-input-focus-border, #4f7cff);

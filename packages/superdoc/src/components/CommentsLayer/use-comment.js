@@ -63,7 +63,7 @@ export default function useComment(params) {
   const createdAtVersionNumber = params.createdAtVersionNumber;
   const isInternal = ref(params.isInternal !== undefined ? params.isInternal : true);
 
-  const mentions = ref([]);
+  const mentions = ref(Array.isArray(params.mentions) ? params.mentions : []);
 
   const commentElement = ref(null);
   const isFocused = ref(params.isFocused || false);

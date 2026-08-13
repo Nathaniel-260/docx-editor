@@ -263,6 +263,7 @@ export const useCommentsStore = defineStore('comments', () => {
   const overlappedIds = new Set([]);
   const suppressInternalExternal = ref(true);
   const currentCommentText = ref('');
+  const currentCommentMentions = ref([]);
   const commentsList = ref([]);
   // Complete review inventory for the explicit document panel only. Floating
   // presentation and geometry continue to consume the bounded commentsList.
@@ -1816,6 +1817,7 @@ export const useCommentsStore = defineStore('comments', () => {
   const removePendingComment = (superdoc) => {
     const hadPending = !!pendingComment.value;
     currentCommentText.value = '';
+    currentCommentMentions.value = [];
     pendingComment.value = null;
     pendingV2CommentTarget.value = null;
     superdocStore.selectionPosition = null;
@@ -1864,6 +1866,7 @@ export const useCommentsStore = defineStore('comments', () => {
       // `host.getHandles().comments.list()`. This keeps the sidebar
       // receipt-driven; rejected mutations never produce orphan sidebar rows.
       const text = normalizeV2CommentDraftText(pendingComment.value ? currentCommentText.value : comment.commentText);
+      const mentions = pendingComment.value ? currentCommentMentions.value : (comment.mentions ?? []);
       const target = pendingComment.value ? pendingV2CommentTarget.value : null;
       const parentCommentId = comment.parentCommentId
         ? String(comment.parentCommentId)
@@ -1873,8 +1876,8 @@ export const useCommentsStore = defineStore('comments', () => {
       const invocation = (async () => {
         try {
           return await (parentCommentId
-            ? v2Adapter.reply({ parentCommentId, text })
-            : v2Adapter.commitPendingComment({ text, target }));
+            ? v2Adapter.reply({ parentCommentId, text, ...(mentions.length ? { mentions } : {}) })
+            : v2Adapter.commitPendingComment({ text, target, ...(mentions.length ? { mentions } : {}) }));
         } catch (err) {
           return { ok: false, reason: 'adapter-threw', detail: err?.message ?? String(err) };
         }
@@ -2454,7 +2457,7 @@ export const useCommentsStore = defineStore('comments', () => {
    *   - rejection preserves rows and emits a rejected `comments-update` event
    *   - committed-but-refresh-failed surfaces honestly (no reconcile with `[]`)
    */
-  const replyCommentV2 = async ({ superdoc, parentCommentId, text } = {}) => {
+  const replyCommentV2 = async ({ superdoc, parentCommentId, text, mentions = [] } = {}) => {
     if (commentsAreReadOnly()) return readOnlyMutationOutcome();
 
     const v2Adapter = getV2CommentsAdapter(superdoc);
@@ -2474,7 +2477,12 @@ export const useCommentsStore = defineStore('comments', () => {
       superdoc,
       adapter: v2Adapter,
       fileId,
-      operation: () => v2Adapter.reply({ parentCommentId: normalizedParent, text: plainText }),
+      operation: () =>
+        v2Adapter.reply({
+          parentCommentId: normalizedParent,
+          text: plainText,
+          ...(mentions.length ? { mentions } : {}),
+        }),
       eventType: COMMENT_EVENTS.ADD,
       rejectionFallbackReason: 'v2-reply-failed',
       rejectionEventExtras: parent ? { comment: getCommentEventPayload(parent) } : {},
@@ -3040,6 +3048,7 @@ export const useCommentsStore = defineStore('comments', () => {
 
         const applyUpdate = (existing, input) => {
           existing.commentText = input.commentText ?? existing.commentText;
+          existing.mentions = Array.isArray(input.mentions) ? input.mentions : [];
           existing.isInternal = typeof input.isInternal === 'boolean' ? input.isInternal : existing.isInternal;
           const hasResolvedTime = typeof input.resolvedTime === 'number';
           if (hasResolvedTime) {
@@ -3122,6 +3131,54 @@ export const useCommentsStore = defineStore('comments', () => {
         return { added: addedComments[addedComments.length - 1] ?? null };
       },
     );
+
+  /**
+   * Reconcile and publish a root comment created by the private V2 context menu.
+   * That path owns selection capture, while this store remains the sole owner
+   * of shared comment rows and public comments-update events.
+   */
+  const announceV2CommentCreated = async ({ superdoc, commentId } = {}) => {
+    const id = normalizeCommentId(commentId);
+    const adapter = getV2CommentsAdapter(superdoc);
+    const commentsApi = superdoc?.activeEditor?.doc?.comments;
+    if (!id) return { ok: false, reason: 'comment-id-missing' };
+    if (!adapter || !isCurrentV2CommentsAdapter(adapter)) {
+      return { ok: false, reason: 'comments-adapter-stale' };
+    }
+    if (typeof commentsApi?.get !== 'function') {
+      return { ok: false, reason: 'document-api-unavailable' };
+    }
+
+    let item;
+    try {
+      item = await commentsApi.get({ commentId: id });
+    } catch (err) {
+      return { ok: false, reason: 'comment-read-failed', detail: err?.message ?? String(err) };
+    }
+    if (!isCurrentV2CommentsAdapter(adapter)) {
+      return { ok: false, reason: 'comments-adapter-stale' };
+    }
+
+    const reconciled = reconcileCommentsFromV2({
+      superdoc,
+      adapter,
+      documentId: adapter.documentId,
+      items: [item],
+      pruneStale: false,
+    });
+    const comment =
+      reconciled?.added ??
+      commentsList.value.find(
+        (candidate) => String(candidate?.commentId ?? '') === id || String(candidate?.importedId ?? '') === id,
+      ) ??
+      null;
+    const event = {
+      type: COMMENT_EVENTS.ADD,
+      comment: comment?.getValues?.() ?? null,
+    };
+    superdoc?.emit?.('comments-update', event);
+    return { ok: true, comment };
+  };
 
   /**
    * Cancel the pending comment
@@ -3383,7 +3440,7 @@ export const useCommentsStore = defineStore('comments', () => {
     commentsList.value = commentsList.value.filter((comment) => !removedComments.includes(comment));
 
     if (removedAliasIds.size) {
-      const nextPositions = { ...(editorCommentPositions.value || {}) };
+      const nextPositions = { ...editorCommentPositions.value };
       removedAliasIds.forEach((id) => {
         delete nextPositions[id];
       });
@@ -5384,6 +5441,7 @@ export const useCommentsStore = defineStore('comments', () => {
     suppressInternalExternal,
     pendingComment,
     currentCommentText,
+    currentCommentMentions,
     commentsList,
     reviewDirectoryList,
     isCommentsListVisible,
@@ -5469,6 +5527,7 @@ export const useCommentsStore = defineStore('comments', () => {
     getV2CommentsAdapter,
     applyReviewWindowFromV2,
     reconcileCommentsFromV2,
+    announceV2CommentCreated,
     isV2EditorActive,
 
     // TCS Phase 0 / 004: store-owned v2 comment mutation helpers.

@@ -2746,16 +2746,98 @@ describe('comments-store v2 pending document comments', () => {
     expect(adapter.captureCurrentSelection).toHaveBeenCalledTimes(1);
 
     store.currentCommentText = '<p>Captured &lt;b&gt;target&lt;/b&gt; comment</p>';
+    store.currentCommentMentions = [{ id: 'u1', name: 'Internal Reviewer', email: 'internal@example.com' }];
     const result = await store.addComment({ superdoc, comment: store.pendingComment });
 
     expect(adapter.commitPendingComment).toHaveBeenCalledWith({
       text: 'Captured <b>target</b> comment',
       target,
+      mentions: [{ id: 'u1', name: 'Internal Reviewer', email: 'internal@example.com' }],
     });
     expect(submittedTargets[0]).toBe(target);
     expect(result.ok).toBe(true);
     expect(store.pendingComment).toBeNull();
+    expect(store.currentCommentMentions).toEqual([]);
     expect(store.commentsList.map((comment) => comment.commentId)).toEqual(['c-created']);
+  });
+
+  it('submits reply mentions and exposes them in the successful update event', async () => {
+    const mentions = [{ id: 'u1', name: 'Internal Reviewer', email: 'internal@example.com' }];
+    const items = [
+      { commentId: 'c1', fileId: 'doc-1', commentText: 'Root', mentions: [] },
+      { commentId: 'c2', parentCommentId: 'c1', fileId: 'doc-1', commentText: '@Internal Reviewer', mentions },
+    ];
+    const adapter = {
+      documentId: 'doc-1',
+      reply: vi.fn(async () => ({ ok: true, items })),
+      mapV2CommentToUseCommentInput: vi.fn((item) => item),
+    };
+    const superdoc = makeSuperdoc(adapter);
+    store.setV2CommentsAdapter(adapter);
+    store.commentsList = [useComment(items[0])];
+
+    const result = await store.replyCommentV2({
+      superdoc,
+      parentCommentId: 'c1',
+      text: '@Internal Reviewer',
+      mentions,
+    });
+
+    expect(adapter.reply).toHaveBeenCalledWith({
+      parentCommentId: 'c1',
+      text: '@Internal Reviewer',
+      mentions,
+    });
+    expect(result.ok).toBe(true);
+    expect(superdoc.emit).toHaveBeenCalledWith(
+      'comments-update',
+      expect.objectContaining({
+        type: 'add',
+        comment: expect.objectContaining({ commentId: 'c2', mentions }),
+      }),
+    );
+  });
+
+  it('reconciles a context-menu create and emits its structured mention event', async () => {
+    const mentions = [{ id: 'u1', name: 'Internal Reviewer', email: 'internal@example.com' }];
+    const detail = {
+      id: 'c-created',
+      text: '@Internal Reviewer',
+      status: 'open',
+      metadata: { mentions },
+    };
+    const adapter = {
+      documentId: 'doc-1',
+      mapV2CommentToUseCommentInput: vi.fn((item) => ({
+        commentId: item.id,
+        fileId: 'doc-1',
+        commentText: item.text,
+        mentions: item.metadata?.mentions ?? [],
+      })),
+    };
+    const superdoc = makeSuperdoc(adapter);
+    superdoc.activeEditor.doc = {
+      comments: { get: vi.fn(async () => detail) },
+    };
+    store.setV2CommentsAdapter(adapter);
+
+    const result = await store.announceV2CommentCreated({
+      superdoc,
+      commentId: 'c-created',
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(superdoc.activeEditor.doc.comments.get).toHaveBeenCalledWith({
+      commentId: 'c-created',
+    });
+    expect(store.commentsList[0]?.mentions).toEqual(mentions);
+    expect(superdoc.emit).toHaveBeenCalledWith(
+      'comments-update',
+      expect.objectContaining({
+        type: 'add',
+        comment: expect.objectContaining({ commentId: 'c-created', mentions }),
+      }),
+    );
   });
 });
 
