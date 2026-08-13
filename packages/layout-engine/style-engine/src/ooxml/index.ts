@@ -207,27 +207,13 @@ export function resolveParagraphProperties(
   if (ilvl == null) {
     ilvl = inlineNumId != null ? 0 : resolveStyleImpliedNumberingLevel(params, styleId, numId, styleNumbering?.ilvl);
   }
-  let numberingDefinedInline = inlineNumId != null;
+  const numberingDefinedInline = inlineNumId != null;
 
   const isList = numId != null && numId !== 0;
   if (isList) {
     const ilvlNum = ilvl != null ? (ilvl as number) : 0;
     numberingProps = getNumberingProperties('paragraphProperties', params, ilvlNum, numId);
-    if (numberingProps.styleId) {
-      // If numbering level defines a style, replace styleProps with that style
-      styleId = numberingProps.styleId as string;
-      styleProps = resolveStyleChain('paragraphProperties', params, styleId);
-      inlineProps.styleId = styleId;
-      const inlineNumProps = inlineProps.numberingProperties;
-      if (
-        styleProps.numberingProperties?.ilvl === inlineNumProps?.ilvl &&
-        styleProps.numberingProperties?.numId === inlineNumProps?.numId
-      ) {
-        // Numbering is already defined in style, so remove from inline props
-        delete inlineProps.numberingProperties;
-        numberingDefinedInline = false;
-      }
-    }
+    delete numberingProps.styleId;
   }
 
   // Table properties

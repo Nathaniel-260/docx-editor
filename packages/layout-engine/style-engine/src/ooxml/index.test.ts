@@ -448,7 +448,7 @@ describe('ooxml - resolveParagraphProperties', () => {
     expect(result.indent?.left).toBe(720);
   });
 
-  it('uses numbering style but ignores basedOn chain for indentation', () => {
+  it("uses numbering indentation without following the level's linked style chain", () => {
     const params = buildParams({
       translatedLinkedStyles: {
         ...emptyStyles,
@@ -474,6 +474,59 @@ describe('ooxml - resolveParagraphProperties', () => {
     const inlineProps = { numberingProperties: { numId: 1, ilvl: 0 } };
     const result = resolveParagraphProperties(params, inlineProps);
     expect(result.indent?.left).toBe(800);
+  });
+
+  it('does not apply a numbering level paragraph style to a paragraph with direct numbering', () => {
+    const params = buildParams({
+      translatedLinkedStyles: {
+        ...emptyStyles,
+        styles: {
+          Heading1: {
+            paragraphProperties: { pageBreakBefore: true, keepNext: true },
+            runProperties: { bold: true, caps: true, fontSize: 28 },
+          },
+        },
+      },
+      translatedNumbering: {
+        definitions: { '1': { abstractNumId: 10 } },
+        abstracts: {
+          '10': {
+            levels: {
+              '0': {
+                styleId: 'Heading1',
+                paragraphProperties: { indent: { left: 720 } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const paragraphProperties = resolveParagraphProperties(params, {
+      numberingProperties: { numId: 1, ilvl: 0 },
+    });
+    const runProperties = resolveRunProperties(params, null, paragraphProperties);
+
+    expect(paragraphProperties).toMatchObject({
+      numberingProperties: { numId: 1, ilvl: 0 },
+      indent: { left: 720 },
+    });
+    expect(paragraphProperties.styleId).toBeUndefined();
+    expect(paragraphProperties.pageBreakBefore).toBeUndefined();
+    expect(paragraphProperties.keepNext).toBeUndefined();
+    expect(runProperties.bold).toBeUndefined();
+    expect(runProperties.caps).toBeUndefined();
+    expect(runProperties.fontSize).toBeUndefined();
+
+    const explicitlyStyledParagraph = resolveParagraphProperties(params, {
+      styleId: 'Heading1',
+      numberingProperties: { numId: 1, ilvl: 0 },
+    });
+    const explicitlyStyledRun = resolveRunProperties(params, null, explicitlyStyledParagraph);
+
+    expect(explicitlyStyledParagraph.pageBreakBefore).toBe(true);
+    expect(explicitlyStyledParagraph.keepNext).toBe(true);
+    expect(explicitlyStyledRun).toMatchObject({ bold: true, caps: true, fontSize: 28 });
   });
 
   it('uses the abstract pStyle level for a style-implied list paragraph', () => {
