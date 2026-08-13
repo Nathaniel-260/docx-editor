@@ -37,8 +37,8 @@ const inputRef = ref(null);
 
 const handleFocusChange = (focused) => emit('focus', focused);
 
-const focus = () => {
-  inputRef.value?.focus?.();
+const focus = (options) => {
+  inputRef.value?.focus?.(options);
 };
 
 const syncInputHeight = () => {

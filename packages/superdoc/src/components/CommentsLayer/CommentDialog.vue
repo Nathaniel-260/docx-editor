@@ -1204,7 +1204,7 @@ onMounted(() => {
   // Auto-focus the input for pending new comments
   if (isPendingNewComment.value) {
     nextTick(() => {
-      commentInput.value?.focus?.();
+      commentInput.value?.focus?.({ preventScroll: true });
     });
   }
 
@@ -1222,7 +1222,7 @@ watch(
   (isVisible) => {
     if (!isVisible) return;
     nextTick(() => {
-      commentInput.value?.focus?.();
+      commentInput.value?.focus?.(isPendingNewComment.value ? { preventScroll: true } : undefined);
     });
   },
   { immediate: true },
