@@ -3057,6 +3057,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    * Story-aware navigation is currently supported for bookmark and tracked
    * change targets. Block and comment targets are body-only.
    *
+   * @deprecated Use the target-specific navigation APIs on `superdoc.ui`. This method will be removed in v3.
    * @returns Whether the target was found and navigated to.
    */
   async navigateTo(target: NavigableAddress): Promise<boolean> {
