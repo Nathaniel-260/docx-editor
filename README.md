@@ -91,9 +91,9 @@ browse [open issues](https://github.com/superdoc/docx-editor/issues), or join
 
 ## Contributors
 
-<a href="https://github.com/superdoc/docx-editor/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=superdoc/docx-editor" alt="SuperDoc contributors" />
-</a>
+Thank you to everyone who has helped us build and improve the SuperDoc editor.
+
+<img src="./assets/contributors.svg" alt="SuperDoc contributors across V1 and V2" />
 
 ## License
 

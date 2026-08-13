@@ -1,0 +1,79 @@
+name: Update Contributors
+
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [main]
+  workflow_run:
+    workflows: [Update README Contributors]
+    types: [completed]
+    branches: [v1]
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-combined-contributors
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Generate the combined V1 and V2 image
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: node scripts/generate-contributors.mjs
+
+      - name: Open an update pull request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- assets/contributors.svg; then
+            echo 'The contributor image is already current.'
+            exit 0
+          fi
+
+          branch='automation/update-contributors'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$branch"
+          git add assets/contributors.svg
+          git commit -m 'docs: update contributors'
+          git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" || true
+          git push --force-with-lease origin "$branch"
+
+          pr_url=$(gh pr list --base main --head "$branch" --state open --json url --jq '.[0].url')
+          if [ -z "$pr_url" ]; then
+            pr_url=$(gh pr create \
+              --base main \
+              --head "$branch" \
+              --title 'docs(readme): update contributors' \
+              --body 'Auto-generated from the combined `main` and `v1` commit histories.')
+          fi
+          auto_merge=$(gh pr view "$pr_url" --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [ "$auto_merge" != 'true' ]; then
+            gh pr merge "$pr_url" --squash --auto --delete-branch
+          fi

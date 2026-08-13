@@ -62,6 +62,8 @@ jobs:
         run: pnpm run check:release-scripts
       - name: Validate workflow paths
         run: pnpm run check:workflow-paths:tests && pnpm run check:workflow-paths
+      - name: Validate contributor generation
+        run: pnpm run check:contributors
       - name: Validate consumer installs
         run: pnpm run check:consumer-install
       - name: Validate public boundary

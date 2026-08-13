@@ -62,6 +62,7 @@
     "check:format-coverage": "node --test scripts/__tests__/format-coverage.test.mjs",
     "check:vite-plus": "node --test scripts/__tests__/vite-plus-toolchain.test.mjs",
     "check:consumer-install": "node --test scripts/__tests__/consumer-install-build-scripts.test.mjs",
+    "check:contributors": "node --test scripts/__tests__/generate-contributors.test.mjs",
     "check:public:superdoc": "node scripts/check-public-contract.mjs",
     "check:public:docapi": "node scripts/check-public-docapi.mjs",
     "check:public": "pnpm run check:public:superdoc && pnpm run check:public:docapi",
