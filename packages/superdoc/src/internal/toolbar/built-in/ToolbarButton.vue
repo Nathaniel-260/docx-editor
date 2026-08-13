@@ -240,6 +240,7 @@ const caretIcon = computed(() => {
     :style="getStyle"
     :role="isOverflowItem ? 'menuitem' : 'button'"
     :aria-label="attributes.ariaLabel"
+    :aria-disabled="disabled ? 'true' : undefined"
     data-sd-part="toolbar-item"
     @click="handleOuterClick"
     @keydown.enter="onEnterKeydown($event)"

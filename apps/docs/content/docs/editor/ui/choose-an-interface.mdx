@@ -28,7 +28,7 @@ All three examples below load `/contract.docx`. Copy the [tracked-changes fixtur
 
 Surfaces you say nothing about keep their historical defaults. The toolbar, comments, context menu, link popover, content controls, and the loading overlay render; search and the ruler are opt-in, so add `ui: { search: true }` or `ui: { ruler: true }` when you want them.
 
-Search is worth opting into whenever the built-in toolbar renders. The toolbar draws its Search button either way, and that button opens the find/replace surface, so leaving `search` off produces a control that is visible, enabled, and does nothing when clicked.
+The built-in toolbar keeps the Search button visible, but disables it until you opt in.
 
 The one thing this mode does need is a mount target for the toolbar. SuperDoc cannot guess where in your layout that belongs, so a toolbar with nowhere to go does not render.
 

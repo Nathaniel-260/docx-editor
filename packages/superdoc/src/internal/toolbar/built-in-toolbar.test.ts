@@ -107,6 +107,21 @@ describe('BuiltInToolbar', () => {
     toolbar.destroy();
   });
 
+  it('disables Search until the built-in search surface is enabled', () => {
+    const disabledToolbar = new BuiltInToolbar({
+      superdoc: makeHost({ uiConfig: { search: { enabled: false } } }),
+    });
+    const enabledToolbar = new BuiltInToolbar({
+      superdoc: makeHost({ uiConfig: { search: { enabled: true } } }),
+    });
+
+    expect(disabledToolbar.getToolbarItemByName('search')?.disabled.value).toBe(true);
+    expect(enabledToolbar.getToolbarItemByName('search')?.disabled.value).toBe(false);
+
+    disabledToolbar.destroy();
+    enabledToolbar.destroy();
+  });
+
   it('keeps custom buttons in their configured group even when groups are explicit', () => {
     const toolbar = new BuiltInToolbar({
       superdoc: makeHost(),

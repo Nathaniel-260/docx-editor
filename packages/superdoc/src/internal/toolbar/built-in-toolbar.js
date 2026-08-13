@@ -646,7 +646,7 @@ export class BuiltInToolbar extends EventEmitter {
     }
 
     if (name === 'search') {
-      item.setDisabled(false);
+      item.setDisabled(this.superdoc?.uiConfig?.search?.enabled !== true);
       return true;
     }
 
