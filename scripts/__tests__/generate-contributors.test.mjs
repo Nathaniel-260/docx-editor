@@ -15,28 +15,12 @@ function jsonResponse(body) {
   });
 }
 
-test("opens contributor updates for review without auto-merging them", async () => {
-  const workflow = (
-    await readFile(
-      fileURLToPath(
-        new URL(
-          "../../.github/workflows/update-contributors.yml",
-          import.meta.url,
-        ),
-      ),
-      "utf8",
-    )
-  ).replaceAll("\r\n", "\n");
-
-  assert.match(
-    workflow,
-    /^on:\s*\n\s+push:\s*\n\s+branches:\s*\[main\]\s*$/mu,
+test("does not ship an OSS contributor update workflow", async () => {
+  const workflowPath = fileURLToPath(
+    new URL("../../.github/workflows/update-contributors.yml", import.meta.url),
   );
-  assert.doesNotMatch(workflow, /pull_request_target:/u);
-  assert.match(workflow, /timeout-minutes:\s*45/u);
-  assert.match(workflow, /gh pr create/u);
-  assert.doesNotMatch(workflow, /gh pr merge/u);
-  assert.doesNotMatch(workflow, /check-runs/u);
+
+  await assert.rejects(() => readFile(workflowPath, "utf8"), { code: "ENOENT" });
 });
 
 test("combines branch histories and counts each person once per unique commit", async () => {
