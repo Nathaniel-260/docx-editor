@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   collectContributors,
@@ -12,6 +14,37 @@ function jsonResponse(body) {
     headers: { "content-type": "application/json" },
   });
 }
+
+test("refreshes contributors after the public export reaches main", async () => {
+  const workflow = (
+    await readFile(
+      fileURLToPath(
+        new URL(
+          "../../.github/workflows/update-contributors.yml",
+          import.meta.url,
+        ),
+      ),
+      "utf8",
+    )
+  ).replaceAll("\r\n", "\n");
+
+  assert.match(
+    workflow,
+    /^on:\s*\n\s+push:\s*\n\s+branches:\s*\[main\]\s*$/mu,
+  );
+  assert.doesNotMatch(workflow, /pull_request_target:/u);
+  assert.match(workflow, /timeout-minutes:\s*45/u);
+  assert.match(workflow, /check_name='CI V2 Public \/ validate'/u);
+  assert.match(workflow, /completed:success/u);
+  assert.match(
+    workflow,
+    /for attempt in 1 2 3; do\s+deadline=\$\(\(SECONDS \+ 2400\)\)\s+check_state=missing\s+pr_head=/u,
+  );
+  assert.match(workflow, /current_head.*!=.*pr_head/u);
+  assert.match(workflow, /gh pr merge "\$pr_url" \\\n\s+--admin/u);
+  assert.match(workflow, /--match-head-commit "\$pr_head"/u);
+  assert.doesNotMatch(workflow, /gh pr merge[^\n]*--auto/u);
+});
 
 test("combines branch histories and counts each person once per unique commit", async () => {
   const pages = new Map([
