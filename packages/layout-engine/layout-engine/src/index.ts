@@ -959,6 +959,55 @@ function* mapLayoutWorkCheckpoints<T>(
 
 type FootnoteAnchorEntry = FootnoteAnchorRef;
 
+const V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER = Symbol.for('superdoc.v2.render-diagnostic.pagination-owner');
+const V2_RENDER_DIAGNOSTIC_PAGINATION_PREFIX = Symbol.for('superdoc.v2.render-diagnostic.pagination-prefix');
+
+type V2RenderDiagnosticPaginationProgress = {
+  blocks: FlowBlock[];
+  measures: Measure[];
+  layout: Layout;
+  failedBlockId: string;
+  sourcePageRange: { firstPage: number; lastPage: number };
+};
+
+type V2RenderDiagnosticPaginationOwner = (input: {
+  blockIds: readonly string[];
+  debugDetail: unknown;
+  phase: 'input' | 'dispatch';
+  progress?: V2RenderDiagnosticPaginationProgress;
+}) => Error | null;
+
+function paginationInputFailure(block: FlowBlock, measure: Measure | undefined): Error | null {
+  if (!measure) return new Error(`layoutDocument: missing measure for block ${block.id}`);
+  const expectedKind =
+    block.kind === 'paragraph' ||
+    block.kind === 'image' ||
+    block.kind === 'drawing' ||
+    block.kind === 'table' ||
+    block.kind === 'pageBreak' ||
+    block.kind === 'columnBreak' ||
+    block.kind === 'sectionBreak'
+      ? block.kind
+      : null;
+  if (expectedKind == null) {
+    return new Error(`layoutDocument: unsupported block kind for ${block.id}`);
+  }
+  if (measure.kind !== expectedKind) {
+    return new Error(`layoutDocument: expected ${expectedKind} measure for block ${block.id}`);
+  }
+  if (block.kind === 'table' && measure.kind === 'table') {
+    if (!Array.isArray(block.rows) || !Array.isArray(measure.rows)) {
+      return new Error(`layoutDocument: invalid table row plane for block ${block.id}`);
+    }
+    if (measure.rows.length > 0 && measure.rows.length < block.rows.length) {
+      return new Error(
+        `layoutDocument: incomplete table row measure plane for block ${block.id} (rows=${block.rows.length}, measures=${measure.rows.length})`,
+      );
+    }
+  }
+  return null;
+}
+
 /**
  * Layout FlowBlocks into paginated fragments using measured line data.
  *
@@ -972,6 +1021,11 @@ function* layoutDocumentSteps(
   options: LayoutOptions,
   checkpointEveryBlocks: number | null,
 ): Generator<LayoutExecutionCheckpoint, Layout, void> {
+  const renderDiagnosticOwner = (
+    options as LayoutOptions & {
+      [V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER]?: V2RenderDiagnosticPaginationOwner;
+    }
+  )[V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER];
   if (checkpointEveryBlocks != null) {
     yield { phase: 'layout-document:prepare', index: 0, total: blocks.length };
   }
@@ -987,6 +1041,17 @@ function* layoutDocumentSteps(
       yield { phase: 'layout-document:preflight-section', index, total: blocks.length };
     }
     const block = blocks[index]!;
+    let inputFailure: Error | null;
+    try {
+      inputFailure = paginationInputFailure(block, measures[index]);
+    } catch (error) {
+      inputFailure = error instanceof Error ? error : new Error('layoutDocument: unreadable pagination input');
+    }
+    if (inputFailure) {
+      const owned = renderDiagnosticOwner?.({ blockIds: [block.id], debugDetail: inputFailure, phase: 'input' });
+      if (owned) throw owned;
+      throw inputFailure;
+    }
     blocksById.set(block.id, block);
   }
   const sectionBoundaryFillerBlockIds = yield* mapLayoutWorkCheckpoints(
@@ -2582,6 +2647,57 @@ function* layoutDocumentSteps(
   }
 
   const blockResumeCheckpoints = new Map<string, import('@superdoc/contracts').LayoutBlockResumeCheckpoint>();
+  const captureRenderDiagnosticPaginationProgress = (block: FlowBlock): V2RenderDiagnosticPaginationProgress | null => {
+    if (block.kind !== 'paragraph') return null;
+    const checkpoint = blockResumeCheckpoints.get(block.id);
+    if (!checkpoint || checkpoint.blockId !== block.id) return null;
+    const checkpointPage = pages[checkpoint.pageIndex];
+    const checkpointState = states[checkpoint.pageIndex];
+    if (
+      !checkpointPage ||
+      !checkpointState ||
+      !Number.isInteger(checkpoint.prefixFragmentCount) ||
+      checkpoint.prefixFragmentCount < 0 ||
+      checkpoint.prefixFragmentCount > checkpointPage.fragments.length
+    )
+      return null;
+    const snapshotPages = pages.slice(0, checkpoint.pageIndex + 1).map((page, pageIndex) => {
+      const snapshot = clonePlain(page);
+      const state = states[pageIndex];
+      if (!state) return snapshot;
+      if (pageIndex === checkpoint.pageIndex) {
+        snapshot.fragments = snapshot.fragments.slice(0, checkpoint.prefixFragmentCount);
+        const raw = Math.max(checkpoint.maxCursorY, checkpoint.cursorY);
+        const trailing = checkpoint.cursorY >= checkpoint.maxCursorY ? checkpoint.trailingSpacing : 0;
+        (snapshot as Page & { bodyMaxY?: number }).bodyMaxY = Math.max(checkpointState.topMargin, raw - trailing);
+      } else {
+        const raw = Math.max(state.maxCursorY, state.cursorY);
+        const trailing = state.cursorY >= state.maxCursorY ? state.trailingSpacing : 0;
+        (snapshot as Page & { bodyMaxY?: number }).bodyMaxY = Math.max(state.topMargin, raw - trailing);
+      }
+      return snapshot;
+    });
+    const layout: Layout = {
+      pageSize,
+      pages: snapshotPages,
+      blockResumeCheckpoints: new Map(blockResumeCheckpoints),
+      layoutEpoch: 0,
+      ...(options.documentBackground ? { documentBackground: options.documentBackground } : {}),
+      ...(resolveColumnCount(activeColumns) > 1 ? { columns: resolveColumnLayout(activeColumns) } : {}),
+    };
+    Object.defineProperty(layout, V2_RENDER_DIAGNOSTIC_PAGINATION_PREFIX, {
+      configurable: false,
+      enumerable: false,
+      value: { blockId: block.id, pageIndex: checkpoint.pageIndex },
+    });
+    return {
+      blocks,
+      measures,
+      layout,
+      failedBlockId: block.id,
+      sourcePageRange: { firstPage: checkpoint.pageIndex, lastPage: checkpoint.pageIndex },
+    };
+  };
 
   // PASS 2: Layout all blocks, consulting float manager for affected paragraphs
   let shouldUseBlankPageFallback = false;
@@ -2595,899 +2711,924 @@ function* layoutDocumentSteps(
       if (!measure) {
         throw new Error(`layoutDocument: missing measure for block ${block.id}`);
       }
-      const sectionBoundaryAnchoredDrawings = block.kind === 'paragraph' ? anchoredByParagraph.get(index) : undefined;
-      const isSectionBoundaryAnchorCarrier =
-        sectionBoundaryFillerBlockIds.has(block.id) &&
-        sectionBoundaryAnchoredDrawings != null &&
-        sectionBoundaryAnchoredDrawings.length > 0;
-      if (sectionBoundaryFillerBlockIds.has(block.id) && !isSectionBoundaryAnchorCarrier) {
-        layoutLog(`[Layout] Skipping section-boundary filler block ${index} (${block.kind}) - ID: ${block.id}`);
-        continue;
-      }
-
-      layoutLog(`[Layout] Block ${index} (${block.kind}) - ID: ${block.id}`);
-      layoutLog(`  activeColumns: ${JSON.stringify(activeColumns)}`);
-      layoutLog(`  pendingColumns: ${JSON.stringify(pendingColumns)}`);
-      if (block.kind === 'sectionBreak') {
-        const sectionBlock = block as SectionBreakBlock;
-        layoutLog(`  sectionBreak.columns: ${JSON.stringify(sectionBlock.columns)}`);
-        layoutLog(`  sectionBreak.type: ${sectionBlock.type}`);
-      }
-
-      if (block.kind === 'sectionBreak') {
-        if (measure.kind !== 'sectionBreak') {
-          throw new Error(`layoutDocument: expected sectionBreak measure for block ${block.id}`);
-        }
-        if (preAppliedInitialSectionBreakIndices.has(index)) {
+      try {
+        const sectionBoundaryAnchoredDrawings = block.kind === 'paragraph' ? anchoredByParagraph.get(index) : undefined;
+        const isSectionBoundaryAnchorCarrier =
+          sectionBoundaryFillerBlockIds.has(block.id) &&
+          sectionBoundaryAnchoredDrawings != null &&
+          sectionBoundaryAnchoredDrawings.length > 0;
+        if (sectionBoundaryFillerBlockIds.has(block.id) && !isSectionBoundaryAnchorCarrier) {
+          layoutLog(`[Layout] Skipping section-boundary filler block ${index} (${block.kind}) - ID: ${block.id}`);
           continue;
         }
-        // Use next-section properties at this boundary when available, so the page started
-        // after this break uses the upcoming section's layout (page size, margins, columns).
-        const effectiveBlock = resolveEffectiveSectionBreakBlock(block as SectionBreakBlock, index);
 
-        const sectionState: SectionState = {
-          activeTopMargin,
-          activeBottomMargin,
-          activeLeftMargin,
-          activeRightMargin,
-          pendingTopMargin,
-          pendingBottomMargin,
-          pendingLeftMargin,
-          pendingRightMargin,
-          activeHeaderDistance,
-          activeFooterDistance,
-          pendingHeaderDistance,
-          pendingFooterDistance,
-          activePageSize,
-          pendingPageSize,
-          activeColumns,
-          pendingColumns,
-          activeOrientation,
-          pendingOrientation,
-          hasAnyPages: states.length > 0,
-        };
-        const _sched = scheduleSectionBreakCompat(effectiveBlock, sectionState, {
-          top: margins.top,
-          bottom: margins.bottom,
-          left: margins.left,
-          right: margins.right,
-        });
-        const breakInfo = _sched.decision;
-        const updatedState = _sched.state ?? sectionState;
-
-        layoutLog(`[Layout] ========== SECTION BREAK SCHEDULED ==========`);
-        layoutLog(`  Block index: ${index}`);
-        layoutLog(`  effectiveBlock.columns: ${JSON.stringify(effectiveBlock.columns)}`);
-        layoutLog(`  effectiveBlock.type: ${effectiveBlock.type}`);
-        layoutLog(`  breakInfo.forcePageBreak: ${breakInfo.forcePageBreak}`);
-        layoutLog(`  breakInfo.forceMidPageRegion: ${breakInfo.forceMidPageRegion}`);
-        layoutLog(
-          `  BEFORE: activeColumns = ${JSON.stringify(sectionState.activeColumns)}, pendingColumns = ${JSON.stringify(sectionState.pendingColumns)}`,
-        );
-        layoutLog(
-          `  AFTER: activeColumns = ${JSON.stringify(updatedState.activeColumns)}, pendingColumns = ${JSON.stringify(updatedState.pendingColumns)}`,
-        );
-        layoutLog(`[Layout] ========== END SECTION BREAK ==========`);
-
-        // Sync updated section state
-        activeTopMargin = updatedState.activeTopMargin;
-        activeBottomMargin = updatedState.activeBottomMargin;
-        activeLeftMargin = updatedState.activeLeftMargin;
-        activeRightMargin = updatedState.activeRightMargin;
-        pendingTopMargin = updatedState.pendingTopMargin;
-        pendingBottomMargin = updatedState.pendingBottomMargin;
-        pendingLeftMargin = updatedState.pendingLeftMargin;
-        pendingRightMargin = updatedState.pendingRightMargin;
-        activeHeaderDistance = updatedState.activeHeaderDistance;
-        activeFooterDistance = updatedState.activeFooterDistance;
-        pendingHeaderDistance = updatedState.pendingHeaderDistance;
-        pendingFooterDistance = updatedState.pendingFooterDistance;
-        activePageSize = updatedState.activePageSize;
-        pendingPageSize = updatedState.pendingPageSize;
-        activeColumns = updatedState.activeColumns;
-        pendingColumns = updatedState.pendingColumns;
-        activeOrientation = updatedState.activeOrientation;
-        pendingOrientation = updatedState.pendingOrientation;
-
-        // Track section base margins (not part of SectionState, handled separately).
-        // These represent the section's configured margins before header/footer inflation.
-        const isFirstSection = isInitialSectionBreak(effectiveBlock, states.length > 0);
-        const blockTopMargin = effectiveBlock.margins?.top;
-        const blockBottomMargin = effectiveBlock.margins?.bottom;
-        if (isFirstSection) {
-          // First section: apply immediately to active
-          activeSectionBaseTopMargin = typeof blockTopMargin === 'number' ? blockTopMargin : margins.top;
-          activeSectionBaseBottomMargin = typeof blockBottomMargin === 'number' ? blockBottomMargin : margins.bottom;
-        } else if (blockTopMargin !== undefined || blockBottomMargin !== undefined) {
-          // Non-first section with margin changes: schedule for next page
-          if (blockTopMargin !== undefined) {
-            pendingSectionBaseTopMargin = typeof blockTopMargin === 'number' ? blockTopMargin : margins.top;
-          }
-          if (blockBottomMargin !== undefined) {
-            pendingSectionBaseBottomMargin = typeof blockBottomMargin === 'number' ? blockBottomMargin : margins.bottom;
-          }
+        layoutLog(`[Layout] Block ${index} (${block.kind}) - ID: ${block.id}`);
+        layoutLog(`  activeColumns: ${JSON.stringify(activeColumns)}`);
+        layoutLog(`  pendingColumns: ${JSON.stringify(pendingColumns)}`);
+        if (block.kind === 'sectionBreak') {
+          const sectionBlock = block as SectionBreakBlock;
+          layoutLog(`  sectionBreak.columns: ${JSON.stringify(sectionBlock.columns)}`);
+          layoutLog(`  sectionBreak.type: ${sectionBlock.type}`);
         }
 
-        // Handle vAlign from section break (not part of SectionState, handled separately).
-        // vAlign is a per-section property that does NOT inherit between sections.
-        // When not specified, OOXML defaults to 'top' (represented as null here).
-        // We must always process this for every section break to prevent stale values.
-        const sectionVAlign = effectiveBlock.vAlign ?? null;
-        const isFirstSectionForVAlign = isInitialSectionBreak(effectiveBlock, states.length > 0);
-        if (isFirstSectionForVAlign) {
-          // First section: apply immediately
-          activeVAlign = sectionVAlign;
-          pendingVAlign = undefined; // Clear any pending (undefined = no pending change)
-        } else {
-          // Non-first section: schedule for next page
-          pendingVAlign = sectionVAlign;
-        }
+        if (block.kind === 'sectionBreak') {
+          if (measure.kind !== 'sectionBreak') {
+            throw new Error(`layoutDocument: expected sectionBreak measure for block ${block.id}`);
+          }
+          if (preAppliedInitialSectionBreakIndices.has(index)) {
+            continue;
+          }
+          // Use next-section properties at this boundary when available, so the page started
+          // after this break uses the upcoming section's layout (page size, margins, columns).
+          const effectiveBlock = resolveEffectiveSectionBreakBlock(block as SectionBreakBlock, index);
 
-        // Schedule section refs (handled outside of SectionState since they're module-level vars)
-        if (effectiveBlock.headerRefs || effectiveBlock.footerRefs) {
-          const baseSectionRefs = pendingSectionRefs ?? activeSectionRefs;
-          const nextSectionRefs = {
-            ...(effectiveBlock.headerRefs && { headerRefs: effectiveBlock.headerRefs }),
-            ...(effectiveBlock.footerRefs && { footerRefs: effectiveBlock.footerRefs }),
+          const sectionState: SectionState = {
+            activeTopMargin,
+            activeBottomMargin,
+            activeLeftMargin,
+            activeRightMargin,
+            pendingTopMargin,
+            pendingBottomMargin,
+            pendingLeftMargin,
+            pendingRightMargin,
+            activeHeaderDistance,
+            activeFooterDistance,
+            pendingHeaderDistance,
+            pendingFooterDistance,
+            activePageSize,
+            pendingPageSize,
+            activeColumns,
+            pendingColumns,
+            activeOrientation,
+            pendingOrientation,
+            hasAnyPages: states.length > 0,
           };
-          pendingSectionRefs = mergeSectionRefs(baseSectionRefs, nextSectionRefs);
-          layoutLog(`[Layout] After scheduleSectionBreakCompat: Scheduled pendingSectionRefs:`, pendingSectionRefs);
-        }
+          const _sched = scheduleSectionBreakCompat(effectiveBlock, sectionState, {
+            top: margins.top,
+            bottom: margins.bottom,
+            left: margins.left,
+            right: margins.right,
+          });
+          const breakInfo = _sched.decision;
+          const updatedState = _sched.state ?? sectionState;
 
-        // Schedule section index and numbering (handled outside of SectionState since they're module-level vars)
-        const sectionIndexRaw = effectiveBlock.attrs?.sectionIndex;
-        const metadataIndex = typeof sectionIndexRaw === 'number' ? sectionIndexRaw : Number(sectionIndexRaw ?? NaN);
-        // Note: isFirstSection is already declared above for base margin tracking
-        if (Number.isFinite(metadataIndex)) {
-          if (isFirstSection) {
-            // First section: apply immediately
-            activeSectionIndex = metadataIndex;
-          } else {
-            // Non-first section: schedule for next page
-            pendingSectionIndex = metadataIndex;
-          }
-        }
-        // Get section metadata for numbering if available
-        const sectionMetadata = Number.isFinite(metadataIndex) ? getSectionMetadata(metadataIndex) : undefined;
-        if (sectionMetadata?.numbering) {
-          if (isFirstSection) {
-            // First section: apply immediately
-            if (sectionMetadata.numbering.format) activeNumberFormat = sectionMetadata.numbering.format;
-            if (typeof sectionMetadata.numbering.start === 'number') {
-              activePageCounter = sectionMetadata.numbering.start;
-              activeSectionPageCounterStart = activePageCounter;
-            }
-          } else {
-            // Non-first section: schedule for next page
-            pendingNumbering = { ...sectionMetadata.numbering };
-          }
-        } else if (effectiveBlock.numbering) {
-          if (isFirstSection) {
-            if (effectiveBlock.numbering.format) activeNumberFormat = effectiveBlock.numbering.format;
-            if (typeof effectiveBlock.numbering.start === 'number') {
-              activePageCounter = effectiveBlock.numbering.start;
-              activeSectionPageCounterStart = activePageCounter;
-            }
-          } else {
-            pendingNumbering = { ...effectiveBlock.numbering };
-          }
-        }
-
-        // Handle mid-page region changes (column layout changes within a page)
-        // Uses pendingColumns from scheduleSectionBreak which handles both:
-        // - Explicit column changes (block.columns defined with different config)
-        // - Implicit reset to single column (block.columns undefined per OOXML spec)
-        if (breakInfo.forceMidPageRegion && updatedState.pendingColumns) {
-          const state = paginator.ensurePage();
-          const newColumns = updatedState.pendingColumns;
-
-          // Identify the ending section from the current page's fragments.
-          // `activeSectionIndex` only updates at page boundaries, so for continuous
-          // mid-page section breaks it's stale. Walk back through page fragments
-          // to find the most recent section index that isn't the new one — that's
-          // the section that's ending.
-          let endingSectionIndex: number | null = null;
-          for (let i = state.page.fragments.length - 1; i >= 0; i--) {
-            const mapped = blockSectionMap.get(state.page.fragments[i].blockId);
-            if (typeof mapped === 'number' && mapped !== metadataIndex) {
-              endingSectionIndex = mapped;
-              break;
-            }
-          }
-          const endingSectionColumns =
-            endingSectionIndex !== null ? sectionColumnsMap.get(endingSectionIndex) : undefined;
-          const willBalance =
-            endingSectionIndex !== null &&
-            !!endingSectionColumns &&
-            resolveColumnCount(endingSectionColumns) > 1 &&
-            !sectionHasExplicitColumnBreak.has(endingSectionIndex);
-
-          // Balance BEFORE any forced page break. After balancing, all of the
-          // ending section's fragments are repositioned within the section's own
-          // vertical region — there's no risk of the new 1-col region overwriting
-          // prior column content, because the cursor moves to maxY below them.
-          //
-          // `willBalance` is a coarse approval: balanceSectionOnPage has its own
-          // late skip conditions (unequal column widths, zero remaining height,
-          // section content too small for shouldSkipBalancing's thresholds) that
-          // can return null even when willBalance was true. The page-break
-          // fallback below must consider the actual balance outcome, not just
-          // willBalance, otherwise we leave the new region starting on the same
-          // page from a stale column index and overwriting the previous
-          // section's column content.
-          let balanceResult: { maxY: number } | null = null;
-          if (willBalance) {
-            // The current region starts at the last constraint boundary's Y, or at
-            // the page's top margin if no mid-page region change has happened yet.
-            const lastBoundary = state.constraintBoundaries[state.constraintBoundaries.length - 1];
-            const activeRegionTop = lastBoundary?.y ?? activeTopMargin;
-            const availableHeight = activePageSize.h - activeBottomMargin - activeRegionTop;
-            const contentWidth = activePageSize.w - (activeLeftMargin + activeRightMargin);
-            const normalized = normalizeColumns(endingSectionColumns!, contentWidth);
-            balanceResult = balanceSectionOnPage({
-              fragments: state.page.fragments as BalancingFragment[],
-              sectionIndex: endingSectionIndex!,
-              sectionColumns: toBalancingColumns(normalized),
-              sectionHasExplicitColumnBreak: false,
-              blockSectionMap,
-              margins: { left: activeLeftMargin },
-              topMargin: activeRegionTop,
-              columnWidth: normalized.width,
-              availableHeight,
-              measureMap: balancingMeasureMap,
-              sectPrMarkerBlockIds,
-              keepLinesBlockIds,
-            });
-            if (balanceResult) {
-              // Collapse both cursors to the balanced section bottom so the new
-              // region starts there, not below an unbalanced tallest column.
-              state.cursorY = balanceResult.maxY;
-              state.maxCursorY = balanceResult.maxY;
-              alreadyBalancedSections.add(endingSectionIndex!);
-            }
-          }
-          startMidPageRegion(state, newColumns);
-        }
-
-        // Handle forced page breaks
-        if (breakInfo.forcePageBreak) {
-          let state = paginator.ensurePage();
-          const hasMeaningfulContent = pageHasMeaningfulBodyContent(
-            state.page,
-            blocksById,
-            sectionBoundaryFillerBlockIds,
+          layoutLog(`[Layout] ========== SECTION BREAK SCHEDULED ==========`);
+          layoutLog(`  Block index: ${index}`);
+          layoutLog(`  effectiveBlock.columns: ${JSON.stringify(effectiveBlock.columns)}`);
+          layoutLog(`  effectiveBlock.type: ${effectiveBlock.type}`);
+          layoutLog(`  breakInfo.forcePageBreak: ${breakInfo.forcePageBreak}`);
+          layoutLog(`  breakInfo.forceMidPageRegion: ${breakInfo.forceMidPageRegion}`);
+          layoutLog(
+            `  BEFORE: activeColumns = ${JSON.stringify(sectionState.activeColumns)}, pendingColumns = ${JSON.stringify(sectionState.pendingColumns)}`,
           );
+          layoutLog(
+            `  AFTER: activeColumns = ${JSON.stringify(updatedState.activeColumns)}, pendingColumns = ${JSON.stringify(updatedState.pendingColumns)}`,
+          );
+          layoutLog(`[Layout] ========== END SECTION BREAK ==========`);
 
-          // If current page has meaningful content, start a new page. Section-boundary
-          // marker/filler fragments alone should not strand a blank page before the new section.
-          if (hasMeaningfulContent) {
-            layoutLog(`[Layout] Starting new page due to section break (forcePageBreak=true)`);
-            layoutLog(
-              `  Before: activeColumns = ${JSON.stringify(activeColumns)}, pendingColumns = ${JSON.stringify(pendingColumns)}`,
-            );
-            const nextPhysicalPage = state.page.number + 1;
-            const needsParityBlank =
-              breakInfo.requiredParity != null &&
-              ((breakInfo.requiredParity === 'even' && nextPhysicalPage % 2 !== 0) ||
-                (breakInfo.requiredParity === 'odd' && nextPhysicalPage % 2 === 0));
-            if (needsParityBlank) {
-              // The parity filler belongs to the preceding section. Do not
-              // consume the pending section restart or its first-page state;
-              // Word suppresses all furniture on this physical page.
-              const blankState = paginator.startNewPage({ applyPendingSection: false });
-              blankState.page.suppressHeaderFooter = true;
+          // Sync updated section state
+          activeTopMargin = updatedState.activeTopMargin;
+          activeBottomMargin = updatedState.activeBottomMargin;
+          activeLeftMargin = updatedState.activeLeftMargin;
+          activeRightMargin = updatedState.activeRightMargin;
+          pendingTopMargin = updatedState.pendingTopMargin;
+          pendingBottomMargin = updatedState.pendingBottomMargin;
+          pendingLeftMargin = updatedState.pendingLeftMargin;
+          pendingRightMargin = updatedState.pendingRightMargin;
+          activeHeaderDistance = updatedState.activeHeaderDistance;
+          activeFooterDistance = updatedState.activeFooterDistance;
+          pendingHeaderDistance = updatedState.pendingHeaderDistance;
+          pendingFooterDistance = updatedState.pendingFooterDistance;
+          activePageSize = updatedState.activePageSize;
+          pendingPageSize = updatedState.pendingPageSize;
+          activeColumns = updatedState.activeColumns;
+          pendingColumns = updatedState.pendingColumns;
+          activeOrientation = updatedState.activeOrientation;
+          pendingOrientation = updatedState.pendingOrientation;
+
+          // Track section base margins (not part of SectionState, handled separately).
+          // These represent the section's configured margins before header/footer inflation.
+          const isFirstSection = isInitialSectionBreak(effectiveBlock, states.length > 0);
+          const blockTopMargin = effectiveBlock.margins?.top;
+          const blockBottomMargin = effectiveBlock.margins?.bottom;
+          if (isFirstSection) {
+            // First section: apply immediately to active
+            activeSectionBaseTopMargin = typeof blockTopMargin === 'number' ? blockTopMargin : margins.top;
+            activeSectionBaseBottomMargin = typeof blockBottomMargin === 'number' ? blockBottomMargin : margins.bottom;
+          } else if (blockTopMargin !== undefined || blockBottomMargin !== undefined) {
+            // Non-first section with margin changes: schedule for next page
+            if (blockTopMargin !== undefined) {
+              pendingSectionBaseTopMargin = typeof blockTopMargin === 'number' ? blockTopMargin : margins.top;
             }
-            state = paginator.startNewPage();
-            layoutLog(
-              `  After page ${state.page.number} created: activeColumns = ${JSON.stringify(activeColumns)}, pendingColumns = ${JSON.stringify(pendingColumns)}`,
-            );
+            if (blockBottomMargin !== undefined) {
+              pendingSectionBaseBottomMargin =
+                typeof blockBottomMargin === 'number' ? blockBottomMargin : margins.bottom;
+            }
           }
 
-          // Handle parity requirements (evenPage/oddPage)
-          if (breakInfo.requiredParity && !hasMeaningfulContent) {
-            const currentPageNumber = state.page.number;
-            const isCurrentEven = currentPageNumber % 2 === 0;
-            const needsEven = breakInfo.requiredParity === 'even';
+          // Handle vAlign from section break (not part of SectionState, handled separately).
+          // vAlign is a per-section property that does NOT inherit between sections.
+          // When not specified, OOXML defaults to 'top' (represented as null here).
+          // We must always process this for every section break to prevent stale values.
+          const sectionVAlign = effectiveBlock.vAlign ?? null;
+          const isFirstSectionForVAlign = isInitialSectionBreak(effectiveBlock, states.length > 0);
+          if (isFirstSectionForVAlign) {
+            // First section: apply immediately
+            activeVAlign = sectionVAlign;
+            pendingVAlign = undefined; // Clear any pending (undefined = no pending change)
+          } else {
+            // Non-first section: schedule for next page
+            pendingVAlign = sectionVAlign;
+          }
 
-            // If parity doesn't match, insert a blank page
-            if ((needsEven && !isCurrentEven) || (!needsEven && isCurrentEven)) {
-              // This already-open page is the parity filler. Keep its current
-              // section state and suppress furniture; the next page applies
-              // the pending section restart exactly once.
-              layoutLog(`[Layout] Inserting blank page for parity (need ${breakInfo.requiredParity})`);
-              state.page.suppressHeaderFooter = true;
-              state = paginator.startNewPage();
+          // Schedule section refs (handled outside of SectionState since they're module-level vars)
+          if (effectiveBlock.headerRefs || effectiveBlock.footerRefs) {
+            const baseSectionRefs = pendingSectionRefs ?? activeSectionRefs;
+            const nextSectionRefs = {
+              ...(effectiveBlock.headerRefs && { headerRefs: effectiveBlock.headerRefs }),
+              ...(effectiveBlock.footerRefs && { footerRefs: effectiveBlock.footerRefs }),
+            };
+            pendingSectionRefs = mergeSectionRefs(baseSectionRefs, nextSectionRefs);
+            layoutLog(`[Layout] After scheduleSectionBreakCompat: Scheduled pendingSectionRefs:`, pendingSectionRefs);
+          }
+
+          // Schedule section index and numbering (handled outside of SectionState since they're module-level vars)
+          const sectionIndexRaw = effectiveBlock.attrs?.sectionIndex;
+          const metadataIndex = typeof sectionIndexRaw === 'number' ? sectionIndexRaw : Number(sectionIndexRaw ?? NaN);
+          // Note: isFirstSection is already declared above for base margin tracking
+          if (Number.isFinite(metadataIndex)) {
+            if (isFirstSection) {
+              // First section: apply immediately
+              activeSectionIndex = metadataIndex;
             } else {
-              // A preceding manual break already opened the correctly-paritied
-              // target page. Rebuild it in place so pending section geometry,
-              // numbering, and furniture become active without adding a blank.
+              // Non-first section: schedule for next page
+              pendingSectionIndex = metadataIndex;
+            }
+          }
+          // Get section metadata for numbering if available
+          const sectionMetadata = Number.isFinite(metadataIndex) ? getSectionMetadata(metadataIndex) : undefined;
+          if (sectionMetadata?.numbering) {
+            if (isFirstSection) {
+              // First section: apply immediately
+              if (sectionMetadata.numbering.format) activeNumberFormat = sectionMetadata.numbering.format;
+              if (typeof sectionMetadata.numbering.start === 'number') {
+                activePageCounter = sectionMetadata.numbering.start;
+                activeSectionPageCounterStart = activePageCounter;
+              }
+            } else {
+              // Non-first section: schedule for next page
+              pendingNumbering = { ...sectionMetadata.numbering };
+            }
+          } else if (effectiveBlock.numbering) {
+            if (isFirstSection) {
+              if (effectiveBlock.numbering.format) activeNumberFormat = effectiveBlock.numbering.format;
+              if (typeof effectiveBlock.numbering.start === 'number') {
+                activePageCounter = effectiveBlock.numbering.start;
+                activeSectionPageCounterStart = activePageCounter;
+              }
+            } else {
+              pendingNumbering = { ...effectiveBlock.numbering };
+            }
+          }
+
+          // Handle mid-page region changes (column layout changes within a page)
+          // Uses pendingColumns from scheduleSectionBreak which handles both:
+          // - Explicit column changes (block.columns defined with different config)
+          // - Implicit reset to single column (block.columns undefined per OOXML spec)
+          if (breakInfo.forceMidPageRegion && updatedState.pendingColumns) {
+            const state = paginator.ensurePage();
+            const newColumns = updatedState.pendingColumns;
+
+            // Identify the ending section from the current page's fragments.
+            // `activeSectionIndex` only updates at page boundaries, so for continuous
+            // mid-page section breaks it's stale. Walk back through page fragments
+            // to find the most recent section index that isn't the new one — that's
+            // the section that's ending.
+            let endingSectionIndex: number | null = null;
+            for (let i = state.page.fragments.length - 1; i >= 0; i--) {
+              const mapped = blockSectionMap.get(state.page.fragments[i].blockId);
+              if (typeof mapped === 'number' && mapped !== metadataIndex) {
+                endingSectionIndex = mapped;
+                break;
+              }
+            }
+            const endingSectionColumns =
+              endingSectionIndex !== null ? sectionColumnsMap.get(endingSectionIndex) : undefined;
+            const willBalance =
+              endingSectionIndex !== null &&
+              !!endingSectionColumns &&
+              resolveColumnCount(endingSectionColumns) > 1 &&
+              !sectionHasExplicitColumnBreak.has(endingSectionIndex);
+
+            // Balance BEFORE any forced page break. After balancing, all of the
+            // ending section's fragments are repositioned within the section's own
+            // vertical region — there's no risk of the new 1-col region overwriting
+            // prior column content, because the cursor moves to maxY below them.
+            //
+            // `willBalance` is a coarse approval: balanceSectionOnPage has its own
+            // late skip conditions (unequal column widths, zero remaining height,
+            // section content too small for shouldSkipBalancing's thresholds) that
+            // can return null even when willBalance was true. The page-break
+            // fallback below must consider the actual balance outcome, not just
+            // willBalance, otherwise we leave the new region starting on the same
+            // page from a stale column index and overwriting the previous
+            // section's column content.
+            let balanceResult: { maxY: number } | null = null;
+            if (willBalance) {
+              // The current region starts at the last constraint boundary's Y, or at
+              // the page's top margin if no mid-page region change has happened yet.
+              const lastBoundary = state.constraintBoundaries[state.constraintBoundaries.length - 1];
+              const activeRegionTop = lastBoundary?.y ?? activeTopMargin;
+              const availableHeight = activePageSize.h - activeBottomMargin - activeRegionTop;
+              const contentWidth = activePageSize.w - (activeLeftMargin + activeRightMargin);
+              const normalized = normalizeColumns(endingSectionColumns!, contentWidth);
+              balanceResult = balanceSectionOnPage({
+                fragments: state.page.fragments as BalancingFragment[],
+                sectionIndex: endingSectionIndex!,
+                sectionColumns: toBalancingColumns(normalized),
+                sectionHasExplicitColumnBreak: false,
+                blockSectionMap,
+                margins: { left: activeLeftMargin },
+                topMargin: activeRegionTop,
+                columnWidth: normalized.width,
+                availableHeight,
+                measureMap: balancingMeasureMap,
+                sectPrMarkerBlockIds,
+                keepLinesBlockIds,
+              });
+              if (balanceResult) {
+                // Collapse both cursors to the balanced section bottom so the new
+                // region starts there, not below an unbalanced tallest column.
+                state.cursorY = balanceResult.maxY;
+                state.maxCursorY = balanceResult.maxY;
+                alreadyBalancedSections.add(endingSectionIndex!);
+              }
+            }
+            startMidPageRegion(state, newColumns);
+          }
+
+          // Handle forced page breaks
+          if (breakInfo.forcePageBreak) {
+            let state = paginator.ensurePage();
+            const hasMeaningfulContent = pageHasMeaningfulBodyContent(
+              state.page,
+              blocksById,
+              sectionBoundaryFillerBlockIds,
+            );
+
+            // If current page has meaningful content, start a new page. Section-boundary
+            // marker/filler fragments alone should not strand a blank page before the new section.
+            if (hasMeaningfulContent) {
+              layoutLog(`[Layout] Starting new page due to section break (forcePageBreak=true)`);
+              layoutLog(
+                `  Before: activeColumns = ${JSON.stringify(activeColumns)}, pendingColumns = ${JSON.stringify(pendingColumns)}`,
+              );
+              const nextPhysicalPage = state.page.number + 1;
+              const needsParityBlank =
+                breakInfo.requiredParity != null &&
+                ((breakInfo.requiredParity === 'even' && nextPhysicalPage % 2 !== 0) ||
+                  (breakInfo.requiredParity === 'odd' && nextPhysicalPage % 2 === 0));
+              if (needsParityBlank) {
+                // The parity filler belongs to the preceding section. Do not
+                // consume the pending section restart or its first-page state;
+                // Word suppresses all furniture on this physical page.
+                const blankState = paginator.startNewPage({ applyPendingSection: false });
+                blankState.page.suppressHeaderFooter = true;
+              }
+              state = paginator.startNewPage();
+              layoutLog(
+                `  After page ${state.page.number} created: activeColumns = ${JSON.stringify(activeColumns)}, pendingColumns = ${JSON.stringify(pendingColumns)}`,
+              );
+            }
+
+            // Handle parity requirements (evenPage/oddPage)
+            if (breakInfo.requiredParity && !hasMeaningfulContent) {
+              const currentPageNumber = state.page.number;
+              const isCurrentEven = currentPageNumber % 2 === 0;
+              const needsEven = breakInfo.requiredParity === 'even';
+
+              // If parity doesn't match, insert a blank page
+              if ((needsEven && !isCurrentEven) || (!needsEven && isCurrentEven)) {
+                // This already-open page is the parity filler. Keep its current
+                // section state and suppress furniture; the next page applies
+                // the pending section restart exactly once.
+                layoutLog(`[Layout] Inserting blank page for parity (need ${breakInfo.requiredParity})`);
+                state.page.suppressHeaderFooter = true;
+                state = paginator.startNewPage();
+              } else {
+                // A preceding manual break already opened the correctly-paritied
+                // target page. Rebuild it in place so pending section geometry,
+                // numbering, and furniture become active without adding a blank.
+                state = paginator.startNewPage({ replaceCurrentPage: true });
+              }
+            } else if (!hasMeaningfulContent) {
+              // `nextPage` encountered on a page already opened by an explicit
+              // page break targets that same physical page in Word. The page was
+              // created with the previous section's state, so replace it in
+              // place and snapshot the pending section contract now.
               state = paginator.startNewPage({ replaceCurrentPage: true });
             }
-          } else if (!hasMeaningfulContent) {
-            // `nextPage` encountered on a page already opened by an explicit
-            // page break targets that same physical page in Word. The page was
-            // created with the previous section's state, so replace it in
-            // place and snapshot the pending section contract now.
-            state = paginator.startNewPage({ replaceCurrentPage: true });
           }
-        }
 
-        if (breakInfo.forceColumnBreak) {
-          const state = paginator.ensurePage();
-          // advanceColumn starts a new page when the active layout has only one
-          // column (columnIndex is already the last). Activate pending multi-column
-          // geometry first so nextColumn advances within the page.
-          const pendingRegionColumns = updatedState.pendingColumns;
-          if (
-            pendingRegionColumns &&
-            resolveColumnCount(pendingRegionColumns) > 1 &&
-            resolveColumnCount(getActiveColumnsForState(state)) < 2
-          ) {
-            startMidPageRegion(state, pendingRegionColumns);
+          if (breakInfo.forceColumnBreak) {
+            const state = paginator.ensurePage();
+            // advanceColumn starts a new page when the active layout has only one
+            // column (columnIndex is already the last). Activate pending multi-column
+            // geometry first so nextColumn advances within the page.
+            const pendingRegionColumns = updatedState.pendingColumns;
+            if (
+              pendingRegionColumns &&
+              resolveColumnCount(pendingRegionColumns) > 1 &&
+              resolveColumnCount(getActiveColumnsForState(state)) < 2
+            ) {
+              startMidPageRegion(state, pendingRegionColumns);
+            }
+            paginator.advanceColumn(state);
           }
-          paginator.advanceColumn(state);
-        }
 
-        continue;
-      }
-
-      if (block.kind === 'paragraph') {
-        if (measure.kind !== 'paragraph') {
-          throw new Error(`layoutDocument: expected paragraph measure for block ${block.id}`);
-        }
-
-        // Skip empty paragraphs that appear between a pageBreak and a sectionBreak
-        // (Word sectPr marker paragraphs should not create visible content)
-        const paraBlock = block as ParagraphBlock;
-        const splitCarrierMode = splitLineBreakAnchorCarrierMode(blocks, index);
-        const isEmpty =
-          !paraBlock.runs ||
-          paraBlock.runs.length === 0 ||
-          (paraBlock.runs.length === 1 &&
-            (!paraBlock.runs[0].kind || paraBlock.runs[0].kind === 'text') &&
-            (!(paraBlock.runs[0] as { text?: string }).text || (paraBlock.runs[0] as { text?: string }).text === ''));
-
-        if (isEmpty && shouldSkipParagraphDuringLayout(blocks, index)) {
           continue;
         }
 
-        const anchorsForPara = sectionBoundaryAnchoredDrawings ?? anchoredByParagraph.get(index);
-        const tablesForPara = anchoredTablesByParagraph.get(index);
-        if (
-          isSyntheticExplicitPageBreakRemnant(blocks, index) &&
-          index < blocks.length - 1 &&
-          !isEditableExplicitPageBreakContinuation(blocks, index) &&
-          (!anchorsForPara || anchorsForPara.length === 0) &&
-          (!tablesForPara || tablesForPara.length === 0)
-        ) {
-          continue;
-        }
-        const deferredSplitCarrierAnchorId = splitCarrierMode === 'spaced' ? blocks[index + 1]?.id : null;
-        const anchorsForLayout =
-          deferredSplitCarrierAnchorId && anchorsForPara
-            ? anchorsForPara.filter((entry) => entry.block.id !== deferredSplitCarrierAnchorId)
-            : anchorsForPara;
-        const hasAnchorsForLayout = anchorsForLayout != null && anchorsForLayout.length > 0;
-
-        /**
-         * keepNext Chain-Aware Page Break Logic
-         *
-         * Word treats consecutive paragraphs with keepNext=true as an indivisible unit.
-         * If the entire chain (plus the first line of the anchor paragraph) doesn't fit
-         * on the current page, the whole chain moves to the next page.
-         *
-         * Three cases:
-         * 1. Mid-chain paragraph: Skip keepNext check (chain-start already decided)
-         * 2. Chain starter: Calculate total chain height and decide for entire chain
-         * 3. Orphan keepNext (no chain, e.g., next is a break): Use single-paragraph logic
-         */
-        const chain = keepNextChains.get(index);
-
-        if (midChainIndices.has(index)) {
-          // Case 1: Mid-chain paragraph - chain starter already made the page break decision
-          // No action needed, just proceed to layout
-        } else if (chain) {
-          // Case 2: Chain starter - evaluate entire chain height
-          let state = paginator.ensurePage();
-          const availableHeight = state.contentBottom - state.cursorY;
-
-          // Check if first chain member has contextualSpacing that would reclaim trailing space.
-          // When contextualSpacing applies, the previous paragraph's trailing spacing is not
-          // rendered as a gap, so we have more available space than cursorY suggests.
-          const firstMemberBlock = blocks[chain.startIndex] as ParagraphBlock;
-          const firstMemberStyleId =
-            typeof firstMemberBlock.attrs?.styleId === 'string' ? firstMemberBlock.attrs?.styleId : undefined;
-          // Reclaim depends on whether the previous paragraph suppresses its own after-spacing
-          const prevSuppressAfter = shouldSuppressOwnSpacing(
-            state.lastParagraphStyleId,
-            state.lastParagraphContextualSpacing,
-            firstMemberStyleId,
-          );
-          const prevTrailing =
-            Number.isFinite(state.trailingSpacing) && state.trailingSpacing > 0 ? state.trailingSpacing : 0;
-          const effectiveAvailableHeight = prevSuppressAfter ? availableHeight + prevTrailing : availableHeight;
-
-          const chainHeight = calculateChainHeight(chain, blocks, measures, state);
-
-          // Calculate page content height to check if chain fits on a blank page
-          const pageContentHeight = state.contentBottom - state.topMargin;
-          const chainFitsOnBlankPage = chainHeight <= pageContentHeight;
-
-          // Only advance if chain fits on blank page but not current page
-          // (prevents infinite loop for chains taller than page)
-          if (chainFitsOnBlankPage && chainHeight > effectiveAvailableHeight && state.page.fragments.length > 0) {
-            state = paginator.advanceColumn(state);
+        if (block.kind === 'paragraph') {
+          if (measure.kind !== 'paragraph') {
+            throw new Error(`layoutDocument: expected paragraph measure for block ${block.id}`);
           }
-        } else if (paraBlock.attrs?.keepNext === true) {
-          // Case 3: Orphan keepNext (next block is a break type or end of document)
-          // This shouldn't normally happen since computeKeepNextChains handles most cases,
-          // but we keep it for safety (e.g., keepNext at end of document with no anchor)
-          const nextBlock = blocks[index + 1];
-          const nextMeasure = measures[index + 1];
+
+          // Skip empty paragraphs that appear between a pageBreak and a sectionBreak
+          // (Word sectPr marker paragraphs should not create visible content)
+          const paraBlock = block as ParagraphBlock;
+          const splitCarrierMode = splitLineBreakAnchorCarrierMode(blocks, index);
+          const isEmpty =
+            !paraBlock.runs ||
+            paraBlock.runs.length === 0 ||
+            (paraBlock.runs.length === 1 &&
+              (!paraBlock.runs[0].kind || paraBlock.runs[0].kind === 'text') &&
+              (!(paraBlock.runs[0] as { text?: string }).text || (paraBlock.runs[0] as { text?: string }).text === ''));
+
+          if (isEmpty && shouldSkipParagraphDuringLayout(blocks, index)) {
+            continue;
+          }
+
+          const anchorsForPara = sectionBoundaryAnchoredDrawings ?? anchoredByParagraph.get(index);
+          const tablesForPara = anchoredTablesByParagraph.get(index);
           if (
-            nextBlock &&
-            nextMeasure &&
-            nextBlock.kind !== 'sectionBreak' &&
-            nextBlock.kind !== 'pageBreak' &&
-            nextBlock.kind !== 'columnBreak'
+            isSyntheticExplicitPageBreakRemnant(blocks, index) &&
+            index < blocks.length - 1 &&
+            !isEditableExplicitPageBreakContinuation(blocks, index) &&
+            (!anchorsForPara || anchorsForPara.length === 0) &&
+            (!tablesForPara || tablesForPara.length === 0)
           ) {
-            const shouldSkipAnchoredTable = nextBlock.kind === 'table' && nextBlock.anchor?.isAnchored === true;
-            if (!shouldSkipAnchoredTable) {
-              let state = paginator.ensurePage();
-              const availableHeight = state.contentBottom - state.cursorY;
+            continue;
+          }
+          const deferredSplitCarrierAnchorId = splitCarrierMode === 'spaced' ? blocks[index + 1]?.id : null;
+          const anchorsForLayout =
+            deferredSplitCarrierAnchorId && anchorsForPara
+              ? anchorsForPara.filter((entry) => entry.block.id !== deferredSplitCarrierAnchorId)
+              : anchorsForPara;
+          const hasAnchorsForLayout = anchorsForLayout != null && anchorsForLayout.length > 0;
 
-              const spacingBefore = getParagraphSpacingBefore(paraBlock);
-              const spacingAfter = getParagraphSpacingAfter(paraBlock);
-              const prevTrailing =
-                Number.isFinite(state.trailingSpacing) && state.trailingSpacing > 0 ? state.trailingSpacing : 0;
-              const currentStyleId =
-                typeof paraBlock.attrs?.styleId === 'string' ? paraBlock.attrs?.styleId : undefined;
-              const currentContextualSpacing = asBoolean(paraBlock.attrs?.contextualSpacing);
-              // Per-paragraph: each side independently suppresses its own spacing
-              const prevSuppressAfter = shouldSuppressOwnSpacing(
-                state.lastParagraphStyleId,
-                state.lastParagraphContextualSpacing,
-                currentStyleId,
-              );
-              const currSuppressBefore = shouldSuppressOwnSpacing(
-                currentStyleId,
-                currentContextualSpacing,
-                state.lastParagraphStyleId,
-              );
-              let effectiveSpacingBefore: number;
-              if (prevSuppressAfter && currSuppressBefore) {
-                effectiveSpacingBefore = 0;
-              } else if (prevSuppressAfter) {
-                effectiveSpacingBefore = spacingBefore;
-              } else if (currSuppressBefore) {
-                effectiveSpacingBefore = 0;
-              } else {
-                effectiveSpacingBefore = Math.max(spacingBefore - prevTrailing, 0);
-              }
-              const currentHeight = getMeasureHeight(paraBlock, measure);
-              const nextHeight = getMeasureHeight(nextBlock, nextMeasure);
+          /**
+           * keepNext Chain-Aware Page Break Logic
+           *
+           * Word treats consecutive paragraphs with keepNext=true as an indivisible unit.
+           * If the entire chain (plus the first line of the anchor paragraph) doesn't fit
+           * on the current page, the whole chain moves to the next page.
+           *
+           * Three cases:
+           * 1. Mid-chain paragraph: Skip keepNext check (chain-start already decided)
+           * 2. Chain starter: Calculate total chain height and decide for entire chain
+           * 3. Orphan keepNext (no chain, e.g., next is a break): Use single-paragraph logic
+           */
+          const chain = keepNextChains.get(index);
 
-              const nextIsParagraph = nextBlock.kind === 'paragraph' && nextMeasure.kind === 'paragraph';
-              const nextSpacingBefore = nextIsParagraph ? getParagraphSpacingBefore(nextBlock) : 0;
-              const nextStyleId =
-                nextIsParagraph && typeof nextBlock.attrs?.styleId === 'string' ? nextBlock.attrs?.styleId : undefined;
-              const nextContextualSpacing = nextIsParagraph && asBoolean(nextBlock.attrs?.contextualSpacing);
+          if (midChainIndices.has(index)) {
+            // Case 1: Mid-chain paragraph - chain starter already made the page break decision
+            // No action needed, just proceed to layout
+          } else if (chain) {
+            // Case 2: Chain starter - evaluate entire chain height
+            let state = paginator.ensurePage();
+            const availableHeight = state.contentBottom - state.cursorY;
 
-              const currSuppressAfter = shouldSuppressOwnSpacing(currentStyleId, currentContextualSpacing, nextStyleId);
-              const nextSuppressBefore =
-                nextIsParagraph && shouldSuppressOwnSpacing(nextStyleId, nextContextualSpacing, currentStyleId);
-              const effectiveSpacingAfter = currSuppressAfter ? 0 : spacingAfter;
-              const effectiveNextSpacingBefore = nextSuppressBefore ? 0 : nextSpacingBefore;
-              const interParagraphSpacing = nextIsParagraph
-                ? Math.max(effectiveSpacingAfter, effectiveNextSpacingBefore)
-                : effectiveSpacingAfter;
+            // Check if first chain member has contextualSpacing that would reclaim trailing space.
+            // When contextualSpacing applies, the previous paragraph's trailing spacing is not
+            // rendered as a gap, so we have more available space than cursorY suggests.
+            const firstMemberBlock = blocks[chain.startIndex] as ParagraphBlock;
+            const firstMemberStyleId =
+              typeof firstMemberBlock.attrs?.styleId === 'string' ? firstMemberBlock.attrs?.styleId : undefined;
+            // Reclaim depends on whether the previous paragraph suppresses its own after-spacing
+            const prevSuppressAfter = shouldSuppressOwnSpacing(
+              state.lastParagraphStyleId,
+              state.lastParagraphContextualSpacing,
+              firstMemberStyleId,
+            );
+            const prevTrailing =
+              Number.isFinite(state.trailingSpacing) && state.trailingSpacing > 0 ? state.trailingSpacing : 0;
+            const effectiveAvailableHeight = prevSuppressAfter ? availableHeight + prevTrailing : availableHeight;
 
-              const nextFirstLineHeight = (() => {
-                if (!nextIsParagraph) {
+            const chainHeight = calculateChainHeight(chain, blocks, measures, state);
+
+            // Calculate page content height to check if chain fits on a blank page
+            const pageContentHeight = state.contentBottom - state.topMargin;
+            const chainFitsOnBlankPage = chainHeight <= pageContentHeight;
+
+            // Only advance if chain fits on blank page but not current page
+            // (prevents infinite loop for chains taller than page)
+            if (chainFitsOnBlankPage && chainHeight > effectiveAvailableHeight && state.page.fragments.length > 0) {
+              state = paginator.advanceColumn(state);
+            }
+          } else if (paraBlock.attrs?.keepNext === true) {
+            // Case 3: Orphan keepNext (next block is a break type or end of document)
+            // This shouldn't normally happen since computeKeepNextChains handles most cases,
+            // but we keep it for safety (e.g., keepNext at end of document with no anchor)
+            const nextBlock = blocks[index + 1];
+            const nextMeasure = measures[index + 1];
+            if (
+              nextBlock &&
+              nextMeasure &&
+              nextBlock.kind !== 'sectionBreak' &&
+              nextBlock.kind !== 'pageBreak' &&
+              nextBlock.kind !== 'columnBreak'
+            ) {
+              const shouldSkipAnchoredTable = nextBlock.kind === 'table' && nextBlock.anchor?.isAnchored === true;
+              if (!shouldSkipAnchoredTable) {
+                let state = paginator.ensurePage();
+                const availableHeight = state.contentBottom - state.cursorY;
+
+                const spacingBefore = getParagraphSpacingBefore(paraBlock);
+                const spacingAfter = getParagraphSpacingAfter(paraBlock);
+                const prevTrailing =
+                  Number.isFinite(state.trailingSpacing) && state.trailingSpacing > 0 ? state.trailingSpacing : 0;
+                const currentStyleId =
+                  typeof paraBlock.attrs?.styleId === 'string' ? paraBlock.attrs?.styleId : undefined;
+                const currentContextualSpacing = asBoolean(paraBlock.attrs?.contextualSpacing);
+                // Per-paragraph: each side independently suppresses its own spacing
+                const prevSuppressAfter = shouldSuppressOwnSpacing(
+                  state.lastParagraphStyleId,
+                  state.lastParagraphContextualSpacing,
+                  currentStyleId,
+                );
+                const currSuppressBefore = shouldSuppressOwnSpacing(
+                  currentStyleId,
+                  currentContextualSpacing,
+                  state.lastParagraphStyleId,
+                );
+                let effectiveSpacingBefore: number;
+                if (prevSuppressAfter && currSuppressBefore) {
+                  effectiveSpacingBefore = 0;
+                } else if (prevSuppressAfter) {
+                  effectiveSpacingBefore = spacingBefore;
+                } else if (currSuppressBefore) {
+                  effectiveSpacingBefore = 0;
+                } else {
+                  effectiveSpacingBefore = Math.max(spacingBefore - prevTrailing, 0);
+                }
+                const currentHeight = getMeasureHeight(paraBlock, measure);
+                const nextHeight = getMeasureHeight(nextBlock, nextMeasure);
+
+                const nextIsParagraph = nextBlock.kind === 'paragraph' && nextMeasure.kind === 'paragraph';
+                const nextSpacingBefore = nextIsParagraph ? getParagraphSpacingBefore(nextBlock) : 0;
+                const nextStyleId =
+                  nextIsParagraph && typeof nextBlock.attrs?.styleId === 'string'
+                    ? nextBlock.attrs?.styleId
+                    : undefined;
+                const nextContextualSpacing = nextIsParagraph && asBoolean(nextBlock.attrs?.contextualSpacing);
+
+                const currSuppressAfter = shouldSuppressOwnSpacing(
+                  currentStyleId,
+                  currentContextualSpacing,
+                  nextStyleId,
+                );
+                const nextSuppressBefore =
+                  nextIsParagraph && shouldSuppressOwnSpacing(nextStyleId, nextContextualSpacing, currentStyleId);
+                const effectiveSpacingAfter = currSuppressAfter ? 0 : spacingAfter;
+                const effectiveNextSpacingBefore = nextSuppressBefore ? 0 : nextSpacingBefore;
+                const interParagraphSpacing = nextIsParagraph
+                  ? Math.max(effectiveSpacingAfter, effectiveNextSpacingBefore)
+                  : effectiveSpacingAfter;
+
+                const nextFirstLineHeight = (() => {
+                  if (!nextIsParagraph) {
+                    return nextHeight;
+                  }
+                  const firstLineHeight = nextMeasure.lines[0]?.lineHeight;
+                  if (typeof firstLineHeight === 'number' && Number.isFinite(firstLineHeight) && firstLineHeight > 0) {
+                    return firstLineHeight;
+                  }
                   return nextHeight;
-                }
-                const firstLineHeight = nextMeasure.lines[0]?.lineHeight;
-                if (typeof firstLineHeight === 'number' && Number.isFinite(firstLineHeight) && firstLineHeight > 0) {
-                  return firstLineHeight;
-                }
-                return nextHeight;
-              })();
+                })();
 
-              const combinedHeight = nextIsParagraph
-                ? effectiveSpacingBefore + currentHeight + interParagraphSpacing + nextFirstLineHeight
-                : effectiveSpacingBefore + currentHeight + spacingAfter + nextHeight;
+                const combinedHeight = nextIsParagraph
+                  ? effectiveSpacingBefore + currentHeight + interParagraphSpacing + nextFirstLineHeight
+                  : effectiveSpacingBefore + currentHeight + spacingAfter + nextHeight;
 
-              const effectiveAvailableHeight = prevSuppressAfter ? availableHeight + prevTrailing : availableHeight;
-              if (combinedHeight > effectiveAvailableHeight && state.page.fragments.length > 0) {
-                state = paginator.advanceColumn(state);
+                const effectiveAvailableHeight = prevSuppressAfter ? availableHeight + prevTrailing : availableHeight;
+                if (combinedHeight > effectiveAvailableHeight && state.page.fragments.length > 0) {
+                  state = paginator.advanceColumn(state);
+                }
               }
             }
           }
-        }
 
-        /**
-         * Contextual spacing suppression for spacingAfter.
-         * Per-paragraph: current paragraph suppresses its own after-spacing when
-         * it has contextualSpacing and the next paragraph shares the same styleId.
-         */
-        let overrideSpacingAfter: number | undefined;
-        const curStyleId = typeof paraBlock.attrs?.styleId === 'string' ? paraBlock.attrs.styleId : undefined;
-        const curContextualSpacing = asBoolean(paraBlock.attrs?.contextualSpacing);
-        if (curContextualSpacing && curStyleId) {
-          const nextBlock = index < blocks.length - 1 ? blocks[index + 1] : null;
-          if (nextBlock?.kind === 'paragraph') {
-            const nextPara = nextBlock as ParagraphBlock;
-            const nextStyleId = typeof nextPara.attrs?.styleId === 'string' ? nextPara.attrs?.styleId : undefined;
-            if (shouldSuppressOwnSpacing(curStyleId, curContextualSpacing, nextStyleId)) {
-              overrideSpacingAfter = 0;
+          /**
+           * Contextual spacing suppression for spacingAfter.
+           * Per-paragraph: current paragraph suppresses its own after-spacing when
+           * it has contextualSpacing and the next paragraph shares the same styleId.
+           */
+          let overrideSpacingAfter: number | undefined;
+          const curStyleId = typeof paraBlock.attrs?.styleId === 'string' ? paraBlock.attrs.styleId : undefined;
+          const curContextualSpacing = asBoolean(paraBlock.attrs?.contextualSpacing);
+          if (curContextualSpacing && curStyleId) {
+            const nextBlock = index < blocks.length - 1 ? blocks[index + 1] : null;
+            if (nextBlock?.kind === 'paragraph') {
+              const nextPara = nextBlock as ParagraphBlock;
+              const nextStyleId = typeof nextPara.attrs?.styleId === 'string' ? nextPara.attrs?.styleId : undefined;
+              if (shouldSuppressOwnSpacing(curStyleId, curContextualSpacing, nextStyleId)) {
+                overrideSpacingAfter = 0;
+              }
             }
           }
+
+          const checkpointState = paginator.ensurePage();
+          blockResumeCheckpoints.set(block.id, {
+            blockId: block.id,
+            pageIndex: checkpointState.page.number - 1 - pageNumberOffset,
+            prefixFragmentCount: checkpointState.page.fragments.length,
+            cursorY: checkpointState.cursorY,
+            maxCursorY: checkpointState.maxCursorY,
+            columnIndex: checkpointState.columnIndex,
+            trailingSpacing: checkpointState.trailingSpacing,
+            ...(checkpointState.lastParagraphStyleId
+              ? { lastParagraphStyleId: checkpointState.lastParagraphStyleId }
+              : {}),
+            lastParagraphContextualSpacing: checkpointState.lastParagraphContextualSpacing,
+            ...(checkpointState.lastParagraphBorderHash
+              ? { lastParagraphBorderHash: checkpointState.lastParagraphBorderHash }
+              : {}),
+            constraintBoundaries: checkpointState.constraintBoundaries.map((boundary) => ({
+              y: boundary.y,
+              columns: { ...boundary.columns },
+            })),
+            activeConstraintIndex: checkpointState.activeConstraintIndex,
+            footnoteDemandThisPage: checkpointState.footnoteDemandThisPage,
+            footnoteRefsThisPage: checkpointState.footnoteRefsThisPage,
+            footnoteAnchorsThisPage: checkpointState.footnoteAnchorsThisPage.map((anchor) => ({ ...anchor })),
+          });
+
+          layoutParagraphBlock(
+            {
+              block,
+              measure,
+              columnWidth: getCurrentColumnWidth(),
+              ensurePage: paginator.ensurePage,
+              advanceColumn: paginator.advanceColumn,
+              columnX,
+              floatManager,
+              remeasureParagraph: options.remeasureParagraph,
+              overrideSpacingAfter,
+              getFootnoteDemandForBlockId,
+              getFootnoteRefCountForBlockId,
+              getFootnoteBandOverhead,
+              getFootnoteAnchorsForBlockId,
+              // A section-boundary filler paragraph can still be the coordinate
+              // base for a paragraph-relative DrawingML object. Register that
+              // object, but keep the carrier itself out of normal flow so it
+              // cannot add a line or change Word-compatible pagination.
+              layoutOnlyAnchorCarrier: splitCarrierMode === 'layoutOnly' || isSectionBoundaryAnchorCarrier,
+              preserveAnchorCarrierPage: isSectionBoundaryAnchorCarrier,
+              collapseSplitLineBreakCarrier: splitCarrierMode === 'spaced',
+              positionedFrameAffectsFlow: !options.nonFlowPositionedParagraphFrameIds?.has(block.id),
+            },
+            hasAnchorsForLayout || tablesForPara
+              ? {
+                  anchoredDrawings: anchorsForLayout,
+                  anchoredTables: tablesForPara,
+                  columnWidth: getCurrentColumnWidth(),
+                  pageWidth: activePageSize.w,
+                  pageMargins: {
+                    top: activeTopMargin,
+                    bottom: activeBottomMargin,
+                    left: activeLeftMargin,
+                    right: activeRightMargin,
+                  },
+                  columns: getCurrentColumns(),
+                  placedAnchoredIds,
+                }
+              : undefined,
+          );
+
+          if (splitCarrierMode === 'spaced') {
+            const siblingBlock = blocks[index + 1];
+            const siblingMeasure = measures[index + 1];
+            const isAnchoredGraphic =
+              (siblingBlock?.kind === 'image' && siblingMeasure?.kind === 'image') ||
+              (siblingBlock?.kind === 'drawing' && siblingMeasure?.kind === 'drawing');
+            if (isAnchoredGraphic && siblingBlock.anchor?.isAnchored === true) {
+              const carrierPlacement = findLastParagraphFragment(block.id);
+              if (carrierPlacement) {
+                const existingPreRegisteredPosition = preRegisteredPositions.get(siblingBlock.id);
+                const { state: carrierState, fragment: carrierFragment } = carrierPlacement;
+                const carrierPage = carrierState.page;
+                const pageSize = carrierPage.size ?? activePageSize;
+                const pageMargins = carrierPage.margins ?? {};
+                const carrierColumnIndex = carrierFragment.columnIndex ?? 0;
+                const carrierLeftMargin = pageMargins.left ?? activeLeftMargin;
+                const carrierRightMargin = pageMargins.right ?? activeRightMargin;
+                const carrierColumns = getNormalizedColumnsForState(carrierState);
+                const anchorY =
+                  existingPreRegisteredPosition?.anchorY ??
+                  resolveAnchoredGraphicY({
+                    anchor: siblingBlock.anchor,
+                    objectHeight: siblingMeasure.height ?? 0,
+                    contentTop: pageMargins.top ?? activeTopMargin,
+                    contentBottom: pageSize.h - (pageMargins.bottom ?? activeBottomMargin),
+                    pageBottomMargin: pageMargins.bottom ?? activeBottomMargin,
+                    anchorParagraphY: carrierFragment.y,
+                    firstLineHeight: measure.lines[0]?.lineHeight ?? 0,
+                    pageNumber: carrierPage.number,
+                  });
+                const anchorX =
+                  existingPreRegisteredPosition?.anchorX ??
+                  (siblingBlock.anchor
+                    ? computeAnchorX(
+                        siblingBlock.anchor,
+                        carrierColumnIndex,
+                        carrierColumns,
+                        siblingMeasure.width,
+                        { left: carrierLeftMargin, right: carrierRightMargin },
+                        pageSize.w,
+                        { pageNumber: carrierPage.number },
+                      )
+                    : carrierFragment.x);
+                if (!placedAnchoredIds.has(siblingBlock.id)) {
+                  floatManager.registerDrawing(
+                    siblingBlock,
+                    siblingMeasure,
+                    anchorY,
+                    carrierColumnIndex,
+                    carrierPage.number,
+                  );
+                }
+                preRegisteredPositions.set(siblingBlock.id, {
+                  anchorX,
+                  anchorY,
+                  targetState: carrierState,
+                  targetColumnIndex: carrierColumnIndex,
+                });
+              }
+            }
+          }
+
+          continue;
         }
+        if (block.kind === 'image') {
+          if (measure.kind !== 'image') {
+            throw new Error(`layoutDocument: expected image measure for block ${block.id}`);
+          }
 
-        const checkpointState = paginator.ensurePage();
-        blockResumeCheckpoints.set(block.id, {
-          blockId: block.id,
-          pageIndex: checkpointState.page.number - 1 - pageNumberOffset,
-          prefixFragmentCount: checkpointState.page.fragments.length,
-          cursorY: checkpointState.cursorY,
-          maxCursorY: checkpointState.maxCursorY,
-          columnIndex: checkpointState.columnIndex,
-          trailingSpacing: checkpointState.trailingSpacing,
-          ...(checkpointState.lastParagraphStyleId
-            ? { lastParagraphStyleId: checkpointState.lastParagraphStyleId }
-            : {}),
-          lastParagraphContextualSpacing: checkpointState.lastParagraphContextualSpacing,
-          ...(checkpointState.lastParagraphBorderHash
-            ? { lastParagraphBorderHash: checkpointState.lastParagraphBorderHash }
-            : {}),
-          constraintBoundaries: checkpointState.constraintBoundaries.map((boundary) => ({
-            y: boundary.y,
-            columns: { ...boundary.columns },
-          })),
-          activeConstraintIndex: checkpointState.activeConstraintIndex,
-          footnoteDemandThisPage: checkpointState.footnoteDemandThisPage,
-          footnoteRefsThisPage: checkpointState.footnoteRefsThisPage,
-          footnoteAnchorsThisPage: checkpointState.footnoteAnchorsThisPage.map((anchor) => ({ ...anchor })),
-        });
+          // Check if this is a pre-registered page-relative anchor
+          const preRegPos = preRegisteredPositions.get(block.id);
+          if (
+            preRegPos &&
+            Number.isFinite(preRegPos.anchorX) &&
+            Number.isFinite(preRegPos.anchorY) &&
+            !placedAnchoredIds.has(block.id)
+          ) {
+            // Use pre-computed coordinates, pinning split-carrier siblings to their carrier page when provided.
+            const targetState = preRegPos.targetState;
+            const state = targetState ?? paginator.ensurePage();
+            const targetColumnIndex = preRegPos.targetColumnIndex ?? state.columnIndex;
+            const imgBlock = block as ImageBlock;
+            const imgMeasure = measure as ImageMeasure;
 
-        layoutParagraphBlock(
-          {
-            block,
-            measure,
+            const pageContentHeight = Math.max(0, state.contentBottom - state.topMargin);
+            const relativeFrom = imgBlock.anchor?.hRelativeFrom ?? 'column';
+            let maxWidth: number;
+            if (relativeFrom === 'page') {
+              if (targetState) {
+                const pageWidth = state.page.size?.w ?? activePageSize.w;
+                const pageMargins = state.page.margins;
+                const leftMargin = pageMargins?.left ?? activeLeftMargin;
+                const rightMargin = pageMargins?.right ?? activeRightMargin;
+                maxWidth =
+                  resolveColumnCount(state.page.columns ?? { count: 1, gap: 0 }) === 1
+                    ? pageWidth - (leftMargin + rightMargin)
+                    : pageWidth;
+              } else {
+                const cols = getCurrentColumns();
+                maxWidth =
+                  cols.count === 1 ? activePageSize.w - (activeLeftMargin + activeRightMargin) : activePageSize.w;
+              }
+            } else if (relativeFrom === 'margin') {
+              if (targetState) {
+                const pageWidth = state.page.size?.w ?? activePageSize.w;
+                const pageMargins = state.page.margins;
+                maxWidth =
+                  pageWidth - ((pageMargins?.left ?? activeLeftMargin) + (pageMargins?.right ?? activeRightMargin));
+              } else {
+                maxWidth = activePageSize.w - (activeLeftMargin + activeRightMargin);
+              }
+            } else {
+              maxWidth = columnWidthForState(state, targetColumnIndex);
+            }
+
+            const aspectRatio =
+              imgMeasure.width > 0 && imgMeasure.height > 0 ? imgMeasure.width / imgMeasure.height : 1.0;
+            const minWidth = 20;
+            const minHeight = minWidth / aspectRatio;
+
+            const metadata: ImageFragmentMetadata = {
+              originalWidth: imgMeasure.width,
+              originalHeight: imgMeasure.height,
+              maxWidth,
+              maxHeight: pageContentHeight,
+              aspectRatio,
+              minWidth,
+              minHeight,
+            };
+
+            const fragment: ImageFragment = {
+              kind: 'image',
+              blockId: imgBlock.id,
+              x: preRegPos.anchorX,
+              y: preRegPos.anchorY,
+              width: imgMeasure.width,
+              height: imgMeasure.height,
+              isAnchored: true,
+              behindDoc: imgBlock.anchor?.behindDoc === true,
+              zIndex: getFragmentZIndex(imgBlock),
+              metadata,
+              sourceAnchor: imgBlock.sourceAnchor,
+            };
+
+            const attrs = imgBlock.attrs as Record<string, unknown> | undefined;
+            if (attrs?.pmStart != null) fragment.pmStart = attrs.pmStart as number;
+            if (attrs?.pmEnd != null) fragment.pmEnd = attrs.pmEnd as number;
+
+            state.page.fragments.push(fragment);
+            placedAnchoredIds.add(imgBlock.id);
+            continue;
+          }
+
+          layoutImageBlock({
+            block: block as ImageBlock,
+            measure: measure as ImageMeasure,
+            columns: getCurrentColumns(),
+            ensurePage: paginator.ensurePage,
+            advanceColumn: paginator.advanceColumn,
+            columnX,
+          });
+          continue;
+        }
+        if (block.kind === 'drawing') {
+          if (measure.kind !== 'drawing') {
+            throw new Error(`layoutDocument: expected drawing measure for block ${block.id}`);
+          }
+
+          // Check if this is a pre-registered page-relative anchor
+          const preRegPos = preRegisteredPositions.get(block.id);
+          if (
+            preRegPos &&
+            Number.isFinite(preRegPos.anchorX) &&
+            Number.isFinite(preRegPos.anchorY) &&
+            !placedAnchoredIds.has(block.id)
+          ) {
+            // Use pre-computed coordinates, pinning split-carrier siblings to their carrier page when provided.
+            const state = preRegPos.targetState ?? paginator.ensurePage();
+            const drawBlock = block as DrawingBlock;
+            const drawMeasure = measure as DrawingMeasure;
+            const contentMeasures =
+              drawBlock.drawingKind === 'textboxShape'
+                ? resolveTextboxContentMeasures(drawBlock, drawMeasure, options.remeasureParagraph)
+                : undefined;
+
+            const fragment: DrawingFragment = {
+              kind: 'drawing',
+              blockId: drawBlock.id,
+              drawingKind: drawBlock.drawingKind,
+              x: preRegPos.anchorX,
+              y: preRegPos.anchorY,
+              width: drawMeasure.width,
+              height: drawMeasure.height,
+              geometry: drawMeasure.geometry,
+              scale: drawMeasure.scale,
+              isAnchored: true,
+              behindDoc: drawBlock.anchor?.behindDoc === true,
+              zIndex: getFragmentZIndex(drawBlock),
+              drawingContentId: drawBlock.drawingContentId,
+              sourceAnchor: drawBlock.sourceAnchor,
+            };
+
+            if (contentMeasures) {
+              fragment.contentMeasures = contentMeasures;
+              const textboxId = drawBlock.attrs?.textboxId;
+              if (typeof textboxId === 'string' && textboxId.length > 0) fragment.textboxId = textboxId;
+            }
+
+            const attrs = drawBlock.attrs as Record<string, unknown> | undefined;
+            if (attrs?.pmStart != null) fragment.pmStart = attrs.pmStart as number;
+            if (attrs?.pmEnd != null) fragment.pmEnd = attrs.pmEnd as number;
+
+            state.page.fragments.push(fragment);
+            placedAnchoredIds.add(drawBlock.id);
+            continue;
+          }
+
+          layoutDrawingBlock({
+            block: block as DrawingBlock,
+            measure: measure as DrawingMeasure,
+            columns: getCurrentColumns(),
+            ensurePage: paginator.ensurePage,
+            advanceColumn: paginator.advanceColumn,
+            columnX,
+            textboxContentMeasures:
+              block.drawingKind === 'textboxShape'
+                ? resolveTextboxContentMeasures(block, measure, options.remeasureParagraph)
+                : undefined,
+          });
+          continue;
+        }
+        if (block.kind === 'table') {
+          if (measure.kind !== 'table') {
+            throw new Error(`layoutDocument: expected table measure for block ${block.id}`);
+          }
+          layoutTableBlock({
+            block: block as TableBlock,
+            measure: measure as TableMeasure,
             columnWidth: getCurrentColumnWidth(),
             ensurePage: paginator.ensurePage,
             advanceColumn: paginator.advanceColumn,
             columnX,
-            floatManager,
-            remeasureParagraph: options.remeasureParagraph,
-            overrideSpacingAfter,
-            getFootnoteDemandForBlockId,
-            getFootnoteRefCountForBlockId,
-            getFootnoteBandOverhead,
-            getFootnoteAnchorsForBlockId,
-            // A section-boundary filler paragraph can still be the coordinate
-            // base for a paragraph-relative DrawingML object. Register that
-            // object, but keep the carrier itself out of normal flow so it
-            // cannot add a line or change Word-compatible pagination.
-            layoutOnlyAnchorCarrier: splitCarrierMode === 'layoutOnly' || isSectionBoundaryAnchorCarrier,
-            preserveAnchorCarrierPage: isSectionBoundaryAnchorCarrier,
-            collapseSplitLineBreakCarrier: splitCarrierMode === 'spaced',
-            positionedFrameAffectsFlow: !options.nonFlowPositionedParagraphFrameIds?.has(block.id),
-          },
-          hasAnchorsForLayout || tablesForPara
-            ? {
-                anchoredDrawings: anchorsForLayout,
-                anchoredTables: tablesForPara,
-                columnWidth: getCurrentColumnWidth(),
-                pageWidth: activePageSize.w,
-                pageMargins: {
-                  top: activeTopMargin,
-                  bottom: activeBottomMargin,
-                  left: activeLeftMargin,
-                  right: activeRightMargin,
-                },
-                columns: getCurrentColumns(),
-                placedAnchoredIds,
-              }
-            : undefined,
-        );
-
-        if (splitCarrierMode === 'spaced') {
-          const siblingBlock = blocks[index + 1];
-          const siblingMeasure = measures[index + 1];
-          const isAnchoredGraphic =
-            (siblingBlock?.kind === 'image' && siblingMeasure?.kind === 'image') ||
-            (siblingBlock?.kind === 'drawing' && siblingMeasure?.kind === 'drawing');
-          if (isAnchoredGraphic && siblingBlock.anchor?.isAnchored === true) {
-            const carrierPlacement = findLastParagraphFragment(block.id);
-            if (carrierPlacement) {
-              const existingPreRegisteredPosition = preRegisteredPositions.get(siblingBlock.id);
-              const { state: carrierState, fragment: carrierFragment } = carrierPlacement;
-              const carrierPage = carrierState.page;
-              const pageSize = carrierPage.size ?? activePageSize;
-              const pageMargins = carrierPage.margins ?? {};
-              const carrierColumnIndex = carrierFragment.columnIndex ?? 0;
-              const carrierLeftMargin = pageMargins.left ?? activeLeftMargin;
-              const carrierRightMargin = pageMargins.right ?? activeRightMargin;
-              const carrierColumns = getNormalizedColumnsForState(carrierState);
-              const anchorY =
-                existingPreRegisteredPosition?.anchorY ??
-                resolveAnchoredGraphicY({
-                  anchor: siblingBlock.anchor,
-                  objectHeight: siblingMeasure.height ?? 0,
-                  contentTop: pageMargins.top ?? activeTopMargin,
-                  contentBottom: pageSize.h - (pageMargins.bottom ?? activeBottomMargin),
-                  pageBottomMargin: pageMargins.bottom ?? activeBottomMargin,
-                  anchorParagraphY: carrierFragment.y,
-                  firstLineHeight: measure.lines[0]?.lineHeight ?? 0,
-                  pageNumber: carrierPage.number,
-                });
-              const anchorX =
-                existingPreRegisteredPosition?.anchorX ??
-                (siblingBlock.anchor
-                  ? computeAnchorX(
-                      siblingBlock.anchor,
-                      carrierColumnIndex,
-                      carrierColumns,
-                      siblingMeasure.width,
-                      { left: carrierLeftMargin, right: carrierRightMargin },
-                      pageSize.w,
-                      { pageNumber: carrierPage.number },
-                    )
-                  : carrierFragment.x);
-              if (!placedAnchoredIds.has(siblingBlock.id)) {
-                floatManager.registerDrawing(
-                  siblingBlock,
-                  siblingMeasure,
-                  anchorY,
-                  carrierColumnIndex,
-                  carrierPage.number,
-                );
-              }
-              preRegisteredPositions.set(siblingBlock.id, {
-                anchorX,
-                anchorY,
-                targetState: carrierState,
-                targetColumnIndex: carrierColumnIndex,
-              });
-            }
-          }
-        }
-
-        continue;
-      }
-      if (block.kind === 'image') {
-        if (measure.kind !== 'image') {
-          throw new Error(`layoutDocument: expected image measure for block ${block.id}`);
-        }
-
-        // Check if this is a pre-registered page-relative anchor
-        const preRegPos = preRegisteredPositions.get(block.id);
-        if (
-          preRegPos &&
-          Number.isFinite(preRegPos.anchorX) &&
-          Number.isFinite(preRegPos.anchorY) &&
-          !placedAnchoredIds.has(block.id)
-        ) {
-          // Use pre-computed coordinates, pinning split-carrier siblings to their carrier page when provided.
-          const targetState = preRegPos.targetState;
-          const state = targetState ?? paginator.ensurePage();
-          const targetColumnIndex = preRegPos.targetColumnIndex ?? state.columnIndex;
-          const imgBlock = block as ImageBlock;
-          const imgMeasure = measure as ImageMeasure;
-
-          const pageContentHeight = Math.max(0, state.contentBottom - state.topMargin);
-          const relativeFrom = imgBlock.anchor?.hRelativeFrom ?? 'column';
-          let maxWidth: number;
-          if (relativeFrom === 'page') {
-            if (targetState) {
-              const pageWidth = state.page.size?.w ?? activePageSize.w;
-              const pageMargins = state.page.margins;
-              const leftMargin = pageMargins?.left ?? activeLeftMargin;
-              const rightMargin = pageMargins?.right ?? activeRightMargin;
-              maxWidth =
-                resolveColumnCount(state.page.columns ?? { count: 1, gap: 0 }) === 1
-                  ? pageWidth - (leftMargin + rightMargin)
-                  : pageWidth;
-            } else {
-              const cols = getCurrentColumns();
-              maxWidth =
-                cols.count === 1 ? activePageSize.w - (activeLeftMargin + activeRightMargin) : activePageSize.w;
-            }
-          } else if (relativeFrom === 'margin') {
-            if (targetState) {
-              const pageWidth = state.page.size?.w ?? activePageSize.w;
-              const pageMargins = state.page.margins;
-              maxWidth =
-                pageWidth - ((pageMargins?.left ?? activeLeftMargin) + (pageMargins?.right ?? activeRightMargin));
-            } else {
-              maxWidth = activePageSize.w - (activeLeftMargin + activeRightMargin);
-            }
-          } else {
-            maxWidth = columnWidthForState(state, targetColumnIndex);
-          }
-
-          const aspectRatio =
-            imgMeasure.width > 0 && imgMeasure.height > 0 ? imgMeasure.width / imgMeasure.height : 1.0;
-          const minWidth = 20;
-          const minHeight = minWidth / aspectRatio;
-
-          const metadata: ImageFragmentMetadata = {
-            originalWidth: imgMeasure.width,
-            originalHeight: imgMeasure.height,
-            maxWidth,
-            maxHeight: pageContentHeight,
-            aspectRatio,
-            minWidth,
-            minHeight,
-          };
-
-          const fragment: ImageFragment = {
-            kind: 'image',
-            blockId: imgBlock.id,
-            x: preRegPos.anchorX,
-            y: preRegPos.anchorY,
-            width: imgMeasure.width,
-            height: imgMeasure.height,
-            isAnchored: true,
-            behindDoc: imgBlock.anchor?.behindDoc === true,
-            zIndex: getFragmentZIndex(imgBlock),
-            metadata,
-            sourceAnchor: imgBlock.sourceAnchor,
-          };
-
-          const attrs = imgBlock.attrs as Record<string, unknown> | undefined;
-          if (attrs?.pmStart != null) fragment.pmStart = attrs.pmStart as number;
-          if (attrs?.pmEnd != null) fragment.pmEnd = attrs.pmEnd as number;
-
-          state.page.fragments.push(fragment);
-          placedAnchoredIds.add(imgBlock.id);
+          });
           continue;
         }
+        // (handled earlier) list and image
 
-        layoutImageBlock({
-          block: block as ImageBlock,
-          measure: measure as ImageMeasure,
-          columns: getCurrentColumns(),
-          ensurePage: paginator.ensurePage,
-          advanceColumn: paginator.advanceColumn,
-          columnX,
-        });
-        continue;
-      }
-      if (block.kind === 'drawing') {
-        if (measure.kind !== 'drawing') {
-          throw new Error(`layoutDocument: expected drawing measure for block ${block.id}`);
-        }
-
-        // Check if this is a pre-registered page-relative anchor
-        const preRegPos = preRegisteredPositions.get(block.id);
-        if (
-          preRegPos &&
-          Number.isFinite(preRegPos.anchorX) &&
-          Number.isFinite(preRegPos.anchorY) &&
-          !placedAnchoredIds.has(block.id)
-        ) {
-          // Use pre-computed coordinates, pinning split-carrier siblings to their carrier page when provided.
-          const state = preRegPos.targetState ?? paginator.ensurePage();
-          const drawBlock = block as DrawingBlock;
-          const drawMeasure = measure as DrawingMeasure;
-          const contentMeasures =
-            drawBlock.drawingKind === 'textboxShape'
-              ? resolveTextboxContentMeasures(drawBlock, drawMeasure, options.remeasureParagraph)
-              : undefined;
-
-          const fragment: DrawingFragment = {
-            kind: 'drawing',
-            blockId: drawBlock.id,
-            drawingKind: drawBlock.drawingKind,
-            x: preRegPos.anchorX,
-            y: preRegPos.anchorY,
-            width: drawMeasure.width,
-            height: drawMeasure.height,
-            geometry: drawMeasure.geometry,
-            scale: drawMeasure.scale,
-            isAnchored: true,
-            behindDoc: drawBlock.anchor?.behindDoc === true,
-            zIndex: getFragmentZIndex(drawBlock),
-            drawingContentId: drawBlock.drawingContentId,
-            sourceAnchor: drawBlock.sourceAnchor,
-          };
-
-          if (contentMeasures) {
-            fragment.contentMeasures = contentMeasures;
-            const textboxId = drawBlock.attrs?.textboxId;
-            if (typeof textboxId === 'string' && textboxId.length > 0) fragment.textboxId = textboxId;
+        // Page break: force start of new page
+        // Corresponds to DOCX <w:br w:type="page"/> or manual page breaks
+        if (block.kind === 'pageBreak') {
+          if (measure.kind !== 'pageBreak') {
+            throw new Error(`layoutDocument: expected pageBreak measure for block ${block.id}`);
           }
-
-          const attrs = drawBlock.attrs as Record<string, unknown> | undefined;
-          if (attrs?.pmStart != null) fragment.pmStart = attrs.pmStart as number;
-          if (attrs?.pmEnd != null) fragment.pmEnd = attrs.pmEnd as number;
-
-          state.page.fragments.push(fragment);
-          placedAnchoredIds.add(drawBlock.id);
-          continue;
-        }
-
-        layoutDrawingBlock({
-          block: block as DrawingBlock,
-          measure: measure as DrawingMeasure,
-          columns: getCurrentColumns(),
-          ensurePage: paginator.ensurePage,
-          advanceColumn: paginator.advanceColumn,
-          columnX,
-          textboxContentMeasures:
-            block.drawingKind === 'textboxShape'
-              ? resolveTextboxContentMeasures(block, measure, options.remeasureParagraph)
-              : undefined,
-        });
-        continue;
-      }
-      if (block.kind === 'table') {
-        if (measure.kind !== 'table') {
-          throw new Error(`layoutDocument: expected table measure for block ${block.id}`);
-        }
-        layoutTableBlock({
-          block: block as TableBlock,
-          measure: measure as TableMeasure,
-          columnWidth: getCurrentColumnWidth(),
-          ensurePage: paginator.ensurePage,
-          advanceColumn: paginator.advanceColumn,
-          columnX,
-        });
-        continue;
-      }
-      // (handled earlier) list and image
-
-      // Page break: force start of new page
-      // Corresponds to DOCX <w:br w:type="page"/> or manual page breaks
-      if (block.kind === 'pageBreak') {
-        if (measure.kind !== 'pageBreak') {
-          throw new Error(`layoutDocument: expected pageBreak measure for block ${block.id}`);
-        }
-        const currentState = states[states.length - 1];
-        if (
-          shouldSkipRedundantPageBreakBefore(block as PageBreakBlock, currentState) ||
-          isPageBreakBeforeSatisfiedByExplicitBreak(blocks, index)
-        ) {
-          continue;
-        }
-        paginator.startNewPage();
-        continue;
-      }
-
-      // Column break: advance to next column or start new page if in last column
-      // Corresponds to DOCX <w:br w:type="column"/>. Section `nextColumn` advances
-      // via forceColumnBreak on the sectionBreak path instead.
-      if (block.kind === 'columnBreak') {
-        if (measure.kind !== 'columnBreak') {
-          throw new Error(`layoutDocument: expected columnBreak measure for block ${block.id}`);
-        }
-        const state = paginator.ensurePage();
-        // Activate pending multi-column geometry first so a column break that also
-        // introduced columns advances within the page instead of startNewPage()-ing
-        // from a 1-col layout.
-        if (
-          pendingColumns &&
-          resolveColumnCount(pendingColumns) > 1 &&
-          resolveColumnCount(getActiveColumnsForState(state)) < 2
-        ) {
-          startMidPageRegion(state, pendingColumns);
-          pendingColumns = null;
-        }
-        const activeCols = getActiveColumnsForState(state);
-
-        if (state.columnIndex < resolveColumnCount(activeCols) - 1) {
-          // Not in last column: advance to next column
-          advanceColumn(state);
-        } else {
-          // In last column: start new page
+          const currentState = states[states.length - 1];
+          if (
+            shouldSkipRedundantPageBreakBefore(block as PageBreakBlock, currentState) ||
+            isPageBreakBeforeSatisfiedByExplicitBreak(blocks, index)
+          ) {
+            continue;
+          }
           paginator.startNewPage();
+          continue;
         }
-        continue;
-      }
 
-      throw new Error(`layoutDocument: unsupported block kind for ${(block as FlowBlock).id}`);
+        // Column break: advance to next column or start new page if in last column
+        // Corresponds to DOCX <w:br w:type="column"/>. Section `nextColumn` advances
+        // via forceColumnBreak on the sectionBreak path instead.
+        if (block.kind === 'columnBreak') {
+          if (measure.kind !== 'columnBreak') {
+            throw new Error(`layoutDocument: expected columnBreak measure for block ${block.id}`);
+          }
+          const state = paginator.ensurePage();
+          // Activate pending multi-column geometry first so a column break that also
+          // introduced columns advances within the page instead of startNewPage()-ing
+          // from a 1-col layout.
+          if (
+            pendingColumns &&
+            resolveColumnCount(pendingColumns) > 1 &&
+            resolveColumnCount(getActiveColumnsForState(state)) < 2
+          ) {
+            startMidPageRegion(state, pendingColumns);
+            pendingColumns = null;
+          }
+          const activeCols = getActiveColumnsForState(state);
+
+          if (state.columnIndex < resolveColumnCount(activeCols) - 1) {
+            // Not in last column: advance to next column
+            advanceColumn(state);
+          } else {
+            // In last column: start new page
+            paginator.startNewPage();
+          }
+          continue;
+        }
+
+        throw new Error(`layoutDocument: unsupported block kind for ${(block as FlowBlock).id}`);
+      } catch (error) {
+        if (isPaginationEarlyStop(error)) throw error;
+        let progress: V2RenderDiagnosticPaginationProgress | null = null;
+        try {
+          progress = captureRenderDiagnosticPaginationProgress(block);
+        } catch {
+          progress = null;
+        }
+        const owned = renderDiagnosticOwner?.({
+          blockIds: [block.id],
+          debugDetail: error,
+          phase: 'dispatch',
+          ...(progress ? { progress } : {}),
+        });
+        if (owned) throw owned;
+        throw error;
+      }
     }
 
     // Prune trailing empty page(s) that can be created by page-boundary rules
@@ -4638,7 +4779,12 @@ export function layoutHeaderFooter(
 ): HeaderFooterLayout {
   const prepared = prepareHeaderFooterLayout(blocks, measures, constraints, kind, remeasureParagraph);
   if (prepared.empty) return { pages: [], height: 0 };
-  const layout = layoutDocument(blocks, measures, prepared.options);
+  let layout: Layout;
+  try {
+    layout = layoutDocument(blocks, measures, prepared.options);
+  } finally {
+    Reflect.deleteProperty(prepared.options, V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER);
+  }
   return finalizeHeaderFooterLayout(layout, blocks, measures, constraints, prepared.height, kind);
 }
 
@@ -4652,7 +4798,12 @@ export async function layoutHeaderFooterCooperatively(
 ): Promise<HeaderFooterLayout> {
   const prepared = prepareHeaderFooterLayout(blocks, measures, constraints, kind, remeasureParagraph);
   if (prepared.empty) return { pages: [], height: 0 };
-  const layout = await layoutDocumentCooperatively(blocks, measures, prepared.options, execution);
+  let layout: Layout;
+  try {
+    layout = await layoutDocumentCooperatively(blocks, measures, prepared.options, execution);
+  } finally {
+    Reflect.deleteProperty(prepared.options, V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER);
+  }
   await checkpointLayoutExecution(execution, {
     phase: 'header-footer:page',
     index: 0,
@@ -4691,17 +4842,30 @@ function prepareHeaderFooterLayout(
     kind,
     constraints,
   );
+  const options: LayoutOptions = {
+    pageSize: { w: width, h: height },
+    margins: { top: 0, right: 0, bottom: 0, left: 0 },
+    allowParagraphlessAnchoredTableFallback: false,
+    allowSectionBreakOnlyPageFallback: false,
+    remeasureParagraph,
+    nonFlowPositionedParagraphFrameIds,
+  };
+  const renderDiagnosticOwner = (
+    constraints as HeaderFooterConstraints & {
+      [V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER]?: V2RenderDiagnosticPaginationOwner;
+    }
+  )[V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER];
+  if (renderDiagnosticOwner) {
+    Object.defineProperty(options, V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER, {
+      configurable: true,
+      enumerable: false,
+      value: renderDiagnosticOwner,
+    });
+  }
   return {
     empty: false,
     height,
-    options: {
-      pageSize: { w: width, h: height },
-      margins: { top: 0, right: 0, bottom: 0, left: 0 },
-      allowParagraphlessAnchoredTableFallback: false,
-      allowSectionBreakOnlyPageFallback: false,
-      remeasureParagraph,
-      nonFlowPositionedParagraphFrameIds,
-    },
+    options,
   };
 }
 

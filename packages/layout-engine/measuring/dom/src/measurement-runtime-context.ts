@@ -1,4 +1,5 @@
 import type { FontMeasureContext } from '@superdoc/font-system';
+import { DomMeasurementInfrastructureError } from './measurement-infrastructure-error.js';
 import { FontMetricsMeasurementCache } from './fontMetricsCache.js';
 import { TextWidthMeasurementCache } from './measurementCache.js';
 
@@ -58,10 +59,12 @@ export function ensureSurfaceMeasurementCanvas(state: SurfaceMeasurementRuntimeS
   if (!state.canvasContext) {
     const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
     if (!canvas) {
-      throw new Error('Canvas not available. Ensure this runs in a DOM environment (browser or jsdom).');
+      throw new DomMeasurementInfrastructureError(
+        'Canvas not available. Ensure this runs in a DOM environment (browser or jsdom).',
+      );
     }
     const context = canvas.getContext('2d');
-    if (!context) throw new Error('Failed to get 2D context from canvas');
+    if (!context) throw new DomMeasurementInfrastructureError('Failed to get 2D context from canvas');
     state.canvasContext = context;
     runtimeByCanvasContext.set(context, state);
   }
@@ -75,7 +78,7 @@ export function bindSurfaceMeasurementPass(
 ): void {
   assertSurfaceMeasurementRuntimeLive(state);
   if (state.activePass) {
-    throw new Error('DomMeasurementRuntime already has an active pass');
+    throw new DomMeasurementInfrastructureError('DomMeasurementRuntime already has an active pass');
   }
   state.execution = execution ?? null;
   state.activeFontContext = fontContext;
@@ -101,7 +104,7 @@ export function clearSurfaceMeasurementGeneration(
 ): void {
   assertSurfaceMeasurementRuntimeLive(state);
   if (state.activePass) {
-    throw new Error('Cannot change font generation during an active measurement pass');
+    throw new DomMeasurementInfrastructureError('Cannot change font generation during an active measurement pass');
   }
   if (state.canvasContext) runtimeByCanvasContext.delete(state.canvasContext);
   state.canvasContext = null;
@@ -135,6 +138,6 @@ export function surfaceMeasurementCheckpointIfDue(fontContext: FontMeasureContex
 
 function assertSurfaceMeasurementRuntimeLive(state: SurfaceMeasurementRuntimeState): void {
   if (state.disposed) {
-    throw new Error('DomMeasurementRuntime has been disposed');
+    throw new DomMeasurementInfrastructureError('DomMeasurementRuntime has been disposed');
   }
 }

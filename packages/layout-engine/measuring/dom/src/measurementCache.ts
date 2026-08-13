@@ -1,3 +1,5 @@
+import { DomMeasurementInfrastructureError } from './measurement-infrastructure-error.js';
+
 type CacheEntry = {
   width: number;
   text: string;
@@ -238,7 +240,7 @@ export class TextWidthMeasurementCache {
   }
 
   private assertLive(): void {
-    if (this.disposed) throw new Error('TextWidthMeasurementCache has been disposed');
+    if (this.disposed) throw new DomMeasurementInfrastructureError('TextWidthMeasurementCache has been disposed');
   }
 }
 

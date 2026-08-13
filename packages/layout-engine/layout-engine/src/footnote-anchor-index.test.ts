@@ -120,6 +120,36 @@ const makeFootnotes = (
 });
 
 describe('buildFootnoteAnchorIndexSteps', () => {
+  it('anchors an exact diagnostic-owned reference without adding model positions to the block', () => {
+    const diagnostic = paragraph('__superdoc_v2_render_diagnostic__/body/1-2');
+    Object.defineProperty(diagnostic, Symbol.for('superdoc.v2.render-diagnostic.block'), {
+      enumerable: false,
+      value: true,
+    });
+    const ordinary = paragraph('ordinary-without-model-range');
+    const footnotes: FootnoteAnchorIndexInput = {
+      refs: [
+        { id: 'diagnostic-note', pos: 20_000, blockId: diagnostic.id },
+        { id: 'unproved-note', pos: 30_000, blockId: ordinary.id },
+      ],
+      bodyHeightById: new Map([
+        ['diagnostic-note', 24],
+        ['unproved-note', 24],
+      ]),
+      firstLineHeightById: new Map([
+        ['diagnostic-note', 10],
+        ['unproved-note', 10],
+      ]),
+    };
+
+    const actual = drain(buildFootnoteAnchorIndexSteps([diagnostic, ordinary], footnotes, null));
+
+    expect(actual.get(diagnostic.id)).toEqual([
+      { pmPos: 20_000, refId: 'diagnostic-note', fullHeight: 24, firstLineHeight: 10 },
+    ]);
+    expect(actual.has(ordinary.id)).toBe(false);
+  });
+
   it('preserves legacy ownership and edge-case semantics', () => {
     const blocks: FlowBlock[] = [
       paragraph('overlap-first', 10, 20),

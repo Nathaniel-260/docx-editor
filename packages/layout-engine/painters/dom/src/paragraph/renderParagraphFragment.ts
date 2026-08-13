@@ -154,7 +154,6 @@ export const renderParagraphFragment = (params: RenderParagraphFragmentParams): 
 
     return fragmentEl;
   } catch (error) {
-    console.error('[DomPainter] Fragment rendering failed:', { fragment, error });
     return createErrorPlaceholder(fragment.blockId, error);
   }
 };

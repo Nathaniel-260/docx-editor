@@ -151,7 +151,6 @@ export const renderImageFragment = ({
 
     return fragmentEl;
   } catch (error) {
-    console.error('[DomPainter] Image fragment rendering failed:', { fragment, error });
     return createErrorPlaceholder(fragment.blockId, error);
   }
 };

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
-import type { FlowBlock, Layout, Line, ParagraphBlock, ParagraphMeasure } from '@superdoc/contracts';
+import type { FlowBlock, Layout, Line, Measure, ParagraphBlock, ParagraphMeasure } from '@superdoc/contracts';
 import { incrementalLayout, measureCache } from '../src/incrementalLayout.js';
 import { computeDirtyRegions } from '../src/diff.js';
 import { selectionToRects } from '../src/index.js';
@@ -235,6 +235,442 @@ describe('incrementalLayout affected frontier', () => {
     expect(measureBlock).not.toHaveBeenCalled();
     expect(observeConstraints).toHaveBeenCalledTimes(3);
     expect(observeConstraints.mock.calls).toEqual(blocks.map((block) => [block, { maxWidth: 180, maxHeight: 80 }]));
+  });
+
+  it('remeasures and repaginates only a proved same-position diagnostic replacement', async () => {
+    const previousBlocks = documentBlocks(24);
+    const measureBlock = vi.fn(async (block: FlowBlock) => measureFor(block));
+    const previous = await incrementalLayout([], null, previousBlocks, options, measureBlock);
+    previous.layout.layoutEpoch = 1;
+    const replacementIndex = 10;
+    const previousBlock = previousBlocks[replacementIndex]!;
+    const diagnosticBlock = paragraph('render-diagnostic/main/10-11', 'unavailable', previousBlock.runs[0]!.pmStart!);
+    const nextBlocks = previousBlocks.slice();
+    nextBlocks[replacementIndex] = diagnosticBlock;
+    const dirty = computeDirtyRegions(previousBlocks, nextBlocks);
+    const previousBlockIndexById = new Map(previousBlocks.map((block, index) => [block.id, index]));
+    const currentBlockIndexById = new Map(nextBlocks.map((block, index) => [block.id, index]));
+    measureBlock.mockClear();
+
+    const result = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      options,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      undefined,
+      {
+        ...retainedMetadata(previous.layout),
+        previousPageStartKeys: previous.layout.pages.map(pageStartKey),
+        previousPageStartKeyIndex: pageStartKeyIndex(previous.layout),
+        previousBlockPageIndex: blockPageIndex(previous.layout),
+        maxRelaidPages: 4,
+        requireDocumentStartCheckpoint: false,
+        allowBlockIdChurn: true,
+        dirtyBlockIds: [...dirty.changedBlockIds, ...dirty.insertedBlockIds],
+        previousBlockIndexById,
+        currentBlockIndexById,
+        blockIdRewrites: {
+          previousToCurrent: new Map([[previousBlock.id, diagnosticBlock.id]]),
+          currentToPrevious: new Map([[diagnosticBlock.id, previousBlock.id]]),
+        },
+        dependencyProof: {
+          profile: 'single-section-local-text',
+          blockIdsUnchanged: true,
+          blockIdsUnique: true,
+          globalDependenciesAbsent: true,
+          renderInputsUnchanged: true,
+          pageReferencesAbsent: true,
+        },
+        provedDirtyRegion: dirty,
+        provedDirtyMeasureConstraints: new Map([[diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }]]),
+      },
+      {
+        provedDirtyRegion: dirty,
+        dependencyProof: {
+          profile: 'single-section-local-text',
+          blockIdsUnchanged: true,
+          blockIdsUnique: true,
+          globalDependenciesAbsent: true,
+          renderInputsUnchanged: true,
+          pageReferencesAbsent: true,
+        },
+        previousBlockIndexById,
+        currentBlockIndexById,
+        provedDirtyMeasureConstraints: new Map([[diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }]]),
+      },
+    );
+
+    expect(measureBlock).toHaveBeenCalledTimes(1);
+    expect(measureBlock).toHaveBeenCalledWith(diagnosticBlock, { maxWidth: 180, maxHeight: 80 });
+    expect(result.measureReuse).toMatchObject({ mode: 'proved-dirty-only', blocksMeasured: 1 });
+    expect(result.layoutReuse?.mode).toBe('tail-splice');
+    expect(result.layoutReuse?.pagesPaginated).not.toBeNull();
+    expect(result.layoutReuse!.pagesPaginated!).toBeLessThan(previous.layout.pages.length);
+    expect(result.measures[replacementIndex - 1]).toBe(previous.measures[replacementIndex - 1]);
+    expect(result.measures[replacementIndex + 1]).toBe(previous.measures[replacementIndex + 1]);
+  });
+
+  it('boundedly collapses a contiguous multi-block source owner into one diagnostic', async () => {
+    const previousBlocks = documentBlocks(24);
+    const measureBlock = vi.fn(async (block: FlowBlock) => measureFor(block));
+    const previous = await incrementalLayout([], null, previousBlocks, options, measureBlock);
+    previous.layout.layoutEpoch = 1;
+    const replacementIndex = 10;
+    const removedBlocks = previousBlocks.slice(replacementIndex, replacementIndex + 2);
+    const diagnosticBlock = paragraph(
+      'render-diagnostic/main/10-12',
+      'unavailable',
+      removedBlocks[0]!.runs[0]!.pmStart!,
+    );
+    const nextBlocks = [
+      ...previousBlocks.slice(0, replacementIndex),
+      diagnosticBlock,
+      ...previousBlocks.slice(replacementIndex + removedBlocks.length),
+    ];
+    const dirty = computeDirtyRegions(previousBlocks, nextBlocks);
+    const previousBlockIndexById = new Map(previousBlocks.map((block, index) => [block.id, index]));
+    const currentBlockIndexById = new Map(nextBlocks.map((block, index) => [block.id, index]));
+    const dependencyProof = {
+      profile: 'single-section-local-text' as const,
+      blockIdsUnchanged: true as const,
+      blockIdsUnique: true as const,
+      globalDependenciesAbsent: true as const,
+      renderInputsUnchanged: true as const,
+      pageReferencesAbsent: true as const,
+    };
+    const previousToCurrent = new Map(removedBlocks.map((block) => [block.id, diagnosticBlock.id]));
+    const currentToPrevious = new Map([[diagnosticBlock.id, removedBlocks[0]!.id]]);
+    measureBlock.mockClear();
+
+    const result = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      options,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      undefined,
+      {
+        ...retainedMetadata(previous.layout),
+        previousPageStartKeys: previous.layout.pages.map(pageStartKey),
+        previousPageStartKeyIndex: pageStartKeyIndex(previous.layout),
+        previousBlockPageIndex: blockPageIndex(previous.layout),
+        maxRelaidPages: 4,
+        requireDocumentStartCheckpoint: false,
+        allowBlockIdChurn: true,
+        dirtyBlockIds: [...dirty.changedBlockIds, ...dirty.insertedBlockIds],
+        previousBlockIndexById,
+        currentBlockIndexById,
+        blockIdRewrites: { previousToCurrent, currentToPrevious },
+        dependencyProof,
+        provedDirtyRegion: dirty,
+        provedDirtyMeasureConstraints: new Map([[diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }]]),
+      },
+      {
+        provedDirtyRegion: dirty,
+        dependencyProof,
+        previousBlockIndexById,
+        currentBlockIndexById,
+        provedDirtyMeasureConstraints: new Map([[diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }]]),
+      },
+    );
+
+    expect(measureBlock).toHaveBeenCalledTimes(1);
+    expect(measureBlock).toHaveBeenCalledWith(diagnosticBlock, { maxWidth: 180, maxHeight: 80 });
+    expect(result.measureReuse).toMatchObject({ mode: 'proved-dirty-only', blocksMeasured: 1 });
+    expect(result.layoutReuse?.mode).toBe('tail-splice');
+    expect(result.measures).toHaveLength(nextBlocks.length);
+    expect(result.measures[replacementIndex - 1]).toBe(previous.measures[replacementIndex - 1]);
+    expect(result.measures[replacementIndex + 1]).toBe(previous.measures[replacementIndex + 2]);
+  });
+
+  it('boundedly replaces a fragmentless pageBreakBefore companion with its paragraph owner', async () => {
+    const bodyBlocks = documentBlocks(24);
+    const replacementIndex = 10;
+    const pageBreak = {
+      kind: 'pageBreak' as const,
+      id: 'page-break-before-p10',
+      attrs: { source: 'pageBreakBefore' as const },
+    };
+    const paragraphOwner = bodyBlocks[replacementIndex]!;
+    const previousBlocks: FlowBlock[] = [
+      ...bodyBlocks.slice(0, replacementIndex),
+      pageBreak,
+      paragraphOwner,
+      ...bodyBlocks.slice(replacementIndex + 1),
+    ];
+    const measureBlock = vi.fn(
+      async (block: FlowBlock): Promise<Measure> =>
+        block.kind === 'pageBreak' ? { kind: 'pageBreak' } : measureFor(block),
+    );
+    const previous = await incrementalLayout([], null, previousBlocks, options, measureBlock);
+    previous.layout.layoutEpoch = 1;
+    expect(
+      previous.layout.pages.some((page) => page.fragments.some((fragment) => fragment.blockId === pageBreak.id)),
+    ).toBe(false);
+
+    const diagnosticBlock = paragraph('render-diagnostic/main/10-11', 'unavailable', paragraphOwner.runs[0]!.pmStart!);
+    const nextBlocks = [
+      ...previousBlocks.slice(0, replacementIndex),
+      diagnosticBlock,
+      ...previousBlocks.slice(replacementIndex + 2),
+    ];
+    const dirty = computeDirtyRegions(previousBlocks, nextBlocks);
+    const previousBlockIndexById = new Map(previousBlocks.map((block, index) => [block.id, index]));
+    const currentBlockIndexById = new Map(nextBlocks.map((block, index) => [block.id, index]));
+    const previousBlockPageIndex = blockPageIndex(previous.layout);
+    const paragraphPageRange = previousBlockPageIndex.get(paragraphOwner.id)!;
+    previousBlockPageIndex.set(pageBreak.id, paragraphPageRange);
+    const dependencyProof = {
+      profile: 'single-section-local-text' as const,
+      blockIdsUnchanged: true as const,
+      blockIdsUnique: true as const,
+      globalDependenciesAbsent: true as const,
+      renderInputsUnchanged: true as const,
+      pageReferencesAbsent: true as const,
+    };
+    measureBlock.mockClear();
+
+    const result = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      options,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      undefined,
+      {
+        ...retainedMetadata(previous.layout),
+        previousPageStartKeys: previous.layout.pages.map(pageStartKey),
+        previousPageStartKeyIndex: pageStartKeyIndex(previous.layout),
+        previousBlockPageIndex,
+        maxRelaidPages: 12,
+        requireDocumentStartCheckpoint: false,
+        allowBlockIdChurn: true,
+        dirtyBlockIds: [...dirty.changedBlockIds, ...dirty.insertedBlockIds],
+        previousBlockIndexById,
+        currentBlockIndexById,
+        blockIdRewrites: {
+          previousToCurrent: new Map([
+            [pageBreak.id, diagnosticBlock.id],
+            [paragraphOwner.id, diagnosticBlock.id],
+          ]),
+          currentToPrevious: new Map([[diagnosticBlock.id, paragraphOwner.id]]),
+        },
+        dependencyProof,
+        provedDirtyRegion: dirty,
+        provedDirtyMeasureConstraints: new Map([[diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }]]),
+      },
+      {
+        provedDirtyRegion: dirty,
+        dependencyProof,
+        previousBlockIndexById,
+        currentBlockIndexById,
+        provedDirtyMeasureConstraints: new Map([[diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }]]),
+      },
+    );
+
+    expect(measureBlock).toHaveBeenCalledTimes(1);
+    expect(measureBlock).toHaveBeenCalledWith(diagnosticBlock, { maxWidth: 180, maxHeight: 80 });
+    expect(result.measureReuse).toMatchObject({ mode: 'proved-dirty-only', blocksMeasured: 1 });
+    expect(result.layoutReuse?.mode).toBe('tail-splice');
+    expect(result.layoutReuse?.pagesPaginated).not.toBeNull();
+    expect(result.layoutReuse!.pagesPaginated!).toBeLessThan(previous.layout.pages.length);
+    expect(result.measures[replacementIndex - 1]).toBe(previous.measures[replacementIndex - 1]);
+    expect(result.measures[replacementIndex + 1]).toBe(previous.measures[replacementIndex + 2]);
+  });
+
+  it.each([
+    { kind: 'pageBreak' as const, lineBreakType: 'page' as const },
+    { kind: 'columnBreak' as const, lineBreakType: 'column' as const },
+  ])(
+    'boundedly replaces a fragmentless manual $lineBreakType break and both paragraph companions',
+    async ({ kind, lineBreakType }) => {
+      const bodyBlocks = documentBlocks(24);
+      const replacementIndex = 10;
+      const before = paragraph('manual-break-before', 'before', bodyBlocks[replacementIndex]!.runs[0]!.pmStart!);
+      const manualBreak: FlowBlock = {
+        kind,
+        id: `manual-${lineBreakType}-break`,
+        attrs: { lineBreakType },
+      };
+      const after = paragraph('manual-break-after', 'after', before.runs[0]!.pmEnd! + 1);
+      const removedBlocks: FlowBlock[] = [before, manualBreak, after];
+      const previousBlocks: FlowBlock[] = [
+        ...bodyBlocks.slice(0, replacementIndex),
+        ...removedBlocks,
+        ...bodyBlocks.slice(replacementIndex + 1),
+      ];
+      const measureBlock = vi.fn(
+        async (block: FlowBlock): Promise<Measure> =>
+          block.kind === 'pageBreak' || block.kind === 'columnBreak' ? { kind: block.kind } : measureFor(block),
+      );
+      const previous = await incrementalLayout([], null, previousBlocks, options, measureBlock);
+      previous.layout.layoutEpoch = 1;
+      expect(
+        previous.layout.pages.some((page) => page.fragments.some((fragment) => fragment.blockId === manualBreak.id)),
+      ).toBe(false);
+
+      const diagnosticBlock = paragraph('render-diagnostic/main/10-11', 'unavailable', before.runs[0]!.pmStart!);
+      const nextBlocks = [
+        ...previousBlocks.slice(0, replacementIndex),
+        diagnosticBlock,
+        ...previousBlocks.slice(replacementIndex + removedBlocks.length),
+      ];
+      const dirty = computeDirtyRegions(previousBlocks, nextBlocks);
+      const previousBlockIndexById = new Map(previousBlocks.map((block, index) => [block.id, index]));
+      const currentBlockIndexById = new Map(nextBlocks.map((block, index) => [block.id, index]));
+      const previousBlockPageIndex = blockPageIndex(previous.layout);
+      expect(previousBlockPageIndex.has(before.id)).toBe(true);
+      expect(previousBlockPageIndex.has(after.id)).toBe(true);
+      expect(previousBlockPageIndex.has(manualBreak.id)).toBe(false);
+      const dependencyProof = {
+        profile: 'single-section-local-text' as const,
+        blockIdsUnchanged: true as const,
+        blockIdsUnique: true as const,
+        globalDependenciesAbsent: true as const,
+        renderInputsUnchanged: true as const,
+        pageReferencesAbsent: true as const,
+      };
+      measureBlock.mockClear();
+
+      const result = await incrementalLayout(
+        previousBlocks,
+        previous.layout,
+        nextBlocks,
+        options,
+        measureBlock,
+        undefined,
+        previous.measures,
+        undefined,
+        undefined,
+        {
+          ...retainedMetadata(previous.layout),
+          previousPageStartKeys: previous.layout.pages.map(pageStartKey),
+          previousPageStartKeyIndex: pageStartKeyIndex(previous.layout),
+          previousBlockPageIndex,
+          maxRelaidPages: 12,
+          requireDocumentStartCheckpoint: false,
+          allowBlockIdChurn: true,
+          dirtyBlockIds: [...dirty.changedBlockIds, ...dirty.insertedBlockIds],
+          previousBlockIndexById,
+          currentBlockIndexById,
+          blockIdRewrites: {
+            previousToCurrent: new Map(removedBlocks.map((block) => [block.id, diagnosticBlock.id])),
+            currentToPrevious: new Map([[diagnosticBlock.id, after.id]]),
+          },
+          dependencyProof,
+          provedDirtyRegion: dirty,
+          provedDirtyMeasureConstraints: new Map([[diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }]]),
+        },
+        {
+          provedDirtyRegion: dirty,
+          dependencyProof,
+          previousBlockIndexById,
+          currentBlockIndexById,
+          provedDirtyMeasureConstraints: new Map([[diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }]]),
+        },
+      );
+
+      expect(measureBlock).toHaveBeenCalledTimes(1);
+      expect(measureBlock).toHaveBeenCalledWith(diagnosticBlock, { maxWidth: 180, maxHeight: 80 });
+      expect(result.measureReuse).toMatchObject({ mode: 'proved-dirty-only', blocksMeasured: 1 });
+      expect(result.layoutReuse?.mode).toBe('tail-splice');
+      expect(result.layoutReuse?.pagesPaginated).not.toBeNull();
+      expect(result.layoutReuse!.pagesPaginated!).toBeLessThan(previous.layout.pages.length);
+      expect(result.measures[replacementIndex - 1]).toBe(previous.measures[replacementIndex - 1]);
+      expect(result.measures[replacementIndex + 1]).toBe(previous.measures[replacementIndex + 3]);
+    },
+  );
+
+  it('keeps an accepted text edit dirty when a different owner becomes diagnostic', async () => {
+    const previousBlocks = documentBlocks(24);
+    const measureBlock = vi.fn(async (block: FlowBlock) => measureFor(block));
+    const previous = await incrementalLayout([], null, previousBlocks, options, measureBlock);
+    previous.layout.layoutEpoch = 1;
+    const editedIndex = 5;
+    const diagnosticIndex = 10;
+    const editedBlock = paragraph(
+      previousBlocks[editedIndex]!.id,
+      'accepted-edit-that-wraps-differently',
+      previousBlocks[editedIndex]!.runs[0]!.pmStart!,
+    );
+    const replacedBlock = previousBlocks[diagnosticIndex]!;
+    const diagnosticBlock = paragraph('render-diagnostic/main/10-11', 'unavailable', replacedBlock.runs[0]!.pmStart!);
+    const nextBlocks = previousBlocks.slice();
+    nextBlocks[editedIndex] = editedBlock;
+    nextBlocks[diagnosticIndex] = diagnosticBlock;
+    const dirty = computeDirtyRegions(previousBlocks, nextBlocks);
+    const previousBlockIndexById = new Map(previousBlocks.map((block, index) => [block.id, index]));
+    const currentBlockIndexById = new Map(nextBlocks.map((block, index) => [block.id, index]));
+    const dependencyProof = {
+      profile: 'single-section-local-text' as const,
+      blockIdsUnchanged: true as const,
+      blockIdsUnique: true as const,
+      globalDependenciesAbsent: true as const,
+      renderInputsUnchanged: true as const,
+      pageReferencesAbsent: true as const,
+    };
+    measureBlock.mockClear();
+
+    const result = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      options,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      undefined,
+      {
+        ...retainedMetadata(previous.layout),
+        previousPageStartKeys: previous.layout.pages.map(pageStartKey),
+        previousPageStartKeyIndex: pageStartKeyIndex(previous.layout),
+        previousBlockPageIndex: blockPageIndex(previous.layout),
+        maxRelaidPages: 4,
+        requireDocumentStartCheckpoint: false,
+        allowBlockIdChurn: true,
+        dirtyBlockIds: [...dirty.changedBlockIds, ...dirty.insertedBlockIds],
+        previousBlockIndexById,
+        currentBlockIndexById,
+        blockIdRewrites: {
+          previousToCurrent: new Map([[replacedBlock.id, diagnosticBlock.id]]),
+          currentToPrevious: new Map([[diagnosticBlock.id, replacedBlock.id]]),
+        },
+        dependencyProof,
+        provedDirtyRegion: dirty,
+        provedDirtyMeasureConstraints: new Map([
+          [editedBlock.id, { maxWidth: 180, maxHeight: 80 }],
+          [diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }],
+        ]),
+      },
+      {
+        provedDirtyRegion: dirty,
+        dependencyProof,
+        previousBlockIndexById,
+        currentBlockIndexById,
+        provedDirtyMeasureConstraints: new Map([
+          [editedBlock.id, { maxWidth: 180, maxHeight: 80 }],
+          [diagnosticBlock.id, { maxWidth: 180, maxHeight: 80 }],
+        ]),
+      },
+    );
+
+    expect(measureBlock.mock.calls.map(([block]) => block.id).sort()).toEqual(
+      [editedBlock.id, diagnosticBlock.id].sort(),
+    );
+    expect(result.measures[editedIndex]).not.toBe(previous.measures[editedIndex]);
+    expect(result.measures[diagnosticIndex]).not.toBe(previous.measures[diagnosticIndex]);
+    expect(result.layoutReuse?.mode).toBe('tail-splice');
   });
 
   it('locally paginates a proved split while lazily rekeying ordinal-scoped retained tail ids', async () => {
@@ -607,7 +1043,7 @@ describe('incrementalLayout affected frontier', () => {
     expect(incremental.layoutReuse!.tailAdoption!.startPageIndex).toBe(1);
   });
 
-  it('expands the exact probe until a delayed section boundary converges', async () => {
+  it('falls back to the canonical full layout when the bounded probe cannot prove convergence', async () => {
     const beforeBreak = documentBlocks(16);
     const afterBreak = Array.from({ length: 16 }, (_, offset) => {
       const index = beforeBreak.length + offset;
@@ -676,14 +1112,12 @@ describe('incrementalLayout affected frontier', () => {
     );
 
     expect(incremental.layoutReuse).toMatchObject({
-      mode: 'tail-splice',
-      reason: 'm4-affected-frontier-converged-tail-adopted',
-      tailDisposition: 'adopted-source-tail',
+      mode: 'full',
+      reason: expect.stringContaining('m4-layout-reuse-bounded-convergence-not-proved'),
+      tailDisposition: 'none',
+      convergencePageIndex: null,
+      pagesSplicedByReuse: 0,
     });
-    expect(incremental.layoutReuse.convergencePageIndex).toBeGreaterThan(3);
-    // The 1/2/4-page probes all fail before the delayed boundary. Include all
-    // failed probes in the reported work, not only the successful final probe.
-    expect(incremental.layoutReuse.pagesPaginated).toBeGreaterThan(10);
     measureCache.clear();
     const full = await incrementalLayout([], null, nextBlocks, options, nextMeasure);
     expect(paginationGeometry(incremental.layout)).toEqual(paginationGeometry(full.layout));
@@ -797,6 +1231,58 @@ describe('incrementalLayout affected frontier', () => {
           multiColumnSectionsProvedNonBalanceable: true,
         },
         dirtyBlockIds: ['p1'],
+        pmShift: { atChar: 1 + 20 + 'text-1'.length, delta: 1 },
+      },
+    );
+
+    expect(incremental.layoutReuse?.mode, incremental.layoutReuse?.reason).toBe('tail-splice');
+    expect(incremental.layoutReuse?.checkpointPageIndex).toBe(0);
+    measureCache.clear();
+    const cold = await incrementalLayout([], null, nextBlocks, options, measureBlock);
+    expect(paginationGeometry(incremental.layout)).toEqual(paginationGeometry(cold.layout));
+    expect(json(incremental.layout)).toEqual(json(cold.layout));
+  });
+
+  it('replays the leading section carrier from a required document-start checkpoint', async () => {
+    const initialSection: FlowBlock = {
+      kind: 'sectionBreak',
+      id: 'initial-section',
+      type: 'continuous',
+      attrs: { isFirstSection: true, sectionIndex: 0 },
+      pageSize: { w: 240, h: 140 },
+      margins: { top: 20, right: 25, bottom: 20, left: 25, header: 6, footer: 7 },
+      columns: { count: 1, gap: 0 },
+    };
+    const previousParagraphs = documentBlocks(10);
+    const previousBlocks: FlowBlock[] = [initialSection, ...previousParagraphs];
+    const nextParagraphs = replaceParagraphText(previousParagraphs, 1, 'text-1!');
+    const nextBlocks: FlowBlock[] = [initialSection, ...nextParagraphs];
+    const measureBlock = vi.fn(async (block: FlowBlock) => measureFor(block));
+    const previous = await incrementalLayout([], null, previousBlocks, options, measureBlock);
+    const provedDirtyRegion = {
+      firstDirtyIndex: 2,
+      lastStableIndex: 1,
+      insertedBlockIds: [],
+      deletedBlockIds: [],
+      changedBlockIds: ['p1'],
+      stableBlockIds: new Set(nextBlocks.filter((block) => block.id !== 'p1').map((block) => block.id)),
+    };
+
+    const incremental = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      options,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      undefined,
+      {
+        ...provedReuse(previousBlocks, nextBlocks, previous.layout),
+        provedDirtyRegion,
+        dirtyBlockIds: ['p1'],
+        requireDocumentStartCheckpoint: true,
         pmShift: { atChar: 1 + 20 + 'text-1'.length, delta: 1 },
       },
     );

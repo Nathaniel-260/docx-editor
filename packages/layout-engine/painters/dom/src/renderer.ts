@@ -485,11 +485,18 @@ type ActivePersistentPagePainterTransaction = {
   snapshot: PersistentPagePainterStateSnapshot;
   pendingPaintSnapshot: PaintSnapshot | null;
   hasPendingPaintSnapshot: boolean;
+  fragmentFailures: PainterFragmentFailure[];
+};
+
+type PainterFragmentFailure = {
+  readonly blockId: string;
+  readonly code: 'painter-fragment-unavailable';
 };
 
 type PersistentPagePainterTransaction = {
   commit(): void;
   rollback(): void;
+  readFragmentFailures(): readonly PainterFragmentFailure[];
 };
 
 function clonePageDomStateMetadata(state: PageDomState): PageDomState {
@@ -1235,6 +1242,7 @@ export class DomPainter {
       snapshot: this.capturePersistentPagePainterState(),
       pendingPaintSnapshot: null,
       hasPendingPaintSnapshot: false,
+      fragmentFailures: [],
     };
     // Tooltip staging is ephemeral but mutable during fragment rendering.
     // Isolate candidate keys so a mid-render throw cannot leave any candidate
@@ -1253,6 +1261,10 @@ export class DomPainter {
     };
 
     return {
+      readFragmentFailures: () => {
+        if (settled || this.activePersistentPageTransaction !== active) return [];
+        return active.fragmentFailures.map((failure) => ({ ...failure }));
+      },
       commit: () => {
         if (!claim()) return;
         try {
@@ -2467,6 +2479,10 @@ export class DomPainter {
     } else {
       throw new Error(`DomPainter: unsupported fragment kind ${(fragment as Fragment).kind}`);
     }
+    if (el.dataset.v2RenderDiagnostic === 'true') {
+      this.applyRenderDiagnosticFragmentFrame(el, fragment, resolvedItem);
+      return el;
+    }
     // Stamp note-band identity here (single dispatch with the page index in
     // scope); a no-op for non-note fragments. Note fragments always carry a
     // page index (set by renderPage); guard satisfies the optional type.
@@ -2544,31 +2560,26 @@ export class DomPainter {
     });
   }
 
-  /**
-   * Creates an error placeholder element for failed fragment renders.
-   * Prevents entire paint operation from failing due to single fragment error.
-   *
-   * @param blockId - The block ID that failed to render
-   * @param error - The error that occurred
-   * @returns HTMLElement showing the error
-   */
-  private createErrorPlaceholder(blockId: string, error: unknown): HTMLElement {
-    if (!this.doc) {
-      // Fallback if doc is not available
-      const el = document.createElement('div');
-      el.className = 'render-error-placeholder';
-      el.style.cssText = 'color: red; padding: 4px; border: 1px solid red; background: #fee;';
-      el.textContent = `[Render Error: ${blockId}]`;
-      return el;
+  private createErrorPlaceholder(blockId: string, _error: unknown): HTMLElement {
+    const active = this.activePersistentPageTransaction;
+    if (active && !active.fragmentFailures.some((failure) => failure.blockId === blockId)) {
+      active.fragmentFailures.push({
+        blockId,
+        code: 'painter-fragment-unavailable',
+      });
     }
-
-    const el = this.doc.createElement('div');
-    el.className = 'render-error-placeholder';
-    el.style.cssText = 'color: red; padding: 4px; border: 1px solid red; background: #fee;';
-    el.textContent = `[Render Error: ${blockId}]`;
-    if (error instanceof Error) {
-      el.title = error.message;
-    }
+    const doc = this.doc ?? document;
+    const el = doc.createElement('div');
+    el.classList.add('render-error-placeholder', CLASS_NAMES.fragment);
+    el.dataset.v2RenderDiagnostic = 'true';
+    el.dataset.v2RenderDiagnosticCode = 'painter-fragment-unavailable';
+    el.setAttribute('contenteditable', 'false');
+    el.setAttribute('tabindex', '-1');
+    el.setAttribute('draggable', 'false');
+    el.setAttribute('aria-readonly', 'true');
+    el.style.cssText =
+      'box-sizing: border-box; padding: 4px; border: 1px solid currentColor; user-select: none; -webkit-user-select: none;';
+    el.textContent = 'This content is unavailable.';
     return el;
   }
 
@@ -2780,7 +2791,6 @@ export class DomPainter {
 
       return fragmentEl;
     } catch (error) {
-      console.error('[DomPainter] Drawing fragment rendering failed:', { fragment, error });
       return this.createErrorPlaceholder(fragment.blockId, error);
     }
   }
@@ -5202,7 +5212,6 @@ export class DomPainter {
 
       return el;
     } catch (error) {
-      console.error('[DomPainter] Table fragment rendering failed:', { fragment, error });
       return this.createErrorPlaceholder(fragment.blockId, error);
     }
   }
@@ -5290,6 +5299,10 @@ export class DomPainter {
     section?: 'body' | 'header' | 'footer',
     resolvedItem?: ResolvedPaintItem,
   ): void {
+    if (el.dataset.v2RenderDiagnostic === 'true') {
+      this.applyRenderDiagnosticFragmentFrame(el, fragment, resolvedItem);
+      return;
+    }
     // Narrow to fragment-kind resolved items (excludes ResolvedGroupItem)
     const fragmentItem = resolvedItem?.kind === 'fragment' ? resolvedItem : undefined;
     const story = resolveSectionStory(section);
@@ -5303,6 +5316,30 @@ export class DomPainter {
         this.applyFragmentWrapperZIndex(el, fragment);
       }
     }
+  }
+
+  private applyRenderDiagnosticFragmentFrame(
+    el: HTMLElement,
+    fragment: Fragment,
+    resolvedItem?: ResolvedPaintItem,
+  ): void {
+    const item = resolvedItem?.kind === 'fragment' ? resolvedItem : null;
+    el.style.position = 'absolute';
+    let height: number | undefined;
+    if (item) {
+      el.style.left = `${item.x}px`;
+      el.style.top = `${item.y}px`;
+      el.style.width = `${item.width}px`;
+      height = item.height;
+    } else {
+      el.style.left = `${fragment.x}px`;
+      el.style.top = `${fragment.y}px`;
+      el.style.width = `${fragment.width}px`;
+      height = 'height' in fragment ? fragment.height : undefined;
+    }
+    if (typeof height === 'number') el.style.height = `${height}px`;
+    this.applyFragmentFlowClass(el, fragment, item ?? undefined);
+    this.applyFragmentWrapperZIndex(el, fragment, item?.zIndex);
   }
 
   /**

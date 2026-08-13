@@ -99,7 +99,7 @@ function createTestPainter(opts: { blocks?: FlowBlock[]; measures?: Measure[] } 
     },
   });
 
-  return {
+  const testPainter = {
     paint(layout: Layout, mount: HTMLElement, mapping?: unknown) {
       const effectiveResolved = resolvedLayoutOverridden
         ? currentResolved
@@ -143,6 +143,48 @@ function createTestPainter(opts: { blocks?: FlowBlock[]; measures?: Measure[] } 
       return painter.consumePositionValidationSummary();
     },
   };
+  const transactionSymbol = Symbol.for('superdoc.painter-dom.persistent-page-transaction.v1');
+  Object.defineProperty(testPainter, transactionSymbol, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: (painter as unknown as Record<PropertyKey, unknown>)[transactionSymbol],
+  });
+  return testPainter;
+}
+
+function paintWithPrivateTransaction(painter: unknown, paint: () => void): readonly unknown[] {
+  const begin = (painter as Record<PropertyKey, unknown>)[
+    Symbol.for('superdoc.painter-dom.persistent-page-transaction.v1')
+  ];
+  if (typeof begin !== 'function') throw new Error('expected private painter transaction');
+  const transaction = (
+    begin as () => {
+      readFragmentFailures(): readonly unknown[];
+      commit(): void;
+      rollback(): void;
+    }
+  )();
+  try {
+    paint();
+    const failures = transaction.readFragmentFailures();
+    transaction.commit();
+    return failures;
+  } catch (error) {
+    transaction.rollback();
+    throw error;
+  }
+}
+
+function expectSanitizedRenderPlaceholder(mount: HTMLElement, privateDetail: string): void {
+  const placeholder = mount.querySelector('.render-error-placeholder') as HTMLElement | null;
+  expect(placeholder).toBeTruthy();
+  expect(placeholder?.textContent).toBe('This content is unavailable.');
+  expect(placeholder?.title).toBe('');
+  expect(placeholder?.outerHTML).not.toContain(privateDetail);
+  expect(placeholder?.getAttribute('contenteditable')).toBe('false');
+  expect(placeholder?.getAttribute('tabindex')).toBe('-1');
+  expect(placeholder?.style.userSelect).toBe('none');
 }
 
 const block: FlowBlock = {
@@ -2179,6 +2221,120 @@ describe('DomPainter', () => {
     expect(() => painter.paint(missingTableLayout, mount)).toThrow(/Missing block\/measure/);
   });
 
+  it('contains a paragraph fragment failure with one sanitized private carrier', () => {
+    const detail = 'paragraph customer text and stack';
+    const renderLineSpy = vi.spyOn(DomPainter.prototype as any, 'renderLine').mockImplementation(() => {
+      throw new Error(detail);
+    });
+    try {
+      const painter = createTestPainter({ blocks: [block], measures: [measure] });
+      const failures = paintWithPrivateTransaction(painter, () => painter.paint(layout, mount));
+
+      expectSanitizedRenderPlaceholder(mount, detail);
+      expect(mount.innerHTML).not.toContain('block-1');
+      expect(failures).toEqual([{ blockId: 'block-1', code: 'painter-fragment-unavailable' }]);
+    } finally {
+      renderLineSpy.mockRestore();
+    }
+  });
+
+  it('contains an image fragment failure with one sanitized private carrier', () => {
+    const detail = 'image customer path and stack';
+    const imageBlock: FlowBlock = {
+      kind: 'image',
+      id: 'image-err',
+      src: 'data:image/png;base64,AA==',
+      width: 30,
+      height: 20,
+    };
+    const imageMeasure: Measure = { kind: 'image', width: 30, height: 20 };
+    const imageLayout: Layout = {
+      pageSize: layout.pageSize,
+      pages: [
+        {
+          number: 1,
+          fragments: [
+            {
+              kind: 'image',
+              blockId: 'image-err',
+              x: 10,
+              y: 10,
+              width: 30,
+              height: 20,
+            },
+          ],
+        },
+      ],
+    };
+    const frameSpy = vi.spyOn(DomPainter.prototype as any, 'applyResolvedFragmentFrame').mockImplementation(() => {
+      throw new Error(detail);
+    });
+    try {
+      const painter = createTestPainter({ blocks: [imageBlock], measures: [imageMeasure] });
+      const failures = paintWithPrivateTransaction(painter, () => painter.paint(imageLayout, mount));
+
+      expectSanitizedRenderPlaceholder(mount, detail);
+      expect(mount.innerHTML).not.toContain('image-err');
+      expect(failures).toEqual([{ blockId: 'image-err', code: 'painter-fragment-unavailable' }]);
+    } finally {
+      frameSpy.mockRestore();
+    }
+  });
+
+  it('contains a drawing fragment failure atomically with one sanitized private carrier', () => {
+    const detail = 'positioned group child customer stack';
+    const drawingBlock: FlowBlock = {
+      kind: 'drawing',
+      id: 'drawing-err',
+      drawingKind: 'vectorShape',
+      geometry: { width: 30, height: 20 },
+    };
+    const drawingMeasure: Measure = {
+      kind: 'drawing',
+      drawingKind: 'vectorShape',
+      width: 30,
+      height: 20,
+      naturalWidth: 30,
+      naturalHeight: 20,
+      scale: 1,
+      geometry: { width: 30, height: 20 },
+    };
+    const drawingLayout: Layout = {
+      pageSize: layout.pageSize,
+      pages: [
+        {
+          number: 1,
+          fragments: [
+            {
+              kind: 'drawing',
+              drawingKind: 'vectorShape',
+              blockId: 'drawing-err',
+              x: 10,
+              y: 10,
+              width: 30,
+              height: 20,
+              geometry: { width: 30, height: 20 },
+              scale: 1,
+            },
+          ],
+        },
+      ],
+    };
+    const contentSpy = vi.spyOn(DomPainter.prototype as any, 'renderDrawingContent').mockImplementation(() => {
+      throw new Error(detail);
+    });
+    try {
+      const painter = createTestPainter({ blocks: [drawingBlock], measures: [drawingMeasure] });
+      const failures = paintWithPrivateTransaction(painter, () => painter.paint(drawingLayout, mount));
+
+      expectSanitizedRenderPlaceholder(mount, detail);
+      expect(mount.innerHTML).not.toContain('drawing-err');
+      expect(failures).toEqual([{ blockId: 'drawing-err', code: 'painter-fragment-unavailable' }]);
+    } finally {
+      contentSpy.mockRestore();
+    }
+  });
+
   it('renders an error placeholder when table-cell line rendering throws', () => {
     const renderLineError = new Error('renderLine forced error');
     const tableBlock: TableBlock = {
@@ -2260,25 +2416,19 @@ describe('DomPainter', () => {
       ],
     };
 
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {
-      // Intentionally empty - suppress expected error logging during this regression test.
-    });
     const renderLineSpy = vi.spyOn(DomPainter.prototype as any, 'renderLine').mockImplementation(() => {
       throw renderLineError;
     });
 
     try {
       const painter = createTestPainter({ blocks: [tableBlock], measures: [tableMeasure] });
-      expect(() => painter.paint(tableLayout, mount)).not.toThrow();
+      const failures = paintWithPrivateTransaction(painter, () => painter.paint(tableLayout, mount));
 
-      const placeholder = mount.querySelector('.render-error-placeholder') as HTMLElement | null;
-      expect(placeholder).toBeTruthy();
-      expect(placeholder?.textContent).toContain('[Render Error: table-err]');
-      expect(placeholder?.title).toBe('renderLine forced error');
-      expect(consoleErrorSpy).toHaveBeenCalled();
+      expectSanitizedRenderPlaceholder(mount, 'renderLine forced error');
+      expect(mount.innerHTML).not.toContain('table-err');
+      expect(failures).toEqual([{ blockId: 'table-err', code: 'painter-fragment-unavailable' }]);
     } finally {
       renderLineSpy.mockRestore();
-      consoleErrorSpy.mockRestore();
     }
   });
 

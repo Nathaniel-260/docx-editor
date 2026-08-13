@@ -1,3 +1,5 @@
+import { DomMeasurementInfrastructureError } from './measurement-infrastructure-error.js';
+
 /**
  * Font Metrics Cache for Typography Measurements
  *
@@ -175,7 +177,7 @@ export class FontMetricsMeasurementCache {
     fonts: MeasurementFonts,
     fontSignature = '',
   ): FontMetricsResult {
-    if (this.disposed) throw new Error('FontMetricsMeasurementCache has been disposed');
+    if (this.disposed) throw new DomMeasurementInfrastructureError('FontMetricsMeasurementCache has been disposed');
     const font = buildFontStringForMetrics(fontInfo, mode, fonts);
     const key = `${fontSignature}\u0000${font}`;
     const cached = this.entries.get(key);
@@ -216,7 +218,7 @@ export class FontMetricsMeasurementCache {
   }
 
   clear(): void {
-    if (this.disposed) throw new Error('FontMetricsMeasurementCache has been disposed');
+    if (this.disposed) throw new DomMeasurementInfrastructureError('FontMetricsMeasurementCache has been disposed');
     this.entries.clear();
   }
 

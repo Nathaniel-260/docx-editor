@@ -555,7 +555,9 @@ describe('incrementalLayout note dependency closure (plan 10)', () => {
     expect(expanded.layoutReuse?.reason).not.toBe('m4-note-only-geometry-stable-tail-adopted');
     expect(expanded.layoutReuse).toMatchObject({
       mode: 'tail-splice',
-      reason: expect.stringContaining('m4-footnote-reserve-localized'),
+      reason: expect.stringContaining('m4-footnote-reserve-localized;m4-terminal-suffix-relaid-with-prefix-adoption'),
+      tailDisposition: 'relaid-to-document-end',
+      tailAdoption: null,
     });
 
     clearIncrementalModuleState();

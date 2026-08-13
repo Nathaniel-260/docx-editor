@@ -4,6 +4,45 @@ import { namedStoryLocator } from '@superdoc/contracts';
 import type { FlowBlock, HeaderFooterLayout, Measure, ParaFragment, ResolvedFragmentItem } from '@superdoc/contracts';
 
 describe('resolveHeaderFooterLayout', () => {
+  it('offers a resolve failure only to the exact header/footer fragment owner', () => {
+    const ownedError = new Error('owned-header-resolve-failure');
+    const owner = (input: {
+      blockIds: readonly string[];
+      debugDetail: unknown;
+      sourcePageRange: { firstPage: number; lastPage: number };
+    }): Error => {
+      expect(input.blockIds).toEqual(['missing-header-table']);
+      expect(input.debugDetail).toBeInstanceOf(Error);
+      expect(input.sourcePageRange).toEqual({ firstPage: 0, lastPage: 0 });
+      return ownedError;
+    };
+    const layout: HeaderFooterLayout = {
+      height: 50,
+      pages: [
+        {
+          number: 1,
+          fragments: [
+            {
+              kind: 'table',
+              blockId: 'missing-header-table',
+              fromRow: 0,
+              toRow: 1,
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 40,
+            },
+          ],
+        },
+      ],
+    };
+    Object.defineProperty(layout, Symbol.for('superdoc.v2.render-diagnostic.resolve-owner'), {
+      value: owner,
+    });
+
+    expect(() => resolveHeaderFooterLayout(layout, [], [])).toThrow(ownedError);
+  });
+
   it('resolves a header/footer with one paragraph fragment', () => {
     const paraFragment: ParaFragment = {
       kind: 'para',

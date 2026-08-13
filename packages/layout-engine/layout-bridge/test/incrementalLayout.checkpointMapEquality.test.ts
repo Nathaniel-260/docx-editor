@@ -18,6 +18,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { FlowBlock, Layout, Line, Measure, Page, ParagraphBlock, ParagraphMeasure } from '@superdoc/contracts';
 import { clearIncrementalModuleState, incrementalLayout, type IncrementalLayoutReuseOptions } from '../src/index.js';
+import { __test_only_splicedCheckpointStats } from '../src/incrementalLayout.js';
 import { computeDirtyRegions } from '../src/diff.js';
 
 const OPTIONS = {
@@ -159,5 +160,43 @@ describe('incrementalLayout spliced checkpoint sidecar equality (plan 15)', () =
       expect(wrong, `editIdx=${editIdx} wrong`).toEqual([]);
       expect(spliced.size, `editIdx=${editIdx} size`).toBe(coldMap.size);
     }
+  });
+
+  it('keeps checkpoint ancestry shallow across 1,001 sequential retained splices', async () => {
+    let currentBlocks = paragraphs(60);
+    let current = await incrementalLayout([], null, currentBlocks, OPTIONS, measureBlock);
+    current.layout.layoutEpoch = 1;
+
+    for (let sequence = 0; sequence < 1_001; sequence += 1) {
+      const nextBlocks = applyEdit(currentBlocks, 20);
+      const next = await incrementalLayout(
+        currentBlocks,
+        current.layout,
+        nextBlocks,
+        OPTIONS,
+        measureBlock,
+        undefined,
+        current.measures,
+        undefined,
+        undefined,
+        buildReuse(currentBlocks, nextBlocks, current.layout, currentBlocks[20]!.runs[0]!.pmEnd!),
+      );
+      expect(next.layoutReuse.mode, `sequence=${sequence}`).toBe('tail-splice');
+      next.layout.layoutEpoch = sequence + 2;
+      currentBlocks = nextBlocks;
+      current = next;
+    }
+
+    const stats = __test_only_splicedCheckpointStats(current.layout.blockResumeCheckpoints);
+    expect(stats).not.toBeNull();
+    expect(stats!.pieceCount).toBeLessThanOrEqual(4);
+    expect(stats!.sourceCount).toBeLessThanOrEqual(4);
+    expect(stats!.maximumTransformTreeDepth).toBeLessThanOrEqual(32);
+
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, currentBlocks, OPTIONS, measureBlock);
+    expect(new Map(current.layout.blockResumeCheckpoints ?? [])).toEqual(
+      new Map(cold.layout.blockResumeCheckpoints ?? []),
+    );
   });
 });

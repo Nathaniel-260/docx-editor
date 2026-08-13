@@ -15,16 +15,21 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { delimiter, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export function formatGenerated(content, filepath) {
   try {
     // Run the JavaScript CLI through Node so pnpm's Windows `.cmd` shim is never involved.
     const vitePlusCli = fileURLToPath(import.meta.resolve('vite-plus/bin'));
+    const vitePlusPackage = fileURLToPath(import.meta.resolve('vite-plus/package.json'));
+    const dependencyNodeModules = dirname(dirname(vitePlusPackage));
+    const nodePath = [dependencyNodeModules, process.env.NODE_PATH].filter(Boolean).join(delimiter);
     return execFileSync(process.execPath, [vitePlusCli, 'fmt', '--stdin-filepath', filepath], {
       input: content,
       encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, NODE_PATH: nodePath },
     });
   } catch {
     return content;

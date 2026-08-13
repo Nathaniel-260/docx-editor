@@ -164,6 +164,22 @@ describe('MeasureCache', () => {
     expect(cache.get(item, 400, 600)).toBeUndefined();
   });
 
+  it('retires every stale variant for one repeatedly changed block without evicting unrelated blocks', () => {
+    const stable = block('stable-paragraph', 'stable');
+    cache.set(stable, 400, 600, { totalHeight: 10 });
+
+    for (let revision = 0; revision < 1_000; revision += 1) {
+      const current = block('edited-paragraph', `revision-${revision}`);
+      cache.invalidate([current.id]);
+      cache.set(current, 400, 600, { totalHeight: revision });
+    }
+
+    expect(cache.getSize()).toBe(2);
+    expect(cache.get(stable, 400, 600)).toEqual({ totalHeight: 10 });
+    expect(cache.get(block('edited-paragraph', 'revision-998'), 400, 600)).toBeUndefined();
+    expect(cache.get(block('edited-paragraph', 'revision-999'), 400, 600)).toEqual({ totalHeight: 999 });
+  });
+
   it('does not share a measure between two documents that map the same block differently', () => {
     const item = block('0-paragraph', 'hello');
     // Document A measured this block under its font mapping (signature "docA").

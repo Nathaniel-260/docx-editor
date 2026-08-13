@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vite-plus/test';
+import { describe, it, expect, vi } from 'vite-plus/test';
 import { createFontResolver } from '@superdoc/font-system';
 import { resolveLayout } from './resolveLayout.js';
 import type {
@@ -28,6 +28,49 @@ describe('resolveLayout', () => {
       pageGap: 0,
       pages: [],
     });
+  });
+
+  it('offers a resolve failure only to the exact fragment owner', () => {
+    const layout: Layout = {
+      pageSize: { w: 612, h: 792 },
+      pages: [
+        {
+          number: 1,
+          fragments: [
+            {
+              kind: 'table',
+              blockId: 'missing-table',
+              fromRow: 0,
+              toRow: 1,
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 40,
+            } as TableFragment,
+          ],
+        },
+      ],
+    };
+    const input = { layout, flowMode: 'paginated' as const, blocks: [], measures: [] };
+    const owner = vi.fn(
+      (failure: {
+        blockIds: readonly string[];
+        debugDetail: unknown;
+        sourcePageRange: { firstPage: number; lastPage: number };
+      }) => {
+        expect(failure.blockIds).toEqual(['missing-table']);
+        expect(failure.debugDetail).toBeInstanceOf(Error);
+        expect(failure.sourcePageRange).toEqual({ firstPage: 0, lastPage: 0 });
+        return new Error('owned-resolve-failure');
+      },
+    );
+    Object.defineProperty(input, Symbol.for('superdoc.v2.render-diagnostic.resolve-owner'), {
+      configurable: true,
+      value: owner,
+    });
+
+    expect(() => resolveLayout(input)).toThrow('owned-resolve-failure');
+    expect(owner).toHaveBeenCalledTimes(1);
   });
 
   it('copies metadata for a single page', () => {

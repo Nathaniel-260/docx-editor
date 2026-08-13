@@ -46,6 +46,14 @@ import {
 } from './versionSignature.js';
 import { resolvePageRefText } from './resolvePageRefText.js';
 
+const V2_RENDER_DIAGNOSTIC_RESOLVE_OWNER = Symbol.for('superdoc.v2.render-diagnostic.resolve-owner');
+
+type V2RenderDiagnosticResolveOwner = (input: {
+  blockIds: readonly string[];
+  debugDetail: unknown;
+  sourcePageRange: { firstPage: number; lastPage: number };
+}) => Error | null;
+
 export type ResolveLayoutInput = {
   layout: Layout;
   flowMode: FlowMode;
@@ -837,10 +845,29 @@ export type ResolvePageInput = {
   pageCountFieldsExact?: boolean;
 };
 
+function contiguousFragmentPageRange(
+  layout: Layout,
+  pageIndex: number,
+  blockId: string,
+): { firstPage: number; lastPage: number } {
+  const pageContainsBlock = (index: number): boolean =>
+    layout.pages[index]?.fragments.some((fragment) => fragment.blockId === blockId) === true;
+  let firstPage = pageIndex;
+  let lastPage = pageIndex;
+  while (firstPage > 0 && pageContainsBlock(firstPage - 1)) firstPage -= 1;
+  while (lastPage + 1 < layout.pages.length && pageContainsBlock(lastPage + 1)) lastPage += 1;
+  return { firstPage, lastPage };
+}
+
 /** Resolve one page without scanning or resolving sibling pages. */
 export function resolvePage(input: ResolvePageInput): ResolvedPage {
   const { layout, page, pageIndex, blockMap, blockVersionCache, pageRefAnchorMap } = input;
   const fontSignature = input.fontSignature ?? '';
+  const renderDiagnosticOwner = (
+    input as ResolvePageInput & {
+      [V2_RENDER_DIAGNOSTIC_RESOLVE_OWNER]?: V2RenderDiagnosticResolveOwner;
+    }
+  )[V2_RENDER_DIAGNOSTIC_RESOLVE_OWNER];
   return {
     id: `page-${pageIndex}`,
     index: pageIndex,
@@ -852,18 +879,28 @@ export function resolvePage(input: ResolvePageInput): ResolvedPage {
     number: page.number,
     width: page.size?.w ?? layout.pageSize.w,
     height: page.size?.h ?? layout.pageSize.h,
-    items: page.fragments.map((fragment, fragmentIndex) =>
-      resolveFragmentItem(
-        fragment,
-        fragmentIndex,
-        pageIndex,
-        blockMap,
-        blockVersionCache,
-        undefined,
-        fontSignature,
-        pageRefAnchorMap ? { sourcePage: page.number, anchorMap: pageRefAnchorMap } : undefined,
-      ),
-    ),
+    items: page.fragments.map((fragment, fragmentIndex) => {
+      try {
+        return resolveFragmentItem(
+          fragment,
+          fragmentIndex,
+          pageIndex,
+          blockMap,
+          blockVersionCache,
+          undefined,
+          fontSignature,
+          pageRefAnchorMap ? { sourcePage: page.number, anchorMap: pageRefAnchorMap } : undefined,
+        );
+      } catch (error) {
+        const owned = renderDiagnosticOwner?.({
+          blockIds: [fragment.blockId],
+          debugDetail: error,
+          sourcePageRange: contiguousFragmentPageRange(layout, pageIndex, fragment.blockId),
+        });
+        if (owned) throw owned;
+        throw error;
+      }
+    }),
     ...(input.pageCountFieldsExact === false ? { pageCountFieldsExact: false } : {}),
     margins: page.margins,
     footnoteReserved: page.footnoteReserved,
@@ -894,21 +931,31 @@ export function resolveLayout(input: ResolveLayoutInput): ResolvedLayout {
   const sectionPageCounts: Record<string, number> = {};
   const pages: ResolvedPage[] = [];
   const pageProgress = createQuartileProgress(layout.pages.length, 'pages');
+  const renderDiagnosticOwner = (
+    input as ResolveLayoutInput & {
+      [V2_RENDER_DIAGNOSTIC_RESOLVE_OWNER]?: V2RenderDiagnosticResolveOwner;
+    }
+  )[V2_RENDER_DIAGNOSTIC_RESOLVE_OWNER];
   layout.pages.forEach((page, pageIndex) => {
     const sectionKey = String(page.sectionIndex ?? 0);
     sectionPageCounts[sectionKey] = (sectionPageCounts[sectionKey] ?? 0) + 1;
-    pages.push(
-      resolvePage({
-        layout,
-        page,
-        pageIndex,
-        blockMap,
-        blockVersionCache,
-        fontSignature,
-        pageRefAnchorMap,
-        pageCountFieldsExact: input.pageCountFieldsExact,
-      }),
-    );
+    const pageInput: ResolvePageInput = {
+      layout,
+      page,
+      pageIndex,
+      blockMap,
+      blockVersionCache,
+      fontSignature,
+      pageRefAnchorMap,
+      pageCountFieldsExact: input.pageCountFieldsExact,
+    };
+    if (renderDiagnosticOwner) {
+      Object.defineProperty(pageInput, V2_RENDER_DIAGNOSTIC_RESOLVE_OWNER, {
+        configurable: true,
+        value: renderDiagnosticOwner,
+      });
+    }
+    pages.push(resolvePage(pageInput));
     pageProgress(pageIndex + 1, input.onProgress);
   });
 

@@ -19,6 +19,7 @@ import { getRenderedTableBorderWidthPx } from '@superdoc/contracts';
 import { DEFAULT_FONT_MEASURE_CONTEXT, type FontMeasureContext } from '@superdoc/font-system';
 import type { AutoFitRowInput } from './autofit-columns.js';
 import type { WorkingTableCellInput, WorkingTableGridInput } from './autofit-normalize.js';
+import { DomMeasurementInfrastructureError } from './measurement-infrastructure-error.js';
 import {
   codePointAt,
   hasCjkBreakOpportunity,
@@ -991,7 +992,7 @@ function getCanvasContext(fontContext?: FontMeasureContext): CanvasRenderingCont
     const canvas = document.createElement('canvas');
     canvasContext = canvas.getContext('2d');
     if (!canvasContext) {
-      throw new Error('Failed to create canvas context for AutoFit cell measurement.');
+      throw new DomMeasurementInfrastructureError('Failed to create canvas context for AutoFit cell measurement.');
     }
   }
 

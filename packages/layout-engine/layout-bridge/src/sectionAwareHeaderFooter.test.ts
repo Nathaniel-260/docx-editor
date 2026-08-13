@@ -42,6 +42,11 @@ describe('buildSectionAwareHeaderFooterMeasurementGroups', () => {
       margins: { top: 96, right: 86.4, bottom: 96, left: 86.4, header: 48, footer: 48 },
       overflowBaseHeight: 864,
     };
+    const paginationOwner = () => new Error('owned pagination');
+    Object.defineProperty(fallbackConstraints, Symbol.for('superdoc.v2.render-diagnostic.pagination-owner'), {
+      enumerable: false,
+      value: paginationOwner,
+    });
 
     const groups = buildSectionAwareHeaderFooterMeasurementGroups(
       'footer',
@@ -53,5 +58,10 @@ describe('buildSectionAwareHeaderFooterMeasurementGroups', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]?.effectiveWidth).toBeCloseTo(643.2, 6);
     expect(groups[0]?.sectionConstraints.width).toBeCloseTo(643.2, 6);
+    expect(
+      (groups[0]?.sectionConstraints as Record<PropertyKey, unknown>)[
+        Symbol.for('superdoc.v2.render-diagnostic.pagination-owner')
+      ],
+    ).toBe(paginationOwner);
   });
 });

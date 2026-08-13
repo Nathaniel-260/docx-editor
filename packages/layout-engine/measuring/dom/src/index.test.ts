@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vite-plus/test';
-import { clearMeasurementCache, configureMeasurement, measureBlock } from './index.js';
+import { clearMeasurementCache, clearTextMeasurementCaches, configureMeasurement, measureBlock } from './index.js';
 import type {
   FlowBlock,
   ParagraphMeasure,
@@ -53,6 +53,172 @@ describe('measureBlock', () => {
   });
 
   describe('basic measurement', () => {
+    it('offers a measurement failure only to the exact block owner', async () => {
+      const sourceError = new Error('measurement-source-failure');
+      const ownedError = new Error('measurement-owned-failure');
+      const block = {
+        kind: 'paragraph',
+        id: 'owned-measurement-block',
+        get runs(): never {
+          throw sourceError;
+        },
+        attrs: {},
+      } as unknown as FlowBlock;
+      const owner = vi.fn(() => ownedError);
+      const constraints = { maxWidth: 1000, maxHeight: 1000 } as Record<PropertyKey, unknown>;
+      Object.defineProperty(constraints, Symbol.for('superdoc.v2.render-diagnostic.measurement-owner'), {
+        value: owner,
+      });
+
+      await expect(measureBlock(block, constraints as never)).rejects.toBe(ownedError);
+      expect(owner).toHaveBeenCalledTimes(1);
+      expect(owner).toHaveBeenCalledWith(block.id, sourceError);
+    });
+
+    it('preserves the exact nested textbox block owner', async () => {
+      const sourceError = new Error('nested-textbox-measurement-source-failure');
+      const ownedError = new Error('nested-textbox-measurement-owned-failure');
+      const nestedBlock = {
+        kind: 'paragraph',
+        id: 'nested-textbox-block',
+        get runs(): never {
+          throw sourceError;
+        },
+        attrs: {},
+      } as unknown as FlowBlock;
+      const drawing: DrawingBlock = {
+        kind: 'drawing',
+        id: 'textbox-carrier',
+        drawingKind: 'textboxShape',
+        geometry: { width: 240, height: 60, rotation: 0 },
+        contentBlocks: [nestedBlock as never],
+      };
+      const owner = vi.fn(() => ownedError);
+      const constraints = { maxWidth: 1000, maxHeight: 1000 } as Record<PropertyKey, unknown>;
+      Object.defineProperty(constraints, Symbol.for('superdoc.v2.render-diagnostic.measurement-owner'), {
+        value: owner,
+      });
+
+      await expect(measureBlock(drawing, constraints as never)).rejects.toBe(ownedError);
+      expect(owner).toHaveBeenCalledTimes(1);
+      expect(owner).toHaveBeenCalledWith(nestedBlock.id, sourceError);
+    });
+
+    it('preserves the nested textbox owner through a table cell', async () => {
+      const sourceError = new Error('table-textbox-measurement-source-failure');
+      const ownedError = new Error('table-textbox-measurement-owned-failure');
+      const nestedBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'table-nested-textbox-block',
+        runs: [
+          {
+            text: 'NESTED_TABLE_TEXTBOX_THROW',
+            fontFamily: 'NestedTableOwnerFault',
+            fontSize: 12,
+          },
+        ],
+      };
+      const drawing: DrawingBlock = {
+        kind: 'drawing',
+        id: 'table-textbox-carrier',
+        drawingKind: 'textboxShape',
+        geometry: { width: 240, height: 60, rotation: 0 },
+        contentBlocks: [nestedBlock as never],
+      };
+      const table: FlowBlock = {
+        kind: 'table',
+        id: 'table-textbox-owner',
+        columnWidths: [240],
+        rows: [
+          {
+            id: 'table-textbox-row',
+            cells: [{ id: 'table-textbox-cell', blocks: [drawing] }],
+          },
+        ],
+      };
+      const owner = vi.fn(() => ownedError);
+      const constraints = { maxWidth: 1000, maxHeight: 1000 } as Record<PropertyKey, unknown>;
+      Object.defineProperty(constraints, Symbol.for('superdoc.v2.render-diagnostic.measurement-owner'), {
+        value: owner,
+      });
+      clearTextMeasurementCaches();
+      let thrown: unknown;
+      try {
+        await measureBlock(table, constraints as never, {
+          fontSignature: 'nested-table-owner-test',
+          resolvePhysical(fontFamily, face) {
+            if (fontFamily === 'NestedTableOwnerFault') throw sourceError;
+            return resolvePhysicalFamily(fontFamily, face);
+          },
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBe(ownedError);
+      expect(owner).toHaveBeenCalledTimes(1);
+      expect(owner).toHaveBeenCalledWith(nestedBlock.id, sourceError);
+    });
+
+    it('lets the enclosing table own a declined cell measurement failure', async () => {
+      const sourceError = new Error('ordinary-table-cell-source-failure');
+      const ownedError = new Error('ordinary-table-owned-failure');
+      const cellBlock: FlowBlock = {
+        kind: 'paragraph',
+        id: 'ordinary-table-cell-block',
+        runs: [
+          {
+            text: 'ORDINARY_TABLE_CELL_THROW',
+            fontFamily: 'OrdinaryTableCellFault',
+            fontSize: 12,
+          },
+        ],
+      };
+      const cellDrawing: DrawingBlock = {
+        kind: 'drawing',
+        id: 'ordinary-table-cell-drawing',
+        drawingKind: 'textboxShape',
+        geometry: { width: 240, height: 60, rotation: 0 },
+        contentBlocks: [cellBlock as never],
+      };
+      const table: FlowBlock = {
+        kind: 'table',
+        id: 'ordinary-table-owner',
+        columnWidths: [240],
+        rows: [
+          {
+            id: 'ordinary-table-row',
+            cells: [{ id: 'ordinary-table-cell', blocks: [cellDrawing] }],
+          },
+        ],
+      };
+      const owner = vi.fn((blockId: string, error: unknown) => (blockId === table.id ? ownedError : error));
+      const constraints = { maxWidth: 1000, maxHeight: 1000 } as Record<PropertyKey, unknown>;
+      Object.defineProperty(constraints, Symbol.for('superdoc.v2.render-diagnostic.measurement-owner'), {
+        value: owner,
+      });
+      clearTextMeasurementCaches();
+
+      let thrown: unknown;
+      try {
+        await measureBlock(table, constraints as never, {
+          fontSignature: 'ordinary-table-owner-test',
+          resolvePhysical(fontFamily, face) {
+            if (fontFamily === 'OrdinaryTableCellFault') throw sourceError;
+            return resolvePhysicalFamily(fontFamily, face);
+          },
+        });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBe(ownedError);
+      expect(owner.mock.calls).toEqual([
+        [cellBlock.id, sourceError],
+        [cellDrawing.id, sourceError],
+        [table.id, sourceError],
+      ]);
+    });
+
     it('measures a simple single-line block', async () => {
       const block: FlowBlock = {
         kind: 'paragraph',

@@ -464,6 +464,7 @@ export function patchPage(
       const needsRebuild =
         geometryChanged ||
         ctx.changedBlocks.has(fragment.blockId) ||
+        current.element.dataset.v2RenderDiagnostic === 'true' ||
         current.signature !== resolvedSig ||
         // Fail closed on missing resolve stamps: two unstamped fragments
         // compare '' === '' above, which proves nothing — content could have

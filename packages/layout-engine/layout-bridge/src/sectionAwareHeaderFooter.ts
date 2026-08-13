@@ -13,6 +13,20 @@ export type SectionAwareHeaderFooterMeasurementGroup = {
 };
 
 const HEADER_FOOTER_VARIANTS: SectionRefType[] = ['default', 'first', 'even', 'odd'];
+const V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER = Symbol.for('superdoc.v2.render-diagnostic.pagination-owner');
+
+function preserveRenderDiagnosticPaginationOwner(
+  source: HeaderFooterConstraints,
+  target: HeaderFooterConstraints,
+): void {
+  const owner = (source as Record<PropertyKey, unknown>)[V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER];
+  if (owner === undefined) return;
+  Object.defineProperty(target, V2_RENDER_DIAGNOSTIC_PAGINATION_OWNER, {
+    configurable: true,
+    enumerable: false,
+    value: owner,
+  });
+}
 
 export function buildSectionAwareHeaderFooterLayoutKey(rId: string, sectionIndex: number): string {
   return `${rId}::s${sectionIndex}`;
@@ -87,7 +101,7 @@ function buildConstraintsForSection(
   const sectionHeight =
     pageHeight != null ? Math.max(1, pageHeight - sectionMarginTop - sectionMarginBottom) : fallback.height;
 
-  return {
+  const constraints: HeaderFooterConstraints = {
     width: contentWidth,
     height: sectionHeight,
     pageWidth,
@@ -102,6 +116,8 @@ function buildConstraintsForSection(
     },
     overflowBaseHeight: fallback.overflowBaseHeight,
   };
+  preserveRenderDiagnosticPaginationOwner(fallback, constraints);
+  return constraints;
 }
 
 export function buildSectionAwareHeaderFooterMeasurementGroups(

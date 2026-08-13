@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type {
   FlowBlock,
+  Layout,
   Measure,
   Line,
   ParagraphMeasure,
@@ -113,6 +114,153 @@ const DEFAULT_OPTIONS: LayoutOptions = {
   pageSize: { w: 600, h: 800 },
   margins: { top: 50, right: 50, bottom: 50, left: 50 },
 };
+
+it('offers a deterministic pagination input failure only to its exact block owner', () => {
+  const options = { ...DEFAULT_OPTIONS };
+  const owner = mock(
+    (input: { blockIds: readonly string[]; debugDetail: unknown; phase: string; progress?: unknown }) => {
+      expect(input.blockIds).toEqual(['block-1']);
+      expect(input.debugDetail).toBeInstanceOf(Error);
+      expect(input.phase).toBe('input');
+      expect(input.progress).toBeUndefined();
+      return new Error('owned-pagination-failure');
+    },
+  );
+  Object.defineProperty(options, Symbol.for('superdoc.v2.render-diagnostic.pagination-owner'), {
+    configurable: true,
+    value: owner,
+  });
+
+  expect(() => layoutDocument([block], [{ kind: 'pageBreak' }], options)).toThrow('owned-pagination-failure');
+  expect(owner).toHaveBeenCalledTimes(1);
+});
+
+it('offers a supported table dispatch failure only to its exact block owner', () => {
+  const options = { ...DEFAULT_OPTIONS };
+  const owner = mock((input: { blockIds: readonly string[]; debugDetail: unknown }) => {
+    expect(input.blockIds).toEqual(['owned-table']);
+    expect(input.debugDetail).toBeInstanceOf(Error);
+    expect((input.debugDetail as Error).message).toContain('table-dispatch-fault');
+    return new Error('owned-table-pagination-failure');
+  });
+  Object.defineProperty(options, Symbol.for('superdoc.v2.render-diagnostic.pagination-owner'), {
+    configurable: true,
+    value: owner,
+  });
+
+  const faultedMeasure = makeTableMeasure([100], [20]);
+  Object.defineProperty(faultedMeasure, 'rows', {
+    configurable: true,
+    get() {
+      throw new Error('table-dispatch-fault');
+    },
+  });
+  expect(() => layoutDocument([makeTableBlock('owned-table', 1)], [faultedMeasure], options)).toThrow(
+    'owned-table-pagination-failure',
+  );
+  expect(owner).toHaveBeenCalledTimes(1);
+});
+
+it('offers a late paragraph pagination failure only to its active block owner', () => {
+  const options = { ...DEFAULT_OPTIONS };
+  const owner = mock(
+    (input: {
+      blockIds: readonly string[];
+      debugDetail: unknown;
+      phase: string;
+      progress?: {
+        blocks: FlowBlock[];
+        measures: Measure[];
+        layout: Layout;
+        failedBlockId: string;
+        sourcePageRange: { firstPage: number; lastPage: number };
+      };
+    }) => {
+      expect(input.blockIds).toEqual(['late-paragraph']);
+      expect((input.debugDetail as Error).message).toContain('late-pagination-fault');
+      expect(input.phase).toBe('dispatch');
+      expect(input.progress).toMatchObject({
+        failedBlockId: 'late-paragraph',
+        sourcePageRange: { firstPage: 0, lastPage: 0 },
+      });
+      expect(input.progress?.blocks.map((entry) => entry.id)).toEqual(['late-paragraph']);
+      expect(input.progress?.measures).toHaveLength(1);
+      expect(input.progress?.layout.pages).toHaveLength(1);
+      expect(input.progress?.layout.pages[0]?.fragments).toEqual([]);
+      expect(
+        (input.progress?.layout as Layout & Record<PropertyKey, unknown>)[
+          Symbol.for('superdoc.v2.render-diagnostic.pagination-prefix')
+        ],
+      ).toEqual({ blockId: 'late-paragraph', pageIndex: 0 });
+      return new Error('owned-late-pagination-failure');
+    },
+  );
+  Object.defineProperty(options, Symbol.for('superdoc.v2.render-diagnostic.pagination-owner'), {
+    configurable: true,
+    value: owner,
+  });
+  const measure = makeMeasure([20]);
+  Object.defineProperty(measure, 'lines', {
+    configurable: true,
+    get() {
+      throw new Error('late-pagination-fault');
+    },
+  });
+
+  expect(() => layoutDocument([{ ...block, id: 'late-paragraph' }], [measure], options)).toThrow(
+    'owned-late-pagination-failure',
+  );
+  expect(owner).toHaveBeenCalledTimes(1);
+});
+
+it('does not offer the page-boundary early-stop sentinel to a block owner', () => {
+  const owner = mock(() => new Error('must-not-own-pagination-early-stop'));
+  const options = {
+    ...DEFAULT_OPTIONS,
+    pageBoundary: { shouldStopBeforeNewPage: () => true },
+  };
+  Object.defineProperty(options, Symbol.for('superdoc.v2.render-diagnostic.pagination-owner'), {
+    configurable: true,
+    value: owner,
+  });
+
+  const layout = layoutDocument(
+    [
+      { ...block, id: 'first-page-paragraph' },
+      { ...block, id: 'second-page-paragraph' },
+    ],
+    [makeMeasure([600]), makeMeasure([600])],
+    options,
+  );
+
+  expect(layout.pages).toHaveLength(1);
+  expect(owner).not.toHaveBeenCalled();
+});
+
+it('preserves the exact pagination owner through header/footer layout', () => {
+  const constraints = { width: 400, height: 80 };
+  const owner = mock((input: { blockIds: readonly string[]; debugDetail: unknown }) => {
+    expect(input.blockIds).toEqual(['owned-header-table']);
+    expect((input.debugDetail as Error).message).toContain('header-table-dispatch-fault');
+    return new Error('owned-header-pagination-failure');
+  });
+  Object.defineProperty(constraints, Symbol.for('superdoc.v2.render-diagnostic.pagination-owner'), {
+    configurable: true,
+    value: owner,
+  });
+  const faultedMeasure = makeTableMeasure([100], [20]);
+  Object.defineProperty(faultedMeasure, 'rows', {
+    configurable: true,
+    get() {
+      throw new Error('header-table-dispatch-fault');
+    },
+  });
+
+  expect(() =>
+    layoutHeaderFooter([makeTableBlock('owned-header-table', 1)], [faultedMeasure], constraints, 'header'),
+  ).toThrow('owned-header-pagination-failure');
+  expect(owner).toHaveBeenCalledTimes(1);
+});
 
 /**
  * Helper to check if a page contains a block with the given ID.

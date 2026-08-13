@@ -3,10 +3,12 @@ import type { LayoutWorkCheckpoint } from './execution.js';
 import type { FootnoteAnchorRef } from './layout-paragraph.js';
 
 export type FootnoteAnchorIndexInput = {
-  refs?: Array<{ id: string; pos: number }>;
+  refs?: Array<{ id: string; pos: number; blockId?: string }>;
   bodyHeightById?: Map<string, number>;
   firstLineHeightById?: Map<string, number>;
 };
+
+const V2_RENDER_DIAGNOSTIC_BLOCK = Symbol.for('superdoc.v2.render-diagnostic.block');
 
 export type FootnoteAnchorIndexDiagnostics = {
   rangeComparisons: number;
@@ -117,6 +119,21 @@ export function* buildFootnoteAnchorIndexSteps(
     }
   }
   const sortedRefPositions = yield* sortAscendingSteps(indexablePositions, (left, right) => left - right);
+  const diagnosticRefsByBlockId = new Map<string, Array<{ id: string; pos: number }>>();
+  for (const ref of refs) {
+    const checkpoint = nextCheckpoint();
+    if (checkpoint) yield checkpoint;
+    if (
+      typeof ref.blockId !== 'string' ||
+      refByPos.get(ref.pos) !== ref.id ||
+      !validBodyHeight(bodyHeights.get(ref.id))
+    ) {
+      continue;
+    }
+    const entries = diagnosticRefsByBlockId.get(ref.blockId) ?? [];
+    entries.push({ id: ref.id, pos: ref.pos });
+    diagnosticRefsByBlockId.set(ref.blockId, entries);
+  }
   const sortedIndexByPosition = new Map<number, number>();
   const nextActiveIndex = new Int32Array(sortedRefPositions.length + 1);
   for (let index = 0; index < nextActiveIndex.length; index += 1) {
@@ -207,6 +224,13 @@ export function* buildFootnoteAnchorIndexSteps(
     const checkpoint = nextCheckpoint();
     if (checkpoint) yield checkpoint;
     if (refByPos.size === 0) break;
+    if ((block as unknown as Record<PropertyKey, unknown>)[V2_RENDER_DIAGNOSTIC_BLOCK] === true) {
+      for (const ref of diagnosticRefsByBlockId.get(block.id) ?? []) {
+        const diagnosticCheckpoint = nextCheckpoint();
+        if (diagnosticCheckpoint) yield diagnosticCheckpoint;
+        if (refByPos.get(ref.pos) === ref.id) record(ref.pos, ref.id, block.id);
+      }
+    }
     const range = yield* resolveBlockPmRangeSteps(block);
     if (range) yield* recordIfHitSteps(range, block.id);
 
