@@ -28,6 +28,8 @@ describe('renderImageRun fail-closed placeholder', () => {
       src: '',
       width: 120,
       height: 48,
+      imageId: '7',
+      imageMutationId: 'img:7:word_document.xml:rId2',
       pmStart: 4,
       pmEnd: 5,
       placeholder: {
@@ -47,6 +49,8 @@ describe('renderImageRun fail-closed placeholder', () => {
     expect(element?.style.height).toBe('48px');
     expect(element?.dataset.pmStart).toBe('4');
     expect(element?.dataset.pmEnd).toBe('5');
+    expect(element?.dataset.sdImageId).toBe('7');
+    expect(element?.dataset.sdImageMutationId).toBe('img:7:word_document.xml:rId2');
   });
 });
 

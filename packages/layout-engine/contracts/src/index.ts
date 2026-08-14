@@ -782,6 +782,8 @@ export type ImageRun = {
   placeholder?: RenderPlaceholder;
   /** DrawingML docPr/@id of the picture (used to target the Document API for interactive resize). */
   imageId?: string;
+  /** Opaque Document API identity when projection can resolve it without a catalog read. */
+  imageMutationId?: string;
   /** Clip-path value for cropped images. */
   clipPath?: string;
   /** DrawingML picture frame; paint-only and excluded from layout sizing. */
@@ -1320,6 +1322,8 @@ export type ImageBlock = {
   placeholder?: RenderPlaceholder;
   /** DrawingML docPr/@id of the picture (used to target the Document API for interactive resize). */
   imageId?: string;
+  /** Opaque Document API identity when projection can resolve it without a catalog read. */
+  imageMutationId?: string;
   objectFit?: 'contain' | 'cover' | 'fill' | 'scale-down';
   display?: 'inline' | 'block';
   padding?: BoxSpacing;

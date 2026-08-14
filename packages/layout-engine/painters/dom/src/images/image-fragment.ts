@@ -128,6 +128,7 @@ export const renderImageFragment = ({
       fragmentEl.setAttribute('data-image-metadata', JSON.stringify(imgMetadata));
       // docPr/@id so the resize overlay can target the Document API (images.setSize).
       if (block.imageId) fragmentEl.setAttribute('data-sd-image-id', String(block.imageId));
+      if (block.imageMutationId) fragmentEl.setAttribute('data-sd-image-mutation-id', block.imageMutationId);
     }
 
     // AIDEV-NOTE: Keep srcRect crop/zoom transforms on the image element via

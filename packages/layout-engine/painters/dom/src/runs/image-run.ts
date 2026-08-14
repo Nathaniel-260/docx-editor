@@ -192,6 +192,7 @@ export const renderImageRun = (
     if (run.pmStart != null) placeholder.dataset.pmStart = String(run.pmStart);
     if (run.pmEnd != null) placeholder.dataset.pmEnd = String(run.pmEnd);
     if (run.imageId) placeholder.dataset.sdImageId = run.imageId;
+    if (run.imageMutationId) placeholder.dataset.sdImageMutationId = run.imageMutationId;
     placeholder.dataset.layoutEpoch = String(context.layoutEpoch);
     context.applySdtDataset(placeholder, run.sdt);
     if (run.dataAttrs) applyRunDataAttributes(placeholder, run.dataAttrs);
@@ -273,6 +274,7 @@ export const renderImageRun = (
     img.setAttribute('data-image-metadata', JSON.stringify(inlineImageMetadata));
     // docPr/@id so the resize overlay can target the Document API (images.setSize).
     if (run.imageId) img.setAttribute('data-sd-image-id', run.imageId);
+    if (run.imageMutationId) img.setAttribute('data-sd-image-mutation-id', run.imageMutationId);
   }
 
   // Set alt text (required for accessibility)

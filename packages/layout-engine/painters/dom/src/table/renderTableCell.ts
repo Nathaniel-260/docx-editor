@@ -385,6 +385,7 @@ const applyTableImageInteractionDataset = (element: HTMLElement, block: ImageBlo
   element.classList.add(DOM_CLASS_NAMES.IMAGE_FRAGMENT);
   if (block.id) element.dataset.sdBlockId = block.id;
   if (block.imageId) element.dataset.sdImageId = String(block.imageId);
+  if (block.imageMutationId) element.dataset.sdImageMutationId = block.imageMutationId;
 };
 
 /**
