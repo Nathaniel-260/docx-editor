@@ -2429,6 +2429,7 @@ describe('public ui — viewport + metadata geometry', () => {
       activeSeed?: 'bullet' | 'ordered' | null;
       enabled?: boolean;
       shippedStatus?: string;
+      mode?: 'editing' | 'viewing';
     } = {},
   ) {
     const apply = options.apply ?? vi.fn(() => Promise.resolve({ status: 'committed' }));
@@ -2452,7 +2453,7 @@ describe('public ui — viewport + metadata geometry', () => {
         },
         editCommands: { lists: { apply }, getSnapshot },
       },
-      config: { documentMode: 'editing' },
+      config: { documentMode: options.mode ?? 'editing' },
       on: vi.fn(),
       off: vi.fn(),
     };
@@ -2497,6 +2498,19 @@ describe('public ui — viewport + metadata geometry', () => {
       enabled: false,
       disabled: true,
     });
+  });
+
+  it('blocks the edit-command list fast path in viewing mode', async () => {
+    const { superdoc, apply } = makeListSuperdoc({ mode: 'viewing' });
+    const ui = createSuperDocUI({ superdoc });
+
+    expect(ui.commands.get('bullet-list').getState()).toMatchObject({
+      supported: true,
+      enabled: false,
+      reason: SUPERDOC_UI_REASONS.documentReadonly,
+    });
+    expect(await ui.toolbar.execute('bullet-list')).toBe(false);
+    expect(apply).not.toHaveBeenCalled();
   });
 
   it('keeps the command id list kind authoritative over payload overrides', async () => {

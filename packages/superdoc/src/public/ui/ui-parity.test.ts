@@ -48,6 +48,7 @@ import { describe, expect, it, vi } from 'vite-plus/test';
 
 import { BuiltInToolbar } from '../../internal/toolbar/built-in-toolbar.js';
 import { createSuperDocUI } from './create-super-doc-ui.js';
+import { SUPERDOC_UI_REASONS } from './reasons.js';
 
 const BASELINE = join(dirname(fileURLToPath(import.meta.url)), 'ui-parity-baseline.json');
 
@@ -150,6 +151,32 @@ function checkpoint(trace: Array<Snap>, label: string, read: () => Snap): void {
   trace.push({ label, state: JSON.parse(previous), unstable: true });
 }
 
+function makeLegacyComparableTrace(trace: Array<Snap>): Array<Snap> {
+  const comparable = structuredClone(trace);
+  const viewing = comparable.find((entry) => entry.label === 'after mode viewing') as
+    | { state?: { commands?: Record<string, Record<string, unknown>> } }
+    | undefined;
+  const commands = viewing?.state?.commands;
+  if (!commands) throw new Error('Viewing-mode parity checkpoint is missing command state');
+
+  for (const id of ['bullet-list', 'numbered-list']) {
+    const command = commands[id];
+    if (!command) throw new Error(`Viewing-mode parity checkpoint is missing ${id}`);
+    expect(command).toMatchObject({
+      supported: true,
+      enabled: false,
+      reason: SUPERDOC_UI_REASONS.documentReadonly,
+    });
+
+    // The baseline predates read-only list enforcement. Restore the two old
+    // fields only after verifying the new values above.
+    command.enabled = true;
+    command.reason = null;
+  }
+
+  return comparable;
+}
+
 describe('custom-UI behaviour parity with v2', () => {
   it('reproduces the recorded base trace for the legacy factory integration', () => {
     const { host, applied, setMode } = makeHost();
@@ -186,6 +213,6 @@ describe('custom-UI behaviour parity with v2', () => {
     // Compared as a whole rather than checkpoint by checkpoint: a behaviour
     // change usually moves one field at one step, and the failure output should
     // show which.
-    expect({ trace, applied }).toEqual(baseline);
+    expect({ trace: makeLegacyComparableTrace(trace), applied }).toEqual(baseline);
   });
 });

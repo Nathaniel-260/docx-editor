@@ -4843,6 +4843,18 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
         const supported = shippedStatus !== 'not-shipped' && shippedStatus !== 'disabled';
         const enabled = supported && (typeof entry?.enabled === 'boolean' ? entry.enabled : true);
         const activeSeed = supported ? readListActiveSeed(entry) : null;
+        if (readonly) {
+          return normalizeCommandState(
+            {
+              enabled: false,
+              active: activeSeed === listKind,
+              supported,
+              value: entry?.value,
+              reason: SUPERDOC_UI_REASONS.documentReadonly,
+            },
+            'builtin',
+          );
+        }
         return normalizeCommandState(
           { enabled, active: activeSeed === listKind, supported, value: entry?.value },
           'builtin',
@@ -8199,6 +8211,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     }
     const listKind = listToggleKind(id);
     if (listKind) {
+      if (readDocumentMode() === 'viewing') return false;
       const editCommands = getEditCommands();
       const apply = (editCommands?.lists as LooseRecord | undefined)?.apply;
       if (typeof apply === 'function') return executeListToggleCommand(listKind, payload);
