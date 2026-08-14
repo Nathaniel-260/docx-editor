@@ -58,6 +58,17 @@ describe('parseInsetClipPathForScale', () => {
     expect(result!.scaleX).toBeCloseTo(100 / visibleW);
     expect(result!.scaleY).toBeCloseTo(100 / visibleH);
   });
+
+  it('treats negative source offsets as outsets', () => {
+    const result = parseInsetClipPathForScale('inset(65.336% -0.72% 0.951% 33.056%)');
+    expect(result).not.toBeNull();
+    const visibleW = 100 - 33.056 + 0.72;
+    const visibleH = 100 - 65.336 - 0.951;
+    expect(result!.scaleX).toBeCloseTo(100 / visibleW);
+    expect(result!.scaleY).toBeCloseTo(100 / visibleH);
+    expect(result!.translateX).toBeCloseTo(-33.056 * (100 / visibleW));
+    expect(result!.translateY).toBeCloseTo(-65.336 * (100 / visibleH));
+  });
 });
 
 describe('formatInsetClipPathTransform', () => {

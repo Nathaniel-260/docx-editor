@@ -23,7 +23,7 @@ export function parseInsetClipPathForScale(clipPath: string): InsetClipPathScale
   const m = clipPath
     .trim()
     .match(
-      /^inset\(\s*(\d+(?:\.\d+)?|\.\d+)%\s+(\d+(?:\.\d+)?|\.\d+)%\s+(\d+(?:\.\d+)?|\.\d+)%\s+(\d+(?:\.\d+)?|\.\d+)%\s*\)$/,
+      /^inset\(\s*(-?(?:\d+(?:\.\d+)?|\.\d+))%\s+(-?(?:\d+(?:\.\d+)?|\.\d+))%\s+(-?(?:\d+(?:\.\d+)?|\.\d+))%\s+(-?(?:\d+(?:\.\d+)?|\.\d+))%\s*\)$/,
     );
   if (!m) return null;
   const top = Number(m[1]);

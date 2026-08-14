@@ -7822,6 +7822,113 @@ describe('DomPainter', () => {
     expect(inlineDrawingEl.classList.contains(DOM_CLASS_NAMES.FLOATING_FRAGMENT)).toBe(false);
   });
 
+  it('paints behindDoc body media below text on both sides of its source anchor', () => {
+    const beforeBlock: FlowBlock = {
+      kind: 'paragraph',
+      id: 'body-before-background',
+      runs: [{ text: 'Before', fontFamily: 'Arial', fontSize: 16 }],
+    };
+    const backgroundBlock: FlowBlock = {
+      kind: 'image',
+      id: 'body-background',
+      src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      width: 200,
+      height: 100,
+      anchor: { isAnchored: true, behindDoc: true },
+    };
+    const afterBlock: FlowBlock = {
+      kind: 'paragraph',
+      id: 'body-after-background',
+      runs: [{ text: 'After', fontFamily: 'Arial', fontSize: 16 }],
+    };
+    const paragraphMeasure: Measure = {
+      kind: 'paragraph',
+      lines: [
+        {
+          fromRun: 0,
+          fromChar: 0,
+          toRun: 0,
+          toChar: 5,
+          width: 48,
+          ascent: 12,
+          descent: 4,
+          lineHeight: 20,
+        },
+      ],
+      totalHeight: 20,
+    };
+    const backgroundMeasure: Measure = { kind: 'image', width: 200, height: 100 };
+    const bodyLayout: Layout = {
+      pageSize: layout.pageSize,
+      pages: [
+        {
+          number: 1,
+          fragments: [
+            {
+              kind: 'para',
+              blockId: beforeBlock.id,
+              fromLine: 0,
+              toLine: 1,
+              x: 30,
+              y: 40,
+              width: 300,
+            },
+            {
+              kind: 'image',
+              blockId: backgroundBlock.id,
+              x: 30,
+              y: 30,
+              width: 200,
+              height: 100,
+              isAnchored: true,
+              behindDoc: true,
+              zIndex: 0,
+            },
+            {
+              kind: 'para',
+              blockId: afterBlock.id,
+              fromLine: 0,
+              toLine: 1,
+              x: 30,
+              y: 80,
+              width: 300,
+            },
+          ],
+        },
+      ],
+    };
+    const painter = createTestPainter({
+      blocks: [beforeBlock, backgroundBlock, afterBlock],
+      measures: [paragraphMeasure, backgroundMeasure, paragraphMeasure],
+    });
+    const expectBackgroundFirst = () => {
+      const pageEl = mount.querySelector('.superdoc-page') as HTMLElement;
+      const bodyPaintOrder = Array.from(pageEl.querySelectorAll(':scope > .superdoc-fragment')).map(
+        (fragment) => (fragment as HTMLElement).dataset.blockId,
+      );
+      expect(bodyPaintOrder).toEqual(['body-background', 'body-before-background', 'body-after-background']);
+    };
+
+    painter.paint(bodyLayout, mount);
+    expectBackgroundFirst();
+
+    // The persistent-page patch path must preserve the same paint order when
+    // geometry changes and the source-order state is reconciled in place.
+    const shiftedLayout: Layout = {
+      ...bodyLayout,
+      pages: [
+        {
+          ...bodyLayout.pages[0],
+          fragments: bodyLayout.pages[0].fragments.map((fragment) =>
+            fragment.blockId === afterBlock.id ? { ...fragment, y: fragment.y + 4 } : fragment,
+          ),
+        },
+      ],
+    };
+    painter.paint(shiftedLayout, mount);
+    expectBackgroundFirst();
+  });
+
   it('applies vector shape transforms to the shared drawing wrapper so text overlays rotate with the shape', () => {
     const vectorShapeBlock: FlowBlock = {
       kind: 'drawing',

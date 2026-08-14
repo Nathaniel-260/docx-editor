@@ -1,4 +1,4 @@
-import type { ImageBlock, ImageDrawing } from '@superdoc/contracts';
+import { parseInsetClipPathForScale, type ImageBlock, type ImageDrawing } from '@superdoc/contracts';
 import { buildImageFilters, resolveImageOpacity } from '../runs/image-run.js';
 import { applyImageClipPath, readImageClipPathValue } from './image-clip-path.js';
 import { createRenderPlaceholder } from './render-placeholder.js';
@@ -55,13 +55,18 @@ export const createBlockImageContent = ({
     img.src = block.src;
   }
   img.alt = block.alt ?? '';
+  const clipPath = resolveBlockImageClipPath(block);
+  // DrawingML a:stretch scales the selected a:srcRect to the target shape.
+  // `contain` would first preserve the full source image's aspect ratio and
+  // therefore shrink a landscape crop taken from a portrait source.
+  const sourceCropStretchesToTarget = parseInsetClipPathForScale(clipPath) != null;
   img.style.width = '100%';
   img.style.height = '100%';
-  img.style.objectFit = block.objectFit ?? 'contain';
+  img.style.objectFit = block.objectFit ?? (sourceCropStretchesToTarget ? 'fill' : 'contain');
   if (block.objectFit === 'cover') {
     img.style.objectPosition = 'left top';
   }
-  applyImageClipPath(img, resolveBlockImageClipPath(block), clipContainer ? { clipContainer } : undefined);
+  applyImageClipPath(img, clipPath, clipContainer ? { clipContainer } : undefined);
   img.style.display = imageDisplay ?? (block.display === 'inline' ? 'inline-block' : 'block');
 
   const filters = buildImageFilters(block);

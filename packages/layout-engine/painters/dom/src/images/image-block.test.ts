@@ -23,6 +23,45 @@ describe('resolveBlockImageClipPath', () => {
   });
 });
 
+describe('createBlockImageContent source crop', () => {
+  it('clips and transforms a signed crop projected through ImageBlock attrs', () => {
+    const doc = document.implementation.createHTMLDocument('block-image-crop');
+    const clipContainer = doc.createElement('div');
+    const clipPath = 'inset(65.336% -0.72% 0.951% 33.056%)';
+    const block: ImageBlock = {
+      kind: 'image',
+      id: 'cropped-image',
+      src: 'data:image/png;base64,AAA',
+      width: 543,
+      height: 381,
+      attrs: { clipPath },
+    };
+
+    const element = createBlockImageContent({ doc, block, clipContainer }) as HTMLImageElement;
+
+    expect(clipContainer.style.overflow).toBe('hidden');
+    expect(element.style.objectFit).toBe('fill');
+    expect(element.style.clipPath).toBe(clipPath);
+    expect(element.style.transformOrigin).toBe('0 0');
+    expect(element.style.transform).not.toBe('');
+  });
+
+  it('keeps the default contain fit when there is no source crop', () => {
+    const doc = document.implementation.createHTMLDocument('uncropped-block-image');
+    const block: ImageBlock = {
+      kind: 'image',
+      id: 'uncropped-image',
+      src: 'data:image/png;base64,AAA',
+      width: 543,
+      height: 381,
+    };
+
+    const element = createBlockImageContent({ doc, block }) as HTMLImageElement;
+
+    expect(element.style.objectFit).toBe('contain');
+  });
+});
+
 describe('createBlockImageContent fail-closed placeholder', () => {
   it('fills the preserved image box and exposes the owning diagnostic', () => {
     const doc = document.implementation.createHTMLDocument('block-image-placeholder');

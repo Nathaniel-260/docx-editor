@@ -342,6 +342,8 @@ export function hydratePageContent(
     ];
   });
 
+  reconcileBodyFragmentPaintOrder(el, fragmentStates);
+
   ctx.renderDecorationsForPage(el, page, pageIndex);
   ctx.renderColumnSeparators(el, page, page.width, page.height);
   return fragmentStates;
@@ -542,16 +544,7 @@ export function patchPage(
 
   existing.forEach((stale) => stale.element.remove());
 
-  const pageContentFragments = getPageContentFragments(pageEl);
-  nextFragments.forEach((fragmentState, index) => {
-    const desiredChild = pageContentFragments[index];
-    if (fragmentState.element !== desiredChild) {
-      pageEl.insertBefore(fragmentState.element, desiredChild ?? null);
-      const currentIndex = pageContentFragments.indexOf(fragmentState.element);
-      if (currentIndex >= 0) pageContentFragments.splice(currentIndex, 1);
-      pageContentFragments.splice(index, 0, fragmentState.element);
-    }
-  });
+  reconcileBodyFragmentPaintOrder(pageEl, nextFragments);
 
   state.fragments = nextFragments;
   ctx.renderDecorationsForPage(pageEl, page, pageIndex);
@@ -563,6 +556,43 @@ function getPageContentFragments(pageEl: HTMLElement): Element[] {
   return Array.from(pageEl.children).filter(
     (child) => child.classList.contains(CLASS_NAMES.fragment) && !child.hasAttribute('data-behind-doc-section'),
   );
+}
+
+/**
+ * OOXML `wp:anchor/@behindDoc` puts the entire anchored object behind document
+ * text, independent of where its anchor appears in source order. A zero
+ * z-index is not sufficient here: body fragments are sibling stacking-level
+ * boxes, so a later anchored image at z-index 0 still paints over earlier
+ * text. Negative z-index is also unsafe because it falls behind the opaque
+ * page surface.
+ *
+ * Keep `PageDomState.fragments` in resolved/source order (the persistent-page
+ * remap path relies on that lockstep), but reconcile the sibling DOM order so
+ * explicit behind-document media paints first. Relative order within each
+ * partition remains stable.
+ */
+function reconcileBodyFragmentPaintOrder(pageEl: HTMLElement, sourceOrderedStates: readonly FragmentDomState[]): void {
+  const behindDocument: FragmentDomState[] = [];
+  const remaining: FragmentDomState[] = [];
+  for (const state of sourceOrderedStates) {
+    const fragment = state.fragment;
+    if ((fragment.kind === 'image' || fragment.kind === 'drawing') && fragment.behindDoc === true) {
+      behindDocument.push(state);
+    } else {
+      remaining.push(state);
+    }
+  }
+
+  const pageContentFragments = getPageContentFragments(pageEl);
+  [...behindDocument, ...remaining].forEach((fragmentState, index) => {
+    const desiredChild = pageContentFragments[index];
+    if (fragmentState.element !== desiredChild) {
+      pageEl.insertBefore(fragmentState.element, desiredChild ?? null);
+      const currentIndex = pageContentFragments.indexOf(fragmentState.element);
+      if (currentIndex >= 0) pageContentFragments.splice(currentIndex, 1);
+      pageContentFragments.splice(index, 0, fragmentState.element);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
