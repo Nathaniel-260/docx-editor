@@ -49,7 +49,10 @@ function expectArrayToIncludeValues(
 }
 
 type ContractTestSchemaShape = {
+  $ref?: string;
   additionalProperties?: boolean;
+  minItems?: number;
+  pattern?: string;
   required?: string[];
   properties?: Record<string, ContractTestSchemaShape>;
   items?: ContractTestSchemaShape;
@@ -88,6 +91,12 @@ function collectUnknownPropertySchemaErrors(
     );
   }
   return errors;
+}
+
+function expectBroadSDFragmentSchema(schema: ContractTestSchemaShape | undefined): void {
+  expect(schema?.oneOf).toHaveLength(2);
+  expect(schema?.oneOf?.[0]).toEqual({ type: 'object' });
+  expect(schema?.oneOf?.[1]).toEqual({ type: 'array', items: { type: 'object' } });
 }
 
 describe('document-api contract catalog', () => {
@@ -171,6 +180,7 @@ describe('document-api contract catalog', () => {
       'remappedRefs',
       'success',
       'textRangeShifts',
+      'trackedChangeRefs',
       'txId',
     ]);
     expect(
@@ -184,7 +194,7 @@ describe('document-api contract catalog', () => {
     ).toEqual([]);
   });
 
-  it('declares insert input as a text or structural-content union', () => {
+  it('declares insert input as plain text, rich string, or structural content', () => {
     const schemas = buildInternalContractSchemas();
     const insertInputSchema = schemas.operations.insert.input as {
       oneOf?: Array<{
@@ -202,9 +212,9 @@ describe('document-api contract catalog', () => {
     };
 
     expect(Array.isArray(insertInputSchema.oneOf)).toBe(true);
-    expect(insertInputSchema.oneOf).toHaveLength(2);
+    expect(insertInputSchema.oneOf).toHaveLength(3);
 
-    const [textVariant, structuralVariant] = insertInputSchema.oneOf!;
+    const [textVariant, richVariant, structuralVariant] = insertInputSchema.oneOf!;
 
     expect(Array.isArray(textVariant.oneOf)).toBe(true);
     expect(textVariant.oneOf).toHaveLength(3);
@@ -227,6 +237,19 @@ describe('document-api contract catalog', () => {
     expect(Object.keys(textUntargetedVariant.properties!).sort()).toEqual(['in', 'type', 'value']);
     expect(textUntargetedVariant.required).toEqual(['value']);
     expect(textUntargetedVariant.additionalProperties).toBe(false);
+
+    expect(Array.isArray(richVariant.oneOf)).toBe(true);
+    expect(richVariant.oneOf).toHaveLength(3);
+    const [richTargetVariant, richRefVariant, richUntargetedVariant] = richVariant.oneOf!;
+    expect(Object.keys(richTargetVariant.properties!).sort()).toEqual(['in', 'placement', 'target', 'type', 'value']);
+    expect(richTargetVariant.required).toEqual(['target', 'value', 'type']);
+    expect(richTargetVariant.additionalProperties).toBe(false);
+    expect((richTargetVariant.properties!.target as { oneOf?: unknown[] }).oneOf).toHaveLength(2);
+    expect(richRefVariant.required).toEqual(['ref', 'value', 'type']);
+    expect(richRefVariant.additionalProperties).toBe(false);
+    expect(richUntargetedVariant.required).toEqual(['value', 'type']);
+    expect(richUntargetedVariant.additionalProperties).toBe(false);
+    expect((richTargetVariant.properties!.type as { enum?: string[] }).enum).toEqual(['markdown', 'html']);
 
     expect(structuralVariant.type).toBe('object');
     expect(Object.keys(structuralVariant.properties!).sort()).toEqual([
@@ -252,6 +275,176 @@ describe('document-api contract catalog', () => {
         }
       ).properties?.tables?.enum,
     ).toEqual(['forbid', 'allow']);
+  });
+
+  it('publishes strict rich replace variants without overlapping legacy shapes', () => {
+    const schemas = buildInternalContractSchemas();
+    const replaceInput = schemas.operations.replace.input as {
+      oneOf?: Array<{
+        oneOf?: Array<{
+          properties?: Record<string, unknown>;
+          required?: string[];
+          additionalProperties?: boolean;
+        }>;
+      }>;
+    };
+
+    expect(replaceInput.oneOf).toHaveLength(3);
+    const rich = replaceInput.oneOf?.[2];
+    expect(rich?.oneOf).toHaveLength(2);
+    const [targetVariant, refVariant] = rich!.oneOf!;
+    expect(Object.keys(targetVariant.properties!).sort()).toEqual(['in', 'nestingPolicy', 'target', 'type', 'value']);
+    expect(targetVariant.required).toEqual(['target', 'value', 'type']);
+    expect(targetVariant.additionalProperties).toBe(false);
+    expect(refVariant.required).toEqual(['ref', 'value', 'type']);
+    expect(refVariant.additionalProperties).toBe(false);
+  });
+
+  it('publishes a strict HTML conversion schema and a unique reference path', () => {
+    const schemas = buildInternalContractSchemas();
+    const htmlOperation = schemas.operations.htmlToFragment;
+    const output = htmlOperation.output as {
+      properties?: {
+        diagnostics?: {
+          items?: { required?: string[]; additionalProperties?: boolean; properties?: Record<string, unknown> };
+        };
+      };
+    };
+    const diagnostic = output.properties?.diagnostics?.items;
+
+    expect((htmlOperation.input as { required?: string[]; additionalProperties?: boolean }).required).toEqual(['html']);
+    expect((htmlOperation.input as { additionalProperties?: boolean }).additionalProperties).toBe(false);
+    expect(diagnostic?.required).toEqual([
+      'code',
+      'severity',
+      'message',
+      'construct',
+      'disposition',
+      'lossy',
+      'source',
+    ]);
+    expect(diagnostic?.additionalProperties).toBe(false);
+    expect(OPERATION_REFERENCE_DOC_PATH_MAP.htmlToFragment).toBe('html-to-fragment.mdx');
+    expect(
+      Object.entries(OPERATION_REFERENCE_DOC_PATH_MAP).filter(([, path]) => path === 'html-to-fragment.mdx'),
+    ).toEqual([['htmlToFragment', 'html-to-fragment.mdx']]);
+  });
+
+  it('publishes concrete recursive fragments for both conversion operations', () => {
+    const schemas = buildInternalContractSchemas();
+    const defs = schemas.$defs as Record<string, ContractTestSchemaShape>;
+
+    for (const operationId of ['htmlToFragment', 'markdownToFragment'] as const) {
+      const output = schemas.operations[operationId].output as ContractTestSchemaShape;
+      const fragment = output.properties?.fragment;
+      expect(fragment?.oneOf).toHaveLength(2);
+      const [singleNode, nodeArray] = fragment!.oneOf!;
+      expect(singleNode.oneOf?.map((variant) => variant.properties?.kind?.const)).toEqual([
+        'paragraph',
+        'heading',
+        'list',
+        'table',
+        'horizontalRule',
+      ]);
+      expect(nodeArray).toMatchObject({ type: 'array', minItems: 1 });
+      expect(nodeArray.items).toEqual(singleNode);
+      expect(JSON.stringify(fragment)).toContain('"header"');
+      expect(JSON.stringify(fragment)).toContain('"horizontalRule"');
+    }
+
+    expect(defs.SDInboundContentNode?.oneOf?.map((variant) => variant.$ref)).toEqual([
+      '#/$defs/SDInboundParagraph',
+      '#/$defs/SDInboundHeading',
+      '#/$defs/SDInboundList',
+      '#/$defs/SDInboundTable',
+      '#/$defs/SDInboundHorizontalRule',
+    ]);
+    expect(defs.SDInboundInlineNode?.oneOf?.map((variant) => variant.$ref)).toEqual([
+      '#/$defs/SDInboundRun',
+      '#/$defs/SDInboundHyperlink',
+      '#/$defs/SDInboundLineBreak',
+    ]);
+
+    const paragraphPayload = defs.SDInboundParagraph?.properties?.paragraph;
+    expect(Object.keys(paragraphPayload?.properties ?? {}).sort()).toEqual(['inlines', 'props', 'styleRef']);
+    expect(paragraphPayload?.properties?.inlines?.items?.$ref).toBe('#/$defs/SDInboundInlineNode');
+
+    const listItem = defs.SDInboundListItem;
+    expect(listItem?.properties?.content?.items?.$ref).toBe('#/$defs/SDInboundContentNode');
+    expect(listItem?.properties?.content?.minItems).toBe(1);
+    expect(defs.SDInboundListLevel?.properties?.format?.enum).toEqual([
+      'decimal',
+      'lowerLetter',
+      'upperLetter',
+      'lowerRoman',
+      'upperRoman',
+    ]);
+    expect(defs.SDInboundListLevel?.properties?.text?.pattern).toBe('^%[1-9][.)]$');
+
+    const tableCell = defs.SDInboundTableCell;
+    expect(Object.keys(tableCell?.properties ?? {}).sort()).toEqual([
+      'colSpan',
+      'content',
+      'header',
+      'id',
+      'props',
+      'rowSpan',
+    ]);
+    expect(tableCell?.properties?.header?.type).toBe('boolean');
+    expect(tableCell?.properties?.content?.items?.$ref).toBe('#/$defs/SDInboundContentNode');
+
+    const horizontalRulePayload = defs.SDInboundHorizontalRule?.properties?.horizontalRule;
+    expect(horizontalRulePayload).toMatchObject({
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    });
+
+    for (const [name, schema] of Object.entries(defs)) {
+      if (!name.startsWith('SDInbound') || schema.type !== 'object') continue;
+      expect(schema.additionalProperties, `${name} must stay closed`).toBe(false);
+    }
+  });
+
+  it('keeps SDMutation success metadata complete and failure branches identity-free', () => {
+    const schemas = buildInternalContractSchemas();
+    const expectedSuccessKeys = [
+      'affectedStories',
+      'conversion',
+      'effects',
+      'evaluatedRevision',
+      'id',
+      'inserted',
+      'invalidatedRefs',
+      'remappedRefs',
+      'removed',
+      'resolution',
+      'success',
+      'textRangeShifts',
+      'txId',
+      'updated',
+      'warnings',
+    ];
+    const expectedFailureKeys = ['conversion', 'evaluatedRevision', 'failure', 'resolution', 'success'];
+
+    for (const operationId of ['insert', 'replace'] as const) {
+      const operation = schemas.operations[operationId];
+      const success = operation.success as ContractTestSchemaShape;
+      const failure = operation.failure as ContractTestSchemaShape;
+      expect(Object.keys(success.properties ?? {}).sort()).toEqual(expectedSuccessKeys);
+      expect(Object.keys(failure.properties ?? {}).sort()).toEqual(expectedFailureKeys);
+      expect(success.additionalProperties).toBe(false);
+      expect(failure.additionalProperties).toBe(false);
+      expect(failure.properties).not.toHaveProperty('id');
+      expect(failure.properties).not.toHaveProperty('inserted');
+      expect(failure.properties).not.toHaveProperty('effects');
+      expect(failure.properties).not.toHaveProperty('txId');
+    }
+
+    const textEffect = schemas.$defs?.TextMutationEffect as ContractTestSchemaShape;
+    const blockEffect = schemas.$defs?.BlockMutationEffect as ContractTestSchemaShape;
+    expect(textEffect.properties).toHaveProperty('sourcePath');
+    expect(blockEffect.properties).toHaveProperty('sourcePath');
   });
 
   it('allows story-scoped text targets for bookmark inserts', () => {
@@ -411,19 +604,22 @@ describe('document-api contract catalog', () => {
     expect(listVariants.some((variant) => variant.$ref === '#/$defs/CommentTrackedChangeLink')).toBe(true);
   });
 
-  it('accepts both object and array SDFragment in structural insert content schema', () => {
+  it('preserves the broad public SDFragment union for structural insert content', () => {
     const schemas = buildInternalContractSchemas();
     const insertInput = schemas.operations.insert.input as { oneOf?: Array<{ properties?: Record<string, unknown> }> };
-    const structuralVariant = insertInput.oneOf![1];
-    const contentSchema = structuralVariant.properties!.content as { oneOf?: Array<{ type?: string }> };
+    const structuralVariant = insertInput.oneOf![2];
+    const contentSchema = structuralVariant.properties!.content as ContractTestSchemaShape;
 
-    expect(Array.isArray(contentSchema.oneOf)).toBe(true);
-    expect(contentSchema.oneOf).toHaveLength(2);
-    expect(contentSchema.oneOf![0].type).toBe('object');
-    expect(contentSchema.oneOf![1].type).toBe('array');
+    expectBroadSDFragmentSchema(contentSchema);
+    expect(
+      collectUnknownPropertySchemaErrors(contentSchema.oneOf?.[0], {
+        kind: 'image',
+        image: { source: { kind: 'media', mediaId: 'rId1' } },
+      }),
+    ).toEqual([]);
   });
 
-  it('accepts both object and array SDFragment in structural replace content schema', () => {
+  it('preserves the broad public SDFragment union for structural replace content', () => {
     const schemas = buildInternalContractSchemas();
     const replaceInput = schemas.operations.replace.input as {
       oneOf?: Array<{ oneOf?: Array<{ properties?: Record<string, unknown> }> }>;
@@ -432,11 +628,7 @@ describe('document-api contract catalog', () => {
     const structuralBranch = replaceInput.oneOf![1] as { oneOf?: Array<{ properties?: Record<string, unknown> }> };
 
     for (const variant of structuralBranch.oneOf!) {
-      const contentSchema = variant.properties!.content as { oneOf?: Array<{ type?: string }> };
-      expect(Array.isArray(contentSchema.oneOf)).toBe(true);
-      expect(contentSchema.oneOf).toHaveLength(2);
-      expect(contentSchema.oneOf![0].type).toBe('object');
-      expect(contentSchema.oneOf![1].type).toBe('array');
+      expectBroadSDFragmentSchema(variant.properties!.content as ContractTestSchemaShape);
     }
   });
 
@@ -456,11 +648,7 @@ describe('document-api contract catalog', () => {
     expect(Object.keys(bodyVariant.properties ?? {}).sort()).toEqual(['at', 'body', 'type']);
     expect(bodyVariant.required).toEqual(['type', 'body']);
 
-    const bodySchema = bodyVariant.properties!.body as { oneOf?: Array<{ type?: string }> };
-    expect(Array.isArray(bodySchema.oneOf)).toBe(true);
-    expect(bodySchema.oneOf).toHaveLength(2);
-    expect(bodySchema.oneOf![0].type).toBe('object');
-    expect(bodySchema.oneOf![1].type).toBe('array');
+    expectBroadSDFragmentSchema(bodyVariant.properties!.body as ContractTestSchemaShape);
   });
 
   it('accepts structured body patches for footnotes.update', () => {
@@ -478,11 +666,7 @@ describe('document-api contract catalog', () => {
     expect(bodyVariant).toBeDefined();
     expect(bodyVariant?.required).toEqual(['body']);
 
-    const bodySchema = bodyVariant?.properties?.body as { oneOf?: Array<{ type?: string }> };
-    expect(Array.isArray(bodySchema.oneOf)).toBe(true);
-    expect(bodySchema.oneOf).toHaveLength(2);
-    expect(bodySchema.oneOf![0].type).toBe('object');
-    expect(bodySchema.oneOf![1].type).toBe('array');
+    expectBroadSDFragmentSchema(bodyVariant?.properties?.body as ContractTestSchemaShape);
   });
 
   it('allows null trackedChangeLink on comment read models', () => {
@@ -651,6 +835,38 @@ describe('document-api contract catalog', () => {
 
     expect(COMMAND_CATALOG.insert.possibleFailureCodes).toContain('UNSUPPORTED_ENVIRONMENT');
     expect(insertFailureSchema.properties?.failure?.properties?.code?.enum).toContain('UNSUPPORTED_ENVIRONMENT');
+  });
+
+  it('describes every rich insert and replace runtime failure field', () => {
+    const schemas = buildInternalContractSchemas();
+    for (const operationId of ['insert', 'replace'] as const) {
+      const failureSchema = schemas.operations[operationId].failure as {
+        properties?: {
+          failure?: {
+            properties?: {
+              code?: { enum?: string[] };
+              path?: ContractTestSchemaShape;
+              target?: ContractTestSchemaShape;
+            };
+          };
+        };
+      };
+      const properties = failureSchema.properties?.failure?.properties;
+      expectArrayToIncludeValues(
+        properties?.code?.enum,
+        ['TARGET_NOT_FOUND', 'PRECONDITION_FAILED', 'REVISION_MISMATCH', 'INTERNAL_ERROR'],
+        `${operationId} failure schema enum`,
+      );
+      expect(properties?.path).toEqual({
+        type: 'array',
+        items: { oneOf: [{ type: 'string' }, { type: 'integer' }] },
+      });
+      expect(properties?.target?.oneOf).toEqual([
+        { $ref: '#/$defs/BlockNodeAddress' },
+        { $ref: '#/$defs/TextAddress' },
+        { $ref: '#/$defs/SelectionTarget' },
+      ]);
+    }
   });
 
   it('declares every trackChanges.decide receipt failure code in command metadata', () => {

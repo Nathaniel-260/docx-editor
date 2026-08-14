@@ -170,6 +170,8 @@ export interface TextRangeShift {
 /** A visible text span created by a mutation (e.g. `doc.insert`). */
 export interface TextMutationEffect {
   kind: 'insertedText';
+  /** Transient source fragment path that produced this created span. */
+  sourcePath?: readonly (string | number)[];
   /**
    * Block-absolute address of the created span. `range.start` is the base
    * offset within the target block (nonzero when text was appended into a
@@ -185,6 +187,8 @@ export interface TextMutationEffect {
 /** A block created by a structural mutation (e.g. paragraph/heading insert). */
 export interface BlockMutationEffect {
   kind: 'insertedBlock';
+  /** Transient source fragment path that produced this created block. */
+  sourcePath?: readonly (string | number)[];
   /** Address of the created block. */
   target: BlockNodeAddress;
   /**

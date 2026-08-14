@@ -84,7 +84,7 @@ export interface WriteAdapter {
   write(request: InsertWriteRequest, options?: MutationOptions): TextMutationReceipt;
   /** Structured insert for SDFragment or markdown/html content. Returns SDMutationReceipt. */
   insertStructured(input: InsertInput, options?: MutationOptions): SDMutationReceipt;
-  /** Structured replace for SDFragment content. Returns SDMutationReceipt. */
+  /** Structured replace for SDFragment or markdown/html content. Returns SDMutationReceipt. */
   replaceStructured(input: ReplaceInput, options?: MutationOptions): SDMutationReceipt;
 }
 

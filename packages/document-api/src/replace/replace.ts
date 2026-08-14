@@ -1,12 +1,13 @@
 /**
  * Replace operation: replaces content at a contiguous document selection.
  *
- * Two shapes:
+ * Three mutually exclusive shapes:
  * - Text replacement (`text` field): routes through SelectionMutationAdapter.
- * - Structural replacement (`content` field): continues through WriteAdapter.replaceStructured.
+ * - Rich HTML/Markdown replacement (`value` field): routes through WriteAdapter.replaceStructured.
+ * - Structural replacement (`content` field): routes through WriteAdapter.replaceStructured.
  *
- * Text path accepts `SelectionTarget` or `ref`. Structural path accepts
- * `BlockNodeAddress`, `SelectionTarget`, or `ref`.
+ * Text replacement accepts `SelectionTarget` or `ref`. Rich and structural
+ * replacements also accept `BlockNodeAddress`.
  */
 
 import type { MutationOptions } from '../types/mutation-plan.types.js';
@@ -15,6 +16,8 @@ import type { SDMutationReceipt } from '../types/sd-contract.js';
 import type { SDReplaceInput } from '../types/structural-input.js';
 import type { SDFragment } from '../types/fragment.js';
 import type { StoryLocator } from '../types/story.types.js';
+import type { BlockNodeAddress } from '../types/base.js';
+import type { NestingPolicy } from '../types/placement.js';
 import type { SelectionMutationAdapter } from '../selection-mutation.js';
 import type { WriteAdapter } from '../write/write.js';
 import { normalizeMutationOptions } from '../write/write.js';
@@ -43,16 +46,26 @@ export type TextReplaceInput = TargetLocator & {
   in?: StoryLocator;
 };
 
+/** HTML or Markdown replacement input for conversion and structured application. */
+export type RichContentReplaceInput = {
+  value: string;
+  type: 'html' | 'markdown';
+  target?: SelectionTarget | BlockNodeAddress;
+  ref?: string;
+  in?: StoryLocator;
+  nestingPolicy?: NestingPolicy;
+};
+
 // ---------------------------------------------------------------------------
-// Discriminated union: text shape OR structural SDFragment shape
+// Discriminated union: text, rich string, or structural SDFragment shape
 // ---------------------------------------------------------------------------
 
 /**
  * Input payload for the `doc.replace` operation.
  *
- * Discrimination: presence of `content` (structural) vs `text` (text replacement).
+ * Discrimination: `text` (plain), `value` (HTML/Markdown), or `content` (SDFragment).
  */
-export type ReplaceInput = TextReplaceInput | SDReplaceInput;
+export type ReplaceInput = TextReplaceInput | RichContentReplaceInput | SDReplaceInput;
 
 // ---------------------------------------------------------------------------
 // Allowlists
@@ -60,6 +73,8 @@ export type ReplaceInput = TextReplaceInput | SDReplaceInput;
 
 const TEXT_REPLACE_ALLOWED_KEYS = new Set(['text', 'target', 'ref', 'in']);
 const STRUCTURAL_REPLACE_ALLOWED_KEYS = new Set(['content', 'target', 'ref', 'nestingPolicy', 'in']);
+const RICH_REPLACE_ALLOWED_KEYS = new Set(['value', 'type', 'target', 'ref', 'nestingPolicy', 'in']);
+const RICH_REPLACE_TYPES = new Set(['html', 'markdown']);
 
 // ---------------------------------------------------------------------------
 // Shape discrimination
@@ -68,6 +83,10 @@ const STRUCTURAL_REPLACE_ALLOWED_KEYS = new Set(['content', 'target', 'ref', 'ne
 /** Returns true when the input uses the structural SDFragment shape. */
 export function isStructuralReplaceInput(input: ReplaceInput): input is SDReplaceInput {
   return 'content' in input && input.content !== undefined;
+}
+
+export function isRichContentReplaceInput(input: ReplaceInput): input is RichContentReplaceInput {
+  return 'value' in input && input.value !== undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,28 +137,75 @@ function validateReplaceInput(input: unknown): asserts input is ReplaceInput {
 
   const hasText = 'text' in input && input.text !== undefined;
   const hasContent = 'content' in input && input.content !== undefined;
+  const hasValue = 'value' in input && input.value !== undefined;
+  const suppliedShapes = Number(hasText) + Number(hasContent) + Number(hasValue);
 
-  if (hasText && hasContent) {
+  if (suppliedShapes > 1) {
     throw new DocumentApiValidationError(
       'INVALID_INPUT',
-      'Replace input must provide either "text" or "content", not both.',
-      { fields: ['text', 'content'] },
+      'Replace input must provide exactly one of "text", "content", or "value".',
+      { fields: ['text', 'content', 'value'] },
     );
   }
 
-  if (!hasText && !hasContent) {
-    throw new DocumentApiValidationError('INVALID_INPUT', 'Replace input must provide either "text" or "content".', {
-      fields: ['text', 'content'],
-    });
+  if (suppliedShapes === 0) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      'Replace input must provide exactly one of "text", "content", or "value".',
+      { fields: ['text', 'content', 'value'] },
+    );
   }
 
   validateStoryLocator(input.in, 'in');
 
   if (hasContent) {
     validateStructuralReplaceInput(input);
+  } else if (hasValue) {
+    validateRichContentReplaceInput(input);
   } else {
     validateTextReplaceInput(input);
   }
+}
+
+function validateRichContentReplaceInput(input: Record<string, unknown>): void {
+  assertNoUnknownFields(input, RICH_REPLACE_ALLOWED_KEYS, 'replace');
+
+  const { target, ref: refValue, value, type, nestingPolicy } = input;
+  const hasTarget = target !== undefined;
+  const hasRef = refValue !== undefined;
+
+  if (hasTarget === hasRef) {
+    throw new DocumentApiValidationError('INVALID_INPUT', 'Rich replace requires exactly one of "target" or "ref".', {
+      fields: ['target', 'ref'],
+    });
+  }
+  if (hasTarget && !isSelectionTarget(target) && !isBlockNodeAddress(target)) {
+    throw new DocumentApiValidationError('INVALID_TARGET', 'target must be a SelectionTarget or BlockNodeAddress.', {
+      field: 'target',
+      value: target,
+    });
+  }
+  if (hasRef && (typeof refValue !== 'string' || refValue === '')) {
+    throw new DocumentApiValidationError('INVALID_TARGET', 'ref must be a non-empty string.', {
+      field: 'ref',
+      value: refValue,
+    });
+  }
+  if (typeof value !== 'string') {
+    throw new DocumentApiValidationError('INVALID_INPUT', `value must be a string, got ${typeof value}.`, {
+      field: 'value',
+      value,
+    });
+  }
+  if (typeof type !== 'string' || !RICH_REPLACE_TYPES.has(type)) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      `type must be one of: html, markdown. Got "${String(type)}".`,
+      { field: 'type', value: type },
+    );
+  }
+
+  validateNestingPolicyValue(nestingPolicy);
 }
 
 /** Validates the text replacement path (SelectionTarget / ref + text). */
@@ -216,8 +282,8 @@ export function executeReplace(
   validateReplaceInput(input);
 
   // Structural content path: returns SDMutationReceipt directly
-  if (isStructuralReplaceInput(input)) {
-    return writeAdapter.replaceStructured(input as unknown as ReplaceInput, normalizeMutationOptions(options));
+  if (isStructuralReplaceInput(input) || isRichContentReplaceInput(input)) {
+    return writeAdapter.replaceStructured(input, normalizeMutationOptions(options));
   }
 
   // Text replacement path: route through SelectionMutationAdapter

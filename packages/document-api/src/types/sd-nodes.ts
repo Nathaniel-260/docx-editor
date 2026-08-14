@@ -130,6 +130,8 @@ export interface SDTableCell {
   props?: SDCellProps;
   colSpan?: number;
   rowSpan?: number;
+  /** Marks a semantic table header cell. */
+  header?: boolean;
   content: SDContentNode[];
 }
 
@@ -225,6 +227,13 @@ export interface SDBreak extends SDNodeBase {
   break: {
     type: 'page' | 'column';
   };
+}
+
+/** A semantic horizontal rule; the destination chooses its durable representation. */
+export interface SDHorizontalRule {
+  id?: string;
+  kind: 'horizontalRule';
+  horizontalRule: Record<string, never>;
 }
 
 export interface SDSectionBreak extends SDNodeBase {
@@ -487,6 +496,7 @@ export type SDContentNode =
   | SDBibliography
   | SDTableOfAuthorities
   | SDBreak
+  | SDHorizontalRule
   | SDSectionBreak
   | SDSectPr
   | SDImage

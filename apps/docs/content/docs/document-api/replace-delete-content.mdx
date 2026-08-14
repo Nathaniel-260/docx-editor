@@ -6,6 +6,8 @@ description: Use fresh query targets to change an open DOCX and inspect each mut
 
 Use `replace()` and `delete()` after a query has identified the exact content to change. Both operations accept a target from `query.match()` and return a receipt that says whether the mutation succeeded.
 
+For HTML, Markdown, or `SDFragment` replacement, see [insert HTML and Markdown](/document-api/rich-content). Rich replacement uses the same fresh-target and revision-guard rules described here.
+
 This guide uses the [tracked-changes fixture](/fixtures/tracked-changes.docx). Serve it from `/contract.docx` in your app, or update the document URL in the example.
 
 ## 1. Run two targeted mutations

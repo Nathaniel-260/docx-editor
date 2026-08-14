@@ -13,7 +13,7 @@ import type { GetNodeAdapter } from './get-node/get-node.js';
 import type { GetAdapter } from './get/get.js';
 import type { TrackChangesAdapter } from './track-changes/track-changes.js';
 import type { WriteAdapter } from './write/write.js';
-import { createDocumentApi } from './index.js';
+import { createDocumentApi, type DocumentApiAdapters } from './index.js';
 import type { CommentInfo, CommentsListQuery, CommentsListResult } from './comments/comments.types.js';
 import type { CreateAdapter } from './create/create.js';
 import type { ListsAdapter } from './lists/lists.js';
@@ -393,6 +393,27 @@ const FIND_RESULT: SDFindResult = {
 };
 
 describe('createDocumentApi', () => {
+  it('delegates htmlToFragment through the optional root adapter slot', () => {
+    const result = {
+      fragment: [{ kind: 'paragraph' as const, paragraph: { inlines: [] } }],
+      lossy: false,
+      diagnostics: [],
+    };
+    const htmlToFragment = { htmlToFragment: mock(() => result) };
+    const api = createDocumentApi({ htmlToFragment } as unknown as DocumentApiAdapters);
+
+    expect(api.htmlToFragment({ html: '<p>Hello</p>' })).toBe(result);
+    expect(htmlToFragment.htmlToFragment).toHaveBeenCalledWith({ html: '<p>Hello</p>' });
+  });
+
+  it('fails htmlToFragment at the root boundary when the optional adapter is absent', () => {
+    const api = createDocumentApi({} as DocumentApiAdapters);
+
+    expect(() => api.htmlToFragment({ html: '<p>Hello</p>' })).toThrow(
+      expect.objectContaining({ code: 'CAPABILITY_UNAVAILABLE' }),
+    );
+  });
+
   it('delegates find to the find adapter', () => {
     const findAdapter = makeFindAdapter(FIND_RESULT);
     const api = createDocumentApi({
@@ -2081,12 +2102,14 @@ describe('createDocumentApi', () => {
       const api = makeApi();
       expect(() =>
         api.replace({ target: SELECTION_TARGET, text: 'hi', content: { type: 'paragraph' } } as any),
-      ).toThrow(/either "text".*or "content".*not both/);
+      ).toThrow(/exactly one of "text", "content", or "value"/);
     });
 
-    it('rejects replace with neither text nor content', () => {
+    it('rejects replace with neither text, content, nor rich value', () => {
       const api = makeApi();
-      expect(() => api.replace({ target: SELECTION_TARGET } as any)).toThrow(/either "text".*or "content"/);
+      expect(() => api.replace({ target: SELECTION_TARGET } as any)).toThrow(
+        /exactly one of "text", "content", or "value"/,
+      );
     });
 
     it('routes structural content replace to replaceStructured', () => {

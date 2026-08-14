@@ -60,6 +60,7 @@ export const SD_CONTENT_NODE_KINDS = [
   'bibliography',
   'tableOfAuthorities',
   'break',
+  'horizontalRule',
   'sectionBreak',
   'sectPr',
   'image',
@@ -72,6 +73,13 @@ export const SD_CONTENT_NODE_KINDS = [
 ] as const;
 
 export type SDContentNodeKind = (typeof SD_CONTENT_NODE_KINDS)[number];
+
+type Assert<_T extends true> = void;
+type KnownSDContentNodeKind = Exclude<SDContentNode['kind'], `ext.${string}`>;
+/** Fails compilation when a concrete public node and the runtime kind inventory drift. */
+type _AllConcreteContentNodesAreRegistered = Assert<KnownSDContentNodeKind extends SDContentNodeKind ? true : false>;
+/** Fails compilation when the runtime inventory contains a kind absent from the public union. */
+type _AllRegisteredContentKindsAreModeled = Assert<SDContentNodeKind extends KnownSDContentNodeKind ? true : false>;
 
 export const SD_INLINE_NODE_KINDS = [
   'run',

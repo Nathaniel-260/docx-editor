@@ -218,6 +218,61 @@ describe('Rule 6: table spans', () => {
     expectError(() => validateSDFragment(tableWithCellSpans(1.5)), 'INVALID_PAYLOAD'));
   it('accepts valid spans', () => expect(() => validateSDFragment(tableWithCellSpans(2, 3))).not.toThrow());
   it('accepts omitted spans', () => expect(() => validateSDFragment(tableWithCellSpans())).not.toThrow());
+
+  it('accepts semantic header cells', () => {
+    expect(() =>
+      validateSDFragment({
+        kind: 'table',
+        table: { rows: [{ cells: [{ header: true, content: [validParagraph()] }] }] },
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects malformed and unknown header-cell fields', () => {
+    expectError(
+      () =>
+        validateSDFragment({
+          kind: 'table',
+          table: { rows: [{ cells: [{ header: 'true', content: [] }] }] },
+        }),
+      'INVALID_PAYLOAD',
+      /header must be a boolean/,
+    );
+    expectError(
+      () =>
+        validateSDFragment({
+          kind: 'table',
+          table: { rows: [{ cells: [{ header: true, isHeader: true, content: [] }] }] },
+        }),
+      'INVALID_PAYLOAD',
+      /Unknown table cell field/,
+    );
+  });
+});
+
+describe('horizontalRule content node', () => {
+  it('accepts the explicit empty-payload form', () => {
+    expect(() => validateSDFragment({ kind: 'horizontalRule', horizontalRule: {} })).not.toThrow();
+  });
+
+  it('rejects missing, non-empty, and unknown forms', () => {
+    expectError(() => validateSDFragment({ kind: 'horizontalRule' }), 'INVALID_PAYLOAD', /payload key/);
+    expectError(
+      () => validateSDFragment({ kind: 'horizontalRule', horizontalRule: { style: 'border' } }),
+      'INVALID_PAYLOAD',
+      /must be empty/,
+    );
+    expectError(
+      () => validateSDFragment({ kind: 'horizontalRule', horizontalRule: {}, border: true }),
+      'INVALID_PAYLOAD',
+      /Unknown horizontalRule field/,
+    );
+    expectError(
+      () => validateSDFragment({ kind: 'horizontalRule', horizontalRule: {}, ext: {} }),
+      'INVALID_PAYLOAD',
+      /Unknown horizontalRule field/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

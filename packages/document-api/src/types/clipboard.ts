@@ -1,6 +1,7 @@
 import type { AdapterMutationFailure } from './adapter-result.js';
 import type { SelectionTarget } from './address.js';
 import type { ReceiptFailure, ReceiptSuccess, ReviewWarning } from './receipt.js';
+import type { SDConversionDiagnostic, SDDiagnostic } from './sd-contract.js';
 import type { StoryLocator } from './story.types.js';
 
 export const SUPERDOC_V2_CLIPBOARD_MIME = 'application/x-superdoc-v2-fragment';
@@ -79,10 +80,31 @@ export interface SDPasteRunMarks {
 export interface SDPasteRun {
   text: string;
   marks?: SDPasteRunMarks;
+  /** Transient conversion identity used to map mutation effects back to source nodes. */
+  sourcePath?: readonly (string | number)[];
 }
 
-export type SDPasteInline =
-  | { kind: 'text'; text: string; marks?: SDPasteRunMarks }
+export interface SDPasteParagraphProperties {
+  alignment?: 'left' | 'center' | 'right' | 'justify';
+  indent?: {
+    start?: number;
+    end?: number;
+    left?: number;
+    right?: number;
+    firstLine?: number;
+    hanging?: number;
+  };
+  spacing?: {
+    before?: number;
+    after?: number;
+    line?: number;
+    lineRule?: 'auto' | 'exact' | 'atLeast';
+  };
+}
+
+export type SDPasteLeafInline =
+  | { kind: 'text'; text: string; marks?: SDPasteRunMarks; sourcePath?: readonly (string | number)[] }
+  | { kind: 'lineBreak'; sourcePath?: readonly (string | number)[] }
   | {
       kind: 'image';
       assetId: string;
@@ -91,12 +113,24 @@ export type SDPasteInline =
       name?: string;
       alt?: string;
       title?: string;
+      sourcePath?: readonly (string | number)[];
+    };
+
+export type SDPasteInline =
+  | SDPasteLeafInline
+  | {
+      kind: 'hyperlink';
+      target: { kind: 'external'; url: string } | { kind: 'anchor'; anchor: string };
+      inlines: readonly SDPasteLeafInline[];
+      tooltip?: string;
+      sourcePath?: readonly (string | number)[];
     };
 
 export interface SDPasteParagraphBlock {
   kind: 'paragraph';
   runs: readonly SDPasteRun[];
   inlines?: readonly SDPasteInline[];
+  paragraphProps?: SDPasteParagraphProperties;
   styleRef?: string;
   /** Portable built-in style intent; destination style identity remains local. */
   semanticStyleRole?: 'default-paragraph' | 'title' | 'subtitle' | `heading-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
@@ -116,7 +150,12 @@ export interface SDPasteParagraphBlock {
     level?: number;
     /** True on the first block of a distinct adjacent portable list. */
     startsNewList?: boolean;
+    /** Positive ordinal for an ordered-list restart at `level`. */
+    start?: number;
+    format?: 'decimal' | 'lowerLetter' | 'upperLetter' | 'lowerRoman' | 'upperRoman';
+    text?: string;
   };
+  listItemContinuationLevel?: number;
   /**
    * Pre-validated direct `<w:pPr>` properties. Same-document copy carries the
    * source paragraph's materialized properties for fidelity; external HTML
@@ -132,6 +171,18 @@ export interface SDPasteParagraphBlock {
    * paste anchor's paragraph, independent of whether they carry formatting.
    */
   complete?: boolean;
+  /** Transient conversion identity used to map mutation effects back to source nodes. */
+  sourcePath?: readonly (string | number)[];
+}
+
+export interface SDPasteHeadingBlock extends Omit<SDPasteParagraphBlock, 'kind' | 'semanticStyleRole'> {
+  kind: 'heading';
+  level: 1 | 2 | 3 | 4 | 5 | 6;
+}
+
+export interface SDPasteHorizontalRuleBlock {
+  kind: 'horizontalRule';
+  sourcePath?: readonly (string | number)[];
 }
 
 export interface SDPasteTableCell {
@@ -148,10 +199,13 @@ export interface SDPasteTableCell {
     bottomPt?: number;
     leftPt?: number;
   };
+  sourcePath?: readonly (string | number)[];
 }
 
 export interface SDPasteTableRow {
   cells: readonly SDPasteTableCell[];
+  header?: boolean;
+  sourcePath?: readonly (string | number)[];
 }
 
 /**
@@ -162,9 +216,10 @@ export interface SDPasteTableRow {
 export interface SDPasteTableBlock {
   kind: 'table';
   rows: readonly SDPasteTableRow[];
+  sourcePath?: readonly (string | number)[];
 }
 
-export type SDPasteBlock = SDPasteParagraphBlock | SDPasteTableBlock;
+export type SDPasteBlock = SDPasteParagraphBlock | SDPasteHeadingBlock | SDPasteHorizontalRuleBlock | SDPasteTableBlock;
 
 export interface SDPasteAsset {
   id: string;
@@ -187,12 +242,18 @@ export interface SDPasteFragment {
   diagnostics?: readonly ClipboardInsertDiagnostic[];
 }
 
-export interface ClipboardInsertDiagnostic {
-  severity: 'error' | 'warning' | 'info';
+export interface ClipboardInsertDiagnostic extends SDDiagnostic {
   reason: SDPasteUnsupportedReason;
-  message: string;
   sourceKind?: ClipboardSourceKind;
-  path?: Array<string | number>;
+  /** Fatal rich-conversion attempt retained when a plain-text fallback is selected. */
+  cause?: SDConversionDiagnostic;
+}
+
+/** HTML conversion diagnostic with the clipboard negotiation envelope retained. */
+export interface ClipboardHtmlConversionDiagnostic extends SDConversionDiagnostic {
+  reason: SDPasteUnsupportedReason;
+  sourceKind: 'html';
+  cause?: SDConversionDiagnostic;
 }
 
 export interface ClipboardInsertPlanSummary {

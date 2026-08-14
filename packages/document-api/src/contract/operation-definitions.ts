@@ -183,7 +183,7 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
       'For multi-step redlines or whole-clause rewrites, prefer superdoc_mutations with where:{by:"block", nodeType, nodeId} from superdoc_get_content action "blocks" includeText:true rather than relying on text selectors. ' +
       'Refs expire after any mutation; always re-search before the next edit. ' +
       'For 2+ edits that must succeed or fail atomically, use superdoc_mutations instead. ' +
-      'Supports "dryRun" to preview changes and "changeMode: tracked" to record edits as tracked changes (not supported for markdown/html inserts). ' +
+      'Supports "dryRun" to preview changes and "changeMode: tracked" to record edits as tracked changes. ' +
       'Do NOT build "target" objects manually when a ref is available; prefer "ref" for simpler, more reliable targeting.',
     inputExamples: [
       {
@@ -192,6 +192,13 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
         target: { kind: 'block', nodeType: 'paragraph', nodeId: '<nodeId>' },
         placement: 'before',
         value: '# Executive Summary\n\nThis agreement sets forth the principal terms...',
+        changeMode: 'direct',
+      },
+      {
+        action: 'insert',
+        type: 'html',
+        value: '<h2>Review heading</h2><p>Tracked rich content.</p>',
+        changeMode: 'tracked',
       },
       {
         action: 'insert',
@@ -200,6 +207,20 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
           '# Section Title\n\nParagraph content here.\n\n# Another Section\n\nMore content with **bold** and *italic*.',
       },
       { action: 'replace', ref: '<handle.ref>', text: 'new text here' },
+      {
+        action: 'replace',
+        ref: '<handle.ref>',
+        value: '**Direct rich replacement**',
+        type: 'markdown',
+        changeMode: 'direct',
+      },
+      {
+        action: 'replace',
+        ref: '<handle.ref>',
+        value: '<strong>Tracked rich replacement</strong>',
+        type: 'html',
+        changeMode: 'tracked',
+      },
       { action: 'delete', ref: '<handle.ref>' },
       { action: 'undo' },
     ],
@@ -818,6 +839,15 @@ export const OPERATION_DEFINITIONS = {
     referenceDocPath: 'markdown-to-fragment.mdx',
     referenceGroup: 'core',
   },
+  htmlToFragment: {
+    memberPath: 'htmlToFragment',
+    description: 'Convert an HTML string into an SDM/1 structural fragment.',
+    expectedResult: 'Returns an SDHtmlToFragmentResult with the converted fragment, lossy flag, and diagnostics.',
+    requiresDocumentContext: true,
+    metadata: readOperation({ throws: ['CAPABILITY_UNAVAILABLE', 'INVALID_INPUT'] }),
+    referenceDocPath: 'html-to-fragment.mdx',
+    referenceGroup: 'core',
+  },
   info: {
     memberPath: 'info',
     description:
@@ -868,7 +898,7 @@ export const OPERATION_DEFINITIONS = {
       'structural SDFragment (content) inserts one or more blocks as siblings relative to a BlockNodeAddress target. ' +
       'When target/ref is omitted, content appends at the end of the document. ' +
       'Text mode supports text (default), markdown, and html content types via the `type` field. ' +
-      'Structural mode uses `placement` (before/after/insideStart/insideEnd) to position relative to the target block.',
+      'Rich markdown/html and structural modes use `placement` (before/after/insideStart/insideEnd) to position relative to a block target.',
     expectedResult:
       'Returns an SDMutationReceipt with applied status; resolution reports the resolved insertion point/target. Created visible text and structural blocks are reported through effects.insertedText and effects.insertedBlocks when available. Receipt reports NO_OP if the insertion point is invalid or content is empty.',
     requiresDocumentContext: true,
@@ -891,6 +921,10 @@ export const OPERATION_DEFINITIONS = {
         'RAW_MODE_REQUIRED',
         'PRESERVE_ONLY_VIOLATION',
         'INVALID_INPUT',
+        'TARGET_NOT_FOUND',
+        'PRECONDITION_FAILED',
+        'REVISION_MISMATCH',
+        'INTERNAL_ERROR',
       ],
       throws: [
         ...T_NOT_FOUND_CAPABLE,
@@ -915,7 +949,8 @@ export const OPERATION_DEFINITIONS = {
     description:
       'Replace content at a contiguous document selection. ' +
       'Text path accepts a SelectionTarget or ref plus replacement text. ' +
-      'Structural path accepts a BlockNodeAddress (replaces whole block), SelectionTarget (expands to full covered block boundaries), or ref plus SDFragment content.',
+      'Rich string path accepts HTML or Markdown plus a BlockNodeAddress, SelectionTarget, or ref. ' +
+      'Structural path accepts the same locator forms plus SDFragment content.',
     expectedResult:
       'Returns an SDMutationReceipt with applied status; receipt reports NO_OP if the target range already contains identical content.',
     requiresDocumentContext: true,
@@ -936,6 +971,10 @@ export const OPERATION_DEFINITIONS = {
         'RAW_MODE_REQUIRED',
         'PRESERVE_ONLY_VIOLATION',
         'INVALID_INPUT',
+        'TARGET_NOT_FOUND',
+        'PRECONDITION_FAILED',
+        'REVISION_MISMATCH',
+        'INTERNAL_ERROR',
       ],
       throws: [
         ...T_NOT_FOUND_CAPABLE,

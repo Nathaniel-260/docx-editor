@@ -41,6 +41,8 @@ export type {
   MarkdownToFragmentAdapter,
 } from './markdown-to-fragment/markdown-to-fragment.js';
 export { executeMarkdownToFragment } from './markdown-to-fragment/markdown-to-fragment.js';
+export type { HtmlToFragmentInput, HtmlToFragmentAdapter } from './html-to-fragment/html-to-fragment.js';
+export { executeHtmlToFragment } from './html-to-fragment/html-to-fragment.js';
 export type {
   HistoryState,
   HistoryActionResult,
@@ -143,7 +145,12 @@ import {
   type MarkdownToFragmentAdapter,
   type MarkdownToFragmentInput,
 } from './markdown-to-fragment/markdown-to-fragment.js';
-import type { SDMarkdownToFragmentResult } from './types/sd-contract.js';
+import {
+  executeHtmlToFragment,
+  type HtmlToFragmentAdapter,
+  type HtmlToFragmentInput,
+} from './html-to-fragment/html-to-fragment.js';
+import type { SDHtmlToFragmentResult, SDMarkdownToFragmentResult } from './types/sd-contract.js';
 import { executeInfo, type InfoAdapter, type InfoInput } from './info/info.js';
 import { executeExtract, type ExtractAdapter, type ExtractInput } from './extract/extract.js';
 import {
@@ -1676,12 +1683,18 @@ export {
 } from './lists/lists.js';
 export { DocumentApiValidationError } from './errors.js';
 export { textReceiptToSDReceipt, buildStructuralReceipt } from './receipt-bridge.js';
-export type { StructuralReceiptParams } from './receipt-bridge.js';
+export type { MutationReceiptBridgeContext, StructuralReceiptParams } from './receipt-bridge.js';
 export { isBlockNodeAddress } from './validation-primitives.js';
-export type { InsertInput, InsertContentType, TextInsertInput, LegacyInsertInput } from './insert/insert.js';
+export type {
+  InsertInput,
+  InsertContentType,
+  TextInsertInput,
+  RichContentInsertInput,
+  LegacyInsertInput,
+} from './insert/insert.js';
 export { isStructuralInsertInput } from './insert/insert.js';
-export type { ReplaceInput, TextReplaceInput } from './replace/replace.js';
-export { executeReplace, isStructuralReplaceInput } from './replace/replace.js';
+export type { ReplaceInput, TextReplaceInput, RichContentReplaceInput } from './replace/replace.js';
+export { executeReplace, isStructuralReplaceInput, isRichContentReplaceInput } from './replace/replace.js';
 export { executeFind } from './find/find.js';
 export { validateDocumentFragment, validateSDFragment } from './validation/fragment-validator.js';
 export type { DeleteInput } from './delete/delete.js';
@@ -1812,6 +1825,10 @@ export interface DocumentApi {
    * Convert a Markdown string into an SDM/1 structural fragment.
    */
   markdownToFragment(input: MarkdownToFragmentInput): SDMarkdownToFragmentResult;
+  /**
+   * Convert an HTML string into an SDM/1 structural fragment.
+   */
+  htmlToFragment(input: HtmlToFragmentInput): SDHtmlToFragmentResult;
   /**
    * Return document summary info including document counts and capabilities.
    */
@@ -2023,6 +2040,7 @@ export interface DocumentApiAdapters {
   getMarkdown: GetMarkdownAdapter;
   getHtml: GetHtmlAdapter;
   markdownToFragment: MarkdownToFragmentAdapter;
+  htmlToFragment?: HtmlToFragmentAdapter;
   info: InfoAdapter;
   extract: ExtractAdapter;
   clearContent: ClearContentAdapter;
@@ -2246,6 +2264,9 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
     },
     markdownToFragment(input: MarkdownToFragmentInput): SDMarkdownToFragmentResult {
       return executeMarkdownToFragment(adapters.markdownToFragment, input);
+    },
+    htmlToFragment(input: HtmlToFragmentInput): SDHtmlToFragmentResult {
+      return executeHtmlToFragment(adapters.htmlToFragment, input);
     },
     info(input: InfoInput): DocumentInfo {
       return executeInfo(adapters.info, input);

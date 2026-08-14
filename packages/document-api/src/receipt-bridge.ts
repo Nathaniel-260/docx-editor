@@ -15,7 +15,51 @@ import type {
   SDError,
   SelectionTarget,
   MutationResolutionTarget,
+  ReceiptSuccess,
+  SDMutationConversionReport,
 } from './types/index.js';
+
+export interface MutationReceiptBridgeContext {
+  evaluatedRevision?: { before: string; after: string };
+  conversion?: SDMutationConversionReport;
+}
+
+interface CanonicalSuccessMetadata {
+  id?: ReceiptSuccess['id'];
+  inserted?: ReceiptSuccess['inserted'];
+  updated?: ReceiptSuccess['updated'];
+  removed?: ReceiptSuccess['removed'];
+  invalidatedRefs?: ReceiptSuccess['invalidatedRefs'];
+  remappedRefs?: ReceiptSuccess['remappedRefs'];
+  affectedStories?: ReceiptSuccess['affectedStories'];
+  textRangeShifts?: ReceiptSuccess['textRangeShifts'];
+  txId?: ReceiptSuccess['txId'];
+  warnings?: ReceiptSuccess['warnings'];
+  effects?: ReceiptSuccess['effects'];
+}
+
+function projectSuccessMetadata(metadata: CanonicalSuccessMetadata): Partial<SDMutationReceipt> {
+  return {
+    ...(metadata.id !== undefined ? { id: metadata.id } : {}),
+    ...(metadata.inserted !== undefined ? { inserted: metadata.inserted } : {}),
+    ...(metadata.updated !== undefined ? { updated: metadata.updated } : {}),
+    ...(metadata.removed !== undefined ? { removed: metadata.removed } : {}),
+    ...(metadata.invalidatedRefs !== undefined ? { invalidatedRefs: metadata.invalidatedRefs } : {}),
+    ...(metadata.remappedRefs !== undefined ? { remappedRefs: metadata.remappedRefs } : {}),
+    ...(metadata.affectedStories !== undefined ? { affectedStories: metadata.affectedStories } : {}),
+    ...(metadata.textRangeShifts !== undefined ? { textRangeShifts: metadata.textRangeShifts } : {}),
+    ...(metadata.txId !== undefined ? { txId: metadata.txId } : {}),
+    ...(metadata.warnings !== undefined ? { warnings: metadata.warnings } : {}),
+    ...(metadata.effects !== undefined ? { effects: metadata.effects } : {}),
+  };
+}
+
+function projectBridgeContext(context: MutationReceiptBridgeContext): Partial<SDMutationReceipt> {
+  return {
+    ...(context.evaluatedRevision !== undefined ? { evaluatedRevision: context.evaluatedRevision } : {}),
+    ...(context.conversion !== undefined ? { conversion: context.conversion } : {}),
+  };
+}
 
 /**
  * Builds the public receipt resolution from a TextMutationResolution.
@@ -36,15 +80,16 @@ function buildResolution(resolution: TextMutationResolution): SDMutationReceipt[
  * - Resolution is passed through directly (both use TextAddress).
  * - Failure codes from the text pipeline are mapped to SDErrorCode.
  */
-export function textReceiptToSDReceipt(receipt: TextMutationReceipt): SDMutationReceipt {
+export function textReceiptToSDReceipt(
+  receipt: TextMutationReceipt,
+  context: MutationReceiptBridgeContext = {},
+): SDMutationReceipt {
   if (receipt.success) {
     return {
       success: true,
       resolution: receipt.resolution ? buildResolution(receipt.resolution) : undefined,
-      // Preserve the created-content lane (inserted text/blocks) so callers can
-      // anchor to the spans the mutation created. `resolution.target` stays the
-      // resolved insertion point; `effects` carries the post-mutation spans.
-      ...(receipt.effects ? { effects: receipt.effects } : {}),
+      ...projectSuccessMetadata(receipt),
+      ...projectBridgeContext(context),
     };
   }
 
@@ -80,6 +125,7 @@ export function textReceiptToSDReceipt(receipt: TextMutationReceipt): SDMutation
     success: false,
     failure,
     resolution: receipt.resolution ? buildResolution(receipt.resolution) : undefined,
+    ...projectBridgeContext(context),
   };
 }
 
@@ -88,7 +134,7 @@ export function textReceiptToSDReceipt(receipt: TextMutationReceipt): SDMutation
 // ---------------------------------------------------------------------------
 
 /** Parameters for building a structural mutation receipt. */
-export interface StructuralReceiptParams {
+export interface StructuralReceiptParams extends CanonicalSuccessMetadata, MutationReceiptBridgeContext {
   target: MutationResolutionTarget;
   range: TextMutationRange;
   selectionTarget?: SelectionTarget;
@@ -122,12 +168,18 @@ export function buildStructuralReceipt(
   };
 
   if (success) {
-    return { success: true, resolution, ...(params.effects ? { effects: params.effects } : {}) };
+    return {
+      success: true,
+      resolution,
+      ...projectSuccessMetadata(params),
+      ...projectBridgeContext(params),
+    };
   }
 
   return {
     success: false,
     failure: { code: (failure?.code ?? 'INTERNAL_ERROR') as SDError['code'], message: failure?.message ?? '' },
     resolution,
+    ...projectBridgeContext(params),
   };
 }

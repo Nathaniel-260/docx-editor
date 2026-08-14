@@ -58,6 +58,7 @@ export function buildDispatchTable(api: DocumentApi): TypedDispatchTable {
     getMarkdown: (input) => api.getMarkdown(input),
     getHtml: (input) => api.getHtml(input),
     markdownToFragment: (input) => api.markdownToFragment(input),
+    htmlToFragment: (input) => api.htmlToFragment(input),
     info: (input) => api.info(input),
     extract: (input) => api.extract(input),
     // --- Singleton mutations ---

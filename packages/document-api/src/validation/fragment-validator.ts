@@ -203,6 +203,9 @@ function validateContentByKind(rec: Record<string, unknown>, kind: string, seenI
     case 'table':
       validateTablePayload(rec, seenIds);
       break;
+    case 'horizontalRule':
+      validateHorizontalRule(rec);
+      break;
     case 'list':
       validateListPayload(rec, seenIds);
       break;
@@ -323,13 +326,47 @@ function validateTablePayload(rec: Record<string, unknown>, seenIds: Set<string>
       validatePositiveInt(cellRec, 'rowSpan');
       validatePositiveInt(cellRec, 'colSpan');
 
+      if (cellRec.header !== undefined && typeof cellRec.header !== 'boolean') {
+        throw new DocumentApiValidationError('INVALID_PAYLOAD', 'Table cell header must be a boolean.', {
+          field: 'header',
+        });
+      }
+
+      const allowedCellFields = new Set(['id', 'ext', 'props', 'rowSpan', 'colSpan', 'header', 'content']);
+      const unknownCellField = Object.keys(cellRec).find((field) => !allowedCellFields.has(field));
+      if (unknownCellField) {
+        throw new DocumentApiValidationError('INVALID_PAYLOAD', `Unknown table cell field "${unknownCellField}".`, {
+          field: unknownCellField,
+        });
+      }
+
       // Validate cell content (block-level children)
-      if (Array.isArray(cellRec.content)) {
-        for (const child of cellRec.content as unknown[]) {
-          validateContentNode(child, seenIds);
-        }
+      if (!Array.isArray(cellRec.content)) {
+        throw new DocumentApiValidationError('INVALID_PAYLOAD', 'Table cell content must be an array.', {
+          field: 'content',
+        });
+      }
+      for (const child of cellRec.content as unknown[]) {
+        validateContentNode(child, seenIds);
       }
     }
+  }
+}
+
+function validateHorizontalRule(rec: Record<string, unknown>): void {
+  const payload = rec.horizontalRule;
+  if (!isRecord(payload)) {
+    throw new DocumentApiValidationError('INVALID_PAYLOAD', 'horizontalRule payload must be an object.');
+  }
+  if (Object.keys(payload).length > 0) {
+    throw new DocumentApiValidationError('INVALID_PAYLOAD', 'horizontalRule payload must be empty.');
+  }
+  const allowedFields = new Set(['kind', 'id', 'horizontalRule']);
+  const unknownField = Object.keys(rec).find((field) => !allowedFields.has(field));
+  if (unknownField) {
+    throw new DocumentApiValidationError('INVALID_PAYLOAD', `Unknown horizontalRule field "${unknownField}".`, {
+      field: unknownField,
+    });
   }
 }
 

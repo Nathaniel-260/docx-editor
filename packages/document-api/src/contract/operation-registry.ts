@@ -9,7 +9,7 @@ import type { OperationId } from './types.js';
 import type { NodeAddress } from '../types/index.js';
 import type { SDNodeResult, SDFindInput, SDFindResult, SDGetInput } from '../types/sd-envelope.js';
 import type { TextMutationReceipt, Receipt } from '../types/receipt.js';
-import type { SDMutationReceipt, SDMarkdownToFragmentResult } from '../types/sd-contract.js';
+import type { SDHtmlToFragmentResult, SDMutationReceipt, SDMarkdownToFragmentResult } from '../types/sd-contract.js';
 import type { DocumentInfo } from '../types/info.types.js';
 import type { SDDocument } from '../types/fragment.js';
 import type {
@@ -37,6 +37,7 @@ import type { GetTextInput } from '../get-text/get-text.js';
 import type { GetMarkdownInput } from '../get-markdown/get-markdown.js';
 import type { GetHtmlInput } from '../get-html/get-html.js';
 import type { MarkdownToFragmentInput } from '../markdown-to-fragment/markdown-to-fragment.js';
+import type { HtmlToFragmentInput } from '../html-to-fragment/html-to-fragment.js';
 import type { InfoInput } from '../info/info.js';
 import type { ExtractInput } from '../extract/extract.js';
 import type { ExtractResult } from '../types/extract.types.js';
@@ -590,6 +591,7 @@ export interface OperationRegistry extends FormatInlineAliasOperationRegistry {
   getMarkdown: { input: GetMarkdownInput; options: never; output: string };
   getHtml: { input: GetHtmlInput; options: never; output: string };
   markdownToFragment: { input: MarkdownToFragmentInput; options: never; output: SDMarkdownToFragmentResult };
+  htmlToFragment: { input: HtmlToFragmentInput; options: never; output: SDHtmlToFragmentResult };
   info: { input: InfoInput; options: never; output: DocumentInfo };
   extract: { input: ExtractInput; options: never; output: ExtractResult };
   // --- Singleton mutations ---

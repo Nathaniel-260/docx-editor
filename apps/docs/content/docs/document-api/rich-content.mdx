@@ -1,0 +1,54 @@
+---
+title: Insert HTML and Markdown
+navTitle: Rich content
+description: Convert, inspect, and apply bounded HTML or Markdown content to an open DOCX.
+---
+
+The Document API accepts HTML and Markdown as structured input. You can inspect the canonical fragment first, or pass the source directly to `insert()` or `replace()`.
+
+HTML and Markdown are not Word package fragments. SuperDoc preserves the supported structure listed below, normalizes representation details, and reports anything it drops or downgrades.
+
+## Convert before applying
+
+Use `htmlToFragment()` or `markdownToFragment()` when your application needs to inspect diagnostics or reuse the canonical fragment:
+
+<include>../../../snippets/document-api/rich-content.ts</include>
+
+Each result contains:
+
+- `fragment`: the canonical structured content.
+- `lossy`: `true` when conversion normalized, downgraded, or dropped source content.
+- `diagnostics`: ordered, source-located conversion findings.
+
+A warning-bearing result can still be applied. An error means there is no safe rich fragment to apply. Check diagnostic `severity` and `disposition` instead of treating every lossy result as a failure.
+
+## Insert or replace raw source
+
+Pass `value` with `type: 'html'` or `type: 'markdown'` to convert and apply in one call. Rich insert supports a selection, a block with `before` or `after`, a ref, or no target for append. Rich replace requires a selection, paragraph or heading block, whole table block, or ref.
+
+Set `changeMode: 'tracked'` when the inserted or replaced structure should remain reviewable. Use `dryRun: true` to resolve and preflight without creating IDs, history, or document changes. Pair a mutation with `expectedRevision` when it depends on an earlier read.
+
+Successful raw-source receipts include a `conversion` report. They may also include created entity identities, source-path effects, affected stories, text-range shifts, and a transaction ID. Check `success` before using any success-only field.
+
+## Supported inbound constructs
+
+| Source construct                                                                                          | Result                                                                  |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Paragraphs, headings, bold, italic, underline, strike, hard breaks                                        | Preserved as canonical blocks and runs                                  |
+| Ordered and unordered lists, including bounded nesting and ordered starts                                 | Preserved with canonical list levels                                    |
+| Tables with a complete leading header row and column spans                                                | Preserved; explicit widths and broad table styling are not              |
+| Safe `http`, `https`, and `mailto` links                                                                  | Preserved as external hyperlinks                                        |
+| Horizontal rules                                                                                          | Preserved as durable horizontal-rule blocks                             |
+| Safe bounded color, font, spacing, indentation, cell shading, and padding                                 | Normalized to typed canonical properties                                |
+| Code, block quotes, task markers, and unsupported inline forms                                            | Downgraded or dropped with diagnostics                                  |
+| Scripts, event handlers, unsafe URLs, raw images, nested tables, row spans, malformed or over-limit input | Sanitized with warnings when safe structure remains; otherwise rejected |
+
+The limits are deliberate. Arbitrary CSS, embedded active content, and full DOCX package fidelity are outside the HTML/Markdown contract.
+
+## Projection and persistence
+
+Direct changes are immediately part of the document. The shared contract names `redline`, `final`, and `original` review projections; this inbound API creates review markup that can be accepted or rejected through the tracked-changes API. Outbound HTML/Markdown projection for those views is deferred to SD-4241. Save and reopen the DOCX before treating a workflow as complete.
+
+Standalone outbound conversion of an `SDFragment` to HTML or Markdown is not part of this inbound API. Document reads such as `getHtml()` and `getMarkdown()` have their own output contract.
+
+For target discovery, start with [query content](/document-api/query-content). For failure handling, see [receipts and errors](/document-api/receipts-and-errors). The generated [HTML conversion reference](/document-api/reference/html-to-fragment), [insert reference](/document-api/reference/insert), and [replace reference](/document-api/reference/replace) list the complete shapes.

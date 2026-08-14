@@ -292,10 +292,19 @@ function makeAdapters() {
     },
   };
 
+  const htmlToFragmentAdapter = {
+    htmlToFragment: mock(() => ({
+      fragment: [{ kind: 'paragraph' as const, paragraph: { inlines: [] } }],
+      lossy: false,
+      diagnostics: [],
+    })),
+  };
+
   const adapters: DocumentApiAdapters = {
     find: findAdapter,
     getNode: getNodeAdapter,
     getText: getTextAdapter,
+    htmlToFragment: htmlToFragmentAdapter,
     info: infoAdapter,
     capabilities: capabilitiesAdapter,
     comments: commentsAdapter,
@@ -311,7 +320,7 @@ function makeAdapters() {
     mutations: mutationsAdapter,
   };
 
-  return { adapters, findAdapter, writeAdapter, commentsAdapter, trackChangesAdapter };
+  return { adapters, findAdapter, writeAdapter, commentsAdapter, trackChangesAdapter, htmlToFragmentAdapter };
 }
 
 describe('invoke', () => {
@@ -351,6 +360,24 @@ describe('invoke', () => {
       const direct = api.insert(input);
       const invoked = api.invoke({ operationId: 'insert', input });
       expect(invoked).toEqual(direct);
+    });
+
+    it('htmlToFragment: invoke returns the same strict conversion result as the direct method', () => {
+      const { adapters, htmlToFragmentAdapter } = makeAdapters();
+      const api = createDocumentApi(adapters);
+      const input = { html: '<p>Hello</p>' };
+
+      expect(api.invoke({ operationId: 'htmlToFragment', input })).toEqual(api.htmlToFragment(input));
+      expect(htmlToFragmentAdapter.htmlToFragment).toHaveBeenCalledWith(input);
+    });
+
+    it('htmlToFragment: invoke preserves the typed missing-capability failure', () => {
+      const { adapters } = makeAdapters();
+      const api = createDocumentApi({ ...adapters, htmlToFragment: undefined });
+
+      expect(() => api.invoke({ operationId: 'htmlToFragment', input: { html: '<p>Hello</p>' } })).toThrow(
+        expect.objectContaining({ code: 'CAPABILITY_UNAVAILABLE' }),
+      );
     });
 
     it('insert: invoke forwards options through to adapter-backed execution', () => {

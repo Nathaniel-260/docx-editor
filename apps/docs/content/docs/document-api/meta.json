@@ -5,6 +5,7 @@
     "mental-model",
     "application-data",
     "query-content",
+    "rich-content",
     "replace-delete-content",
     "mutation-plans",
     "tracked-changes",

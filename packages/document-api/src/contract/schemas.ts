@@ -16,6 +16,13 @@ import {
 import { buildPatchSchema, buildStateSchema } from '../styles/index.js';
 import { Z_ORDER_RELATIVE_HEIGHT_MAX, Z_ORDER_RELATIVE_HEIGHT_MIN } from '../images/z-order.js';
 import { SD_EXPORT_MODES } from '../export/export.types.js';
+import {
+  SD_CONVERSION_CONSTRUCTS,
+  SD_CONVERSION_DIAGNOSTIC_CODES,
+  SD_CONVERSION_DISPOSITIONS,
+  SD_CONVERSION_FORMATS,
+} from '../types/sd-contract.js';
+import { SD_CONVERSION_FRAGMENT_SCHEMA, SD_CONVERSION_FRAGMENT_SCHEMA_DEFS } from './sd-fragment-schema.js';
 type JsonSchema = Record<string, unknown>;
 const trackChangeTypeValues = [
   'insertion',
@@ -71,6 +78,65 @@ function arraySchema(items: JsonSchema): JsonSchema {
 function ref(name: string): JsonSchema {
   return { $ref: `#/$defs/${name}` };
 }
+const sourcePathSchema = arraySchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] });
+const diagnosticPathSchema = arraySchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] });
+const conversionSourceRangeSchema = objectSchema(
+  {
+    startOffset: { type: 'integer', minimum: 0 },
+    endOffset: { type: 'integer', minimum: 0 },
+    startLine: { type: 'integer', minimum: 1 },
+    startColumn: { type: 'integer', minimum: 1 },
+    endLine: { type: 'integer', minimum: 1 },
+    endColumn: { type: 'integer', minimum: 1 },
+  },
+  ['startOffset', 'endOffset'],
+);
+const conversionSourceSchema = objectSchema(
+  {
+    format: { enum: [...SD_CONVERSION_FORMATS] },
+    range: conversionSourceRangeSchema,
+  },
+  ['format'],
+);
+const diagnosticProperties: Record<string, JsonSchema> = {
+  code: { type: 'string' },
+  severity: { enum: ['error', 'warning', 'info'] },
+  message: { type: 'string' },
+  path: diagnosticPathSchema,
+  construct: { enum: [...SD_CONVERSION_CONSTRUCTS] },
+  disposition: { enum: [...SD_CONVERSION_DISPOSITIONS] },
+  lossy: { type: 'boolean' },
+  source: conversionSourceSchema,
+};
+const sdDiagnosticSchema = objectSchema(diagnosticProperties, ['code', 'severity', 'message']);
+const sdConversionDiagnosticSchema = objectSchema(
+  {
+    ...diagnosticProperties,
+    code: { enum: [...SD_CONVERSION_DIAGNOSTIC_CODES] },
+  },
+  ['code', 'severity', 'message', 'construct', 'disposition', 'lossy', 'source'],
+);
+const conversionReportSchema = objectSchema(
+  {
+    format: { enum: [...SD_CONVERSION_FORMATS] },
+    lossy: { type: 'boolean' },
+    diagnostics: arraySchema(sdConversionDiagnosticSchema),
+  },
+  ['format', 'lossy', 'diagnostics'],
+);
+const receiptSuccessMetadataProperties: Record<string, JsonSchema> = {
+  id: { type: 'string' },
+  inserted: arraySchema(ref('EntityAddress')),
+  updated: arraySchema(ref('EntityAddress')),
+  removed: arraySchema(ref('EntityAddress')),
+  invalidatedRefs: arraySchema(ref('AffectedRef')),
+  remappedRefs: arraySchema(ref('AffectedRefRemapping')),
+  affectedStories: arraySchema(ref('StoryLocator')),
+  textRangeShifts: arraySchema(ref('TextRangeShift')),
+  txId: { type: 'string' },
+  warnings: arraySchema(ref('ReviewWarning')),
+  effects: ref('ReceiptEffects'),
+};
 /**
  * Builds a `oneOf` schema that merges each TargetLocator branch with additional
  * payload properties. This avoids the `allOf` + `additionalProperties: false`
@@ -185,6 +251,7 @@ const knownTargetKindValues = [
  * graph is self-consistent.
  */
 const SHARED_DEFS: Record<string, JsonSchema> = {
+  ...SD_CONVERSION_FRAGMENT_SCHEMA_DEFS,
   // -- Primitives --
   Range: objectSchema(
     {
@@ -499,18 +566,22 @@ const SHARED_DEFS: Record<string, JsonSchema> = {
     },
     ['story', 'atChar', 'delta'],
   ),
+  ReviewWarning: objectSchema(
+    {
+      code: { type: 'string' },
+      message: { type: 'string' },
+      feature: { enum: ['comments', 'trackedChanges'] },
+      severity: { const: 'warning' },
+      affectedObjectId: { type: 'string' },
+      affectedPartUri: { type: 'string' },
+      canProceed: { type: 'boolean' },
+    },
+    ['code', 'message', 'feature', 'severity', 'canProceed'],
+  ),
   ReceiptSuccess: objectSchema(
     {
       success: { const: true },
-      id: { type: 'string' },
-      inserted: arraySchema(ref('EntityAddress')),
-      updated: arraySchema(ref('EntityAddress')),
-      removed: arraySchema(ref('EntityAddress')),
-      invalidatedRefs: arraySchema(ref('AffectedRef')),
-      remappedRefs: arraySchema(ref('AffectedRefRemapping')),
-      affectedStories: arraySchema(ref('StoryLocator')),
-      textRangeShifts: arraySchema(ref('TextRangeShift')),
-      txId: { type: 'string' },
+      ...receiptSuccessMetadataProperties,
     },
     ['success'],
   ),
@@ -566,6 +637,7 @@ const SHARED_DEFS: Record<string, JsonSchema> = {
   TextMutationEffect: objectSchema(
     {
       kind: { const: 'insertedText' },
+      sourcePath: sourcePathSchema,
       target: ref('TextAddress'),
       selectionTarget: ref('SelectionTarget'),
       text: { type: 'string' },
@@ -575,6 +647,7 @@ const SHARED_DEFS: Record<string, JsonSchema> = {
   BlockMutationEffect: objectSchema(
     {
       kind: { const: 'insertedBlock' },
+      sourcePath: sourcePathSchema,
       target: ref('BlockNodeAddress'),
       insertedText: ref('TextMutationEffect'),
     },
@@ -1308,22 +1381,42 @@ const sdMutationResolutionSchema = objectSchema(
   },
   ['target', 'range'],
 );
+const evaluatedRevisionSchema = objectSchema({ before: { type: 'string' }, after: { type: 'string' } }, [
+  'before',
+  'after',
+]);
 const sdMutationSuccessSchema = objectSchema(
   {
     success: { const: true },
     resolution: sdMutationResolutionSchema,
-    effects: ref('ReceiptEffects'),
-    evaluatedRevision: objectSchema({ before: { type: 'string' }, after: { type: 'string' } }, ['before', 'after']),
+    ...receiptSuccessMetadataProperties,
+    evaluatedRevision: evaluatedRevisionSchema,
+    conversion: conversionReportSchema,
   },
   ['success'],
 );
+function sdErrorSchemaFor(operationId: OperationId): JsonSchema {
+  return objectSchema(
+    {
+      code: { enum: possibleFailureCodes(operationId) },
+      message: { type: 'string' },
+      path: diagnosticPathSchema,
+      target: {
+        oneOf: [ref('BlockNodeAddress'), ref('TextAddress'), ref('SelectionTarget')],
+      },
+      details: {},
+    },
+    ['code', 'message'],
+  );
+}
 function sdMutationFailureSchemaFor(operationId: OperationId): JsonSchema {
   return objectSchema(
     {
       success: { const: false },
-      failure: receiptFailureSchemaFor(operationId),
+      failure: sdErrorSchemaFor(operationId),
       resolution: sdMutationResolutionSchema,
-      evaluatedRevision: objectSchema({ before: { type: 'string' }, after: { type: 'string' } }, ['before', 'after']),
+      evaluatedRevision: evaluatedRevisionSchema,
+      conversion: conversionReportSchema,
     },
     ['success', 'failure'],
   );
@@ -2278,6 +2371,7 @@ const nullableTableBorderSpecSchema: JsonSchema = {
 const sdFragmentSchema: JsonSchema = {
   oneOf: [{ type: 'object' }, { type: 'array', items: { type: 'object' } }],
 };
+const conversionFragmentSchema: JsonSchema = SD_CONVERSION_FRAGMENT_SCHEMA;
 const placementSchema: JsonSchema = { enum: ['before', 'after', 'insideStart', 'insideEnd'] };
 const nestingPolicySchema: JsonSchema = {
   ...objectSchema({
@@ -2292,13 +2386,45 @@ const insertInputSchema: JsonSchema = {
         in: storyLocatorSchema,
         value: { type: 'string', description: 'Text content to insert.' },
         type: {
-          type: 'string',
-          enum: ['text', 'markdown', 'html'],
-          description: "Content format: 'text' (default), 'markdown', or 'html'.",
+          const: 'text',
+          description: "Plain-text content format. Omit for the same 'text' default.",
         },
       },
       ['value'],
     ),
+    {
+      oneOf: [
+        objectSchema(
+          {
+            in: storyLocatorSchema,
+            target: { oneOf: [selectionTargetSchema, blockNodeAddressSchema] },
+            value: { type: 'string', description: 'HTML or Markdown content to convert and insert.' },
+            type: { enum: ['markdown', 'html'] },
+            placement: placementSchema,
+          },
+          ['target', 'value', 'type'],
+        ),
+        objectSchema(
+          {
+            in: storyLocatorSchema,
+            ref: { type: 'string', minLength: 1 },
+            value: { type: 'string', description: 'HTML or Markdown content to convert and insert.' },
+            type: { enum: ['markdown', 'html'] },
+            placement: placementSchema,
+          },
+          ['ref', 'value', 'type'],
+        ),
+        objectSchema(
+          {
+            in: storyLocatorSchema,
+            value: { type: 'string', description: 'HTML or Markdown content to convert and insert.' },
+            type: { enum: ['markdown', 'html'] },
+            placement: placementSchema,
+          },
+          ['value', 'type'],
+        ),
+      ],
+    },
     objectSchema(
       {
         in: storyLocatorSchema,
@@ -3579,19 +3705,20 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
     input: objectSchema({ markdown: { type: 'string' } }, ['markdown']),
     output: objectSchema(
       {
-        fragment: {},
+        fragment: conversionFragmentSchema,
         lossy: { type: 'boolean' },
-        diagnostics: arraySchema(
-          objectSchema(
-            {
-              code: { type: 'string' },
-              severity: { type: 'string', enum: ['error', 'warning', 'info'] },
-              message: { type: 'string' },
-              path: arraySchema({ type: 'string' }),
-            },
-            ['code', 'severity', 'message'],
-          ),
-        ),
+        diagnostics: arraySchema(sdDiagnosticSchema),
+      },
+      ['fragment', 'lossy', 'diagnostics'],
+    ),
+  },
+  htmlToFragment: {
+    input: objectSchema({ html: { type: 'string' } }, ['html']),
+    output: objectSchema(
+      {
+        fragment: conversionFragmentSchema,
+        lossy: { type: 'boolean' },
+        diagnostics: arraySchema(sdConversionDiagnosticSchema),
       },
       ['fragment', 'lossy', 'diagnostics'],
     ),
@@ -3786,6 +3913,30 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
                 nestingPolicy: nestingPolicySchema,
               },
               ['ref', 'content'],
+            ),
+          ],
+        },
+        {
+          oneOf: [
+            objectSchema(
+              {
+                in: storyLocatorSchema,
+                target: { oneOf: [blockNodeAddressSchema, selectionTargetSchema] },
+                value: { type: 'string', description: 'HTML or Markdown replacement content.' },
+                type: { enum: ['html', 'markdown'] },
+                nestingPolicy: nestingPolicySchema,
+              },
+              ['target', 'value', 'type'],
+            ),
+            objectSchema(
+              {
+                in: storyLocatorSchema,
+                ref: { type: 'string', minLength: 1 },
+                value: { type: 'string', description: 'HTML or Markdown replacement content.' },
+                type: { enum: ['html', 'markdown'] },
+                nestingPolicy: nestingPolicySchema,
+              },
+              ['ref', 'value', 'type'],
             ),
           ],
         },

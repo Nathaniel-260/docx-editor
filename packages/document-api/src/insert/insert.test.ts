@@ -87,6 +87,31 @@ describe('executeInsert: content type validation', () => {
   it('rejects non-string content type', () => {
     expect(() => exec({ value: 'hello', type: 123 })).toThrow('text, markdown, html');
   });
+
+  it('routes rich content with a block target and placement through the structured adapter', () => {
+    const selectionAdapter = createStubSelectionAdapter();
+    const writeAdapter = createStubWriteAdapter();
+    const input = {
+      value: '<p>Hello</p>',
+      type: 'html' as const,
+      target: { kind: 'block' as const, nodeType: 'paragraph' as const, nodeId: 'p1' },
+      placement: 'after' as const,
+    };
+
+    executeInsert(selectionAdapter, writeAdapter, input, { changeMode: 'tracked' });
+
+    expect(writeAdapter.insertStructured).toHaveBeenCalledWith(input, {
+      changeMode: 'tracked',
+      dryRun: false,
+    });
+    expect(selectionAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects placement on a plain-text insert', () => {
+    expect(() => exec({ value: 'hello', type: 'text', placement: 'after' })).toThrow(
+      'only valid with structural content input or markdown/html inserts',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

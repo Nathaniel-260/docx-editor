@@ -44,7 +44,6 @@ export type TextInsertInput = OptionalInsertLocator & {
 /**
  * Type-safe input for markdown/html inserts with block-level positioning.
  * Accepts BlockNodeAddress targets and placement (routed through the structural insert path).
- * Standalone export: not part of the InsertInput union to avoid type narrowing issues in the runtime.
  */
 export type RichContentInsertInput = {
   target?: SelectionTarget | BlockNodeAddress;
@@ -68,7 +67,7 @@ export type LegacyInsertInput = TextInsertInput;
  * Discrimination: presence of `content` (structural) vs `value` (text string).
  * These are mutually exclusive: providing both is an error.
  */
-export type InsertInput = TextInsertInput | SDInsertInput;
+export type InsertInput = TextInsertInput | RichContentInsertInput | SDInsertInput;
 
 // ---------------------------------------------------------------------------
 // Allowlists for strict field validation
@@ -291,7 +290,7 @@ export function executeInsert(
   }
 
   // Text string path
-  const { target, ref, value } = input;
+  const { value } = input;
   const contentType = input.type ?? 'text';
 
   // For non-text content types, delegate to the adapter's structured insert path.
@@ -300,7 +299,7 @@ export function executeInsert(
   }
 
   // Text path with target/ref → route through SelectionMutationAdapter
-  const storyIn = input.in;
+  const { target, ref, in: storyIn } = input as TextInsertInput;
   if (target || ref) {
     const request = target
       ? { kind: 'insert' as const, target, text: value, ...(storyIn ? { in: storyIn } : {}) }

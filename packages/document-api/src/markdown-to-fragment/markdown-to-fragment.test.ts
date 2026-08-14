@@ -1,7 +1,21 @@
 import { describe, it, expect, mock } from 'bun:test';
 import { executeMarkdownToFragment } from './markdown-to-fragment.js';
 import type { MarkdownToFragmentAdapter, MarkdownToFragmentInput } from './markdown-to-fragment.js';
-import type { SDMarkdownToFragmentResult } from '../types/sd-contract.js';
+import type { SDDiagnostic, SDMarkdownToFragmentResult } from '../index.js';
+
+const legacyDiagnostic: SDDiagnostic = {
+  code: 'LEGACY_ADAPTER_CODE',
+  severity: 'warning',
+  message: 'Existing base diagnostics remain valid without conversion fields.',
+};
+
+const legacyMarkdownResult: SDMarkdownToFragmentResult = {
+  fragment: [],
+  lossy: true,
+  diagnostics: [legacyDiagnostic],
+};
+
+void legacyMarkdownResult;
 
 describe('executeMarkdownToFragment', () => {
   it('delegates input to the adapter and returns result', () => {
