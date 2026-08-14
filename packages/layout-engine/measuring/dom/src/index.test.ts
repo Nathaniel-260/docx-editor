@@ -263,6 +263,83 @@ describe('measureBlock', () => {
       expect(measure.totalHeight).toBe(measure.lines[0].lineHeight);
     });
 
+    it('resolves one repeated physical font face once per paragraph', async () => {
+      const resolvePhysical = vi.fn((family: string) => family);
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'repeated-physical-face',
+        runs: Array.from({ length: 12 }, (_, index) => ({
+          text: `segment ${index} `,
+          fontFamily: 'Arial',
+          fontSize: index % 2 === 0 ? 16 : 18,
+        })),
+        attrs: {},
+      };
+
+      const measure = expectParagraphMeasure(
+        await measureBlock(block, 1000, { resolvePhysical, fontSignature: 'repeated-face' }),
+      );
+
+      expect(measure.lines.length).toBeGreaterThan(0);
+      expect(resolvePhysical).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps distinct physical font faces separate', async () => {
+      const resolvePhysical = vi.fn((family: string) => family);
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'distinct-physical-faces',
+        runs: [
+          { text: 'regular ', fontFamily: 'Arial', fontSize: 16 },
+          { text: 'bold ', fontFamily: 'Arial', fontSize: 16, bold: true },
+          { text: 'italic ', fontFamily: 'Arial', fontSize: 16, italic: true },
+          { text: 'other', fontFamily: 'Times New Roman', fontSize: 16 },
+        ],
+        attrs: {},
+      };
+
+      await measureBlock(block, 1000, { resolvePhysical, fontSignature: 'distinct-faces' });
+
+      expect(resolvePhysical).toHaveBeenCalledTimes(4);
+    });
+
+    it('preserves omitted font flags across paragraph-local font-info reuse', async () => {
+      const explicitThenOmitted: FlowBlock = {
+        kind: 'paragraph',
+        id: 'explicit-then-omitted-font-flags',
+        runs: [
+          { text: 'explicit', fontFamily: 'Arial', fontSize: 16, bold: false, italic: false },
+          { kind: 'lineBreak' },
+          { text: 'omitted', fontFamily: 'Arial', fontSize: 16 },
+        ],
+        attrs: {},
+      };
+      const omittedThenExplicit: FlowBlock = {
+        kind: 'paragraph',
+        id: 'omitted-then-explicit-font-flags',
+        runs: [
+          { text: 'omitted', fontFamily: 'Arial', fontSize: 16 },
+          { kind: 'lineBreak' },
+          { text: 'explicit', fontFamily: 'Arial', fontSize: 16, bold: false, italic: false },
+        ],
+        attrs: {},
+      };
+
+      const explicitThenOmittedMeasure = expectParagraphMeasure(await measureBlock(explicitThenOmitted, 1000));
+      const omittedThenExplicitMeasure = expectParagraphMeasure(await measureBlock(omittedThenExplicit, 1000));
+      const maxFontInfo = (line: ParagraphMeasure['lines'][number]) =>
+        (line as ParagraphMeasure['lines'][number] & { maxFontInfo?: Pick<TextRun, 'bold' | 'italic'> }).maxFontInfo;
+
+      expect(explicitThenOmittedMeasure.lines).toHaveLength(2);
+      expect(maxFontInfo(explicitThenOmittedMeasure.lines[0])).toMatchObject({ bold: false, italic: false });
+      expect(maxFontInfo(explicitThenOmittedMeasure.lines[1])?.bold).toBeUndefined();
+      expect(maxFontInfo(explicitThenOmittedMeasure.lines[1])?.italic).toBeUndefined();
+      expect(omittedThenExplicitMeasure.lines).toHaveLength(2);
+      expect(maxFontInfo(omittedThenExplicitMeasure.lines[0])?.bold).toBeUndefined();
+      expect(maxFontInfo(omittedThenExplicitMeasure.lines[0])?.italic).toBeUndefined();
+      expect(maxFontInfo(omittedThenExplicitMeasure.lines[1])).toMatchObject({ bold: false, italic: false });
+    });
+
     it('does not count empty text runs as justification spaces', async () => {
       const visibleRuns = [
         {

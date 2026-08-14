@@ -9,6 +9,7 @@ import {
   resolveHeaderFooterForPage,
   resolveHeaderFooterForPageAndSection,
   buildMultiSectionIdentifier,
+  defaultMultiSectionIdentifier,
 } from '../src/headerFooterUtils';
 import type { SectionMetadata } from '@superdoc/contracts';
 
@@ -684,6 +685,31 @@ describe('headerFooterUtils', () => {
       expect(identifier.footerIds.first).toBe('conv-f-first');
       expect(identifier.footerIds.even).toBe('section-f-even');
       expect(identifier.footerIds.odd).toBe('conv-f-odd');
+    });
+  });
+
+  describe('public multi-section identifier mutation', () => {
+    it('resolves sections appended after creating the default identifier', () => {
+      const identifier = defaultMultiSectionIdentifier();
+      identifier.sections.push({
+        sectionIndex: 0,
+        headerRefs: { default: 'late-header' },
+      });
+
+      expect(
+        getHeaderFooterIdForPage({ number: 1, fragments: [], sectionIndex: 0 }, identifier, { kind: 'header' }),
+      ).toBe('late-header');
+    });
+
+    it('resolves mutations to a built identifier map value', () => {
+      const identifier = buildMultiSectionIdentifier([{ sectionIndex: 0, headerRefs: { default: 'initial-header' } }]);
+      const sectionHeaderIds = identifier.sectionHeaderIds.get(0);
+      expect(sectionHeaderIds).toBeDefined();
+      sectionHeaderIds!.default = 'updated-header';
+
+      expect(
+        getHeaderFooterIdForPage({ number: 1, fragments: [], sectionIndex: 0 }, identifier, { kind: 'header' }),
+      ).toBe('updated-header');
     });
   });
 

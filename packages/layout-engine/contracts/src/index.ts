@@ -38,8 +38,10 @@ export {
 export { effectiveTableCellSpacing } from './table-cell-spacing.js';
 
 export {
+  createHeaderFooterResolutionIndex,
   selectHeaderFooterVariantForPage,
   resolveEffectiveHeaderFooterRef,
+  type HeaderFooterResolutionIndex,
   type HeaderFooterKind,
   type HeaderFooterVariant,
   type HeaderFooterSectionRefs,

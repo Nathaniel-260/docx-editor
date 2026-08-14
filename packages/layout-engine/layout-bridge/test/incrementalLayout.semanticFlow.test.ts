@@ -227,6 +227,21 @@ describe('incrementalLayout semantic flow', () => {
     expect(timing.headerFooterPreLayoutMs).toBe(0);
     expect(timing.finalHeaderFooterMs).toBe(0);
     expect(timing.counters.blocksRead).toBe(1);
+    expect(timing.counters.blocksByKind).toEqual({
+      paragraph: 1,
+      image: 0,
+      drawing: 0,
+      list: 0,
+      table: 0,
+      sectionBreak: 0,
+      pageBreak: 0,
+      columnBreak: 0,
+    });
+    expect(timing.counters.bodyBlocksMeasuredByKind.paragraph).toBe(1);
+    expect(timing.counters.bodyMeasureCacheReads).toBe(1);
+    expect(timing.counters.bodyMeasureCacheWrites).toBe(1);
+    expect(timing.counters.bodyMeasureCacheKeyComputations).toBe(1);
+    expect(timing.counters.measureContentSignatureComputations).toBe(0);
     expect(timing.counters.cacheMisses).toBe(1);
     expect(timing.counters.measuresAdopted).toBe(0);
     expect(timing.counters.paginationPasses).toBe(1);
@@ -257,6 +272,12 @@ describe('incrementalLayout semantic flow', () => {
       timing.unattributedMs;
     expect(Math.abs(additive - timing.totalMs)).toBeLessThanOrEqual(0.01);
     expect(timing.paginationMs).toBe(timing.layoutDocumentMs);
+    expect(
+      Math.abs(timing.paginationInitialMs - (timing.layoutDocumentMs + timing.layoutReuseOrchestrationMs)),
+    ).toBeLessThanOrEqual(0.01);
+    expect(timing.paginationPageTokenMs).toBe(0);
+    expect(timing.paginationFootnoteMs).toBe(0);
+    expect(timing.paginationTotalMs).toBe(timing.paginationInitialMs);
     expect(timing.layoutReuseOrchestrationMs).toBeGreaterThanOrEqual(0);
   });
 

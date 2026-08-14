@@ -708,6 +708,9 @@ const createStats = (): MeasureCacheStats => ({
  */
 const MAX_DIMENSION = 1_000_000;
 
+declare const preparedMeasureCacheKeyBrand: unique symbol;
+export type PreparedMeasureCacheKey = string & { readonly [preparedMeasureCacheKeyBrand]: true };
+
 /**
  * LRU-enhanced MeasureCache
  *
@@ -740,13 +743,25 @@ export class MeasureCache<T> {
    * @returns The cached value or undefined
    */
   public get(block: FlowBlock | null | undefined, width: number, height: number, fontSignature = ''): T | undefined {
-    // Safety: Validate block exists and has required properties before accessing
-    // This prevents invalid cache keys from null/undefined blocks
-    if (!block || !block.id) {
-      return undefined;
-    }
+    return this.getPrepared(this.prepareKey(block, width, height, fontSignature));
+  }
 
-    const key = this.composeKey(block, width, height, fontSignature);
+  /**
+   * Compose the complete content, constraint, and font key once for a cache
+   * read followed by an insertion in the same measurement transaction.
+   */
+  public prepareKey(
+    block: FlowBlock | null | undefined,
+    width: number,
+    height: number,
+    fontSignature = '',
+  ): PreparedMeasureCacheKey | undefined {
+    if (!block || !block.id) return undefined;
+    return this.composeKey(block, width, height, fontSignature) as PreparedMeasureCacheKey;
+  }
+
+  public getPrepared(key: PreparedMeasureCacheKey | undefined): T | undefined {
+    if (key === undefined) return undefined;
     const value = this.cache.get(key);
 
     if (value !== undefined) {
@@ -774,13 +789,11 @@ export class MeasureCache<T> {
    * @param value - The value to cache
    */
   public set(block: FlowBlock | null | undefined, width: number, height: number, value: T, fontSignature = ''): void {
-    // Safety: Validate block exists and has required properties before caching
-    // This prevents invalid cache keys and silent failures
-    if (!block || !block.id) {
-      return;
-    }
+    this.setPrepared(this.prepareKey(block, width, height, fontSignature), block?.id, value);
+  }
 
-    const key = this.composeKey(block, width, height, fontSignature);
+  public setPrepared(key: PreparedMeasureCacheKey | undefined, blockId: string | undefined, value: T): void {
+    if (key === undefined || !blockId) return;
 
     // If key already exists, delete it first (will be re-added at end)
     const alreadyCached = this.cache.has(key);
@@ -801,10 +814,10 @@ export class MeasureCache<T> {
     // Add new entry (goes to end of Map)
     this.cache.set(key, value);
     if (!alreadyCached) {
-      this.blockIdByKey.set(key, block.id);
-      const keys = this.keysByBlockId.get(block.id) ?? new Set<string>();
+      this.blockIdByKey.set(key, blockId);
+      const keys = this.keysByBlockId.get(blockId) ?? new Set<string>();
       keys.add(key);
-      this.keysByBlockId.set(block.id, keys);
+      this.keysByBlockId.set(blockId, keys);
     }
     this.stats.sets += 1;
 

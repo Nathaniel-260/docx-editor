@@ -179,6 +179,10 @@ export type IncrementalLayoutBridgeTiming = {
   /** Union wall time spent inside caller-owned measure callbacks across body and furniture. */
   measureCallbackWallMs: number;
   measureCacheLookupMs: number;
+  /** Body-measure cache insertion wall time, including content-key composition. */
+  measureCacheWriteMs: number;
+  /** Previous-measure content-adoption lookup/build wall time. */
+  measureContentAdoptionMs: number;
   measureActualMs: number;
   headerFooterPreLayoutMs: number;
   headerPreLayoutMs: number;
@@ -188,6 +192,14 @@ export type IncrementalLayoutBridgeTiming = {
   layoutDocumentMs: number;
   /** Initial body-layout wrapper work outside `layoutDocument` (proof, slice, convergence, splice). */
   layoutReuseOrchestrationMs: number;
+  /** Initial pagination invocation including bridge reuse orchestration. */
+  paginationInitialMs: number;
+  /** Body page-token convergence pagination only. */
+  paginationPageTokenMs: number;
+  /** Footnote convergence pagination only; overlaps `footnoteMs`. */
+  paginationFootnoteMs: number;
+  /** All initial, page-token, and footnote pagination invocation wall time. */
+  paginationTotalMs: number;
   paginationMs: number;
   pageTokenSetupMs: number;
   pageTokenTotalMs: number;
@@ -200,8 +212,16 @@ export type IncrementalLayoutBridgeTiming = {
   unattributedMs: number;
   counters: {
     blocksRead: number;
+    blocksByKind?: Record<FlowBlock['kind'], number>;
+    bodyBlocksMeasuredByKind: Record<FlowBlock['kind'], number>;
     cacheHits: number;
     cacheMisses: number;
+    bodyMeasureCacheReads: number;
+    bodyMeasureCacheWrites: number;
+    bodyMeasureCacheKeyComputations: number;
+    measureContentSignatureComputations: number;
+    fontSignaturePresent: number;
+    fontSignatureChanged: number;
     measuresAdopted: number;
     pagesPaginated: number | null;
     pagesSplicedByReuse: number;
@@ -217,6 +237,17 @@ export type IncrementalLayoutBridgeTiming = {
     footnoteOtherRelayouts: number;
   };
 };
+
+const createFlowBlockKindCounters = (): Record<FlowBlock['kind'], number> => ({
+  paragraph: 0,
+  image: 0,
+  drawing: 0,
+  list: 0,
+  table: 0,
+  sectionBreak: 0,
+  pageBreak: 0,
+  columnBreak: 0,
+});
 
 /**
  * Structural discriminator for what happened to the document tail (SD-3772
@@ -1637,7 +1668,7 @@ export async function incrementalLayout(
       : undefined;
   const headerFooterExecution: HeaderFooterLayoutExecution | undefined = execution
     ? {
-        ...(layoutExecution ?? {}),
+        ...layoutExecution,
         ...(execution.checkpointIfDue ? { checkpointIfDue: execution.checkpointIfDue } : {}),
       }
     : undefined;
@@ -1694,6 +1725,9 @@ export async function incrementalLayout(
     headerFooter = undefined;
     nextBlocks = rewriteSectionBreaksForSemanticFlow(nextBlocks, options);
   }
+
+  let blocksByKind: Record<FlowBlock['kind'], number> | undefined;
+  const bodyBlocksMeasuredByKind = createFlowBlockKindCounters();
 
   // Dirty region computation
   const effectiveMeasureReuseProof = measureReuseProof ?? layoutReuse;
@@ -1816,7 +1850,13 @@ export async function incrementalLayout(
   let cacheMisses = 0;
   let reusedMeasures = 0;
   let cacheLookupTime = 0;
+  let cacheWriteTime = 0;
+  let contentAdoptionTime = 0;
   let actualMeasureTime = 0;
+  let bodyMeasureCacheReads = 0;
+  let bodyMeasureCacheWrites = 0;
+  let bodyMeasureCacheKeyComputations = 0;
+  let measureContentSignatureComputations = 0;
 
   // P8.4 — content-keyed previous-measure adoption. Structural keystrokes
   // under synthetic occurrence ids (paraId-less documents: split/merge/paste,
@@ -1842,10 +1882,12 @@ export async function incrementalLayout(
         const previousBlock = previousBlocks[index];
         if (previousBlock.kind === 'sectionBreak') continue;
         const constraints = previousPerSectionConstraints![index];
+        measureContentSignatureComputations += 1;
         const key = `${hashMeasureContent(previousBlock)}@${constraints.maxWidth}x${constraints.maxHeight}`;
         if (!previousMeasuresByContent.has(key)) previousMeasuresByContent.set(key, previousMeasures![index]);
       }
     }
+    measureContentSignatureComputations += 1;
     return previousMeasuresByContent?.get(`${hashMeasureContent(block)}@${maxWidth}x${maxHeight}`) ?? undefined;
   };
 
@@ -1900,7 +1942,12 @@ export async function incrementalLayout(
       const measureBlockStart = performance.now();
       const measurement = await measureBlock(block, constraints);
       actualMeasureTime += performance.now() - measureBlockStart;
+      bodyBlocksMeasuredByKind[block.kind] += 1;
+      const cacheWriteStart = performance.now();
       measureCache.set(block, constraints.maxWidth, constraints.maxHeight, measurement, fontSignature);
+      cacheWriteTime += performance.now() - cacheWriteStart;
+      bodyMeasureCacheWrites += 1;
+      bodyMeasureCacheKeyComputations += 1;
       overrides.set(blockIndex, measurement);
       cacheMisses += 1;
     }
@@ -1923,7 +1970,8 @@ export async function incrementalLayout(
       measures = createMeasureOverlay(previousMeasures!, overrides);
     }
     reusedMeasures = nextBlocks.length - overrides.size;
-  } else
+  } else {
+    blocksByKind = createFlowBlockKindCounters();
     for (let blockIndex = 0; blockIndex < nextBlocks.length; blockIndex++) {
       const checkpoint = checkpointMeasurement(blockIndex, nextBlocks.length);
       if (checkpoint) {
@@ -1931,6 +1979,7 @@ export async function incrementalLayout(
         throwIfLayoutExecutionAborted(layoutExecution);
       }
       const block = nextBlocks[blockIndex];
+      blocksByKind[block.kind] += 1;
       if (block.kind === 'sectionBreak') {
         measures.push({ kind: 'sectionBreak' });
         continue;
@@ -1959,8 +2008,11 @@ export async function incrementalLayout(
 
       // Time the cache lookup (includes hashRuns computation)
       const lookupStart = performance.now();
-      const cached = measureCache.get(block, blockMeasureWidth, blockMeasureHeight, fontSignature);
+      const measureCacheKey = measureCache.prepareKey(block, blockMeasureWidth, blockMeasureHeight, fontSignature);
+      const cached = measureCache.getPrepared(measureCacheKey);
       cacheLookupTime += performance.now() - lookupStart;
+      bodyMeasureCacheReads += 1;
+      bodyMeasureCacheKeyComputations += 1;
 
       if (cached) {
         hydrateTabRunWidthsFromMeasure(block, cached);
@@ -1982,10 +2034,15 @@ export async function incrementalLayout(
         previousMeasuresById != null &&
         (!previousMeasuresById.has(block.id) || cacheMisses >= CONTENT_ADOPTION_MISS_THRESHOLD)
       ) {
+        const adoptionStart = performance.now();
         const adopted = adoptPreviousMeasureByContent(block, blockMeasureWidth, blockMeasureHeight);
+        contentAdoptionTime += performance.now() - adoptionStart;
         if (adopted) {
           hydrateTabRunWidthsFromMeasure(block, adopted);
-          measureCache.set(block, blockMeasureWidth, blockMeasureHeight, adopted, fontSignature);
+          const cacheWriteStart = performance.now();
+          measureCache.setPrepared(measureCacheKey, block.id, adopted);
+          cacheWriteTime += performance.now() - cacheWriteStart;
+          bodyMeasureCacheWrites += 1;
           measures.push(adopted);
           reusedMeasures++;
           continue;
@@ -1996,11 +2053,19 @@ export async function incrementalLayout(
       const measureBlockStart = performance.now();
       const measurement = await measureBlock(block, sectionConstraints);
       actualMeasureTime += performance.now() - measureBlockStart;
+      bodyBlocksMeasuredByKind[block.kind] += 1;
 
-      measureCache.set(block, blockMeasureWidth, blockMeasureHeight, measurement, fontSignature);
+      const cacheWriteStart = performance.now();
+      // The measurer may stamp runtime-only tab widths and drop-cap dimensions;
+      // hashMeasureContent intentionally excludes those fields. Content that
+      // affects measurement must remain unchanged across this transaction.
+      measureCache.setPrepared(measureCacheKey, block.id, measurement);
+      cacheWriteTime += performance.now() - cacheWriteStart;
+      bodyMeasureCacheWrites += 1;
       measures.push(measurement);
       cacheMisses++;
     }
+  }
   const measureEnd = performance.now();
   const totalMeasureTime = measureEnd - measureStart;
   await checkpointPhaseIfDue();
@@ -2708,6 +2773,7 @@ export async function incrementalLayout(
   const footnoteStart = performance.now();
   let footnoteFullRelayoutPerformed = false;
   let footnoteRelayouts = 0;
+  let footnotePaginationTime = 0;
   const footnoteRelayoutBreakdown = {
     reserve: 0,
     grow: 0,
@@ -3706,7 +3772,7 @@ export async function incrementalLayout(
                 plannedReserveTail: summarizeReserveTail(plannedReserves),
               }
             : {}),
-          ...(extra ?? {}),
+          ...extra,
         });
       };
 
@@ -3717,6 +3783,14 @@ export async function incrementalLayout(
       // Otherwise the slicer falls back to defaults that drift on docs with
       // custom separator dimensions, packing body onto a page whose band
       // can't actually fit the refs.
+      const timeFootnotePagination = async <Result>(paginate: () => Result | Promise<Result>): Promise<Result> => {
+        const startedAt = performance.now();
+        try {
+          return await paginate();
+        } finally {
+          footnotePaginationTime += performance.now() - startedAt;
+        }
+      };
       const relayout = async (
         footnoteReservedByPageIndex: number[],
         plannerSeparatorSpacingBefore?: number,
@@ -3760,18 +3834,20 @@ export async function incrementalLayout(
           delete localizedReuse.provedNoteOnlyRefresh;
           delete localizedReuse.provedHeaderFooterOnlyRefresh;
           const localizedTiming = { layoutDocumentMs: 0, layoutDocumentCalls: 0 };
-          const localized = await layoutWithOptionalReuse({
-            previousBlocks,
-            blocks: currentBlocks,
-            measures: currentMeasures,
-            options: footnoteLayoutOptions,
-            dirty,
-            stableBlockIds: dirty.stableBlockIds,
-            reuse: localizedReuse,
-            relayoutProvedPrefixToDocumentEndOnBoundedConvergenceFailure: true,
-            timing: localizedTiming,
-            execution: layoutExecution,
-          });
+          const localized = await timeFootnotePagination(() =>
+            layoutWithOptionalReuse({
+              previousBlocks,
+              blocks: currentBlocks,
+              measures: currentMeasures,
+              options: footnoteLayoutOptions,
+              dirty,
+              stableBlockIds: dirty.stableBlockIds,
+              reuse: localizedReuse,
+              relayoutProvedPrefixToDocumentEndOnBoundedConvergenceFailure: true,
+              timing: localizedTiming,
+              execution: layoutExecution,
+            }),
+          );
           if (localized.reuse.mode !== 'full') {
             layoutReuseSummary = {
               ...localized.reuse,
@@ -3794,9 +3870,11 @@ export async function incrementalLayout(
           return localized.layout;
         }
         footnoteFullRelayoutPerformed = true;
-        return layoutExecution
-          ? layoutDocumentCooperatively(currentBlocks, currentMeasures, footnoteLayoutOptions, layoutExecution)
-          : layoutDocument(currentBlocks, currentMeasures, footnoteLayoutOptions);
+        return timeFootnotePagination(() =>
+          layoutExecution
+            ? layoutDocumentCooperatively(currentBlocks, currentMeasures, footnoteLayoutOptions, layoutExecution)
+            : layoutDocument(currentBlocks, currentMeasures, footnoteLayoutOptions),
+        );
       };
 
       // SD-3049: every reachable footnote id, computed once. Used to keep
@@ -4616,6 +4694,8 @@ export async function incrementalLayout(
     measureTotalMs: roundTimingMs(totalMeasureTime),
     measureCallbackWallMs: roundTimingMs(measureCallbackWallTime),
     measureCacheLookupMs: roundTimingMs(cacheLookupTime),
+    measureCacheWriteMs: roundTimingMs(cacheWriteTime),
+    measureContentAdoptionMs: roundTimingMs(contentAdoptionTime),
     measureActualMs: roundTimingMs(actualMeasureTime),
     headerFooterPreLayoutMs: roundTimingMs(headerPreLayoutTime + footerPreLayoutTime),
     headerPreLayoutMs: roundTimingMs(headerPreLayoutTime),
@@ -4623,6 +4703,10 @@ export async function incrementalLayout(
     warmStartPreparationMs: roundTimingMs(warmStartPreparationTime),
     layoutDocumentMs: roundTimingMs(layoutDocumentTime),
     layoutReuseOrchestrationMs: roundTimingMs(layoutReuseOrchestrationTime),
+    paginationInitialMs: roundTimingMs(layoutTime),
+    paginationPageTokenMs: roundTimingMs(totalRelayoutTime),
+    paginationFootnoteMs: roundTimingMs(footnotePaginationTime),
+    paginationTotalMs: roundTimingMs(layoutTime + totalRelayoutTime + footnotePaginationTime),
     paginationMs: roundTimingMs(layoutDocumentTime),
     pageTokenSetupMs: roundTimingMs(pageTokenSetupTime),
     pageTokenTotalMs: roundTimingMs(totalTokenTime),
@@ -4635,8 +4719,16 @@ export async function incrementalLayout(
     unattributedMs: roundTimingMs(totalBridgeTime - additiveTopLevelMs),
     counters: {
       blocksRead: nextBlocks.length,
+      ...(blocksByKind ? { blocksByKind } : {}),
+      bodyBlocksMeasuredByKind,
       cacheHits,
       cacheMisses,
+      bodyMeasureCacheReads,
+      bodyMeasureCacheWrites,
+      bodyMeasureCacheKeyComputations,
+      measureContentSignatureComputations,
+      fontSignaturePresent: Number(fontSignature !== ''),
+      fontSignatureChanged: Number(previousFontSignature !== '' && previousFontSignature !== fontSignature),
       measuresAdopted: reusedMeasures,
       pagesPaginated: layoutReuseSummary.pagesPaginated,
       pagesSplicedByReuse: layoutReuseSummary.pagesSplicedByReuse,

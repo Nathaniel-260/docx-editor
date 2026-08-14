@@ -31,7 +31,6 @@ import type {
   NormalizedColumnLayout,
   ColumnGeometry,
   DocumentBackground,
-  HeaderFooterResolutionSection,
   PageNumberFormat,
   ParagraphLineRegion,
 } from '@superdoc/contracts';
@@ -46,7 +45,7 @@ import {
   resolveColumnCount,
   resolveColumnLayout,
   resolveAnchoredGraphicY,
-  resolveEffectiveHeaderFooterRef,
+  createHeaderFooterResolutionIndex,
   selectHeaderFooterVariantForPage,
   isPagePositionedParagraphFrame,
   resolveFooterPageFrameOriginY,
@@ -1786,31 +1785,28 @@ function* layoutDocumentSteps(
     };
   };
   const sectionMetadataList = options.sectionMetadata ?? [];
-  const getSectionMetadata = (sectionIndex: number) =>
-    sectionMetadataList.find((section, fallbackIndex) => (section.sectionIndex ?? fallbackIndex) === sectionIndex);
-  const runtimeSectionRefsByIndex = new Map<number, SectionRefs>();
-  const buildHeaderFooterResolutionSections = (): HeaderFooterResolutionSection[] => {
-    const sectionIndexes = new Set<number>();
-    sectionMetadataList.forEach((section, fallbackIndex) => sectionIndexes.add(section.sectionIndex ?? fallbackIndex));
-    runtimeSectionRefsByIndex.forEach((_refs, sectionIndex) => sectionIndexes.add(sectionIndex));
-    if (sectionIndexes.size === 0) sectionIndexes.add(0);
-
-    return Array.from(sectionIndexes)
-      .sort((a, b) => a - b)
-      .map((sectionIndex) => {
-        const metadata = getSectionMetadata(sectionIndex);
-        const runtimeRefs = runtimeSectionRefsByIndex.get(sectionIndex);
-        return {
-          sectionIndex,
-          titlePg: metadata?.titlePg === true,
-          headerRefs: runtimeRefs?.headerRefs ?? metadata?.headerRefs,
-          footerRefs: runtimeRefs?.footerRefs ?? metadata?.footerRefs,
-        };
-      });
-  };
-  const hasAnyHeaderFooterRefs = (sections: HeaderFooterResolutionSection[], kind: 'header' | 'footer'): boolean => {
-    const refKey = kind === 'header' ? 'headerRefs' : 'footerRefs';
-    return sections.some((section) => Object.values(section[refKey] ?? {}).some(Boolean));
+  const sectionMetadataByIndex = new Map<number, SectionMetadata>();
+  sectionMetadataList.forEach((section, fallbackIndex) => {
+    const sectionIndex = section.sectionIndex ?? fallbackIndex;
+    if (!sectionMetadataByIndex.has(sectionIndex)) sectionMetadataByIndex.set(sectionIndex, section);
+  });
+  const getSectionMetadata = (sectionIndex: number) => sectionMetadataByIndex.get(sectionIndex);
+  const headerFooterResolutionIndex = createHeaderFooterResolutionIndex(
+    Array.from(sectionMetadataByIndex, ([sectionIndex, section]) => ({
+      sectionIndex,
+      titlePg: section.titlePg === true,
+      headerRefs: section.headerRefs,
+      footerRefs: section.footerRefs,
+    })),
+  );
+  const updateRuntimeSectionRefs = (sectionIndex: number, runtimeRefs: SectionRefs): void => {
+    const metadata = getSectionMetadata(sectionIndex);
+    headerFooterResolutionIndex.updateSection({
+      sectionIndex,
+      titlePg: metadata?.titlePg === true,
+      headerRefs: runtimeRefs.headerRefs ?? metadata?.headerRefs,
+      footerRefs: runtimeRefs.footerRefs ?? metadata?.footerRefs,
+    });
   };
   const initialSectionIndex =
     typeof options.startContext?.activeSectionIndex === 'number' &&
@@ -1836,13 +1832,13 @@ function* layoutDocumentSteps(
   let pendingSectionRefs: SectionRefs | null = null;
   if (options.startContext?.activeSectionRefs) {
     activeSectionRefs = options.startContext.activeSectionRefs;
-    runtimeSectionRefsByIndex.set(initialSectionIndex, activeSectionRefs);
+    updateRuntimeSectionRefs(initialSectionIndex, activeSectionRefs);
   } else if (initialSectionMetadata?.headerRefs || initialSectionMetadata?.footerRefs) {
     activeSectionRefs = {
       ...(initialSectionMetadata.headerRefs && { headerRefs: initialSectionMetadata.headerRefs }),
       ...(initialSectionMetadata.footerRefs && { footerRefs: initialSectionMetadata.footerRefs }),
     };
-    runtimeSectionRefsByIndex.set(initialSectionMetadata.sectionIndex ?? 0, activeSectionRefs);
+    updateRuntimeSectionRefs(initialSectionMetadata.sectionIndex ?? 0, activeSectionRefs);
   }
   // Initialize vertical alignment from first section metadata (for page 1)
   if (initialSectionMetadata?.vAlign) {
@@ -1989,7 +1985,7 @@ function* layoutDocumentSteps(
             pendingSectionIndex = null;
           }
           if (activeSectionRefs) {
-            runtimeSectionRefsByIndex.set(activeSectionIndex, activeSectionRefs);
+            updateRuntimeSectionRefs(activeSectionIndex, activeSectionRefs);
           }
           // Apply pending vertical alignment (undefined = no change, null = reset to default)
           if (pendingVAlign !== undefined) {
@@ -2036,26 +2032,13 @@ function* layoutDocumentSteps(
           alternateHeaders,
         });
 
-        const resolutionSections = buildHeaderFooterResolutionSections();
         const headerResolved =
-          variantType &&
-          resolveEffectiveHeaderFooterRef({
-            sections: resolutionSections,
-            sectionIndex: activeSectionIndex,
-            kind: 'header',
-            variant: variantType,
-          });
+          variantType && headerFooterResolutionIndex.resolve(activeSectionIndex, 'header', variantType);
         const footerResolved =
-          variantType &&
-          resolveEffectiveHeaderFooterRef({
-            sections: resolutionSections,
-            sectionIndex: activeSectionIndex,
-            kind: 'footer',
-            variant: variantType,
-          });
+          variantType && headerFooterResolutionIndex.resolve(activeSectionIndex, 'footer', variantType);
 
-        const hasHeaderRefs = hasAnyHeaderFooterRefs(resolutionSections, 'header');
-        const hasFooterRefs = hasAnyHeaderFooterRefs(resolutionSections, 'footer');
+        const hasHeaderRefs = headerFooterResolutionIndex.hasAny('header');
+        const hasFooterRefs = headerFooterResolutionIndex.hasAny('footer');
         const headerHeight = headerResolved
           ? getHeaderHeightForPage(headerResolved.matchedVariant, headerResolved.refId, activeSectionIndex)
           : variantType && !hasHeaderRefs
@@ -2533,7 +2516,7 @@ function* layoutDocumentSteps(
       };
       activeSectionRefs = mergeSectionRefs(activeSectionRefs, nextSectionRefs);
       if (activeSectionRefs) {
-        runtimeSectionRefsByIndex.set(activeSectionIndex, activeSectionRefs);
+        updateRuntimeSectionRefs(activeSectionIndex, activeSectionRefs);
       }
     }
 
