@@ -192,9 +192,23 @@ const getCommentFocusThreadId = (comment) => {
 
 const getV2ExistingReplyParentId = (comment) => {
   if (!comment) return null;
-  if (comment.trackedChange && comment.importedId != null) return String(comment.importedId);
+  if (comment.trackedChange && comment.trackedChangeCanonicalId != null) {
+    return String(comment.trackedChangeCanonicalId);
+  }
   if (comment.commentId != null) return String(comment.commentId);
   return null;
+};
+
+const getV2TrackedChangeCommentTarget = (comment) => {
+  if (!comment?.trackedChange) return null;
+  const trackedChangeId = getV2ExistingReplyParentId(comment);
+  if (!trackedChangeId) return null;
+
+  const target = { kind: 'trackedChange', trackedChangeId };
+  if (comment.trackedChangeStory) target.story = comment.trackedChangeStory;
+  if (comment.semanticColorKey === 'move-from') target.side = 'source';
+  if (comment.semanticColorKey === 'move-to') target.side = 'destination';
+  return target;
 };
 
 const getEntryBoundsCoordinate = (entry, coordinate) => {
@@ -721,10 +735,9 @@ const handleAddComment = async () => {
     return { ok: false, reason: v2WriteCapability.value?.reason ?? 'v2-write-unavailable' };
   }
 
-  // TCS Phase 0 / 004 §4.1: in v2 mode route an existing-thread reply through
-  // the store-owned `replyCommentV2` helper. The decision is scoped to this
-  // dialog; an unrelated pending new-comment row must not divert the reply
-  // into the local tracked-change fallback.
+  // AIDEV-NOTE: A tracked-change review row is not a comment entity. Address
+  // it by the canonical change id and let the store create the first anchored
+  // root only when the Document API confirms that no thread exists yet.
   if (isV2Mode.value && v2CommentsAdapter.value && !isPendingNewComment.value) {
     if (isSubmittingReply.value) {
       return { ok: false, reason: 'reply-submit-in-flight' };
@@ -733,11 +746,13 @@ const handleAddComment = async () => {
     isSubmittingReply.value = true;
     try {
       const parentCommentId = getV2ExistingReplyParentId(props.comment);
+      const trackedChangeTarget = getV2TrackedChangeCommentTarget(props.comment);
       const outcome = await commentsStore.replyCommentV2({
         superdoc: proxy.$superdoc,
         parentCommentId,
         text: currentCommentText.value,
         ...(currentCommentMentions.value.length ? { mentions: currentCommentMentions.value } : {}),
+        ...(trackedChangeTarget ? { trackedChangeTarget } : {}),
       });
       if (!outcome?.ok) {
         // Plan §4.1: keep reply editor open and typed text intact for retry.

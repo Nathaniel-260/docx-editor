@@ -117,6 +117,7 @@ describe('buildTrackedChangeThreadIndex', () => {
       trackedChangeParentId: 'tc|main:/word/document.xml|move|1%7C101',
       trackedChangeText: '',
       deletedText: 'moved text',
+      semanticColorKey: 'move-from',
       createdTime: 1,
     };
     const moveTo = {
@@ -127,14 +128,90 @@ describe('buildTrackedChangeThreadIndex', () => {
       trackedChangeParentId: moveFrom.commentId,
       trackedChangeText: 'moved text',
       trackedChangeLabel: 'Moved (insertion)',
+      semanticColorKey: 'move-to',
       createdTime: 2,
     };
-    const comments = [moveFrom, moveTo];
+    const sharedCanonicalRoot = {
+      commentId: 'move-comment-root',
+      trackedChangeThreadParentId: moveFrom.trackedChangeCanonicalId,
+      createdTime: 3,
+    };
+    const comments = [moveFrom, moveTo, sharedCanonicalRoot];
     const index = buildTrackedChangeThreadIndex(comments);
 
     expect(index.get(moveFrom.commentId)).toEqual([moveFrom]);
     expect(index.get(moveTo.commentId)).toEqual([moveTo]);
     expect(buildTrackedChangeDecisionLinkIndex(comments).get(moveFrom.commentId)).toEqual([moveTo]);
+  });
+
+  it('routes explicit move comments to the visible source or destination card', () => {
+    const canonicalId = 'tc|main:/word/document.xml|move|1%7C101';
+    const moveFrom = {
+      commentId: `${canonicalId}::move-from`,
+      trackedChange: true,
+      trackedChangeCanonicalId: canonicalId,
+      semanticColorKey: 'move-from',
+      createdTime: 1,
+    };
+    const moveTo = {
+      commentId: `${canonicalId}::move-to`,
+      trackedChange: true,
+      trackedChangeCanonicalId: canonicalId,
+      semanticColorKey: 'move-to',
+      createdTime: 2,
+    };
+    const sourceRoot = {
+      commentId: 'source-root',
+      trackedChangeThreadParentId: canonicalId,
+      trackedChangeSide: 'source',
+      createdTime: 3,
+    };
+    const sourceReply = { commentId: 'source-reply', parentCommentId: 'source-root', createdTime: 4 };
+    const destinationRoot = {
+      commentId: 'destination-root',
+      trackedChangeThreadParentId: canonicalId,
+      trackedChangeSide: 'destination',
+      createdTime: 5,
+    };
+    const destinationReply = { commentId: 'destination-reply', parentCommentId: 'destination-root', createdTime: 6 };
+    const index = buildTrackedChangeThreadIndex([
+      moveFrom,
+      moveTo,
+      sourceRoot,
+      sourceReply,
+      destinationRoot,
+      destinationReply,
+    ]);
+
+    expect(index.get(moveFrom.commentId)?.map((comment) => comment.commentId)).toEqual([
+      moveFrom.commentId,
+      'source-root',
+      'source-reply',
+    ]);
+    expect(index.get(moveTo.commentId)?.map((comment) => comment.commentId)).toEqual([
+      moveTo.commentId,
+      'destination-root',
+      'destination-reply',
+    ]);
+  });
+
+  it('threads a canonical-id comment under its unique visible tracked-change row', () => {
+    const canonicalId = 'tc|main:/word/document.xml|del|coalesced|2|4';
+    const tracked = {
+      commentId: 'tc|main:/word/document.xml|del|source%7CwId%3A4',
+      importedId: '4',
+      trackedChange: true,
+      trackedChangeCanonicalId: canonicalId,
+      createdTime: 1,
+    };
+    const root = { commentId: '0', trackedChangeThreadParentId: canonicalId, createdTime: 2 };
+    const reply = { commentId: '1', parentCommentId: '0', createdTime: 3 };
+
+    expect(buildTrackedChangeThreadIndex([tracked, root, reply]).get(tracked.commentId)).toEqual([
+      tracked,
+      root,
+      reply,
+    ]);
   });
 });
 

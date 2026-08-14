@@ -1,7 +1,94 @@
 // @ts-check
 
 import { trackedChangeThreadParentIdForComment } from '../../components/CommentsLayer/tracked-change-threading.js';
-import { isV2SyntheticTrackedChangeRow } from '../../core/v2-integration/v2-integration.js';
+
+/**
+ * @param {string|null|undefined} side
+ * @returns {'source'|'destination'|null}
+ */
+const trackedChangeSideGroup = (side) => {
+  if (side === 'source' || side === 'deleted') return 'source';
+  if (side === 'destination' || side === 'inserted') return 'destination';
+  return null;
+};
+
+/**
+ * @param {{ semanticColorKey?: string|null }} comment
+ * @returns {'source'|'destination'|null}
+ */
+const trackedChangeRowSideGroup = (comment) => {
+  if (comment?.semanticColorKey === 'move-from') return 'source';
+  if (comment?.semanticColorKey === 'move-to') return 'destination';
+  return null;
+};
+
+/**
+ * Resolve explicit conversation provenance to the visible tracked-change row.
+ * Canonical move ids are shared, so their persisted side selects the source or
+ * destination card. Other ambiguous canonical ids remain unresolved.
+ *
+ * @template {{ commentId: string|number, trackedChange?: boolean, trackedChangeCanonicalId?: string|number|null, trackedChangeSide?: string|null, semanticColorKey?: string|null, parentCommentId?: string|number|null, threadingParentCommentId?: string|number|null, trackedChangeParentId?: string|number|null, trackedChangeThreadParentId?: string|number|null }} Comment
+ * @param {ReadonlyArray<Comment>} allComments
+ * @returns {Map<Comment, Comment>}
+ */
+export const buildTrackedChangeThreadOwnerIndex = (allComments) => {
+  /** @type {Map<string, Comment[]>} */
+  const trackedRowsById = new Map();
+  /** @type {Map<string, Comment[]>} */
+  const trackedRowsByCanonicalId = new Map();
+
+  /**
+   * @template Key, Value
+   * @param {Map<Key, Value[]>} map
+   * @param {Key} key
+   * @param {Value} value
+   */
+  const append = (map, key, value) => {
+    const existing = map.get(key);
+    if (existing) existing.push(value);
+    else map.set(key, [value]);
+  };
+
+  for (const comment of allComments) {
+    if (comment?.trackedChange !== true) continue;
+    if (typeof comment.commentId === 'string') append(trackedRowsById, comment.commentId, comment);
+    if (comment.trackedChangeCanonicalId != null) {
+      append(trackedRowsByCanonicalId, String(comment.trackedChangeCanonicalId), comment);
+    }
+  }
+
+  /** @type {Map<Comment, Comment>} */
+  const ownerByComment = new Map();
+  for (const comment of allComments) {
+    if (comment?.trackedChange === true) continue;
+    const aliases = new Set(
+      [comment.threadingParentCommentId, trackedChangeThreadParentIdForComment(comment)]
+        .filter((id) => id != null)
+        .map((id) => String(id)),
+    );
+    if (aliases.size === 0) continue;
+
+    const directOwners = new Set([...aliases].flatMap((alias) => trackedRowsById.get(alias) ?? []));
+    if (directOwners.size === 1) {
+      ownerByComment.set(comment, [...directOwners][0]);
+      continue;
+    }
+    if (directOwners.size > 1) continue;
+
+    const canonicalOwners = new Set([...aliases].flatMap((alias) => trackedRowsByCanonicalId.get(alias) ?? []));
+    if (canonicalOwners.size === 1) {
+      ownerByComment.set(comment, [...canonicalOwners][0]);
+      continue;
+    }
+
+    const sideGroup = trackedChangeSideGroup(comment.trackedChangeSide);
+    if (!sideGroup) continue;
+    const sideOwners = [...canonicalOwners].filter((owner) => trackedChangeRowSideGroup(owner) === sideGroup);
+    if (sideOwners.length === 1) ownerByComment.set(comment, sideOwners[0]);
+  }
+
+  return ownerByComment;
+};
 
 /**
  * Build every tracked-change conversation in one graph pass.
@@ -18,7 +105,7 @@ import { isV2SyntheticTrackedChangeRow } from '../../core/v2-integration/v2-inte
  * asymmetry here so numeric tracked-change row ids do not acquire new thread
  * membership.
  *
- * @template {{ commentId: string|number, trackedChange?: boolean, createdTime?: number, parentCommentId?: string|number|null, threadingParentCommentId?: string|number|null, trackedChangeParentId?: string|number|null }} Comment
+ * @template {{ commentId: string|number, trackedChange?: boolean, trackedChangeCanonicalId?: string|number|null, trackedChangeSide?: string|null, semanticColorKey?: string|null, createdTime?: number, parentCommentId?: string|number|null, threadingParentCommentId?: string|number|null, trackedChangeParentId?: string|number|null }} Comment
  * @param {ReadonlyArray<Comment>} allComments
  * @param {ReadonlyMap<string|number, ReadonlyArray<Comment>>} [previous]
  * @returns {Map<string|number, ReadonlyArray<Comment>>}
@@ -26,12 +113,13 @@ import { isV2SyntheticTrackedChangeRow } from '../../core/v2-integration/v2-inte
 export const buildTrackedChangeThreadIndex = (allComments, previous = new Map()) => {
   /** @type {Map<string, Comment[]>} Parent links are normalized exactly as in the legacy collector. */
   const childrenByParentId = new Map();
-  /** @type {Map<string, Comment[]>} Explicit tracked-change conversation roots, normalized like the legacy collector. */
-  const anchoredRootsByTrackedChangeId = new Map();
+  /** @type {Map<string, Comment[]>} Explicit conversation members keyed by their visible tracked-change row. */
+  const anchoredCommentsByTrackedChangeId = new Map();
   /** @type {Map<string|number, Comment[]>} */
   const commentsById = new Map();
   /** @type {Map<Comment, number>} */
   const sourceIndex = new Map();
+  const trackedChangeOwnerByComment = buildTrackedChangeThreadOwnerIndex(allComments);
 
   /**
    * @template Key, Value
@@ -52,11 +140,9 @@ export const buildTrackedChangeThreadIndex = (allComments, previous = new Map())
       [comment.parentCommentId, comment.threadingParentCommentId].filter((id) => id != null).map((id) => String(id)),
     );
     parentIds.forEach((parentId) => append(childrenByParentId, parentId, comment));
-    const trackedChangeThreadParentId = isV2SyntheticTrackedChangeRow(comment)
-      ? null
-      : trackedChangeThreadParentIdForComment(comment);
-    if (trackedChangeThreadParentId != null && !comment.parentCommentId) {
-      append(anchoredRootsByTrackedChangeId, String(trackedChangeThreadParentId), comment);
+    const owner = trackedChangeOwnerByComment.get(comment);
+    if (owner?.commentId != null) {
+      append(anchoredCommentsByTrackedChangeId, String(owner.commentId), comment);
     }
   });
 
@@ -68,13 +154,15 @@ export const buildTrackedChangeThreadIndex = (allComments, previous = new Map())
     const threadIds = new Set([trackedChangeId]);
     /** @type {Array<string|number>} */
     const queue = [];
-    const seed =
-      typeof trackedChangeId === 'string'
-        ? [
-            ...(childrenByParentId.get(trackedChangeId) ?? []),
-            ...(anchoredRootsByTrackedChangeId.get(trackedChangeId) ?? []),
-          ]
-        : [];
+    /** @type {string[]} */
+    const threadParentIds = [];
+    if (typeof trackedChangeId === 'string') {
+      threadParentIds.push(trackedChangeId);
+    }
+    const seed = threadParentIds.flatMap((parentId) => [
+      ...(childrenByParentId.get(parentId) ?? []),
+      ...(anchoredCommentsByTrackedChangeId.get(parentId) ?? []),
+    ]);
     for (const comment of seed) {
       const id = comment.commentId;
       if (id === trackedChangeId || threadIds.has(id)) continue;

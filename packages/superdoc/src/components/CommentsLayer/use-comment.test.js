@@ -42,6 +42,20 @@ describe('use-comment', () => {
     expect(comment.getValues().trackedChangeThreadParentId).toBe('tc-new');
   });
 
+  it('preserves the tracked-change side used to route shared move conversations', () => {
+    const comment = useComment({
+      commentId: 'move-comment',
+      trackedChangeThreadParentId: 'tc-move',
+      trackedChangeSide: 'source',
+    });
+
+    expect(comment.trackedChangeSide).toBe('source');
+    expect(comment.getValues().trackedChangeSide).toBe('source');
+
+    comment.trackedChangeSide = 'destination';
+    expect(comment.getValues().trackedChangeSide).toBe('destination');
+  });
+
   it('returns the latest docxCommentJSON value from getValues()', () => {
     const comment = useComment({
       commentId: 'comment-2',

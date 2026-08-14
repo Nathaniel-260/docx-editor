@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref, shallowRef, reactive, computed, watch } from 'vue';
+import { ref, shallowRef, reactive, computed, watch, toRaw } from 'vue';
 import { comments_module_events } from '@superdoc/common';
 import { useSuperdocStore } from '@superdoc/stores/superdoc-store';
 import { syncCommentsToClients } from '../core/collaboration/helpers.js';
@@ -14,6 +14,7 @@ import {
 import { endInteractionSpan, startInteractionSpan, withInteractionSpan } from '../helpers/interaction-trace.js';
 import {
   buildTrackedChangeDecisionLinkIndex,
+  buildTrackedChangeThreadOwnerIndex,
   buildTrackedChangeThreadIndex,
 } from './helpers/tracked-change-thread-index.js';
 import { trackedChangeThreadParentIdForComment as resolveTrackedChangeThreadParentId } from '../components/CommentsLayer/tracked-change-threading.js';
@@ -156,6 +157,15 @@ const normalizeV2CommentDraftText = (value) => {
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\n+/, '')
     .replace(/\n+$/, '');
+};
+
+const cloneV2TrackedChangeStory = (story) => {
+  if (!story || typeof story !== 'object') return null;
+  const rawStory = toRaw(story);
+  return {
+    ...rawStory,
+    ...(rawStory.section && typeof rawStory.section === 'object' ? { section: { ...toRaw(rawStory.section) } } : {}),
+  };
 };
 
 export const useCommentsStore = defineStore('comments', () => {
@@ -528,13 +538,6 @@ export const useCommentsStore = defineStore('comments', () => {
     if (comment?.trackedChangeThreadParentId) return comment.trackedChangeThreadParentId;
     if (isV2SyntheticTrackedChangeRow(comment) && comment?.trackedChange === true) return null;
     return resolveTrackedChangeThreadParentId(comment);
-  };
-
-  const shouldThreadWithTrackedChange = (comment) => {
-    const trackedChangeParentId = trackedChangeThreadParentIdForComment(comment);
-    if (!trackedChangeParentId) return false;
-    const trackedChange = getComment(trackedChangeParentId);
-    return Boolean(trackedChange?.trackedChange);
   };
 
   /**
@@ -1694,12 +1697,11 @@ export const useCommentsStore = defineStore('comments', () => {
     const parentComments = [];
     const resolvedComments = [];
     const childCommentMap = new Map();
+    const trackedChangeThreadOwnerIndex = buildTrackedChangeThreadOwnerIndex(source);
 
     source.forEach((comment) => {
       if (!isThreadVisible(comment)) return;
-      const trackedChangeThreadParentId = shouldThreadWithTrackedChange(comment)
-        ? trackedChangeThreadParentIdForComment(comment)
-        : null;
+      const trackedChangeThreadParentId = trackedChangeThreadOwnerIndex.get(comment)?.commentId ?? null;
       const parentId = comment.trackedChange ? null : comment.parentCommentId || trackedChangeThreadParentId;
       // Track resolved comments
       if (comment.resolvedTime) {
@@ -2448,16 +2450,18 @@ export const useCommentsStore = defineStore('comments', () => {
   };
 
   /**
-   * Reply to an existing comment through the v2 adapter.
+   * Reply to an existing comment or tracked-change review row through the v2 adapter.
    *
    * Plan §4.1 rules:
    *   - empty text rejects before mutation with `comment-text-empty`
    *   - missing parent rejects before mutation with `parent-comment-id-missing`
-   *   - successful reply refreshes from v2 list and reconciles
+   *   - a tracked-change row creates its first anchored root only after a
+   *     canonical-id reply reports `TARGET_NOT_FOUND`
+   *   - successful mutation refreshes from v2 list and reconciles
    *   - rejection preserves rows and emits a rejected `comments-update` event
    *   - committed-but-refresh-failed surfaces honestly (no reconcile with `[]`)
    */
-  const replyCommentV2 = async ({ superdoc, parentCommentId, text, mentions = [] } = {}) => {
+  const replyCommentV2 = async ({ superdoc, parentCommentId, text, mentions = [], trackedChangeTarget } = {}) => {
     if (commentsAreReadOnly()) return readOnlyMutationOutcome();
 
     const v2Adapter = getV2CommentsAdapter(superdoc);
@@ -2470,19 +2474,51 @@ export const useCommentsStore = defineStore('comments', () => {
       return { ok: false, reason: 'comment-text-empty' };
     }
 
-    const parent = commentsList.value.find((c) => String(c.commentId) === normalizedParent);
+    let normalizedTrackedChangeTarget = null;
+    if (trackedChangeTarget != null) {
+      const trackedChangeId =
+        trackedChangeTarget?.trackedChangeId != null ? String(trackedChangeTarget.trackedChangeId) : null;
+      if (!trackedChangeId) return { ok: false, reason: 'tracked-change-id-missing' };
+      if (trackedChangeId !== normalizedParent) {
+        return { ok: false, reason: 'tracked-change-target-mismatch' };
+      }
+      const story = cloneV2TrackedChangeStory(trackedChangeTarget.story);
+      // AIDEV-NOTE: Review rows are reactive, but the mutation target crosses
+      // a worker boundary and must contain cloneable plain data only.
+      normalizedTrackedChangeTarget = {
+        kind: 'trackedChange',
+        trackedChangeId,
+        ...(trackedChangeTarget.side != null ? { side: trackedChangeTarget.side } : {}),
+        ...(story ? { story } : {}),
+      };
+    }
+
+    const parent = commentsList.value.find(
+      (c) =>
+        String(c.commentId) === normalizedParent ||
+        (c.trackedChange === true && String(c.trackedChangeCanonicalId) === normalizedParent),
+    );
     const fileId = parent?.fileId ?? v2Adapter.documentId ?? null;
 
     return runV2CommentMutation({
       superdoc,
       adapter: v2Adapter,
       fileId,
-      operation: () =>
-        v2Adapter.reply({
+      operation: async () => {
+        const replyOutcome = await v2Adapter.reply({
           parentCommentId: normalizedParent,
           text: plainText,
           ...(mentions.length ? { mentions } : {}),
-        }),
+        });
+        if (replyOutcome?.ok || replyOutcome?.code !== 'TARGET_NOT_FOUND' || !normalizedTrackedChangeTarget) {
+          return replyOutcome;
+        }
+        return v2Adapter.commitPendingComment({
+          text: plainText,
+          target: normalizedTrackedChangeTarget,
+          ...(mentions.length ? { mentions } : {}),
+        });
+      },
       eventType: COMMENT_EVENTS.ADD,
       rejectionFallbackReason: 'v2-reply-failed',
       rejectionEventExtras: parent ? { comment: getCommentEventPayload(parent) } : {},
@@ -3080,7 +3116,7 @@ export const useCommentsStore = defineStore('comments', () => {
           if (input.trackedChangeSide !== undefined) {
             existing.trackedChangeSide = input.trackedChangeSide;
           } else {
-            delete existing.trackedChangeSide;
+            existing.trackedChangeSide = undefined;
           }
           if (input.threadingParentCommentId !== undefined) {
             existing.threadingParentCommentId = input.threadingParentCommentId;
@@ -4044,7 +4080,7 @@ export const useCommentsStore = defineStore('comments', () => {
       if (!isLinked) return;
       delete linkedComment.trackedChangeParentId;
       linkedComment.trackedChangeThreadParentId = undefined;
-      delete linkedComment.trackedChangeSide;
+      linkedComment.trackedChangeSide = undefined;
       delete linkedComment.threadingParentCommentId;
       if (parentCommentId && trackedChangeIds.has(parentCommentId)) delete linkedComment.parentCommentId;
       detachedCount += 1;

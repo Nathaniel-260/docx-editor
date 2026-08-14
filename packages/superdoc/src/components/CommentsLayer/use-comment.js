@@ -58,6 +58,7 @@ export default function useComment(params) {
   let parentCommentId = params.parentCommentId;
   let trackedChangeParentId = params.trackedChangeParentId;
   const trackedChangeThreadParentId = ref(params.trackedChangeThreadParentId);
+  const trackedChangeSide = ref(params.trackedChangeSide);
   const fileId = params.fileId;
   const fileType = params.fileType;
   const createdAtVersionNumber = params.createdAtVersionNumber;
@@ -340,6 +341,7 @@ export default function useComment(params) {
       parentCommentId,
       trackedChangeParentId,
       trackedChangeThreadParentId: trackedChangeThreadParentId.value,
+      trackedChangeSide: trackedChangeSide.value,
       fileId,
       fileType,
       mentions: mentions.value.map((u) => {
@@ -393,6 +395,7 @@ export default function useComment(params) {
     parentCommentId,
     trackedChangeParentId,
     trackedChangeThreadParentId,
+    trackedChangeSide,
     fileId,
     fileType,
     mentions,
