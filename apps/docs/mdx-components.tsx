@@ -14,6 +14,7 @@ import { FileDownload } from '@/components/mdx/file-download';
 import { MigrationAgentPrompt } from '@/components/mdx/MigrationAgentPrompt';
 import { MigrationExplorer } from '@/components/mdx/migration-explorer';
 import { MigrationExample, MigrationExampleTabs } from '@/components/mdx/migration-example-tabs';
+import { ProofingConfigReference } from '@/components/mdx/proofing-config-reference';
 import { ReceiptBar } from '@/components/mdx/receipt-bar';
 import { RuntimeExample, RuntimeExampleTabs } from '@/components/mdx/runtime-example-tabs';
 import {
@@ -55,6 +56,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     MigrationExplorer,
     MigrationExample,
     MigrationExampleTabs,
+    ProofingConfigReference,
     ReceiptBar,
     RuntimeExample,
     RuntimeExampleTabs,

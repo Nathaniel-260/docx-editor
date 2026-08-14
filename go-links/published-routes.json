@@ -13,6 +13,7 @@
   "examples/content-controls",
   "examples/custom-ui",
   "examples/document-modes",
+  "examples/proofing",
   "examples/react",
   "examples/search",
   "examples/sveltekit",

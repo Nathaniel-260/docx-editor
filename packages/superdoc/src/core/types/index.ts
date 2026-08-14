@@ -3885,30 +3885,63 @@ export interface ProofingError {
 }
 
 export interface ProofingConfig {
-  /** Enable or disable proofing (default: false). */
+  /**
+   * Enables proofing. A provider is also required before SuperDoc runs checks.
+   * @defaultValue false
+   */
   enabled?: boolean;
-  /** Provider instance. */
+  /**
+   * Checks the text segments SuperDoc supplies and returns spelling, grammar,
+   * or style issues.
+   * @defaultValue null
+   */
   provider?: ProofingProvider | null;
-  /** Fallback language for segments without a resolved language. */
+  /**
+   * Fallback language passed to the provider when a text segment has no
+   * resolved language.
+   * @defaultValue null
+   */
   defaultLanguage?: string | null;
-  /** Debounce delay after edits before rechecking (default: 500). */
+  /**
+   * Delay in milliseconds between an edit and the next proofing check. Values
+   * at or below 0 run without a delay.
+   * @defaultValue 500
+   */
   debounceMs?: number;
-  /** Maximum replacement suggestions per issue. */
+  /** Suggestion limit passed to the provider. The provider decides how to apply it. */
   maxSuggestions?: number;
-  /** Prioritize checking visible pages first (default: true). */
+  /** Prioritize checking visible pages first. */
   visibleFirst?: boolean;
-  /** Show "Ignore" in context menu (default: true). */
+  /**
+   * Shows Ignore in the proofing context menu. Ignored words remain suppressed
+   * for this editor session.
+   * @defaultValue true
+   */
   allowIgnoreWord?: boolean;
-  /** Words to suppress from proofing results. */
+  /**
+   * Words whose proofing issues SuperDoc suppresses. Matching is
+   * case-insensitive after Unicode normalization.
+   * @defaultValue []
+   */
   ignoredWords?: string[];
-  /** Provider call timeout in milliseconds (default: 10000). */
+  /**
+   * Maximum provider call time in milliseconds. Non-positive or non-finite
+   * values use the default.
+   * @defaultValue 10000
+   */
   timeoutMs?: number;
-  /** Max concurrent provider requests (default: 2). */
+  /** Maximum concurrent provider requests. */
   maxConcurrentRequests?: number;
-  /** Max segments per provider call (default: 20). */
+  /** Maximum segments per provider call. */
   maxSegmentsPerBatch?: number;
-  /** Error callback for provider failures. */
+  /**
+   * Runs when a provider check fails or times out.
+   * @param error - The failure kind, message, affected segment IDs, and cause.
+   */
   onProofingError?: (error: ProofingError) => void;
-  /** Status change callback. */
+  /**
+   * Runs when the proofing lifecycle status changes.
+   * @param status - The current proofing status.
+   */
   onStatusChange?: (status: ProofingStatus) => void;
 }

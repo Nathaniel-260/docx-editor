@@ -19,4 +19,5 @@ Every example is typechecked and has a behavior test for the outcome its README 
 - [Content controls](https://go.superdoc.dev/examples/content-controls) — update a Word text content control.
 - [Document modes](https://go.superdoc.dev/examples/document-modes) — switch between viewing, editing, and suggesting.
 - [Search](https://go.superdoc.dev/examples/search) — enable the built-in find surface and navigate matches.
+- [Proofing](https://go.superdoc.dev/examples/proofing) — add local spell checking with suggestions and Ignore.
 - [Collaboration](https://go.superdoc.dev/examples/collaboration) — synchronize one DOCX between two browser pages.

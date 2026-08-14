@@ -5,9 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import JSZip from 'jszip';
 import ts from 'typescript';
+import { configTemplate } from '../lib/config-explorer.ts';
+import { proofingConfigExplorer } from '../lib/proofing-config-explorer.ts';
 
 const appRoot = fileURLToPath(new URL('../', import.meta.url));
 const contentRoot = new URL('../content/docs/', import.meta.url);
+const embedsRoot = new URL('../components/embeds/', import.meta.url);
 const snippetsRoot = fileURLToPath(new URL('../snippets/', import.meta.url));
 const snippetsRootPrefix = snippetsRoot.endsWith('/') ? snippetsRoot : `${snippetsRoot}/`;
 // Runnable examples own their typecheck and are included directly so the guide cannot drift from the app.
@@ -20,6 +23,7 @@ const docsHomeUrl = new URL('../components/docs-home.tsx', import.meta.url);
 const pinnedV2MajorPackageInstall =
   /\b(?:pnpm add(?:\s+--global)?|npm (?:install|i|add)|yarn add|bun add)[^\n]*\s(?:superdoc|@superdoc\/[a-z0-9-]+)@(?:\^|~)?2(?:[.\w-]*)?(?=\s|$)/mu;
 const editorDemoUrl = new URL('../components/embeds/editor-demo.tsx', import.meta.url);
+const collapsibleEditorPreviewUrl = new URL('../components/embeds/collapsible-editor-preview.tsx', import.meta.url);
 const superdocRuntimeUrl = new URL('../components/embeds/superdoc-runtime.ts', import.meta.url);
 const focusedToolbarExampleUrl = new URL('../snippets/editor/focused-built-in-toolbar.ts', import.meta.url);
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
@@ -51,7 +55,12 @@ const documentManagementExampleUrl = new URL('../snippets/editor/document-manage
 const externalSurfaceExampleUrl = new URL('../snippets/editor/external-surface.ts', import.meta.url);
 const themeAndFontsExampleUrl = new URL('../snippets/editor/theme-and-fonts.ts', import.meta.url);
 const reactQuickstartExampleUrl = new URL('../../../examples/react/src/App.tsx', import.meta.url);
+const proofingGuideUrl = new URL('../content/docs/editor/platform/proofing.mdx', import.meta.url);
 const proofingProviderExampleUrl = new URL('../snippets/editor/proofing-provider.ts', import.meta.url);
+const proofingConfigExplorerUrl = new URL('../lib/proofing-config-explorer.ts', import.meta.url);
+const generatedProofingConfigUrl = new URL('../generated/proofing-config-reference.json', import.meta.url);
+const configExplorerUrl = new URL('../components/mdx/config-explorer.tsx', import.meta.url);
+const superdocCoreTypesUrl = new URL('../../../packages/superdoc/src/core/types/index.ts', import.meta.url);
 const commentThreadExampleUrl = new URL('../snippets/document-api/comment-thread.ts', import.meta.url);
 const pythonSdkExampleUrl = new URL('../snippets/headless/python-accept-changes.py', import.meta.url);
 const cliExampleUrl = new URL('../snippets/headless/cli-accept-changes.sh', import.meta.url);
@@ -88,11 +97,12 @@ const registeredComponents = new Set([
   'MigrationExplorer',
   'MigrationExample',
   'MigrationExampleTabs',
+  'ProofingConfigReference',
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
 ]);
-const editorDemoPresets = new Set(['document-modes', 'tracked-review']);
+const editorDemoPresets = new Set(['document-modes', 'proofing', 'tracked-review']);
 
 async function collectMdxFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -312,14 +322,15 @@ test('Markdown images include alt text and accessible SVG metadata', async () =>
   assert.deepEqual(accessibilityIssues, []);
 });
 
-test('the editor demo runtime matches the public package manifest', async () => {
+test('the editor demo runtime uses exact stable packages', async () => {
   const runtimeConfig = JSON.parse(await readFile(runtimeConfigUrl, 'utf8'));
   const superdocPackage = JSON.parse(await readFile(superdocPackageUrl, 'utf8'));
   const engineSpecifier = superdocPackage.dependencies?.[runtimeConfig.enginePackage];
 
   assert.equal(runtimeConfig.runtimePackage, superdocPackage.name);
-  assert.equal(runtimeConfig.runtimeVersion, superdocPackage.version);
-  assert.equal(engineSpecifier, `workspace:${runtimeConfig.engineVersion}`);
+  assert.match(runtimeConfig.runtimeVersion, /^2\.\d+\.\d+$/u);
+  assert.match(runtimeConfig.engineVersion, /^\d+\.\d+\.\d+$/u);
+  assert.ok(engineSpecifier, `${runtimeConfig.enginePackage} must remain a SuperDoc dependency`);
   assert.equal(runtimeConfig.uiModulePath, superdocPackage.exports?.['./ui']?.import?.slice(1));
 });
 
@@ -337,6 +348,11 @@ test('the editor demo fits from v2 page metrics and observes container width', a
   assert.match(source, /comments: \{ displayMode: 'inline' \}/);
   assert.match(source, /instanceRef\.current\?\.setDocumentMode\(mode\)/);
   assert.match(source, /preset === 'document-modes'/);
+  assert.match(source, /preset === 'proofing' \? \{ enabled: true, provider: proofingProvider \} : undefined/);
+  assert.match(source, /ui: \{ loading: false \}/);
+  assert.match(source, /activeEditor\?\.doc\?\.insert\(\{ value: 'Proofing finds mispelled words as you type\.' \}\)/);
+  assert.match(source, /<CollapsibleEditorPreview/);
+  assert.match(source, /className='sd-editor-demo-preview'/);
 });
 
 // The runtime loader moved out of the demo when a second embed needed it. These
@@ -836,15 +852,79 @@ test('the external surface example handles lifecycle outcomes', async () => {
 
 test('the theme, font, and proofing examples preserve their data boundaries', async () => {
   const theme = await readFile(themeAndFontsExampleUrl, 'utf8');
+  const proofingGuide = await readFile(proofingGuideUrl, 'utf8');
   const proofing = await readFile(proofingProviderExampleUrl, 'utf8');
+  const proofingPresentation = await readFile(proofingConfigExplorerUrl, 'utf8');
+  const generatedProofingConfig = JSON.parse(await readFile(generatedProofingConfigUrl, 'utf8'));
+  const configExplorer = await readFile(configExplorerUrl, 'utf8');
+  const superdocTypes = await readFile(superdocCoreTypesUrl, 'utf8');
 
   assert.match(theme, /createTheme\(/);
   assert.match(theme, /fonts\.add\(/);
   assert.match(theme, /fonts\.map\(\{ Calibri: 'Product Sans' \}\)/);
   assert.match(theme, /await readySuperDoc\.fonts\.preload\(\['Calibri'\]\)/);
-  assert.match(proofing, /requiresNetwork: false/);
+  assert.match(proofing, /enabled: true/);
   assert.match(proofing, /segments\.flatMap/);
-  assert.match(proofing, /onProofingError:/);
+  assert.doesNotMatch(proofing, /getCapabilities/);
+  assert.match(proofingGuide, /does not include a dictionary or grammar checker/);
+  assert.match(proofingGuide, /Proofing helps people catch spelling and grammar mistakes while they write/);
+  assert.match(proofingGuide, /<EditorDemo preset='proofing'/);
+  assert.match(proofingGuide, /<ProofingConfigReference \/>/);
+  assert.match(proofingGuide, /Options under \*\*Reserved\*\*.*do not affect the current runtime/);
+  assert.match(proofingGuide, /https:\/\/go\.superdoc\.dev\/examples\/proofing/);
+  assert.match(configExplorer, /navigator\.clipboard\.writeText/);
+  assert.match(configExplorer, /copyStatus === 'failed' \? 'Copy failed'/);
+  assert.match(configExplorer, /aria-pressed=\{group\.id === activeGroup\.id\}/);
+  assert.match(configExplorer, /aria-pressed=\{field\.name === selected\.name\}/);
+  assert.match(configExplorer, /shapeExpanded \? 'Hide shape' : 'Show shape'/);
+  assert.match(configExplorer, /<DynamicCodeBlock/);
+  assert.match(configExplorer, /lang='ts'/);
+  assert.match(configExplorer, /allowCopy: false/);
+  assert.doesNotMatch(configExplorer, /field\.values\.map|field\.parameters\?\.map/);
+
+  const configBody = superdocTypes.match(/export interface ProofingConfig \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+  const configFields = [...configBody.matchAll(/^\s{2}(\w+)\??:/gmu)].map((match) => match[1]).sort();
+  const documentedFields = generatedProofingConfig.fields.map((field) => field.name).sort();
+  assert.deepEqual(documentedFields, configFields);
+  assert.equal(new Set(documentedFields).size, documentedFields.length);
+  assert.ok(generatedProofingConfig.fields.every((field) => field.type && field.description));
+  const providerField = generatedProofingConfig.fields.find((field) => field.name === 'provider');
+  assert.equal(providerField?.typeName, 'ProofingProvider | null');
+  assert.match(providerField?.type ?? '', /\n  check: \(request: ProofingCheckRequest\)/);
+  assert.match(proofingPresentation, /satisfies Partial<Record<ProofingFieldName, ProofingPresentation>>/);
+  assert.match(proofingPresentation, /if \(!details\) return \{ \.\.\.field, group: 'other' \}/);
+
+  const copiedConfig = configTemplate(proofingConfigExplorer);
+  assert.match(copiedConfig, /^proofing: \{/);
+  assert.match(copiedConfig, /enabled: true/);
+  assert.match(copiedConfig, /provider: myProvider/);
+  assert.doesNotMatch(copiedConfig, /debounceMs|onProofingError|visibleFirst|maxConcurrentRequests|maxSegmentsPerBatch/);
+});
+
+test('every live editor embed uses the shared collapsed preview', async () => {
+  const preview = await readFile(collapsibleEditorPreviewUrl, 'utf8');
+  const embedFiles = (await readdir(embedsRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.tsx'))
+    .map((entry) => entry.name);
+  const liveEditors = [];
+
+  for (const fileName of embedFiles) {
+    const source = await readFile(new URL(fileName, embedsRoot), 'utf8');
+    if (source.includes('loadRuntime()')) liveEditors.push({ fileName, source });
+  }
+
+  assert.match(preview, /const \[expanded, setExpanded\] = useState\(false\)/);
+  assert.doesNotMatch(preview, /\binert\b/);
+  assert.match(preview, /aria-expanded=\{expanded\}/);
+  assert.match(preview, /className='sd-editor-preview-toggle'/);
+  assert.deepEqual(
+    liveEditors.map(({ fileName }) => fileName).sort(),
+    ['custom-bold-demo.tsx', 'editor-demo.tsx'],
+  );
+  for (const { fileName, source } of liveEditors) {
+    assert.match(source, /<CollapsibleEditorPreview/, `${fileName} does not use the collapsed preview`);
+    assert.match(source, /loading: false/, `${fileName} does not disable the built-in loading overlay`);
+  }
 });
 
 test('the React quickstart owns one stable SuperDoc v2 lifecycle', async () => {

@@ -47,6 +47,11 @@
   --sd-success-surface: #ecfdf3;
   --sd-warning: #8a4b08;
   --sd-warning-surface: #fff8e6;
+  --sd-code-surface: #fbfbfc;
+  --sd-code-text: #3d4351;
+  --sd-code-muted: #9aa1ad;
+  --sd-code-key: var(--sd-blue-700);
+  --sd-code-value: #0d7544;
   --sd-radius-xs: 0.25rem;
   --sd-radius-sm: 6px;
   --sd-radius-md: 9px;
@@ -94,6 +99,11 @@
   --sd-success-surface: #102a20;
   --sd-warning: #f6c86b;
   --sd-warning-surface: #302411;
+  --sd-code-surface: #12151c;
+  --sd-code-text: #cbd1dc;
+  --sd-code-muted: #737b89;
+  --sd-code-key: #91adff;
+  --sd-code-value: #75e0a7;
   --sd-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.24);
   --sd-shadow-sm: 0 1px 3px rgb(0 0 0 / 0.3), 0 1px 2px rgb(0 0 0 / 0.2);
   --sd-shadow-md: 0 8px 24px rgb(0 0 0 / 0.36);

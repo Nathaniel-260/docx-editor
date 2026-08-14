@@ -260,6 +260,34 @@ test('exports the document modes guide with an interactive mode switcher', async
   assert.doesNotMatch(markdown, /<EditorDemo\b/);
 });
 
+test('exports the proofing guide with an interactive editor', async () => {
+  const article = await readFile(new URL('../out/editor/platform/proofing/index.html', import.meta.url), 'utf8');
+  const markdown = await readFile(new URL('../out/md/editor/platform/proofing.md', import.meta.url), 'utf8');
+
+  assert.match(article, /Try proofing/);
+  assert.match(article, /data-preset="proofing"/);
+  assert.match(article, /data-expanded="false"/);
+  assert.match(article, /Proofing helps people catch spelling and grammar mistakes while they write/);
+  assert.match(article, /id="proofing-config"/);
+  assert.match(article, /data-config-explorer="true"/);
+  assert.match(article, /proofing config/);
+  assert.match(article, /Setup/);
+  assert.match(article, /Behavior/);
+  assert.match(article, /Events/);
+  assert.match(article, /Reserved/);
+  assert.match(article, /Required\./);
+  assert.match(markdown, /Proofing: type `mispelled`, `workng`, or `teh`, then right-click the underline\./);
+  assert.match(markdown, /\| `enabled` \| `boolean` \| `false` \|/);
+  assert.match(markdown, /visibleFirst.*maxConcurrentRequests.*maxSegmentsPerBatch/s);
+  const tableStart = markdown.indexOf('| Field | Type | Default | Description |');
+  const tableEnd = markdown.indexOf('\n\n', tableStart);
+  const configRows = markdown.slice(tableStart, tableEnd).split('\n');
+  assert.ok(configRows.length > 2);
+  assert.ok(configRows.every((row) => row.startsWith('|') && row.endsWith('|')));
+  assert.doesNotMatch(markdown, /<ProofingConfigReference\b/);
+  assert.doesNotMatch(markdown, /<EditorDemo\b/);
+});
+
 test('exports the custom UI command-state model with a Markdown fallback', async () => {
   const article = await readFile(new URL('../out/editor/custom-ui/overview/index.html', import.meta.url), 'utf8');
   const markdown = await readFile(new URL('../out/md/editor/custom-ui/overview.md', import.meta.url), 'utf8');
@@ -500,7 +528,7 @@ test('exports the Editor platform guidance as clean Markdown', async () => {
   assert.match(corpus, /triggerDownload: false/);
   assert.match(corpus, /await handle\.result/);
   assert.match(corpus, /fonts\.map\(\{ Calibri: 'Product Sans' \}\)/);
-  assert.match(corpus, /requiresNetwork: false/);
+  assert.match(corpus, /If the provider uses a network, document text leaves the browser/);
   assert.match(corpus, /Accessibility remains a shared responsibility/);
   assert.match(corpus, /client code a trusted authorization boundary/);
   assert.doesNotMatch(corpus, /<include>/);

@@ -4,6 +4,7 @@ import {
   renderReferenceNamespaceMarkdown,
   renderReferenceOperationMarkdown,
 } from './document-api-reference/markdown';
+import { proofingConfigExplorer } from './proofing-config-explorer';
 
 export const llmPlaceholderComponents = [
   'Callout',
@@ -20,6 +21,7 @@ export const llmPlaceholderComponents = [
   'FileDownload',
   'MigrationAgentPrompt',
   'MigrationExplorer',
+  'ProofingConfigReference',
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
@@ -136,6 +138,9 @@ export function renderLLMMarkdown(markdown: string) {
         fixture ? `Sample: [open the fixture](${fixture}).` : undefined,
         preset ? `Preset: \`${preset}\`.` : undefined,
         preset === 'document-modes' ? 'Mode switching: viewing, editing, and suggesting.' : undefined,
+        preset === 'proofing'
+          ? 'Proofing: type `mispelled`, `workng`, or `teh`, then right-click the underline.'
+          : undefined,
         preset === 'tracked-review' ? 'Tracked-change review: accept or reject the sample change.' : undefined,
         localFile ? 'Local DOCX selection: enabled. Files remain in the browser.' : 'Local DOCX selection: disabled.',
       ].filter((value): value is string => Boolean(value));
@@ -194,6 +199,13 @@ export function renderLLMMarkdown(markdown: string) {
         '> A machine-readable version of every entry is published at `/migration/v1-to-v2.json`.',
         '',
       ].join('\n');
+    },
+    ProofingConfigReference() {
+      const rows = proofingConfigExplorer.fields.map((field) => {
+        const type = field.type.replace(/\s+/gu, ' ').trim().replaceAll('|', '\\|');
+        return `| \`${field.name}\` | \`${type}\` | ${field.default ? `\`${field.default}\`` : '—'} | ${field.description} |`;
+      });
+      return ['| Field | Type | Default | Description |', '| --- | --- | --- | --- |', ...rows, ''].join('\n');
     },
     ReceiptBar({ attributes }) {
       const operation = textAttribute(attributes, 'operation') ?? 'operation';

@@ -3,6 +3,7 @@
 import { Bold, Expand, Shrink } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CommandState, SuperDocUI } from 'superdoc/ui';
+import { CollapsibleEditorPreview } from './collapsible-editor-preview';
 import { loadRuntime, loadUIModule, type SuperDocInstance } from './superdoc-runtime';
 
 /**
@@ -43,7 +44,7 @@ export function CustomBoldDemo() {
   const [bold, setBold] = useState<CommandState>(INITIAL_BOLD);
   const [result, setResult] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [error, setError] = useState('');
 
   const fitCleanupRef = useRef<(() => void) | null>(null);
@@ -138,7 +139,7 @@ export function CustomBoldDemo() {
         // built-in comments sidebar is switched off. It also reserves container
         // width, which `fit-width` counts as available and then shrinks the
         // page to a fraction of the frame to compensate.
-        ui: { comments: false },
+        ui: { comments: false, loading: false },
         // Manual, measured against the mount rather than the runtime's own
         // fit policy, for the same reason: the measurement has to be of the
         // space the document actually gets.
@@ -209,12 +210,12 @@ export function CustomBoldDemo() {
   // Track the browser's own fullscreen state rather than assuming the button is
   // the only way out: Esc and the system control both exit without telling us.
   useEffect(() => {
-    const sync = () => setExpanded(document.fullscreenElement === rootRef.current);
+    const sync = () => setIsFullscreen(document.fullscreenElement === rootRef.current);
     document.addEventListener('fullscreenchange', sync);
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
 
-  const toggleExpanded = useCallback(async () => {
+  const toggleFullscreen = useCallback(async () => {
     const node = rootRef.current;
     if (!node) return;
     try {
@@ -297,62 +298,64 @@ export function CustomBoldDemo() {
 
   return (
     <figure className='sd-custom-bold-demo' ref={rootRef} data-custom-bold-demo data-state={state}>
-      {state === 'error' ? (
-        <div className='sd-custom-bold-demo-error' role='alert'>
-          <p>{error}</p>
-          <button onClick={() => void start()} type='button'>
-            Try again
-          </button>
-        </div>
-      ) : null}
+      <CollapsibleEditorPreview className='sd-custom-bold-demo-preview'>
+        {state === 'error' ? (
+          <div className='sd-custom-bold-demo-error' role='alert'>
+            <p>{error}</p>
+            <button onClick={() => void start()} type='button'>
+              Try again
+            </button>
+          </div>
+        ) : null}
 
-      {state !== 'idle' && state !== 'error' ? (
-        <div className='sd-custom-bold-demo-toolbar' role='toolbar' aria-label='Custom controls'>
-          <button
-            aria-pressed={bold.active}
-            data-testid='custom-bold'
-            // `pending` as well as `enabled`: Bold is a toggle whose direction is
-            // read before executing, so a second click landing mid-flight would
-            // compute its direction from state the first has not finished
-            // changing, and the earlier completion would publish a result for
-            // the later one.
-            disabled={!bold.enabled || pending}
-            onClick={() => void runBold()}
-            title={bold.enabled ? 'Bold' : (bold.reason ?? DISABLED_BEFORE_SELECTION)}
-            type='button'
-          >
-            <Bold aria-hidden='true' size={16} />
-            Bold
-          </button>
+        {state !== 'idle' && state !== 'error' ? (
+          <div className='sd-custom-bold-demo-toolbar' role='toolbar' aria-label='Custom controls'>
+            <button
+              aria-pressed={bold.active}
+              data-testid='custom-bold'
+              // `pending` as well as `enabled`: Bold is a toggle whose direction is
+              // read before executing, so a second click landing mid-flight would
+              // compute its direction from state the first has not finished
+              // changing, and the earlier completion would publish a result for
+              // the later one.
+              disabled={!bold.enabled || pending}
+              onClick={() => void runBold()}
+              title={bold.enabled ? 'Bold' : (bold.reason ?? DISABLED_BEFORE_SELECTION)}
+              type='button'
+            >
+              <Bold aria-hidden='true' size={16} />
+              Bold
+            </button>
 
-          {/* One quiet line. The raw controller values belong in the prose and
+            {/* One quiet line. The raw controller values belong in the prose and
               the simulated model below, not competing with the document. */}
-          <output className='sd-custom-bold-demo-state' data-testid='custom-bold-state'>
-            {plainState}
-          </output>
+            <output className='sd-custom-bold-demo-state' data-testid='custom-bold-state'>
+              {plainState}
+            </output>
 
-          <button
-            className='sd-custom-bold-demo-reset'
-            data-testid='custom-bold-reset'
-            onClick={() => void start()}
-            type='button'
-          >
-            Reset
-          </button>
+            <button
+              className='sd-custom-bold-demo-reset'
+              data-testid='custom-bold-reset'
+              onClick={() => void start()}
+              type='button'
+            >
+              Reset
+            </button>
 
-          <button
-            aria-label={expanded ? 'Exit fullscreen' : 'Expand the editor'}
-            className='sd-custom-bold-demo-expand'
-            data-testid='custom-bold-expand'
-            onClick={() => void toggleExpanded()}
-            type='button'
-          >
-            {expanded ? <Shrink aria-hidden='true' size={15} /> : <Expand aria-hidden='true' size={15} />}
-          </button>
-        </div>
-      ) : null}
+            <button
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              className='sd-custom-bold-demo-expand'
+              data-testid='custom-bold-expand'
+              onClick={() => void toggleFullscreen()}
+              type='button'
+            >
+              {isFullscreen ? <Shrink aria-hidden='true' size={15} /> : <Expand aria-hidden='true' size={15} />}
+            </button>
+          </div>
+        ) : null}
 
-      <div className='sd-custom-bold-demo-canvas' ref={mountRef} />
+        <div className='sd-custom-bold-demo-canvas' ref={mountRef} />
+      </CollapsibleEditorPreview>
 
       <ol aria-label='Anatomy of a command control' className='sd-anatomy'>
         <li className='sd-anatomy-step' data-active={step === 1}>

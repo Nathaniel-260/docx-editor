@@ -1,17 +1,31 @@
 ---
 title: Add spelling and grammar proofing
 navTitle: Proofing
-description: Connect a provider to SuperDoc's segment, scheduling, rendering, and replacement workflow.
+description: Connect a spelling or grammar provider to SuperDoc.
 ---
 
-SuperDoc owns document segmentation, scheduling, issue rendering, ignore actions, and replacement. Your proofing provider receives text segments and returns issue ranges.
+Proofing helps people catch spelling and grammar mistakes while they write, before those mistakes reach a reader. Word processors usually underline an issue so the writer can replace or ignore it without leaving the document.
+
+<EditorDemo preset='proofing' title='Try proofing' />
+
+## Enable proofing
+
+SuperDoc schedules checks, underlines issues, and handles Ignore and replacements. It does not include a dictionary or grammar checker, so you provide one:
 
 <include>../../../../snippets/editor/proofing-provider.ts</include>
 
-The local example is intentionally small but executable. A production provider may call a service and return spelling, grammar, or style issues. Ranges are zero-based UTF-16 offsets within the supplied segment, not document-global positions.
+This provider flags only `teh`. For a complete local dictionary, see the [proofing example](https://go.superdoc.dev/examples/proofing).
 
-Declare capabilities honestly. Configure timeouts, concurrency, batching, debounce, language fallback, and error handling for the provider's real behavior. Treat proofing as advisory: the document can change while a request is in flight, and SuperDoc owns reconciling results with its current segments.
+SuperDoc sends text segments to the provider after edits. Return spelling, grammar, or style issues with zero-based UTF-16 offsets. Honor the request's `signal` so SuperDoc can cancel stale or timed-out checks.
 
-If the provider uses a network, document text leaves the browser. Obtain the required user consent, send only necessary segments, use authenticated transport, set retention policy, and never place document text in logs or URL query strings.
+## Configure proofing
 
-Proofing is disabled by default. Do not enable it without a provider and a clear data-handling policy.
+Start with **Setup**, then open the other groups only when you need them. Proofing runs only when both `enabled: true` and `provider` are present.
+
+<ProofingConfigReference />
+
+Options under **Reserved** are present in the TypeScript type but do not affect the current runtime.
+
+## Protect document text
+
+If the provider uses a network, document text leaves the browser. Obtain user consent, send only the required segments over authenticated encrypted transport, define how the service retains and deletes the text, and never include document text in URLs or logs.

@@ -43,6 +43,7 @@ catalog:
   fast-glob: ^3.3.3
   fumadocs-core: ^16.11.5
   fumadocs-mdx: ^15.2.0
+  fumadocs-typescript: ^5.3.0
   fumadocs-ui: ^16.11.5
   happy-dom: ^20.3.4
   he: ^1.2.0

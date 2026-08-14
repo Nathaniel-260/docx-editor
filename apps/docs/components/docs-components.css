@@ -826,6 +826,102 @@
   content: '';
 }
 
+.sd-editor-preview {
+  position: relative;
+  overflow: hidden;
+}
+
+.sd-editor-preview-content {
+  max-height: 60rem;
+  overflow: hidden;
+  transition: max-height 350ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sd-editor-preview[data-expanded='false'] .sd-editor-preview-content {
+  max-height: 11.25rem;
+}
+
+.sd-editor-preview[data-expanded='false'] {
+  min-height: 11.25rem;
+}
+
+.sd-editor-demo-preview[data-expanded='false'] .sd-editor-preview-content {
+  max-height: 14.25rem;
+}
+
+.sd-editor-preview-fade {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 5.625rem;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--sd-background) 92%, transparent) 65%,
+    var(--sd-background)
+  );
+  pointer-events: none;
+  transition: opacity 300ms ease;
+}
+
+.sd-editor-preview[data-expanded='true'] .sd-editor-preview-fade {
+  opacity: 0;
+}
+
+.sd-editor-preview-toggle {
+  position: absolute;
+  bottom: 0.875rem;
+  left: 50%;
+  z-index: 2;
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.9rem;
+  transform: translateX(-50%);
+  border: 1px solid var(--sd-border);
+  border-radius: 999px;
+  background: var(--sd-surface);
+  box-shadow: var(--sd-shadow-sm);
+  color: var(--sd-text-primary);
+  cursor: pointer;
+  font: 600 0.8125rem/1.2 var(--font-sans);
+  transition:
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.sd-editor-preview-toggle:hover {
+  transform: translateX(-50%) translateY(-1px);
+  box-shadow: var(--sd-shadow-md);
+}
+
+.sd-editor-preview-toggle:focus-visible {
+  outline: 3px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.sd-editor-preview-toggle svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  transition: transform 300ms ease;
+}
+
+.sd-editor-preview[data-expanded='true'] .sd-editor-preview-toggle svg {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-editor-preview-content,
+  .sd-editor-preview-fade,
+  .sd-editor-preview-toggle,
+  .sd-editor-preview-toggle svg,
+  .sd-editor-demo-surface {
+    transition: none;
+  }
+}
+
 .sd-editor-demo-poster {
   display: grid;
   min-height: 16rem;
@@ -997,6 +1093,24 @@
   background: var(--sd-canvas);
 }
 
+.sd-editor-demo:fullscreen .sd-editor-demo-preview,
+.sd-editor-demo:fullscreen .sd-editor-preview-content,
+.sd-custom-bold-demo:fullscreen .sd-custom-bold-demo-preview,
+.sd-custom-bold-demo:fullscreen .sd-editor-preview-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  max-height: none;
+}
+
+.sd-editor-demo:fullscreen .sd-editor-preview-toggle,
+.sd-editor-demo:fullscreen .sd-editor-preview-fade,
+.sd-custom-bold-demo:fullscreen .sd-editor-preview-toggle,
+.sd-custom-bold-demo:fullscreen .sd-editor-preview-fade {
+  display: none;
+}
+
 .sd-editor-demo:fullscreen .sd-editor-demo-surface {
   height: auto;
   min-height: 0;
@@ -1009,6 +1123,9 @@
   overflow-x: hidden;
   overflow-y: auto;
   background: var(--sd-background);
+  transition:
+    height 350ms cubic-bezier(0.4, 0, 0.2, 1),
+    min-height 350ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sd-editor-demo-surface .superdoc__layers {
@@ -1711,4 +1828,285 @@
 .sd-anatomy-step[data-active='true'] b,
 .sd-anatomy-step[data-active='true'] code {
   color: var(--sd-blue-600);
+}
+
+/* Feature configuration is shown in the same shape developers write it. The
+   generated contract controls the fields and types; this component only adds
+   navigation and examples around that source of truth. */
+.sd-config-explorer {
+  overflow: hidden;
+  margin-block: 1rem 1.5rem;
+  border: 1px solid var(--sd-border-soft);
+  border-radius: var(--sd-radius-lg);
+  background: var(--sd-surface);
+  box-shadow: var(--sd-shadow-xs);
+}
+
+.sd-config-explorer-groups {
+  display: flex;
+  gap: 1.125rem;
+  overflow-x: auto;
+  padding-inline: 1.125rem;
+  border-bottom: 1px solid var(--sd-border-soft);
+}
+
+.sd-config-explorer-groups button {
+  flex: none;
+  margin-bottom: -1px;
+  padding: 0.75rem 0.125rem 0.6875rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--sd-text-tertiary);
+  cursor: pointer;
+  font: 500 0.75rem/1.25 var(--font-sans);
+}
+
+.sd-config-explorer-groups button:hover {
+  color: var(--sd-text-primary);
+}
+
+.sd-config-explorer-groups button[aria-pressed='true'] {
+  border-bottom-color: var(--sd-text-primary);
+  color: var(--sd-text-primary);
+  font-weight: 650;
+}
+
+.sd-config-explorer-body {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
+}
+
+.sd-config-explorer-code {
+  position: relative;
+  overflow-x: auto;
+  padding-block: 1rem;
+  border-right: 1px solid var(--sd-border-soft);
+  background: var(--sd-code-surface);
+  color: var(--sd-code-text);
+  font: 0.75rem/1.9 var(--font-mono);
+}
+
+.sd-config-explorer-copy {
+  position: absolute;
+  top: 0.625rem;
+  right: 0.75rem;
+  z-index: 1;
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  place-items: center;
+  border: 0;
+  border-radius: var(--sd-radius-sm);
+  background: transparent;
+  color: var(--sd-code-muted);
+  cursor: pointer;
+}
+
+.sd-config-explorer-copy:hover {
+  background: var(--sd-canvas);
+  color: var(--sd-code-text);
+}
+
+.sd-config-explorer-copy:focus-visible,
+.sd-config-explorer-groups button:focus-visible,
+.sd-config-explorer-field:focus-visible {
+  outline: 3px solid var(--color-fd-ring);
+  outline-offset: -3px;
+}
+
+.sd-config-explorer-copy svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.sd-config-explorer-line,
+.sd-config-explorer-field {
+  display: block;
+  min-width: max-content;
+  width: 100%;
+  padding-inline: 1.125rem 3.25rem;
+  white-space: pre;
+}
+
+.sd-config-explorer-line-muted {
+  color: var(--sd-code-muted);
+}
+
+.sd-config-explorer-field {
+  padding-block: 0;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.sd-config-explorer-field:hover {
+  background: color-mix(in srgb, var(--sd-blue-300) 7%, transparent);
+}
+
+.sd-config-explorer-field[data-selected='true'] {
+  border-left-color: var(--sd-blue);
+  background: color-mix(in srgb, var(--sd-blue) 10%, transparent);
+}
+
+.sd-config-explorer-field-name {
+  color: var(--sd-code-key);
+}
+
+.sd-config-explorer-field-value {
+  color: var(--sd-code-value);
+}
+
+.sd-config-explorer-detail {
+  min-width: 0;
+  padding: 1.25rem 1.5rem 1.375rem;
+}
+
+.sd-config-explorer .sd-config-explorer-detail-heading > code {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--sd-text-primary);
+  font-size: 0.84375rem;
+  font-weight: 650;
+}
+
+.sd-config-explorer-type {
+  overflow-x: auto;
+  margin: 0;
+  color: var(--sd-text-secondary);
+  font-size: 0.734375rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+
+.sd-config-explorer .sd-config-explorer-type code {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.sd-config-explorer .sd-config-explorer-shape {
+  margin-top: 0.75rem;
+  border: 1px solid var(--sd-border-soft);
+  border-radius: 7px;
+  background: var(--sd-code-surface);
+  box-shadow: none;
+}
+
+.sd-config-explorer .sd-config-explorer-shape-viewport {
+  max-height: 9.5rem;
+  padding: 0.625rem 0.875rem;
+  background: var(--sd-code-surface);
+  color: var(--sd-code-text);
+  font: 0.734375rem/1.7 var(--font-mono);
+}
+
+.sd-config-explorer .sd-config-explorer-shape pre {
+  margin: 0;
+  color: inherit;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.sd-config-explorer-shape-toggle {
+  flex: none;
+  padding: 0.125rem 0.25rem;
+  border: 0;
+  border-radius: var(--sd-radius-sm);
+  background: transparent;
+  color: var(--sd-blue-600);
+  cursor: pointer;
+  font: 500 0.71875rem/1.4 var(--font-sans);
+}
+
+.sd-config-explorer-shape-toggle:hover {
+  background: color-mix(in srgb, var(--sd-blue) 7%, transparent);
+}
+
+.sd-config-explorer-shape-toggle:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.sd-config-explorer-detail > p {
+  margin: 0.625rem 0 0;
+  color: var(--sd-text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.sd-config-explorer-meta {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  font-size: 0.75rem;
+}
+
+.sd-config-explorer-meta > div {
+  min-width: 0;
+}
+
+.sd-config-explorer-meta dt {
+  margin-bottom: 0.25rem;
+  color: var(--sd-text-tertiary);
+  font-size: 0.65625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.sd-config-explorer-meta dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.sd-config-explorer-type-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.sd-config-explorer .sd-config-explorer-meta code {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--sd-text-secondary);
+  font-size: 0.734375rem;
+}
+
+.sd-config-explorer-detail > .sd-config-explorer-note {
+  margin-top: 0.75rem;
+  color: var(--sd-blue-600);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.sd-config-explorer-detail > .sd-config-explorer-note[data-kind='reserved'] {
+  color: var(--sd-warning);
+}
+
+@media (max-width: 48rem) {
+  .sd-config-explorer-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sd-config-explorer-detail {
+    border-top: 1px solid var(--sd-border-soft);
+  }
+
+  .sd-config-explorer-code {
+    border-right: 0;
+  }
 }

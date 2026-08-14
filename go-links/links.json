@@ -20,6 +20,7 @@
     "examples/content-controls": { "path": "examples/content-controls" },
     "examples/custom-ui": { "path": "examples/custom-ui" },
     "examples/document-modes": { "path": "examples/document-modes" },
+    "examples/proofing": { "path": "examples/proofing" },
     "examples/react": { "path": "examples/react" },
     "examples/search": { "path": "examples/search" },
     "examples/sveltekit": { "path": "examples/sveltekit" },

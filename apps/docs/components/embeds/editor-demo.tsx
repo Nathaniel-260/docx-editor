@@ -2,18 +2,19 @@
 
 import { Bold, Check, Expand, Italic, Minus, Plus, Shrink, Underline, Undo2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { DocumentMode } from 'superdoc';
+import type { Config, DocumentMode } from 'superdoc';
 import type { CommandState, SuperDocUI, ZoomSlice } from 'superdoc/ui';
+import { CollapsibleEditorPreview } from './collapsible-editor-preview';
 import { loadRuntime, loadUIModule, type SuperDocInstance } from './superdoc-runtime';
 
 const zoomStep = 10;
 const initialZoom = { max: 200, min: 10, mode: 'manual', value: 100 } satisfies ZoomSlice;
 
-type EditorDemoPreset = 'document-modes' | 'tracked-review';
+type EditorDemoPreset = 'document-modes' | 'proofing' | 'tracked-review';
 
 type EditorDemoProps = {
   allowLocalFile?: boolean;
-  fixture: string;
+  fixture?: string;
   preset: EditorDemoPreset;
   title: string;
 };
@@ -29,6 +30,38 @@ type PageMetricsSnapshot = {
 type PageMetricsHandle = {
   getSnapshot(): PageMetricsSnapshot;
   subscribe(listener: (snapshot: PageMetricsSnapshot) => void): () => void;
+};
+
+type ProofingProvider = NonNullable<NonNullable<Config['proofing']>['provider']>;
+
+const proofingReplacements = new Map([
+  ['mispelled', 'misspelled'],
+  ['teh', 'the'],
+  ['workng', 'working'],
+]);
+
+const proofingProvider: ProofingProvider = {
+  id: 'docs-proofing-demo',
+  check: async ({ segments, signal }) => ({
+    issues: segments.flatMap((segment) => {
+      if (signal?.aborted) return [];
+
+      return [...segment.text.matchAll(/[\p{L}]+/gu)].flatMap((match) => {
+        const replacement = proofingReplacements.get(match[0].toLowerCase());
+        if (!replacement) return [];
+
+        return [
+          {
+            segmentId: segment.id,
+            start: match.index,
+            end: match.index + match[0].length,
+            kind: 'spelling',
+            replacements: [replacement],
+          },
+        ];
+      });
+    }),
+  }),
 };
 
 function getPageMetrics(instance: SuperDocInstance): PageMetricsHandle | null {
@@ -66,7 +99,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const [activeChangeId, setActiveChangeId] = useState<string | null>(null);
   const [commandStates, setCommandStates] = useState(initialCommandStates);
   const [documentMode, setDocumentMode] = useState<DocumentMode>(
-    preset === 'document-modes' ? 'editing' : 'suggesting',
+    preset === 'tracked-review' ? 'suggesting' : 'editing',
   );
   const [fitActive, setFitActive] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -158,14 +191,14 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     uiCleanupRef.current = () => cleanup.forEach((unsubscribe) => unsubscribe());
   }
 
-  async function mountDocument(getFile: () => Promise<File>) {
+  async function mountDocument(getFile?: () => Promise<File>) {
     if (!mountRef.current || state === 'loading') return;
 
     const loadId = ++loadIdRef.current;
     destroyEditor();
     setActiveChangeId(null);
     setCommandStates(initialCommandStates());
-    const initialDocumentMode = preset === 'document-modes' ? 'editing' : 'suggesting';
+    const initialDocumentMode = preset === 'tracked-review' ? 'suggesting' : 'editing';
     setDocumentMode(initialDocumentMode);
     fitActiveRef.current = true;
     setFitActive(true);
@@ -185,14 +218,16 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     };
 
     try {
-      const [file, SuperDoc, uiModule] = await Promise.all([getFile(), loadRuntime(), loadUIModule()]);
+      const [file, SuperDoc, uiModule] = await Promise.all([getFile?.(), loadRuntime(), loadUIModule()]);
       if (!mountedRef.current || !mountRef.current || loadId !== loadIdRef.current) return;
 
       let instance: SuperDocInstance | null = null;
       instance = new SuperDoc({
         selector: mountRef.current,
-        document: file,
+        document: file ?? SuperDoc.BlankDOCX,
         documentMode: initialDocumentMode,
+        proofing: preset === 'proofing' ? { enabled: true, provider: proofingProvider } : undefined,
+        ui: { loading: false },
         modules: {
           comments: { displayMode: 'inline' },
         },
@@ -204,8 +239,11 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           name: 'Docs visitor',
           email: 'docs@example.com',
         },
-        onReady: () => {
+        onReady: ({ superdoc: readySuperDoc }) => {
           if (!mountedRef.current || loadId !== loadIdRef.current) return;
+          if (preset === 'proofing') {
+            void readySuperDoc.activeEditor?.doc?.insert({ value: 'Proofing finds mispelled words as you type.' });
+          }
           setState('ready');
           if (instance) connectFitToWidth(instance);
         },
@@ -226,6 +264,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   }
 
   async function getFixtureFile() {
+    if (!fixture) throw new Error('This editor demo does not have a fixture.');
     const response = await fetch(fixture);
     if (!response.ok) throw new Error(`Fixture request failed with ${response.status}.`);
 
@@ -237,7 +276,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   }
 
   function loadDemo() {
-    void mountDocument(getFixtureFile);
+    void mountDocument(fixture ? getFixtureFile : undefined);
   }
 
   useEffect(() => {
@@ -325,7 +364,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               ? 'Loads the sample automatically. Files stay in this browser.'
               : preset === 'document-modes'
                 ? 'Switch modes and try the same DOCX as a viewer, editor, or reviewer.'
-                : 'Loads the sample DOCX in suggesting mode.'}
+                : preset === 'proofing'
+                  ? 'Type “mispelled”, “workng”, or “teh”, then right-click its underline.'
+                  : 'Loads the sample DOCX in suggesting mode.'}
           </span>
         </div>
         <div className='sd-editor-demo-actions'>
@@ -361,133 +402,151 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           ) : null}
         </div>
       </div>
-      {state === 'error' ? (
-        <p className='sd-editor-demo-error' role='alert'>
-          {allowLocalFile
-            ? 'The editor could not load. Try the sample again or choose a local DOCX to continue.'
-            : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
-        </p>
-      ) : null}
-      <div className='sd-editor-demo-toolbar' hidden={state === 'idle'} aria-label='Editor controls'>
-        <div className='sd-editor-demo-toolbar-group sd-editor-demo-edit-controls' role='group' aria-label='Edit'>
-          <button
-            type='button'
-            aria-label='Undo'
-            disabled={!commandStates.undo.enabled}
-            onClick={() => runCommand('undo')}
-          >
-            <Undo2 aria-hidden='true' />
-          </button>
-          <span className='sd-editor-demo-toolbar-separator' aria-hidden='true' />
-          <button
-            type='button'
-            aria-label='Bold'
-            aria-pressed={commandStates.bold.active}
-            disabled={!commandStates.bold.enabled}
-            onClick={() => runCommand('bold')}
-          >
-            <Bold aria-hidden='true' />
-          </button>
-          <button
-            type='button'
-            aria-label='Italic'
-            aria-pressed={commandStates.italic.active}
-            disabled={!commandStates.italic.enabled}
-            onClick={() => runCommand('italic')}
-          >
-            <Italic aria-hidden='true' />
-          </button>
-          <button
-            type='button'
-            aria-label='Underline'
-            aria-pressed={commandStates.underline.active}
-            disabled={!commandStates.underline.enabled}
-            onClick={() => runCommand('underline')}
-          >
-            <Underline aria-hidden='true' />
-          </button>
-        </div>
-        {preset === 'document-modes' ? (
-          <div
-            className='sd-editor-demo-toolbar-group sd-editor-demo-mode-controls'
-            role='group'
-            aria-label='Document mode'
-          >
-            {(['viewing', 'editing', 'suggesting'] as const).map((mode) => (
-              <button
-                key={mode}
-                type='button'
-                aria-pressed={documentMode === mode}
-                disabled={state !== 'ready'}
-                onClick={() => changeDocumentMode(mode)}
-              >
-                {mode === 'viewing' ? 'View' : mode === 'editing' ? 'Edit' : 'Suggest'}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className='sd-editor-demo-toolbar-group sd-editor-demo-review-controls' role='group' aria-label='Review'>
-            <button
-              className='sd-editor-demo-accept-button'
-              type='button'
-              disabled={!hasActiveChange}
-              onClick={() => void decideChange('accept')}
-            >
-              <Check aria-hidden='true' />
-              Accept
-            </button>
-            <button type='button' disabled={!hasActiveChange} onClick={() => void decideChange('reject')}>
-              <X aria-hidden='true' />
-              Reject
-            </button>
-            <span className='sd-editor-demo-change-count' aria-live='polite'>
-              {countLabel}
-            </span>
-          </div>
-        )}
-        <div className='sd-editor-demo-toolbar-group sd-editor-demo-view-controls' role='group' aria-label='View'>
-          <div className='sd-editor-demo-zoom-control'>
-            <button
-              type='button'
-              aria-label='Zoom out'
-              disabled={zoom.value <= zoom.min}
-              onClick={() => changeZoom(-1)}
-            >
-              <Minus aria-hidden='true' />
-            </button>
-            <button
-              className='sd-editor-demo-fit-button'
-              type='button'
-              aria-label='Fit document to width'
-              aria-pressed={fitActive}
-              onClick={fitToWidth}
-            >
-              {fitActive ? 'Fit' : `${Math.round(zoom.value)}%`}
-            </button>
-            <button type='button' aria-label='Zoom in' disabled={zoom.value >= zoom.max} onClick={() => changeZoom(1)}>
-              <Plus aria-hidden='true' />
-            </button>
-          </div>
-          <button
-            type='button'
-            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-            onClick={() => void toggleFullscreen()}
-          >
-            {isFullscreen ? <Shrink aria-hidden='true' /> : <Expand aria-hidden='true' />}
-          </button>
-        </div>
-      </div>
-      <div ref={mountRef} className='sd-editor-demo-surface' hidden={state === 'idle'} />
-      {state === 'idle' ? (
-        <div className='sd-editor-demo-poster'>
-          <span aria-hidden='true'>DOCX</span>
-          <p>
+      <CollapsibleEditorPreview
+        className='sd-editor-demo-preview'
+        onCollapse={() => mountRef.current?.scrollTo({ top: 0 })}
+      >
+        {state === 'error' ? (
+          <p className='sd-editor-demo-error' role='alert'>
             {allowLocalFile
-              ? 'The sample editor loads as this demo enters view. You can also open your own DOCX.'
-              : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
+              ? 'The editor could not load. Try the sample again or choose a local DOCX to continue.'
+              : preset === 'proofing'
+                ? 'The proofing editor could not load. Try again.'
+                : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
           </p>
+        ) : null}
+        <div className='sd-editor-demo-toolbar' hidden={state === 'idle'} aria-label='Editor controls'>
+          <div className='sd-editor-demo-toolbar-group sd-editor-demo-edit-controls' role='group' aria-label='Edit'>
+            <button
+              type='button'
+              aria-label='Undo'
+              disabled={!commandStates.undo.enabled}
+              onClick={() => runCommand('undo')}
+            >
+              <Undo2 aria-hidden='true' />
+            </button>
+            <span className='sd-editor-demo-toolbar-separator' aria-hidden='true' />
+            <button
+              type='button'
+              aria-label='Bold'
+              aria-pressed={commandStates.bold.active}
+              disabled={!commandStates.bold.enabled}
+              onClick={() => runCommand('bold')}
+            >
+              <Bold aria-hidden='true' />
+            </button>
+            <button
+              type='button'
+              aria-label='Italic'
+              aria-pressed={commandStates.italic.active}
+              disabled={!commandStates.italic.enabled}
+              onClick={() => runCommand('italic')}
+            >
+              <Italic aria-hidden='true' />
+            </button>
+            <button
+              type='button'
+              aria-label='Underline'
+              aria-pressed={commandStates.underline.active}
+              disabled={!commandStates.underline.enabled}
+              onClick={() => runCommand('underline')}
+            >
+              <Underline aria-hidden='true' />
+            </button>
+          </div>
+          {preset === 'document-modes' ? (
+            <div
+              className='sd-editor-demo-toolbar-group sd-editor-demo-mode-controls'
+              role='group'
+              aria-label='Document mode'
+            >
+              {(['viewing', 'editing', 'suggesting'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type='button'
+                  aria-pressed={documentMode === mode}
+                  disabled={state !== 'ready'}
+                  onClick={() => changeDocumentMode(mode)}
+                >
+                  {mode === 'viewing' ? 'View' : mode === 'editing' ? 'Edit' : 'Suggest'}
+                </button>
+              ))}
+            </div>
+          ) : preset === 'tracked-review' ? (
+            <div
+              className='sd-editor-demo-toolbar-group sd-editor-demo-review-controls'
+              role='group'
+              aria-label='Review'
+            >
+              <button
+                className='sd-editor-demo-accept-button'
+                type='button'
+                disabled={!hasActiveChange}
+                onClick={() => void decideChange('accept')}
+              >
+                <Check aria-hidden='true' />
+                Accept
+              </button>
+              <button type='button' disabled={!hasActiveChange} onClick={() => void decideChange('reject')}>
+                <X aria-hidden='true' />
+                Reject
+              </button>
+              <span className='sd-editor-demo-change-count' aria-live='polite'>
+                {countLabel}
+              </span>
+            </div>
+          ) : null}
+          <div className='sd-editor-demo-toolbar-group sd-editor-demo-view-controls' role='group' aria-label='View'>
+            <div className='sd-editor-demo-zoom-control'>
+              <button
+                type='button'
+                aria-label='Zoom out'
+                disabled={zoom.value <= zoom.min}
+                onClick={() => changeZoom(-1)}
+              >
+                <Minus aria-hidden='true' />
+              </button>
+              <button
+                className='sd-editor-demo-fit-button'
+                type='button'
+                aria-label='Fit document to width'
+                aria-pressed={fitActive}
+                onClick={fitToWidth}
+              >
+                {fitActive ? 'Fit' : `${Math.round(zoom.value)}%`}
+              </button>
+              <button
+                type='button'
+                aria-label='Zoom in'
+                disabled={zoom.value >= zoom.max}
+                onClick={() => changeZoom(1)}
+              >
+                <Plus aria-hidden='true' />
+              </button>
+            </div>
+            <button
+              type='button'
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              onClick={() => void toggleFullscreen()}
+            >
+              {isFullscreen ? <Shrink aria-hidden='true' /> : <Expand aria-hidden='true' />}
+            </button>
+          </div>
         </div>
-      ) : null}
+        <div ref={mountRef} className='sd-editor-demo-surface' hidden={state === 'idle'} />
+        {state === 'idle' ? (
+          <div className='sd-editor-demo-poster'>
+            <span aria-hidden='true'>DOCX</span>
+            <p>
+              {allowLocalFile
+                ? 'The sample editor loads as this demo enters view. You can also open your own DOCX.'
+                : preset === 'proofing'
+                  ? 'The proofing editor is loading.'
+                  : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
+            </p>
+          </div>
+        ) : null}
+      </CollapsibleEditorPreview>
     </section>
   );
 }

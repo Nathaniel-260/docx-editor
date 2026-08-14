@@ -1,0 +1,130 @@
+{
+  "id": "proofing-config",
+  "name": "ProofingConfig",
+  "root": "proofing",
+  "label": "proofing config",
+  "groups": [
+    {
+      "id": "core",
+      "label": "Setup"
+    },
+    {
+      "id": "behavior",
+      "label": "Behavior"
+    },
+    {
+      "id": "callbacks",
+      "label": "Events"
+    },
+    {
+      "id": "reserved",
+      "label": "Reserved"
+    },
+    {
+      "id": "other",
+      "label": "Other options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "enabled",
+      "type": "boolean",
+      "required": false,
+      "description": "Enables proofing. A provider is also required before SuperDoc runs checks.",
+      "default": "false",
+      "group": "other"
+    },
+    {
+      "name": "provider",
+      "type": "{\n  id: string;\n  getCapabilities?: () => ProofingCapabilities | Promise<ProofingCapabilities>;\n  check: (request: ProofingCheckRequest) => Promise<ProofingCheckResult>;\n  dispose?: () => void | Promise<void>;\n} | null",
+      "typeName": "ProofingProvider | null",
+      "required": false,
+      "description": "Checks the text segments SuperDoc supplies and returns spelling, grammar, or style issues.",
+      "default": "null",
+      "group": "other"
+    },
+    {
+      "name": "defaultLanguage",
+      "type": "string | null",
+      "required": false,
+      "description": "Fallback language passed to the provider when a text segment has no resolved language.",
+      "default": "null",
+      "group": "other"
+    },
+    {
+      "name": "debounceMs",
+      "type": "number",
+      "required": false,
+      "description": "Delay in milliseconds between an edit and the next proofing check. Values at or below 0 run without a delay.",
+      "default": "500",
+      "group": "other"
+    },
+    {
+      "name": "maxSuggestions",
+      "type": "number",
+      "required": false,
+      "description": "Suggestion limit passed to the provider. The provider decides how to apply it.",
+      "group": "other"
+    },
+    {
+      "name": "visibleFirst",
+      "type": "boolean",
+      "required": false,
+      "description": "Prioritize checking visible pages first.",
+      "group": "other"
+    },
+    {
+      "name": "allowIgnoreWord",
+      "type": "boolean",
+      "required": false,
+      "description": "Shows Ignore in the proofing context menu. Ignored words remain suppressed for this editor session.",
+      "default": "true",
+      "group": "other"
+    },
+    {
+      "name": "ignoredWords",
+      "type": "string[]",
+      "required": false,
+      "description": "Words whose proofing issues SuperDoc suppresses. Matching is case-insensitive after Unicode normalization.",
+      "default": "[]",
+      "group": "other"
+    },
+    {
+      "name": "timeoutMs",
+      "type": "number",
+      "required": false,
+      "description": "Maximum provider call time in milliseconds. Non-positive or non-finite values use the default.",
+      "default": "10000",
+      "group": "other"
+    },
+    {
+      "name": "maxConcurrentRequests",
+      "type": "number",
+      "required": false,
+      "description": "Maximum concurrent provider requests.",
+      "group": "other"
+    },
+    {
+      "name": "maxSegmentsPerBatch",
+      "type": "number",
+      "required": false,
+      "description": "Maximum segments per provider call.",
+      "group": "other"
+    },
+    {
+      "name": "onProofingError",
+      "type": "(error: {\n  kind: \"provider-error\" | \"validation-error\" | \"timeout\";\n  message: string;\n  segmentIds?: string[];\n  cause?: unknown;\n}) => void",
+      "typeName": "(error: ProofingError) => void",
+      "required": false,
+      "description": "Runs when a provider check fails or times out.",
+      "group": "other"
+    },
+    {
+      "name": "onStatusChange",
+      "type": "(status: ProofingStatus) => void",
+      "required": false,
+      "description": "Runs when the proofing lifecycle status changes.",
+      "group": "other"
+    }
+  ]
+}

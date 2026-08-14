@@ -21,7 +21,7 @@ const runtimeBaseUrl = `${runtimePackageUrl}/dist-cdn`;
 const engineBaseUrl = `${runtime.cdnOrigin}/${runtime.enginePackage}@${runtime.engineVersion}/dist-cdn`;
 const uiModuleUrl = `${runtimePackageUrl}${runtime.uiModulePath}`;
 
-export type SuperDocConstructor = typeof import('superdoc').SuperDoc;
+export type SuperDocConstructor = typeof import('superdoc').SuperDoc & Pick<typeof import('superdoc'), 'BlankDOCX'>;
 export type SuperDocInstance = InstanceType<SuperDocConstructor>;
 export type SuperDocUIModule = Pick<typeof import('superdoc/ui'), 'createSuperDocUI'>;
 
