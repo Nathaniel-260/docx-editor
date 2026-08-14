@@ -52,10 +52,10 @@ export const pageStyles = (width: number, height: number, overrides?: PageStyles
 
   return {
     position: 'relative',
-    // Resolved page dimensions describe the physical outer page. Keep visual
-    // chrome (notably the canonical 1px border) inside that exact box so a
-    // virtualized window occupies the same extent regardless of how many
-    // pages are currently mounted.
+    // Resolved page dimensions and fragment coordinates both start at the
+    // physical paper edge. Paint page chrome as a non-sizing outline so the
+    // canonical 1px rule cannot inset or clip page-edge document artwork.
+    // The outline does not change the virtualized page extent.
     boxSizing: 'border-box',
     width: `${width}px`,
     height: `${height}px`,
@@ -64,7 +64,9 @@ export const pageStyles = (width: number, height: number, overrides?: PageStyles
     flexShrink: '0',
     background: merged.background,
     boxShadow: merged.boxShadow,
-    border: merged.border,
+    border: 'none',
+    outline: merged.border,
+    outlineOffset: '0',
     margin: merged.margin,
     color: merged.color,
     overflow: 'hidden',
@@ -117,6 +119,7 @@ const PRINT_STYLES = `
   .${CLASS_NAMES.page} {
     margin: 0;
     border: none;
+    outline: none !important;
     box-shadow: none;
     page-break-after: always;
   }
@@ -341,11 +344,11 @@ const LINK_AND_TOC_STYLES = `
   background-color: var(--sd-content-controls-block-hover-bg, #f2f2f2);
 }
 
-/* Remove focus outlines from layout engine elements */
+/* Remove focus outlines from the layout root. Pages own a non-sizing outline
+ * as visual chrome, so clearing page outlines here would expose white seams
+ * around physical-page artwork. */
 .superdoc-layout,
-.superdoc-page,
-.superdoc-layout:focus,
-.superdoc-page:focus {
+.superdoc-layout:focus {
   outline: none !important;
 }
 `;

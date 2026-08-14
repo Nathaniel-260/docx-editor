@@ -36,6 +36,144 @@ const FOOTER_BAND_ORIGIN = PAGE_HEIGHT - FOOTER_DISTANCE; // 1020
 // ---------------------------------------------------------------------------
 
 describe('normalizeFragmentsForRegion', () => {
+  describe('page-covering header overlays (SD-3550)', () => {
+    const pageCoverConstraints = {
+      width: 695.4667,
+      pageWidth: 793.7333,
+      pageHeight: 1122.5333,
+      margins: {
+        left: 49.1333,
+        right: 49.1333,
+        top: 49.1333,
+        bottom: 94.5333,
+        header: 26.4667,
+        footer: 56.7333,
+      },
+    };
+
+    it('snaps a page-sized column/paragraph header background to the physical page edges', () => {
+      const block: FlowBlock = {
+        kind: 'drawing',
+        id: 'header-background',
+        drawingKind: 'shapeGroup',
+        geometry: { width: 794, height: 1123 },
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'column',
+          vRelativeFrom: 'paragraph',
+          offsetH: -47.8,
+          offsetV: -26.4667,
+          behindDoc: true,
+        },
+        wrap: { type: 'None' },
+        shapes: [],
+      };
+      const fragment = {
+        kind: 'drawing',
+        blockId: block.id,
+        drawingKind: 'shapeGroup',
+        x: -47.8,
+        y: -26.4667,
+        width: 794,
+        height: 1123,
+        isAnchored: true,
+        behindDoc: true,
+      } as unknown as Fragment;
+
+      normalizeFragmentsForRegion(
+        [{ number: 1, fragments: [fragment] }],
+        [block],
+        [makeDummyMeasure()],
+        'header',
+        pageCoverConstraints,
+      );
+
+      expect(fragment.x).toBeCloseTo(-pageCoverConstraints.margins.left);
+      expect(fragment.y).toBeCloseTo(-pageCoverConstraints.margins.header);
+    });
+
+    it('snaps a page-sized page-relative header background to zero', () => {
+      const block: FlowBlock = {
+        kind: 'drawing',
+        id: 'page-relative-background',
+        drawingKind: 'shapeGroup',
+        geometry: { width: 794, height: 1123 },
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'page',
+          vRelativeFrom: 'page',
+          offsetH: 1.6,
+          offsetV: 0,
+          behindDoc: true,
+        },
+        wrap: { type: 'None' },
+        shapes: [],
+      };
+      const fragment = {
+        kind: 'drawing',
+        blockId: block.id,
+        drawingKind: 'shapeGroup',
+        x: 1.6,
+        y: 0,
+        width: 794,
+        height: 1123,
+        isAnchored: true,
+        behindDoc: true,
+      } as unknown as Fragment;
+
+      normalizeFragmentsForRegion(
+        [{ number: 1, fragments: [fragment] }],
+        [block],
+        [makeDummyMeasure()],
+        'header',
+        pageCoverConstraints,
+      );
+
+      expect(fragment.x).toBe(0);
+      expect(fragment.y).toBe(0);
+    });
+
+    it('does not snap an ordinary behind-document header shape', () => {
+      const block: FlowBlock = {
+        kind: 'drawing',
+        id: 'ordinary-header-shape',
+        drawingKind: 'vectorShape',
+        geometry: { width: 320, height: 180 },
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'page',
+          vRelativeFrom: 'page',
+          offsetH: 2,
+          offsetV: 1,
+          behindDoc: true,
+        },
+        wrap: { type: 'None' },
+      };
+      const fragment = {
+        kind: 'drawing',
+        blockId: block.id,
+        drawingKind: 'vectorShape',
+        x: 2,
+        y: 1,
+        width: 320,
+        height: 180,
+        isAnchored: true,
+        behindDoc: true,
+      } as unknown as Fragment;
+
+      normalizeFragmentsForRegion(
+        [{ number: 1, fragments: [fragment] }],
+        [block],
+        [makeDummyMeasure()],
+        'header',
+        pageCoverConstraints,
+      );
+
+      expect(fragment.x).toBe(2);
+      expect(fragment.y).toBe(1);
+    });
+  });
+
   describe('margin-relative anchors in header', () => {
     it('normalizes visible margin-relative header content to header-local y', () => {
       const block: FlowBlock = {

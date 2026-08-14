@@ -26,6 +26,13 @@ export type RegionConstraints = {
   };
 };
 
+// Word-authored header backgrounds can carry a small positive edge offset even
+// when their extent is the full physical page. Word paints those shapes as a
+// page cover. Keep this tolerance narrower than ordinary shape placement: the
+// two known Word encodings are 1 pt and 1.2 pt (1.333 px and 1.6 px).
+const PAGE_COVER_EDGE_TOLERANCE_PX = 2;
+const PAGE_COVER_SIZE_TOLERANCE_PX = 0.5;
+
 /**
  * Compute the physical-page Y coordinate for a page-relative anchored drawing,
  * using the real page geometry from constraints.
@@ -77,6 +84,57 @@ function isHeaderMarginContentBlock(block: FlowBlock): block is ImageBlock | Dra
   if (block.anchor?.vRelativeFrom !== 'margin') return false;
   if (block.anchor.behindDoc === true) return false;
   return block.wrap?.type !== 'None';
+}
+
+function normalizePageCoveringHeaderOverlay(
+  fragment: Fragment,
+  block: FlowBlock,
+  constraints: RegionConstraints,
+): void {
+  if (!isAnchoredFragment(fragment) || (block.kind !== 'image' && block.kind !== 'drawing')) return;
+  if (block.anchor?.behindDoc !== true || block.wrap?.type !== 'None') return;
+
+  const horizontalAnchor = block.anchor.hRelativeFrom;
+  const verticalAnchor = block.anchor.vRelativeFrom;
+  if (
+    (horizontalAnchor !== 'page' && horizontalAnchor !== 'column') ||
+    (verticalAnchor !== 'page' && verticalAnchor !== 'paragraph')
+  ) {
+    return;
+  }
+
+  const pageWidth = constraints.pageWidth;
+  const pageHeight = constraints.pageHeight;
+  const fragmentWidth = (fragment as { width?: number }).width;
+  const fragmentHeight = (fragment as { height?: number }).height;
+  if (
+    typeof pageWidth !== 'number' ||
+    !Number.isFinite(pageWidth) ||
+    typeof pageHeight !== 'number' ||
+    !Number.isFinite(pageHeight) ||
+    typeof fragmentWidth !== 'number' ||
+    !Number.isFinite(fragmentWidth) ||
+    typeof fragmentHeight !== 'number' ||
+    !Number.isFinite(fragmentHeight) ||
+    Math.abs(fragmentWidth - pageWidth) > PAGE_COVER_SIZE_TOLERANCE_PX ||
+    Math.abs(fragmentHeight - pageHeight) > PAGE_COVER_SIZE_TOLERANCE_PX
+  ) {
+    return;
+  }
+
+  const marginLeft = constraints.margins?.left ?? 0;
+  const headerOffset = constraints.margins?.header ?? 0;
+  const pageRelativeX = horizontalAnchor === 'page';
+  const pageRelativeY = verticalAnchor === 'page';
+  const physicalX = fragment.x + (pageRelativeX ? 0 : marginLeft);
+  const physicalY = fragment.y + (pageRelativeY ? 0 : headerOffset);
+
+  if (Math.abs(physicalX) <= PAGE_COVER_EDGE_TOLERANCE_PX) {
+    fragment.x = pageRelativeX ? 0 : -marginLeft;
+  }
+  if (Math.abs(physicalY) <= PAGE_COVER_EDGE_TOLERANCE_PX) {
+    fragment.y = pageRelativeY ? 0 : -headerOffset;
+  }
 }
 
 /**
@@ -163,11 +221,15 @@ export function normalizeFragmentsForRegion(
         continue;
       }
 
-      if (!isPageRelativeBlock(block)) continue;
+      if (!isPageRelativeBlock(block)) {
+        if (kind === 'header') normalizePageCoveringHeaderOverlay(fragment, block, constraints);
+        continue;
+      }
 
       const fragmentHeight = (fragment as { height?: number }).height ?? 0;
       const physicalY = computePhysicalAnchorY(block, fragmentHeight, pageHeight);
       fragment.y = kind === 'header' ? physicalY : physicalY - bandOrigin;
+      if (kind === 'header') normalizePageCoveringHeaderOverlay(fragment, block, constraints);
     }
   }
 

@@ -10,11 +10,13 @@ import {
 } from './styles.js';
 
 describe('pageStyles', () => {
-  it('keeps page chrome inside the exact resolved outer dimensions', () => {
+  it('keeps page chrome out of the physical page coordinate space (SD-3550)', () => {
     const styles = pageStyles(793.7333333333, 1122.5333333333);
     expect(styles.boxSizing).toBe('border-box');
     expect(styles.width).toBe('793.7333333333px');
     expect(styles.height).toBe('1122.5333333333px');
+    expect(styles.border).toBe('none');
+    expect(styles.outline).toBe('1px solid rgba(15, 23, 42, 0.08)');
   });
 
   it('establishes a document foreground on the page root', () => {
