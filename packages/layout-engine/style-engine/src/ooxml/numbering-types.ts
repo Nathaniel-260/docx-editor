@@ -30,6 +30,8 @@ export interface NumberingProperties {
 export interface AbstractNumberingDefinition {
   /** Abstract numbering identifier. */
   abstractNumId?: number;
+  /** Restart this numbering definition after each section break. */
+  restartNumberingAfterBreak?: boolean;
   /** Numbering namespace identifier. */
   nsid?: number;
   /** Numbering template identifier. */
