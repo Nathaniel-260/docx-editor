@@ -1,16 +1,7 @@
 #!/usr/bin/env node
 
 const { execFileSync } = require('node:child_process');
-const {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} = require('node:fs');
-const os = require('node:os');
+const { existsSync, readFileSync } = require('node:fs');
 const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '..');
@@ -22,10 +13,6 @@ const defaultRegistry = process.env.NPM_CONFIG_REGISTRY || 'https://registry.npm
 
 const run = (command, args, cwd) => {
   execFileSync(command, args, { stdio: 'inherit', cwd });
-};
-
-const runCapture = (command, args, cwd) => {
-  return execFileSync(command, args, { cwd, encoding: 'utf8' }).trim();
 };
 
 const isVersionLookupNotFoundError = (error) => {
@@ -77,17 +64,6 @@ function createSealedTarball({ build, logger }) {
   return sealedTarballPath;
 }
 
-function rewriteScopedManifest(sourceManifest, scopedName) {
-  return {
-    ...sourceManifest,
-    name: scopedName,
-    publishConfig: {
-      ...sourceManifest.publishConfig,
-      access: 'public',
-    },
-  };
-}
-
 function buildPublishArgs(tarballPath, { distTag, registry, access = 'public' }) {
   if (!tarballPath.endsWith('.tgz')) throw new Error(`publish target must be an audited tarball: ${tarballPath}`);
   return [
@@ -101,51 +77,6 @@ function buildPublishArgs(tarballPath, { distTag, registry, access = 'public' })
     '--registry',
     registry,
   ];
-}
-
-function findOnlyTarball(directory, packOutput) {
-  const fromOutput = packOutput
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .find((line) => line.endsWith('.tgz'));
-  if (fromOutput) return path.isAbsolute(fromOutput) ? fromOutput : path.join(directory, fromOutput);
-  const candidates = readdirSync(directory)
-    .filter((entry) => entry.endsWith('.tgz'))
-    .map((entry) => path.join(directory, entry));
-  if (candidates.length !== 1) throw new Error(`Expected one scoped mirror tarball, found ${candidates.length}`);
-  return candidates[0];
-}
-
-function createScopedMirrorTarball(baseTarball, scopedName, logger = console) {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'superdoc-scoped-publish-'));
-  try {
-    run('tar', ['-xzf', baseTarball, '-C', tempDir], tempDir);
-    const extractedDir = path.join(tempDir, 'package');
-    const extractedManifestPath = path.join(extractedDir, 'package.json');
-    const extractedManifest = JSON.parse(readFileSync(extractedManifestPath, 'utf8'));
-    writeFileSync(
-      extractedManifestPath,
-      `${JSON.stringify(rewriteScopedManifest(extractedManifest, scopedName), null, 2)}\n`,
-    );
-    const packedDir = path.join(tempDir, 'packed');
-    mkdirSync(packedDir);
-    const output = runCapture(
-      'pnpm',
-      ['pack', '--config.ignore-scripts=true', '--pack-destination', packedDir],
-      extractedDir,
-    );
-    const mirrorTarball = findOnlyTarball(packedDir, output);
-    run(process.execPath, [auditScript, mirrorTarball, '--label', 'scoped-superdoc-tarball', '--superdoc'], rootDir);
-    const retained = path.join(os.tmpdir(), `${path.basename(tempDir)}-${path.basename(mirrorTarball)}`);
-    writeFileSync(retained, readFileSync(mirrorTarball), { flag: 'wx' });
-    logger.log(`Created audited scoped mirror tarball ${retained}`);
-    return {
-      dispose: () => rmSync(retained, { force: true }),
-      tarballPath: retained,
-    };
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
 }
 
 function ensureDistTag(packageName, version, distTag, registry) {
@@ -171,20 +102,6 @@ function publishPackages({
       logger.log(`Publishing audited ${path.basename(baseTarball)} with dist-tag "${distTag}"...`);
       run('pnpm', buildPublishArgs(baseTarball, { distTag, registry }), rootDir);
     }
-  }
-
-  const scopedName = '@harbour-enterprises/superdoc';
-  if (isVersionPublished(scopedName, packageJson.version, registry)) {
-    logger.log(`${scopedName}@${packageJson.version} already published, ensuring dist-tag "${distTag}" and skipping.`);
-    ensureDistTag(scopedName, packageJson.version, distTag, registry);
-    return;
-  }
-  const mirror = createScopedMirrorTarball(baseTarball, scopedName, logger);
-  try {
-    logger.log(`Publishing audited ${scopedName} tarball with dist-tag "${distTag}"...`);
-    run('pnpm', buildPublishArgs(mirror.tarballPath, { distTag, registry }), rootDir);
-  } finally {
-    mirror.dispose();
   }
 }
 
@@ -241,5 +158,4 @@ module.exports = {
   publish: async (pluginConfig, context) => publishFromSemanticRelease(context),
   publishFromSemanticRelease,
   publishPackages,
-  rewriteScopedManifest,
 };

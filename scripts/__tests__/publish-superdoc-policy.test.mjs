@@ -7,7 +7,6 @@ const {
   assertPublicPublisherVersionAllowed,
   buildPublishArgs,
   publishFromSemanticRelease,
-  rewriteScopedManifest,
 } = require('../publish-superdoc.cjs');
 
 test('public publisher remains a 1.x-only release lane', () => {
@@ -40,22 +39,6 @@ test('publisher targets audited tarballs rather than mutable package directories
     () => buildPublishArgs('/workspace/packages/superdoc', { distTag: 'next', registry: 'registry' }),
     /publish target must be an audited tarball/u,
   );
-});
-
-test('scoped mirror manifest rewriting is pure', () => {
-  const source = {
-    name: 'superdoc',
-    version: '1.2.3',
-    publishConfig: { provenance: true },
-  };
-  const before = JSON.stringify(source);
-  const mirror = rewriteScopedManifest(source, '@harbour-enterprises/superdoc');
-  assert.equal(JSON.stringify(source), before);
-  assert.deepEqual(mirror, {
-    name: '@harbour-enterprises/superdoc',
-    version: '1.2.3',
-    publishConfig: { provenance: true, access: 'public' },
-  });
 });
 
 test('semantic-release builds the sealed package after version stamping', () => {
