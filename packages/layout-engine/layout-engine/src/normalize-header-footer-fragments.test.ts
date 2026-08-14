@@ -14,6 +14,17 @@ function makeAnchoredImageFragment(blockId: string, y: number, height: number): 
   return { kind: 'image', blockId, x: 0, y, height, isAnchored: true } as unknown as Fragment;
 }
 
+function makeTableFragment(
+  blockId: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  isAnchored?: boolean,
+): Fragment {
+  return { kind: 'table', blockId, x, y, width, height, fromRow: 0, toRow: 1, isAnchored } as Fragment;
+}
+
 function makeDummyMeasure(): Measure {
   return { kind: 'paragraph', lines: [], totalHeight: 0 } as Measure;
 }
@@ -235,6 +246,53 @@ describe('normalizeFragmentsForRegion', () => {
   });
 
   describe('page-relative anchors in footer', () => {
+    it('normalizes page-positioned floating tables against the physical page', () => {
+      const block: FlowBlock = {
+        kind: 'table',
+        id: 'footer-table',
+        rows: [],
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'page',
+          vRelativeFrom: 'page',
+          alignH: 'right',
+          alignV: 'bottom',
+        },
+      };
+      const fragment = makeTableFragment(block.id, 572, 824, 100, 40, true);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'footer', fullConstraints);
+
+      expect(fragment.x).toBe(fullConstraints.pageWidth - 100);
+      expect(fragment.y).toBe(PAGE_HEIGHT - 40 - FOOTER_BAND_ORIGIN);
+    });
+
+    it('keeps ordinary footer table coordinates unchanged', () => {
+      const block: FlowBlock = { kind: 'table', id: 'footer-table', rows: [] };
+      const fragment = makeTableFragment(block.id, 12, 18, 100, 40);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'footer', fullConstraints);
+
+      expect(fragment).toMatchObject({ x: 12, y: 18 });
+    });
+
+    it('keeps inline footer table coordinates when its source table is page-anchored', () => {
+      const block: FlowBlock = {
+        kind: 'table',
+        id: 'footer-table',
+        rows: [],
+        anchor: { isAnchored: true, hRelativeFrom: 'page', vRelativeFrom: 'page' },
+      };
+      const fragment = makeTableFragment(block.id, 12, 18, fullConstraints.width, 40);
+      const pages = [{ number: 1, fragments: [fragment] }];
+
+      normalizeFragmentsForRegion(pages, [block], [makeDummyMeasure()], 'footer', fullConstraints);
+
+      expect(fragment).toMatchObject({ x: 12, y: 18 });
+    });
+
     it.each([
       ['right', 602, 746],
       ['center', 301, 373],

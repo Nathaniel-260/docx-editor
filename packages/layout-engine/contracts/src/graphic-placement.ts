@@ -72,6 +72,20 @@ export function isPagePositionedParagraphFrame(
   );
 }
 
+export function isPagePositionedFloatingTable<
+  T extends {
+    kind?: string;
+    anchor?: { isAnchored?: boolean; vRelativeFrom?: string };
+  },
+>(
+  block: T | undefined,
+): block is T & {
+  kind: 'table';
+  anchor: { isAnchored: true; vRelativeFrom: 'page' };
+} {
+  return block?.kind === 'table' && block.anchor?.isAnchored === true && block.anchor.vRelativeFrom === 'page';
+}
+
 /**
  * Resolve the page-space origin used for page-anchored paragraph frames in a footer.
  * Invalid or negative bottom margins behave like a zero margin.

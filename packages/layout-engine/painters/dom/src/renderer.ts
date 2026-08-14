@@ -62,6 +62,7 @@ import {
   resolveFooterPageFrameOriginY,
   rescaleColumnWidths,
   getCellSpacingPx,
+  isPagePositionedFloatingTable,
   isPagePositionedParagraphFrame,
 } from '@superdoc/contracts';
 import { DATASET_KEYS, decodeLayoutStoryDataset } from '@superdoc/dom-contract';
@@ -1830,9 +1831,21 @@ export class DomPainter {
    * Used to determine special Y positioning for page-relative anchored content
    * in header/footer decoration sections.
    */
-  private isPageRelativeAnchoredFragment(fragment: Fragment, resolvedItem: ResolvedPaintItem | undefined): boolean {
+  private isPageRelativeAnchoredFragment(
+    fragment: Fragment,
+    resolvedItem: ResolvedPaintItem | undefined,
+    kind: 'header' | 'footer',
+  ): boolean {
     if (this.isPageRelativeParagraphFrame(fragment, resolvedItem)) return true;
     const block = resolvedItem && 'block' in resolvedItem ? resolvedItem.block : undefined;
+    if (
+      kind === 'footer' &&
+      fragment.kind === 'table' &&
+      fragment.isAnchored === true &&
+      isPagePositionedFloatingTable(block)
+    ) {
+      return true;
+    }
     return (
       (fragment.kind === 'image' || fragment.kind === 'drawing') &&
       (block?.kind === 'image' || block?.kind === 'drawing') &&
@@ -1850,11 +1863,20 @@ export class DomPainter {
   private isPageRelativeHorizontalAnchoredFragment(
     fragment: Fragment,
     resolvedItem: ResolvedPaintItem | undefined,
+    kind: 'header' | 'footer',
   ): boolean {
     const block = resolvedItem && 'block' in resolvedItem ? resolvedItem.block : undefined;
     if (fragment.kind === 'para' && block?.kind === 'paragraph') {
       const frame = block.attrs?.frame;
       return isPositionedParagraphFrame(frame) && frame.hAnchor === 'page';
+    }
+    if (fragment.kind === 'table' && block?.kind === 'table') {
+      return (
+        kind === 'footer' &&
+        fragment.isAnchored === true &&
+        block.anchor?.isAnchored === true &&
+        block.anchor.hRelativeFrom === 'page'
+      );
     }
     if (fragment.kind !== 'image' && fragment.kind !== 'drawing') {
       return false;
@@ -2092,7 +2114,7 @@ export class DomPainter {
         resolvedItem,
       );
       this.applyHeaderFooterTextWatermarkPreviewOpacity(fragEl, data.isActiveHeaderFooter === true);
-      const isPageRelative = this.isPageRelativeAnchoredFragment(fragment, resolvedItem);
+      const isPageRelative = this.isPageRelativeAnchoredFragment(fragment, resolvedItem, kind);
 
       let pageY: number;
       if (isPageRelative && kind === 'footer') {
@@ -2124,8 +2146,8 @@ export class DomPainter {
         resolvedItem,
       );
       this.applyHeaderFooterTextWatermarkPreviewOpacity(fragEl, data.isActiveHeaderFooter === true);
-      const isPageRelative = this.isPageRelativeAnchoredFragment(fragment, resolvedItem);
-      const isPageRelativeX = this.isPageRelativeHorizontalAnchoredFragment(fragment, resolvedItem);
+      const isPageRelative = this.isPageRelativeAnchoredFragment(fragment, resolvedItem, kind);
+      const isPageRelativeX = this.isPageRelativeHorizontalAnchoredFragment(fragment, resolvedItem, kind);
 
       if (isPageRelative && kind === 'footer') {
         // Footer page-relative: fragment.y is normalized to band-local coords

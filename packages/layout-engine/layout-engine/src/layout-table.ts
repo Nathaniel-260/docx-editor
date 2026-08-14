@@ -1936,6 +1936,7 @@ export function createAnchoredTableFragment(
   const fragment: TableFragment = {
     kind: 'table',
     blockId: block.id,
+    isAnchored: true,
     fromRow: 0,
     toRow: block.rows.length,
     x,

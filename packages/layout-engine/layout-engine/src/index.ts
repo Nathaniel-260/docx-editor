@@ -48,6 +48,7 @@ import {
   createHeaderFooterResolutionIndex,
   selectHeaderFooterVariantForPage,
   isPagePositionedParagraphFrame,
+  isPagePositionedFloatingTable,
   resolveFooterPageFrameOriginY,
   collectSectionBoundaryFillerBlockIdsSteps,
   isInvisibleSectionBoundaryMarkerBlock,
@@ -4681,6 +4682,15 @@ function shouldExcludeFromMeasurement(
   kind: 'header' | 'footer' | undefined,
   constraints: HeaderFooterConstraints,
 ): boolean {
+  if (
+    kind === 'footer' &&
+    fragment.kind === 'table' &&
+    fragment.isAnchored === true &&
+    isPagePositionedFloatingTable(block)
+  ) {
+    return true;
+  }
+
   const pageAnchoredParagraphFrame =
     fragment.kind === 'para' && block.kind === 'paragraph' && isPagePositionedParagraphFrame(block.attrs?.frame);
 
@@ -4747,8 +4757,9 @@ function shouldExcludeFromMeasurement(
  * transformations and computing the actual height required by visible content.
  *
  * When `kind` and `constraints.pageHeight` are provided, page-relative and
- * margin-relative anchored drawings are post-normalized from the synthetic
- * measurement canvas to header/footer-local coordinates.
+ * margin-relative anchored drawings and page-relative floating footer tables
+ * are post-normalized from the synthetic measurement canvas to
+ * header/footer-local coordinates.
  *
  * Returns separate measurement bounds (for pagination) and render bounds
  * (for overlay shift). See the Coordinate Contract in the fix plan for details.

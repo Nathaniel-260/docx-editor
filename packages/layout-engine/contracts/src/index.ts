@@ -102,6 +102,7 @@ export {
   resolveFooterPageFrameOriginY,
   isPositionedParagraphFrame,
   isPagePositionedParagraphFrame,
+  isPagePositionedFloatingTable,
   isAnchorHRelative,
   isAnchorVRelative,
   isAnchorAlignH,
@@ -3415,6 +3416,8 @@ export type PartialRowInfo = {
 export type TableFragment = {
   kind: 'table';
   blockId: BlockId;
+  /** True when this fragment was emitted by floating-table placement. */
+  isAnchored?: boolean;
   /** Flow column that owns this fragment, distinct from visual x when overflow crosses margins. */
   columnIndex?: number;
   fromRow: number;

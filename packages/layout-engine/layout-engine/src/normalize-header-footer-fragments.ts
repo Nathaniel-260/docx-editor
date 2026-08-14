@@ -2,12 +2,19 @@ import type {
   FlowBlock,
   ImageBlock,
   DrawingBlock,
+  TableBlock,
   Fragment,
   Measure,
   ImageMeasure,
   DrawingMeasure,
 } from '@superdoc/contracts';
-import { isPagePositionedParagraphFrame, resolveFooterPageFrameOriginY } from '@superdoc/contracts';
+import {
+  isPagePositionedFloatingTable,
+  isPagePositionedParagraphFrame,
+  resolveAnchoredGraphicX,
+  resolveAnchoredGraphicY,
+  resolveFooterPageFrameOriginY,
+} from '@superdoc/contracts';
 /**
  * Subset of HeaderFooterConstraints needed for fragment normalization.
  * Defined locally to avoid circular imports with index.ts.
@@ -77,6 +84,46 @@ function isAnchoredFragment(fragment: Fragment): boolean {
 
 function isPageRelativeBlock(block: FlowBlock): block is ImageBlock | DrawingBlock {
   return (block.kind === 'image' || block.kind === 'drawing') && block.anchor?.vRelativeFrom === 'page';
+}
+
+function normalizeFloatingFooterTableFragment(
+  fragment: Extract<Fragment, { kind: 'table' }>,
+  block: TableBlock,
+  pageNumber: number,
+  constraints: RegionConstraints,
+  bandOrigin: number,
+): void {
+  if (isPagePositionedFloatingTable(block)) {
+    const pageHeight = constraints.pageHeight ?? 0;
+    const physicalY = resolveAnchoredGraphicY({
+      anchor: block.anchor as Parameters<typeof resolveAnchoredGraphicY>[0]['anchor'],
+      objectHeight: fragment.height,
+      contentTop: 0,
+      contentBottom: pageHeight,
+      pageBottomMargin: 0,
+      pageNumber,
+    });
+    fragment.y = physicalY - bandOrigin;
+  }
+
+  const pageWidth = constraints.pageWidth;
+  if (
+    block.anchor?.hRelativeFrom !== 'page' ||
+    typeof pageWidth !== 'number' ||
+    !Number.isFinite(pageWidth) ||
+    pageWidth <= 0
+  ) {
+    return;
+  }
+  fragment.x = resolveAnchoredGraphicX(
+    block.anchor,
+    0,
+    { width: constraints.width ?? pageWidth, gap: 0, count: 1 },
+    fragment.width,
+    constraints.margins,
+    pageWidth,
+    { pageNumber },
+  );
 }
 
 function isHeaderMarginContentBlock(block: FlowBlock): block is ImageBlock | DrawingBlock {
@@ -153,9 +200,9 @@ function normalizePageCoveringHeaderOverlay(
  * offset so they do not inflate the reserved header height by carrying
  * body-canvas coordinates.
  *
- * Page-anchored paragraph frames are likewise converted from physical-page
- * coordinates; other paragraphs, inline images, and absolute overlays pass
- * through unchanged.
+ * Page-anchored paragraph frames and floating footer tables are likewise
+ * converted from physical-page coordinates; other paragraphs, inline images,
+ * and absolute overlays pass through unchanged.
  */
 export function normalizeFragmentsForRegion(
   pages: Array<{ number: number; fragments: Fragment[] }>,
@@ -211,6 +258,17 @@ export function normalizeFragmentsForRegion(
         const regionOrigin =
           kind === 'footer' ? resolveFooterPageFrameOriginY(pageHeight, constraints.margins.bottom) : 0;
         fragment.y = physicalY - regionOrigin;
+        continue;
+      }
+
+      if (
+        kind === 'footer' &&
+        fragment.kind === 'table' &&
+        fragment.isAnchored === true &&
+        block.kind === 'table' &&
+        (isPagePositionedFloatingTable(block) || block.anchor?.hRelativeFrom === 'page')
+      ) {
+        normalizeFloatingFooterTableFragment(fragment, block, page.number, constraints, bandOrigin);
         continue;
       }
 

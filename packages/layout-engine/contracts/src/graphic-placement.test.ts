@@ -5,6 +5,7 @@ import {
   resolveFooterPageFrameOriginY,
   isPositionedParagraphFrame,
   isPagePositionedParagraphFrame,
+  isPagePositionedFloatingTable,
 } from './graphic-placement.js';
 
 const yBase = {
@@ -36,6 +37,25 @@ describe('isPagePositionedParagraphFrame', () => {
 
   it.each([undefined, Number.NaN, Number.POSITIVE_INFINITY])('rejects non-finite y=%s', (y) => {
     expect(isPagePositionedParagraphFrame({ wrap: 'around', vAnchor: 'page', y })).toBe(false);
+  });
+});
+
+describe('isPagePositionedFloatingTable', () => {
+  it('accepts an anchored table positioned relative to the page', () => {
+    expect(
+      isPagePositionedFloatingTable({
+        kind: 'table',
+        anchor: { isAnchored: true, vRelativeFrom: 'page' },
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    { kind: 'table', anchor: { isAnchored: false, vRelativeFrom: 'page' } },
+    { kind: 'table', anchor: { isAnchored: true, vRelativeFrom: 'margin' } },
+    { kind: 'paragraph', anchor: { isAnchored: true, vRelativeFrom: 'page' } },
+  ])('rejects non-page-positioned floating tables', (block) => {
+    expect(isPagePositionedFloatingTable(block)).toBe(false);
   });
 });
 

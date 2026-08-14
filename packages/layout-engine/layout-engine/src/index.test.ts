@@ -5428,6 +5428,171 @@ describe('layoutHeaderFooter', () => {
     expect(layout.height).toBeGreaterThanOrEqual(72);
   });
 
+  it('includes an ordinary table in measured footer height', () => {
+    const tableBlock = makeTableBlock('footer-table', 1);
+    const tableMeasure = makeTableMeasure([200], [72]);
+
+    const layout = layoutHeaderFooter(
+      [tableBlock],
+      [tableMeasure],
+      {
+        width: 300,
+        height: 400,
+        pageWidth: 500,
+        pageHeight: 600,
+        margins: { left: 100, right: 100, top: 80, bottom: 80, footer: 40 },
+      },
+      'footer',
+    );
+
+    expect(layout.height).toBeGreaterThanOrEqual(72);
+  });
+
+  it('keeps a page-positioned floating header table in header flow', () => {
+    const tableBlock = makeTableBlock('floating-header-table', 1, {
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'page',
+        vRelativeFrom: 'page',
+        alignH: 'right',
+        alignV: 'bottom',
+      },
+      wrap: { type: 'Square' },
+    });
+    const carrierBlock: FlowBlock = {
+      kind: 'paragraph',
+      id: 'header-carrier',
+      runs: [{ text: '', fontFamily: 'Arial', fontSize: 12 }],
+    };
+    const tableMeasure = makeTableMeasure([100], [40]);
+    const carrierMeasure = makeMeasure([15]);
+    const constraints = {
+      width: 300,
+      height: 400,
+      pageWidth: 500,
+      pageHeight: 600,
+      margins: { left: 100, right: 100, top: 80, bottom: 80, header: 40 },
+    };
+
+    const layout = layoutHeaderFooter(
+      [tableBlock, carrierBlock],
+      [tableMeasure, carrierMeasure],
+      constraints,
+      'header',
+    );
+    const fragment = layout.pages[0]?.fragments.find((candidate) => candidate.blockId === tableBlock.id);
+
+    expect(layout.height).toBeLessThanOrEqual(constraints.height);
+    expect(fragment).toMatchObject({ kind: 'table', x: 200, y: constraints.height - 40 });
+  });
+
+  it('excludes a page-positioned floating footer table from measured footer height', () => {
+    const tableBlock = makeTableBlock('floating-footer-table', 1, {
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'page',
+        vRelativeFrom: 'page',
+        alignH: 'right',
+        alignV: 'bottom',
+      },
+      wrap: { type: 'Square' },
+    });
+    const carrierBlock: FlowBlock = {
+      kind: 'paragraph',
+      id: 'footer-carrier',
+      runs: [{ text: '', fontFamily: 'Arial', fontSize: 12 }],
+    };
+    const tableMeasure = makeTableMeasure([100], [40]);
+    const carrierMeasure = makeMeasure([15]);
+    const constraints = {
+      width: 300,
+      height: 400,
+      pageWidth: 500,
+      pageHeight: 600,
+      margins: { left: 100, right: 100, top: 80, bottom: 80, footer: 40 },
+    };
+
+    const layout = layoutHeaderFooter(
+      [tableBlock, carrierBlock],
+      [tableMeasure, carrierMeasure],
+      constraints,
+      'footer',
+    );
+    const fragment = layout.pages[0]?.fragments.find((candidate) => candidate.blockId === tableBlock.id);
+
+    expect(layout.height).toBeCloseTo(15);
+    expect(fragment).toMatchObject({
+      kind: 'table',
+      x: constraints.pageWidth - 100,
+      y: constraints.margins.footer - 40,
+    });
+  });
+
+  it('resolves a page-relative floating footer table X against the physical page width', () => {
+    const tableBlock = makeTableBlock('page-relative-x-footer-table', 1, {
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'page',
+        vRelativeFrom: 'margin',
+        alignH: 'right',
+        alignV: 'bottom',
+      },
+      wrap: { type: 'Square' },
+    });
+    const carrierBlock: FlowBlock = {
+      kind: 'paragraph',
+      id: 'page-relative-x-footer-carrier',
+      runs: [{ text: '', fontFamily: 'Arial', fontSize: 12 }],
+    };
+    const tableMeasure = makeTableMeasure([100], [40]);
+    const carrierMeasure = makeMeasure([15]);
+    const constraints = {
+      width: 300,
+      height: 400,
+      pageWidth: 500,
+      pageHeight: 600,
+      margins: { left: 100, right: 100, top: 80, bottom: 80, footer: 40 },
+    };
+
+    const layout = layoutHeaderFooter(
+      [tableBlock, carrierBlock],
+      [tableMeasure, carrierMeasure],
+      constraints,
+      'footer',
+    );
+    const fragment = layout.pages[0]?.fragments.find((candidate) => candidate.blockId === tableBlock.id);
+
+    expect(fragment).toMatchObject({ kind: 'table', x: constraints.pageWidth - 100 });
+  });
+
+  it('keeps a full-width source-anchored footer table in footer flow', () => {
+    const tableBlock = makeTableBlock('inline-footer-table', 1, {
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'page',
+        vRelativeFrom: 'page',
+        offsetH: 0,
+        offsetV: 0,
+      },
+      wrap: { type: 'Square' },
+    });
+    const tableMeasure = makeTableMeasure([300], [40]);
+    const constraints = {
+      width: 300,
+      height: 400,
+      pageWidth: 500,
+      pageHeight: 600,
+      margins: { left: 100, right: 100, top: 80, bottom: 80, footer: 40 },
+    };
+
+    const layout = layoutHeaderFooter([tableBlock], [tableMeasure], constraints, 'footer');
+    const fragment = layout.pages[0]?.fragments.find((candidate) => candidate.blockId === tableBlock.id);
+
+    expect(layout.height).toBeGreaterThanOrEqual(40);
+    expect(fragment).toMatchObject({ kind: 'table', x: 0, y: 0 });
+    expect((fragment as TableFragment).isAnchored).not.toBe(true);
+  });
+
   it('ignores far-away behindDoc anchored fragments when computing height', () => {
     const paragraphBlock: FlowBlock = {
       kind: 'paragraph',

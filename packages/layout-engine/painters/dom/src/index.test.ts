@@ -7411,6 +7411,122 @@ describe('DomPainter', () => {
       expect(renderedPageTop).toBe((layout.pageSize?.h ?? 0) - 20 + footerFragment.y);
     });
 
+    it('limits page-positioned table coordinates to floating footer tables', () => {
+      const cellParagraph: FlowBlock = {
+        kind: 'paragraph',
+        id: 'footer-table-cell-paragraph',
+        runs: [{ text: 'Footer', fontFamily: 'Arial', fontSize: 12 }],
+      };
+      const footerTableBlock: TableBlock = {
+        kind: 'table',
+        id: 'footer-page-table',
+        rows: [{ id: 'footer-page-table-row', cells: [{ id: 'footer-page-table-cell', paragraph: cellParagraph }] }],
+        anchor: {
+          isAnchored: true,
+          hRelativeFrom: 'page',
+          vRelativeFrom: 'page',
+          alignH: 'right',
+          alignV: 'bottom',
+        },
+      };
+      const paragraphMeasure: ParagraphMeasure = {
+        kind: 'paragraph',
+        lines: [{ fromRun: 0, fromChar: 0, toRun: 0, toChar: 6, width: 40, ascent: 8, descent: 2, lineHeight: 12 }],
+        totalHeight: 12,
+      };
+      const footerTableMeasure: TableMeasure = {
+        kind: 'table',
+        rows: [{ height: 40, cells: [{ paragraph: paragraphMeasure, width: 100, height: 40 }] }],
+        columnWidths: [100],
+        totalWidth: 100,
+        totalHeight: 40,
+      };
+      const footerTableFragment: Fragment = {
+        kind: 'table',
+        blockId: footerTableBlock.id,
+        isAnchored: true,
+        fromRow: 0,
+        toRow: 1,
+        x: 300,
+        y: -20,
+        width: 100,
+        height: 40,
+      };
+      const inlineFooterTableBlock: TableBlock = {
+        ...footerTableBlock,
+        id: 'footer-inline-page-table',
+      };
+      const inlineFooterTableFragment: Fragment = {
+        kind: 'table',
+        blockId: inlineFooterTableBlock.id,
+        fromRow: 0,
+        toRow: 1,
+        x: 12,
+        y: 8,
+        width: 100,
+        height: 40,
+      };
+      const headerTableBlock: TableBlock = {
+        ...footerTableBlock,
+        id: 'header-page-table',
+      };
+      const headerTableFragment: Fragment = {
+        ...footerTableFragment,
+        blockId: headerTableBlock.id,
+        x: 200,
+        y: 360,
+      };
+      const footerOffset = 400;
+      const footerHeight = 80;
+      const footerContentHeight = 40;
+      const marginLeft = 96;
+      const painter = createTestPainter({
+        blocks: [footerTableBlock, inlineFooterTableBlock, headerTableBlock],
+        measures: [footerTableMeasure, footerTableMeasure, footerTableMeasure],
+        headerProvider: () => ({
+          fragments: [headerTableFragment],
+          height: 400,
+          offset: 40,
+          marginLeft,
+        }),
+        footerProvider: () => ({
+          fragments: [footerTableFragment, inlineFooterTableFragment],
+          height: footerHeight,
+          contentHeight: footerContentHeight,
+          offset: footerOffset,
+          marginLeft,
+        }),
+      });
+
+      painter.paint(
+        {
+          ...layout,
+          pages: [{ ...layout.pages[0], number: 1, margins: { left: marginLeft, right: 0, bottom: 100, footer: 20 } }],
+        },
+        mount,
+      );
+
+      const footerEl = mount.querySelector('.superdoc-page-footer') as HTMLElement;
+      const headerEl = mount.querySelector('.superdoc-page-header') as HTMLElement;
+      const tableEl = footerEl.querySelector('[data-block-id="footer-page-table"]') as HTMLElement;
+      const inlineTableEl = footerEl.querySelector('[data-block-id="footer-inline-page-table"]') as HTMLElement;
+      const headerTableEl = headerEl.querySelector('[data-block-id="header-page-table"]') as HTMLElement;
+      expect(parseFloat(footerEl.style.top) + parseFloat(tableEl.style.top)).toBe(
+        (layout.pageSize?.h ?? 0) - 20 + footerTableFragment.y,
+      );
+      expect(parseFloat(footerEl.style.left) + parseFloat(tableEl.style.left)).toBe(footerTableFragment.x);
+      expect(parseFloat(footerEl.style.top) + parseFloat(inlineTableEl.style.top)).toBe(
+        footerOffset + (footerHeight - footerContentHeight) + inlineFooterTableFragment.y,
+      );
+      expect(parseFloat(footerEl.style.left) + parseFloat(inlineTableEl.style.left)).toBe(
+        marginLeft + inlineFooterTableFragment.x,
+      );
+      expect(parseFloat(headerEl.style.top) + parseFloat(headerTableEl.style.top)).toBe(40 + headerTableFragment.y);
+      expect(parseFloat(headerEl.style.left) + parseFloat(headerTableEl.style.left)).toBe(
+        marginLeft + headerTableFragment.x,
+      );
+    });
+
     it('falls back to bottom margin origin when footer distance is missing', () => {
       const footerImageBlock: FlowBlock = {
         kind: 'image',
