@@ -26,6 +26,21 @@ const markdownInput: Parameters<DocumentApi['markdownToFragment']>[0] = { markdo
 const htmlResult: ReturnType<DocumentApi['htmlToFragment']> = doc.htmlToFragment(htmlInput);
 const markdownResult: ReturnType<DocumentApi['markdownToFragment']> = doc.markdownToFragment(markdownInput);
 
+const mutationInput: Parameters<DocumentApi['mutations']['apply']>[0] = {
+  atomic: true,
+  changeMode: 'direct',
+  steps: [
+    {
+      id: 'rewrite-selection',
+      op: 'text.rewrite',
+      where: { by: 'target', target: selection },
+      args: { replacement: { text: 'Updated content' } },
+    },
+  ],
+};
+const mutationResult: ReturnType<DocumentApi['mutations']['apply']> = doc.mutations.apply(mutationInput);
+const invalidatedRefs = mutationResult.invalidatedRefs;
+
 for (const diagnostic of htmlResult.diagnostics) {
   const format: 'html' | 'markdown' = diagnostic.source.format;
   const disposition: 'preserved' | 'normalized' | 'downgraded' | 'dropped' | 'rejected' = diagnostic.disposition;
@@ -151,4 +166,5 @@ void [
   oldReplace,
   oldMarkdown,
   parsedClipboard,
+  invalidatedRefs,
 ];

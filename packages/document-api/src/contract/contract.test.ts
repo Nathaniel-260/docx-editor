@@ -447,6 +447,20 @@ describe('document-api contract catalog', () => {
     expect(blockEffect.properties).toHaveProperty('sourcePath');
   });
 
+  it('publishes tracked and invalidated refs from mutation plans', () => {
+    const operation = buildInternalContractSchemas().operations['mutations.apply'];
+    for (const schema of [operation.output, operation.success] as ContractTestSchemaShape[]) {
+      expect(schema.properties?.trackedChanges).toEqual({
+        type: 'array',
+        items: { $ref: '#/$defs/TrackedChangeAddress' },
+      });
+      expect(schema.properties?.invalidatedRefs).toEqual({
+        type: 'array',
+        items: { $ref: '#/$defs/AffectedRef' },
+      });
+    }
+  });
+
   it('allows story-scoped text targets for bookmark inserts', () => {
     const schemas = buildInternalContractSchemas();
     const bookmarkInsertInput = schemas.operations['bookmarks.insert'].input as {

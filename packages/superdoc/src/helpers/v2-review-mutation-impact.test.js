@@ -33,6 +33,21 @@ describe('v2 review mutation impact', () => {
     expect([...impact.removedIds]).toEqual([]);
   });
 
+  it('classifies tracked identities from a mutation plan receipt', () => {
+    const impact = getV2TrackedChangeMutationImpact({
+      type: 'mutation:committed',
+      origin: 'command',
+      receipt: {
+        success: true,
+        trackedChanges: [trackedChange('plan-change')],
+        steps: [{ trackedChangeIds: ['plan-change'] }],
+      },
+    });
+
+    expect([...impact.upsertIds]).toEqual(['plan-change']);
+    expect([...impact.removedIds]).toEqual([]);
+  });
+
   it('classifies removals, invalidations, and remaps from history results', () => {
     const impact = getV2TrackedChangeMutationImpact({
       type: 'mutation:committed',

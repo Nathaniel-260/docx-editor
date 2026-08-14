@@ -2,9 +2,8 @@
  * Classify the tracked-change identities carried by a v2 mutation event.
  *
  * Receipt entities are the durable invalidation contract between the document
- * kernel and derived review UI. Consumers apply removals/remaps locally; the
- * next committed window supplies surviving or restored rows. History follows
- * the same bounded path and never enumerates invisible review identities.
+ * kernel and derived review UI. Direct receipts carry entity refs; mutation
+ * plans carry the same identities through `trackedChanges` and per-step ids.
  */
 export function getV2TrackedChangeMutationImpact(event) {
   if (event?.type !== 'mutation:committed') return null;
@@ -33,6 +32,17 @@ export function getV2TrackedChangeMutationImpact(event) {
   // refresh.
   if (Array.isArray(payload.trackedChangeRefs)) {
     payload.trackedChangeRefs.forEach((entry) => collectEntity(entry, upsertIds));
+  }
+  if (Array.isArray(payload.trackedChanges)) {
+    payload.trackedChanges.forEach((entry) => collectEntity(entry, upsertIds));
+  }
+  if (Array.isArray(payload.steps)) {
+    for (const step of payload.steps) {
+      if (!Array.isArray(step?.trackedChangeIds)) continue;
+      for (const id of step.trackedChangeIds) {
+        if (typeof id === 'string' && id.length > 0) upsertIds.add(id);
+      }
+    }
   }
   if (Array.isArray(payload.removed)) payload.removed.forEach((entry) => collectEntity(entry, removedIds));
   if (Array.isArray(payload.invalidatedRefs)) {

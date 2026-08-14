@@ -12,6 +12,7 @@ import type { InsertStylePolicy, StylePolicy } from './style-policy.types.js';
 import type { InlineRunPatch } from '../format/inline-run-patch.js';
 import type { SDFragment } from './fragment.js';
 import type { Placement, NestingPolicy } from './placement.js';
+import type { AffectedRef } from './receipt.js';
 
 // ---------------------------------------------------------------------------
 // Universal targeting model
@@ -291,6 +292,8 @@ export type PlanReceipt = {
   };
   steps: StepOutcome[];
   trackedChanges?: TrackedChangeAddress[];
+  /** Caller-held refs that no longer resolve after the plan. */
+  invalidatedRefs?: AffectedRef[];
   timing: {
     totalMs: number;
   };
