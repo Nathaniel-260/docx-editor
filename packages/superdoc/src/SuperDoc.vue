@@ -1375,7 +1375,15 @@ const applyCurrentV2DomSelection = () => {
     // without going through the host pointer path), so only then fall through
     // to the DOM-selection mirror below.
     const hostSnapshot = handles?.editing?.selection?.getSnapshot?.() ?? null;
-    if (shouldPreserveHostV2Selection(documentMode, hostSnapshot)) {
+    // Prefer the controller's tracked-space-aware range check over the raw
+    // blockOffset comparison in `shouldPreserveHostV2Selection`: a selection
+    // wholly inside a tracked deletion has zero visible width, so anchor and
+    // focus land at the same blockOffset even though it is a real range.
+    const renderedHostTarget = handles?.editing?.selection?.toSelectionTarget?.();
+    const hasHostRange = renderedHostTarget
+      ? renderedHostTarget.kind === 'ok' && renderedHostTarget.mode === 'range'
+      : shouldPreserveHostV2Selection(documentMode, hostSnapshot);
+    if (hasHostRange) {
       const root = getActiveV2MountContainer();
       const selection = window.getSelection?.() ?? null;
       if (hasOutsideV2DomRangeSelection(selection, root)) {
