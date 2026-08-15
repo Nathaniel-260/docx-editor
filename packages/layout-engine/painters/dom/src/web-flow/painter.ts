@@ -1,4 +1,9 @@
-import { rebaseWebFlowItemNode, renderWebFlowItem, webFlowItemIdentityFingerprint } from './render.js';
+import {
+  doesWebFlowBlockProduceDom,
+  rebaseWebFlowItemNode,
+  renderWebFlowItem,
+  webFlowItemIdentityFingerprint,
+} from './render.js';
 import { ensureWebFlowStyles, WEB_FLOW_CLASS_NAMES } from './styles.js';
 import type {
   WebFlowAppliedPaint,
@@ -12,7 +17,11 @@ import type {
   WebFlowPaintWorkSummary,
 } from './types.js';
 
-interface Entry extends WebFlowDomBinding {
+interface Entry {
+  readonly key: string;
+  readonly renderFingerprint: string;
+  readonly blockId: string;
+  readonly node: HTMLElement | null;
   readonly item: WebFlowPaintItem;
 }
 
@@ -38,6 +47,25 @@ const fail = (message: string): never => {
   throw new Error(`WebFlowPainter: ${message}`);
 };
 
+const entryNodes = (entries: readonly Entry[]): HTMLElement[] =>
+  entries.flatMap((entry) => (entry.node ? [entry.node] : []));
+
+const entryBinding = (entry: Entry): WebFlowDomBinding | null =>
+  entry.node
+    ? {
+        key: entry.key,
+        renderFingerprint: entry.renderFingerprint,
+        blockId: entry.blockId,
+        node: entry.node,
+      }
+    : null;
+
+const entryBindings = (entries: readonly Entry[]): WebFlowDomBinding[] =>
+  entries.flatMap((entry) => {
+    const binding = entryBinding(entry);
+    return binding ? [binding] : [];
+  });
+
 const assertUniqueItems = (items: readonly WebFlowPaintItem[]): void => {
   const keys = new Set<string>();
   for (const item of items) {
@@ -56,6 +84,7 @@ class WebFlowPainter implements WebFlowPainterHandle {
   #indexByKey = new Map<string, number>();
   #epoch: number | null = null;
   #version = 0;
+  #mountedNodeCount = 0;
   #active: symbol | null = null;
   #disposed = false;
   #unownedMutation: 'text' | 'dom' | null = null;
@@ -89,7 +118,8 @@ class WebFlowPainter implements WebFlowPainterHandle {
     const beforeEntries = prepared.kind === 'full' ? this.#entries : null;
     const beforeEpoch = this.#epoch;
     const beforeVersion = this.#version;
-    const beforeNodes = beforeEntries?.map((entry) => entry.node) ?? null;
+    const beforeMountedNodeCount = this.#mountedNodeCount;
+    const beforeNodes = beforeEntries ? entryNodes(beforeEntries) : null;
     let state: 'prepared' | 'applied' | 'finalized' | 'rolled-back' = 'prepared';
     let applied: WebFlowAppliedPaint | null = null;
     let rollbackRebases: Array<() => void> = [];
@@ -101,7 +131,7 @@ class WebFlowPainter implements WebFlowPainterHandle {
         prepared.previous.forEach((entry, index) => {
           this.#entries[prepared.start + index] = entry;
         });
-        this.#mount.replaceChildren(...this.#entries.map((entry) => entry.node));
+        this.#mount.replaceChildren(...entryNodes(this.#entries));
       } else {
         this.#mount.replaceChildren(...beforeNodes!);
         this.#entries = beforeEntries!;
@@ -109,6 +139,7 @@ class WebFlowPainter implements WebFlowPainterHandle {
       this.#rebuildEntryIndexes();
       this.#epoch = beforeEpoch;
       this.#version = beforeVersion;
+      this.#mountedNodeCount = beforeMountedNodeCount;
     };
 
     const apply = (): WebFlowAppliedPaint => {
@@ -121,7 +152,7 @@ class WebFlowPainter implements WebFlowPainterHandle {
           this.#applyLocalizedSplice(prepared.start, prepared.previous, prepared.inserted);
         } else if (command.kind === 'splice') {
           this.#applySplice(prepared.entries, prepared.start, prepared.deleteCount);
-        } else this.#mount.replaceChildren(...prepared.entries.map((entry) => entry.node));
+        } else this.#mount.replaceChildren(...entryNodes(prepared.entries));
         rollbackRebases = prepared.rebases.map(({ previous, next, node }) =>
           rebaseWebFlowItemNode(node, previous, next),
         );
@@ -130,7 +161,8 @@ class WebFlowPainter implements WebFlowPainterHandle {
         const changedEntries =
           prepared.kind === 'localized-splice'
             ? prepared.inserted.filter(
-                (entry, index) => entry.node !== prepared.previous[index]?.node || rebasedNodes.has(entry.node),
+                (entry, index) =>
+                  entry.node !== prepared.previous[index]?.node || (entry.node != null && rebasedNodes.has(entry.node)),
               )
             : prepared.entries;
         if (prepared.kind === 'localized-splice') {
@@ -140,27 +172,19 @@ class WebFlowPainter implements WebFlowPainterHandle {
             this.#entryByKey.set(entry.key, entry);
             this.#indexByKey.set(entry.key, entryIndex);
           });
+          this.#mountedNodeCount += entryNodes(prepared.inserted).length - entryNodes(prepared.previous).length;
         } else {
           this.#entries = prepared.entries;
           this.#rebuildEntryIndexes();
+          this.#mountedNodeCount = entryNodes(prepared.entries).length;
         }
         this.#epoch = command.epoch;
         this.#version += 1;
         state = 'applied';
         applied = {
           work: prepared.work,
-          touchedBindings: touchedEntries.map(({ key, renderFingerprint, blockId, node }) => ({
-            key,
-            renderFingerprint,
-            blockId,
-            node,
-          })),
-          changedBindings: changedEntries.map(({ key, renderFingerprint, blockId, node }) => ({
-            key,
-            renderFingerprint,
-            blockId,
-            node,
-          })),
+          touchedBindings: entryBindings(touchedEntries),
+          changedBindings: entryBindings(changedEntries),
         };
         return applied;
       } catch (error) {
@@ -207,12 +231,7 @@ class WebFlowPainter implements WebFlowPainterHandle {
     return {
       epoch: this.#epoch,
       version: this.#version,
-      bindings: this.#entries.map(({ key, renderFingerprint, blockId, node }) => ({
-        key,
-        renderFingerprint,
-        blockId,
-        node,
-      })),
+      bindings: entryBindings(this.#entries),
     };
   }
 
@@ -227,9 +246,10 @@ class WebFlowPainter implements WebFlowPainterHandle {
         const node = renderWebFlowItem(entry.item, this.#mount.ownerDocument, this.#options);
         return { ...entry, node };
       });
-      this.#mount.replaceChildren(...entries.map((entry) => entry.node));
+      this.#mount.replaceChildren(...entryNodes(entries));
       this.#entries = entries;
       this.#rebuildEntryIndexes();
+      this.#mountedNodeCount = entryNodes(entries).length;
       this.#unownedMutation = null;
       this.#version += 1;
       return this.snapshot();
@@ -247,6 +267,7 @@ class WebFlowPainter implements WebFlowPainterHandle {
     this.#entryByKey.clear();
     this.#indexByKey.clear();
     this.#epoch = null;
+    this.#mountedNodeCount = 0;
     this.#mount.replaceChildren();
     this.#mount.classList.remove(WEB_FLOW_CLASS_NAMES.root);
     delete this.#mount.dataset.webFlowOwner;
@@ -260,7 +281,7 @@ class WebFlowPainter implements WebFlowPainterHandle {
     this.#recordUnownedMutations(this.#textMutationObserver?.takeRecords() ?? []);
     if (this.#unownedMutation === 'text') fail('unowned text mutation detected');
     if (this.#unownedMutation === 'dom') fail('unowned DOM mutation detected');
-    if (this.#mount.childNodes.length !== this.#entries.length) fail('unowned root mutation detected');
+    if (this.#mount.childNodes.length !== this.#mountedNodeCount) fail('unowned root mutation detected');
   }
 
   #observeMount(): void {
@@ -337,8 +358,10 @@ class WebFlowPainter implements WebFlowPainterHandle {
     }> = [];
     const createEntry = (item: WebFlowPaintItem): Entry => {
       const existing = oldByKey.get(item.stableDomKey);
-      if (existing?.renderFingerprint === item.renderFingerprint) {
-        if (webFlowItemIdentityFingerprint(existing.item) !== webFlowItemIdentityFingerprint(item)) {
+      const producesDom = doesWebFlowBlockProduceDom(item.block);
+      const hasMatchingDomDisposition = existing != null && (existing.node != null) === producesDom;
+      if (existing?.renderFingerprint === item.renderFingerprint && hasMatchingDomDisposition) {
+        if (existing.node && webFlowItemIdentityFingerprint(existing.item) !== webFlowItemIdentityFingerprint(item)) {
           replacementRebases.push({ previous: existing.item, next: item, node: existing.node });
         }
         return {
@@ -347,20 +370,21 @@ class WebFlowPainter implements WebFlowPainterHandle {
           item,
         };
       }
-      const node = renderWebFlowItem(item, this.#mount.ownerDocument, this.#options);
       return {
         key: item.stableDomKey,
         renderFingerprint: item.renderFingerprint,
         blockId: item.block.id,
-        node,
+        node: producesDom ? renderWebFlowItem(item, this.#mount.ownerDocument, this.#options) : null,
         item,
       };
     };
 
     if (command.kind === 'replace-all') {
       const entries = command.items.map(createEntry);
-      const retainedNodes = entries.filter((entry) => oldByKey.get(entry.key)?.node === entry.node).length;
-      const nextNodes = new Set(entries.map((entry) => entry.node));
+      const retainedNodes = entries.filter(
+        (entry) => entry.node != null && oldByKey.get(entry.key)?.node === entry.node,
+      ).length;
+      const nextNodes = new Set(entryNodes(entries));
       return {
         kind: 'full',
         entries,
@@ -369,8 +393,8 @@ class WebFlowPainter implements WebFlowPainterHandle {
         work: {
           kind: command.kind,
           retainedNodes,
-          createdNodes: entries.length - retainedNodes,
-          removedNodes: this.#entries.filter((entry) => !nextNodes.has(entry.node)).length,
+          createdNodes: entryNodes(entries).length - retainedNodes,
+          removedNodes: this.#entries.filter((entry) => entry.node != null && !nextNodes.has(entry.node)).length,
           rebasedNodes: replacementRebases.length,
           touchedItems: entries.length,
         },
@@ -386,7 +410,9 @@ class WebFlowPainter implements WebFlowPainterHandle {
       inserted.length === removedEntries.length &&
       inserted.every((entry, index) => entry.key === removedEntries[index]?.key);
     if (localized) {
-      const retainedNodes = inserted.filter((entry, index) => entry.node === removedEntries[index]?.node).length;
+      const retainedNodes = inserted.filter(
+        (entry, index) => entry.node != null && entry.node === removedEntries[index]?.node,
+      ).length;
       return {
         kind: 'localized-splice',
         start,
@@ -395,8 +421,10 @@ class WebFlowPainter implements WebFlowPainterHandle {
         work: {
           kind: command.kind,
           retainedNodes,
-          createdNodes: inserted.length - retainedNodes,
-          removedNodes: removedEntries.filter((entry, index) => entry.node !== inserted[index]?.node).length,
+          createdNodes: inserted.filter((entry) => entry.node != null).length - retainedNodes,
+          removedNodes: removedEntries.filter(
+            (entry, index) => entry.node != null && entry.node !== inserted[index]?.node,
+          ).length,
           rebasedNodes: replacementRebases.length,
           touchedItems: inserted.length,
         },
@@ -415,7 +443,7 @@ class WebFlowPainter implements WebFlowPainterHandle {
     entries = entries.map((entry) => {
       const next = rebaseByKey.get(entry.key);
       if (!next) return entry;
-      rebases.push({ previous: entry.item, next, node: entry.node });
+      if (entry.node) rebases.push({ previous: entry.item, next, node: entry.node });
       return {
         ...entry,
         renderFingerprint: next.renderFingerprint,
@@ -423,7 +451,9 @@ class WebFlowPainter implements WebFlowPainterHandle {
         item: next,
       };
     });
-    const retainedNodes = inserted.filter((entry) => oldByKey.get(entry.key)?.node === entry.node).length;
+    const retainedNodes = inserted.filter(
+      (entry) => entry.node != null && oldByKey.get(entry.key)?.node === entry.node,
+    ).length;
     return {
       kind: 'full',
       entries,
@@ -432,8 +462,10 @@ class WebFlowPainter implements WebFlowPainterHandle {
       work: {
         kind: command.kind,
         retainedNodes,
-        createdNodes: inserted.length - retainedNodes,
-        removedNodes: removedEntries.filter((entry) => !inserted.includes(entry)).length,
+        createdNodes: inserted.filter((entry) => entry.node != null).length - retainedNodes,
+        removedNodes: removedEntries.filter(
+          (entry) => entry.node != null && !inserted.some((insertedEntry) => insertedEntry.node === entry.node),
+        ).length,
         rebasedNodes: rebases.length,
         touchedItems: Math.max(command.expectedRemovedKeys.length, inserted.length) + rebases.length,
       },
@@ -451,26 +483,28 @@ class WebFlowPainter implements WebFlowPainterHandle {
   }
 
   #applyLocalizedSplice(start: number, previous: readonly Entry[], inserted: readonly Entry[]): void {
-    let anchor = this.#entries[start + previous.length]?.node ?? null;
+    let anchor = this.#nextMountedNode(start + previous.length);
     for (let index = inserted.length - 1; index >= 0; index -= 1) {
       const node = inserted[index]!.node;
+      if (!node) continue;
       if (node.parentNode !== this.#mount || node.nextSibling !== anchor) {
         this.#mount.insertBefore(node, anchor);
       }
       anchor = node;
     }
     previous.forEach((entry, index) => {
-      if (entry.node !== inserted[index]?.node) entry.node.remove();
+      if (entry.node && entry.node !== inserted[index]?.node) entry.node.remove();
     });
   }
 
   #applySplice(entries: readonly Entry[], start: number, deleteCount: number): void {
-    const oldNodes = this.#entries.slice(start, start + deleteCount).map((entry) => entry.node);
-    const nextNode = this.#entries[start + deleteCount]?.node ?? null;
+    const oldNodes = entryNodes(this.#entries.slice(start, start + deleteCount));
+    const nextNode = this.#nextMountedNode(start + deleteCount);
     const inserted = entries.slice(start, entries.length - (this.#entries.length - start - deleteCount));
     let anchor = nextNode;
     for (let index = inserted.length - 1; index >= 0; index -= 1) {
       const node = inserted[index]!.node;
+      if (!node) continue;
       if (node.parentNode !== this.#mount || node.nextSibling !== anchor) {
         this.#mount.insertBefore(node, anchor);
       }
@@ -479,6 +513,14 @@ class WebFlowPainter implements WebFlowPainterHandle {
     oldNodes.forEach((node) => {
       if (!inserted.some((entry) => entry.node === node)) node.remove();
     });
+  }
+
+  #nextMountedNode(start: number): HTMLElement | null {
+    for (let index = start; index < this.#entries.length; index += 1) {
+      const node = this.#entries[index]?.node;
+      if (node) return node;
+    }
+    return null;
   }
 }
 

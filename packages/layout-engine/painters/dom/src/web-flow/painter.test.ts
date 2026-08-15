@@ -65,6 +65,156 @@ describe('WebFlowPainter', () => {
     expect(painter.snapshot().bindings.map((binding) => binding.key)).toEqual(['a', 'b']);
   });
 
+  it('omits layout-only blocks and anchored objects without losing retained splice identity', () => {
+    const root = mount();
+    const painter = createWebFlowPainter(root);
+    const blocks: Array<[string, FlowBlock]> = [
+      ['section', { kind: 'sectionBreak', id: 'section', margins: {} }],
+      ['carrier', paragraph('carrier', '', { attrs: { sectPrMarker: true }, runs: [] })],
+      ['page', { kind: 'pageBreak', id: 'page' }],
+      ['column', { kind: 'columnBreak', id: 'column' }],
+      [
+        'behind-image',
+        {
+          kind: 'image',
+          id: 'behind-image',
+          src: '',
+          placeholder: { diagnosticIds: ['render.media.unsupported-format'], accessibleName: 'Picture 1' },
+          anchor: { isAnchored: true, behindDoc: true, vRelativeFrom: 'insideMargin' },
+        },
+      ],
+      [
+        'floating-table',
+        {
+          kind: 'table',
+          id: 'floating-table',
+          rows: [{ id: 'row', cells: [{ id: 'cell', paragraph: paragraph('cell-paragraph', 'floating') }] }],
+          anchor: { isAnchored: true, vRelativeFrom: 'page' },
+        },
+      ],
+      [
+        'anchored-drawing',
+        {
+          kind: 'drawing',
+          id: 'anchored-drawing',
+          drawingKind: 'vectorShape',
+          geometry: { width: 10, height: 10, rotation: 0, flipH: false, flipV: false },
+          shapeKind: 'rect',
+          anchor: { isAnchored: true, vRelativeFrom: 'paragraph' },
+        },
+      ],
+      [
+        'flow-drawing',
+        {
+          kind: 'drawing',
+          id: 'flow-drawing',
+          drawingKind: 'vectorShape',
+          geometry: { width: 10, height: 10, rotation: 0, flipH: false, flipV: false },
+          shapeKind: 'rect',
+        },
+      ],
+      [
+        'flow-image',
+        {
+          kind: 'image',
+          id: 'flow-image',
+          src: '',
+          placeholder: { diagnosticIds: ['render.media.unsupported-format'], accessibleName: 'Inline image' },
+        },
+      ],
+      ['break-before', paragraph('break-before', 'after', { attrs: { pageBreakBefore: true } })],
+      ['paragraph', paragraph('paragraph', 'body')],
+    ];
+    const items = blocks.map(([stableDomKey, block]) => ({
+      stableDomKey,
+      renderFingerprint: stableDomKey,
+      block,
+    }));
+    const work = commit(painter, { kind: 'replace-all', epoch: 1, items }).work;
+
+    expect(root.textContent).toBe('Inline imageafterbody');
+    expect(root.textContent).not.toContain('Picture 1');
+    expect(root.querySelectorAll('.superdoc-web-flow-diagnostic')).toHaveLength(1);
+    expect(painter.snapshot().bindings.map((binding) => binding.key)).toEqual([
+      'flow-image',
+      'break-before',
+      'paragraph',
+    ]);
+    expect(work).toMatchObject({ createdNodes: 3, touchedItems: items.length });
+
+    const noDomWork = commit(painter, {
+      kind: 'splice',
+      expectedBaseEpoch: 1,
+      epoch: 2,
+      storyKey: 'body',
+      expectedRemovedKeys: ['page'],
+      expectedLeftKey: 'carrier',
+      expectedRightKey: 'column',
+      items: [{ stableDomKey: 'page', renderFingerprint: 'page-v2', block: { kind: 'pageBreak', id: 'page' } }],
+    }).work;
+
+    expect(root.textContent).toBe('Inline imageafterbody');
+    expect(noDomWork).toMatchObject({ createdNodes: 0, removedNodes: 0, touchedItems: 1 });
+  });
+
+  it('drops inline page controls and treats inline column breaks as ordinary line breaks', () => {
+    const root = mount();
+    const painter = createWebFlowPainter(root);
+    const block = paragraph('breaks', '', {
+      runs: [
+        { kind: 'text', text: 'left', fontFamily: 'Arial', fontSize: 16 },
+        { kind: 'break', breakType: 'page' },
+        { kind: 'text', text: 'middle', fontFamily: 'Arial', fontSize: 16 },
+        { kind: 'break', breakType: 'column' },
+        { kind: 'text', text: 'right', fontFamily: 'Arial', fontSize: 16 },
+      ],
+    });
+
+    commit(painter, {
+      kind: 'replace-all',
+      epoch: 1,
+      items: [{ stableDomKey: 'breaks', renderFingerprint: 'v1', block }],
+    });
+
+    expect(root.textContent).toBe('leftmiddleright');
+    expect(root.textContent).not.toMatch(/Page break|Column break/);
+    expect(root.querySelectorAll('br')).toHaveLength(1);
+    expect(root.querySelector('.superdoc-web-flow-diagnostic')).toBeNull();
+  });
+
+  it('rolls DOM transitions between omitted and visible retained items back atomically', () => {
+    const root = mount();
+    const painter = createWebFlowPainter(root);
+    commit(painter, {
+      kind: 'replace-all',
+      epoch: 1,
+      items: [
+        item('left', 'left'),
+        { stableDomKey: 'middle', renderFingerprint: 'hidden', block: { kind: 'pageBreak', id: 'middle' } },
+        item('right', 'right'),
+      ],
+    });
+    const before = [...root.children];
+    const transaction = painter.prepare({
+      kind: 'splice',
+      expectedBaseEpoch: 1,
+      epoch: 2,
+      storyKey: 'body',
+      expectedRemovedKeys: ['middle'],
+      expectedLeftKey: 'left',
+      expectedRightKey: 'right',
+      items: [item('middle', 'visible', 'visible')],
+    });
+
+    transaction.apply();
+    expect(root.textContent).toBe('leftvisibleright');
+    transaction.rollback();
+
+    expect([...root.children]).toEqual(before);
+    expect(root.textContent).toBe('leftright');
+    expect(painter.snapshot().bindings.map((binding) => binding.key)).toEqual(['left', 'right']);
+  });
+
   it('patches only the certified middle extent and retains unaffected node identity', () => {
     const root = mount();
     const painter = createWebFlowPainter(root);
@@ -328,7 +478,7 @@ describe('WebFlowPainter', () => {
     commit(painter, { kind: 'replace-all', epoch: 2, items: [tableItem(2)] });
     expect(painter.snapshot().bindings[0]!.node).toBe(retainedTable);
     expect(root.querySelector('[data-flow-block-id="n/body/o2-image"]')).not.toBeNull();
-    expect(root.querySelector('[data-flow-block-id="n/body/o2-break"]')).not.toBeNull();
+    expect(root.querySelector('[data-flow-block-id="n/body/o2-break"]')).toBeNull();
 
     commit(painter, {
       kind: 'splice',
@@ -343,7 +493,7 @@ describe('WebFlowPainter', () => {
     });
     expect(painter.snapshot().bindings[1]!.node).toBe(retainedTable);
     expect(root.querySelector('[data-flow-block-id="n/body/o3-image"]')).not.toBeNull();
-    expect(root.querySelector('[data-flow-block-id="n/body/o3-break"]')).not.toBeNull();
+    expect(root.querySelector('[data-flow-block-id="n/body/o3-break"]')).toBeNull();
   });
 
   it('uses text nodes and blocks executable link and image sources', () => {

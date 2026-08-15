@@ -1,15 +1,16 @@
-import type {
-  BoxSpacing,
-  FlowBlock,
-  ImageBlock,
-  ImageRun,
-  LayoutSourceIdentity,
-  ParagraphBlock,
-  Run,
-  TableBlock,
-  TableCell,
-  TableRow,
-  TextRun,
+import {
+  isPageRelativeAnchor,
+  type BoxSpacing,
+  type FlowBlock,
+  type ImageBlock,
+  type ImageRun,
+  type LayoutSourceIdentity,
+  type ParagraphBlock,
+  type Run,
+  type TableBlock,
+  type TableCell,
+  type TableRow,
+  type TextRun,
 } from '@superdoc/contracts';
 import { isValidImageDataUrl } from '@superdoc/url-validation';
 import { applyContainerSdtDataset, applySdtDataset } from '../sdt/dataset.js';
@@ -39,6 +40,30 @@ interface RenderContext {
   readonly options: WebFlowPainterOptions;
   readonly layoutEpoch?: number;
   readonly layoutIdentities: ReadonlyMap<string, LayoutSourceIdentity>;
+}
+
+const PAGE_RELATIVE_HORIZONTAL_ANCHORS = new Set([
+  'margin',
+  'page',
+  'leftMargin',
+  'rightMargin',
+  'insideMargin',
+  'outsideMargin',
+]);
+
+export function doesWebFlowBlockProduceDom(block: FlowBlock): boolean {
+  if (block.kind === 'sectionBreak' || block.kind === 'pageBreak' || block.kind === 'columnBreak') return false;
+  if (block.kind === 'paragraph') return block.attrs?.sectPrMarker !== true;
+  if (block.kind === 'drawing') return false;
+  if (block.kind !== 'image' && block.kind !== 'table') return true;
+
+  const anchor = block.anchor;
+  if (!anchor) return true;
+  if (anchor.isAnchored === true) return false;
+  if ('behindDoc' in anchor && anchor.behindDoc === true) return false;
+  if (isPageRelativeAnchor(block)) return false;
+  if (anchor.hRelativeFrom && PAGE_RELATIVE_HORIZONTAL_ANCHORS.has(anchor.hRelativeFrom)) return false;
+  return !(block.kind !== 'table' && block.wrap?.behindDoc === true);
 }
 
 const finitePx = (value: number | undefined): string | null =>
@@ -153,6 +178,12 @@ function renderRun(run: Run, runIndex: number, block: ParagraphBlock, context: R
     applyPositionRange(br, run);
     return stamp(br);
   }
+  if (run.kind === 'break') {
+    if (run.breakType !== 'column') return context.doc.createDocumentFragment();
+    const br = context.doc.createElement('br');
+    applyPositionRange(br, run);
+    return stamp(br);
+  }
   const element = context.doc.createElement('span');
   element.classList.add(WEB_FLOW_CLASS_NAMES.run);
   if (run.kind === 'tab') {
@@ -167,11 +198,6 @@ function renderRun(run: Run, runIndex: number, block: ParagraphBlock, context: R
   } else if (run.kind === 'math') {
     element.textContent = run.textContent;
     element.setAttribute('role', 'math');
-  } else {
-    const breakRun = run as Extract<Run, { kind: 'break' }>;
-    element.textContent = breakRun.breakType === 'column' ? 'Column break' : 'Page break';
-    element.classList.add(WEB_FLOW_CLASS_NAMES.diagnostic);
-    element.dataset.webFlowEditable = 'false';
   }
   applyPositionRange(element, run);
   return stamp(element);
@@ -261,7 +287,7 @@ function renderCell(cell: TableCell, row: TableRow, table: TableBlock, context: 
   if (cell.attrs?.trackedChange) {
     applyCellTrackedChangeToCell(element, cell.attrs.trackedChange, cellTrackedConfig);
   }
-  const blocks = cell.blocks ?? (cell.paragraph ? [cell.paragraph] : []);
+  const blocks = (cell.blocks ?? (cell.paragraph ? [cell.paragraph] : [])).filter(doesWebFlowBlockProduceDom);
   blocks.forEach((block) => element.appendChild(renderFlowBlock(block, context)));
   if (blocks.length === 0) element.appendChild(context.doc.createElement('br'));
   return element;
@@ -320,28 +346,6 @@ function renderBlockImage(block: ImageBlock, context: RenderContext): HTMLElemen
   return element;
 }
 
-function semanticBoundary(block: FlowBlock, context: RenderContext): HTMLElement {
-  const element = context.doc.createElement('div');
-  element.classList.add(WEB_FLOW_CLASS_NAMES.diagnostic);
-  element.dataset.webFlowEditable = 'false';
-  if (block.kind === 'pageBreak') element.textContent = 'Page break';
-  else if (block.kind === 'columnBreak') element.textContent = 'Column break';
-  else if (block.kind === 'sectionBreak') element.textContent = 'Section break';
-  else element.textContent = 'Layout boundary';
-  return element;
-}
-
-function unsupportedBlock(block: FlowBlock, context: RenderContext): HTMLElement {
-  const element = context.doc.createElement('div');
-  element.classList.add(WEB_FLOW_CLASS_NAMES.diagnostic);
-  element.dataset.webFlowEditable = 'false';
-  element.dataset.webFlowDiagnostic = 'unsupported-drawing';
-  element.setAttribute('role', 'note');
-  element.textContent = 'This object is available in print layout.';
-  element.dataset.flowBlockId = block.id;
-  return element;
-}
-
 function renderFlowBlock(block: FlowBlock, context: RenderContext): HTMLElement {
   let node: HTMLElement;
   if (block.kind === 'paragraph') return renderParagraph(block, context);
@@ -379,11 +383,7 @@ function renderFlowBlock(block: FlowBlock, context: RenderContext): HTMLElement 
       list.appendChild(li);
     });
     node = list;
-  } else if (block.kind === 'sectionBreak' || block.kind === 'pageBreak' || block.kind === 'columnBreak') {
-    node = semanticBoundary(block, context);
-  } else {
-    node = unsupportedBlock(block, context);
-  }
+  } else throw new Error(`WebFlow cannot present ${block.kind} in browser flow`);
   if (context.layoutEpoch != null) node.dataset.layoutEpoch = String(context.layoutEpoch);
   node.dataset.flowBlockId = block.id;
   applyLayoutIdentityDataset(node, context.layoutIdentities.get(block.id));
@@ -391,7 +391,12 @@ function renderFlowBlock(block: FlowBlock, context: RenderContext): HTMLElement 
   return node;
 }
 
-export function renderWebFlowItem(item: WebFlowPaintItem, doc: Document, options: WebFlowPainterOptions): HTMLElement {
+export function renderWebFlowItem(
+  item: WebFlowPaintItem,
+  doc: Document,
+  options: WebFlowPainterOptions,
+): HTMLElement | null {
+  if (!doesWebFlowBlockProduceDom(item.block)) return null;
   const node = renderFlowBlock(item.block, {
     doc,
     options,
@@ -415,6 +420,7 @@ interface RebaseBlockEntry {
 function collectRebaseBlocks(block: FlowBlock): RebaseBlockEntry[] {
   const result: RebaseBlockEntry[] = [];
   const visit = (candidate: FlowBlock): void => {
+    if (!doesWebFlowBlockProduceDom(candidate)) return;
     result.push({ block: candidate, id: candidate.id, appliesSourceAnchor: true });
     if (candidate.kind === 'list') {
       candidate.items.forEach((item) => {
