@@ -503,6 +503,8 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
   assert.match(structured, /handleImageUpload/);
   assert.match(structured, /object URLs.*browser session/s);
   assert.match(responsive, /mode: 'fit-width'/);
+  assert.match(responsive, /viewOptions: \{ layout: 'web' \}/);
+  assert.match(responsive, /retained semantic document surface/);
   assert.match(responsive, /fullscreenchange/);
   assert.match(responsive, /Avoid nesting the Editor inside another horizontal scroller/);
   assert.doesNotMatch(`${links}\n${structured}\n${responsive}`, /<include>/);

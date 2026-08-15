@@ -2661,7 +2661,11 @@ export type ViewLayout = 'print' | 'web';
  * Mirrors OOXML document view settings.
  */
 export interface ViewOptions {
-  /** Document view layout (OOXML ST_View compatible). */
+  /**
+   * Document view layout (OOXML ST_View compatible). In the browser editor,
+   * `'web'` selects the retained semantic DOM surface. Browser normal flow
+   * rewraps content as the editor container changes width.
+   */
   layout?: ViewLayout;
 }
 
@@ -3534,6 +3538,11 @@ export interface Config {
     unifiedHistory?: boolean;
     v2Host?: boolean;
     /**
+     * Temporary V2 web-surface rollout control. The value is snapshotted at
+     * mount and changing it requires a remount. This is not a stable renderer API.
+     */
+    v2WebSurface?: 'dense-control' | 'retained-dom';
+    /**
      * Derived-invalidation deferral for direct single-paragraph edits (v2
      * engine only). Field display text settles off the keystroke path under
      * the engine's settlement contract. DEFAULT TRUE — this is the engine's
@@ -3751,10 +3760,8 @@ export interface Config {
    */
   workerStartupTimeoutMs?: number;
   /**
-   * Opt-in toggle for the layout engine. Auto-disabled when web layout is
-   * requested without `layoutEngineOptions.flowMode === 'semantic'`; the
-   * loader logs a warning and falls back to the legacy ProseMirror render
-   * path in that case.
+   * Compatibility toggle retained for existing configurations. V2 always
+   * uses the OOXML kernel; `viewOptions.layout` selects the mounted renderer.
    */
   useLayoutEngine?: boolean;
   // V2 branch: `editorVersion`, `v2Integration`, and `v2` are intentionally NOT

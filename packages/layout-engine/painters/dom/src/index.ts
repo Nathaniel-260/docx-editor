@@ -5,6 +5,20 @@ import type { PaintKind, PositionValidationOptions, PositionValidationSummary } 
 import type { DomPainterInput, PageDecorationProvider, PaintSnapshot, PositionMapping, FlowMode } from './renderer.js';
 import type { DomPainterPersistentPageInput } from './persistent-page-surface.js';
 
+export { createWebFlowPainter, ensureWebFlowStyles, WEB_FLOW_CLASS_NAMES } from './web-flow/index.js';
+export type {
+  WebFlowAppliedPaint,
+  WebFlowDomBinding,
+  WebFlowPaintCommand,
+  WebFlowPaintItem,
+  WebFlowPaintSnapshot,
+  WebFlowPaintTransaction,
+  WebFlowPainterHandle,
+  WebFlowPainterOptions,
+  WebFlowPaintWorkSummary,
+  WebFlowStableDomKey,
+} from './web-flow/index.js';
+
 // Re-export constants
 export { DOM_CLASS_NAMES } from './constants.js';
 export type { DomClassName } from './constants.js';
