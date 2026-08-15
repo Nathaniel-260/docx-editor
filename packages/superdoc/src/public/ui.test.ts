@@ -4581,6 +4581,39 @@ describe('public ui — viewport.scrollIntoView parity', () => {
     });
   });
 
+  it('forwards instant behavior to the host', async () => {
+    const scrollTargetIntoView = vi.fn(async () => ({ success: true }));
+    const { superdoc } = makeWorkflowSuperdoc({ host: { scrollTargetIntoView } });
+    const ui = createSuperDocUI({ superdoc });
+    const target = { kind: 'text', blockId: 'P1', range: { start: 0, end: 5 } } as const;
+
+    const result = await ui.viewport.scrollIntoView({ target, behavior: 'instant' });
+
+    expect(result).toEqual({ success: true });
+    expect(scrollTargetIntoView).toHaveBeenCalledWith({
+      target: { kind: 'text', segments: [{ blockId: 'P1', range: { start: 0, end: 5 } }] },
+      block: 'center',
+      behavior: 'instant',
+    });
+  });
+
+  it('maps one failed instant text-range attempt without retrying', async () => {
+    const scrollTargetIntoView = vi.fn(async () => ({ success: false, reason: 'target-not-visible' }));
+    const { superdoc } = makeWorkflowSuperdoc({ host: { scrollTargetIntoView } });
+    const ui = createSuperDocUI({ superdoc });
+    const target = { kind: 'text', blockId: 'P-far', range: { start: 0, end: 0 } } as const;
+
+    const result = await ui.viewport.scrollIntoView({ target, block: 'start', behavior: 'instant' });
+
+    expect(result).toEqual({ success: false });
+    expect(scrollTargetIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollTargetIntoView).toHaveBeenCalledWith({
+      target: { kind: 'text', segments: [{ blockId: 'P-far', range: { start: 0, end: 0 } }] },
+      block: 'start',
+      behavior: 'instant',
+    });
+  });
+
   it('scrolls a multi-segment text target (TextTarget) into view', async () => {
     const scrollTargetIntoView = vi.fn(async () => ({ success: true }));
     const { superdoc } = makeWorkflowSuperdoc({ host: { scrollTargetIntoView } });

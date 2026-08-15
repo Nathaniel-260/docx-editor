@@ -759,9 +759,10 @@ describe('useLinkPopover', () => {
     const handle = manager.handles[0];
 
     manager.open.mock.calls[0][0].props.goToAnchor('#section-one');
+    await tick();
 
     expect(handle.close).toHaveBeenCalledWith('closed');
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'instant' });
   });
 
   it('passes a complete resolver context', () => {
@@ -1106,15 +1107,10 @@ describe('useLinkPopover', () => {
 
     expect(open).not.toHaveBeenCalled();
     expect(manager.open).not.toHaveBeenCalled();
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'instant' });
   });
 
-  it('navigates viewing mode anchor links to a bookmark target already painted by paraId', async () => {
-    // Bookmark-marker spans (`data-bookmark-marker`/`data-bookmark-name`) are
-    // NOT a reliable DOM signal: layout-engine measuring drops them from
-    // paint whenever the wrapping paragraph has visible content (the
-    // standard TOC-bookmark shape). The real signal is the paragraph's own
-    // `paraId`-identifying attribute (e.g. `data-source-node-id`).
+  it('routes a painted V2 bookmark through one exact model viewport request', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     const host = document.createElement('div');
     host.innerHTML = '<div data-source-node-id="w14:para-target">Target Heading</div>';
@@ -1123,6 +1119,7 @@ describe('useLinkPopover', () => {
     Object.defineProperty(host, 'clientHeight', { configurable: true, value: 50 });
     host.scrollTo = scrollTo;
     vi.spyOn(window, 'getComputedStyle').mockReturnValue({ overflowY: 'auto' });
+    const scrollIntoView = vi.fn(async () => ({ success: true }));
     const editor = {
       id: 'editor',
       doc: {
@@ -1139,6 +1136,7 @@ describe('useLinkPopover', () => {
       ui: {
         viewport: {
           getHost: () => host,
+          scrollIntoView,
         },
       },
     });
@@ -1152,155 +1150,215 @@ describe('useLinkPopover', () => {
     expect(editor.doc.bookmarks.get).toHaveBeenCalledWith({
       target: { kind: 'entity', entityType: 'bookmark', name: 'targetSection' },
     });
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      target: { kind: 'text', blockId: 'w14:para-target', range: { start: 0, end: 0 } },
+      block: 'start',
+      behavior: 'instant',
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it('navigates a TOC entry link directly in editing mode (no link popover)', async () => {
+  it('places the editing caret before invoking the viewport for an unpainted V2 bookmark', async () => {
+    const host = document.createElement('div');
+    const scrollTo = vi.fn();
+    host.scrollTo = scrollTo;
+    let releaseCaret;
+    const setSelectionTarget = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          releaseCaret = resolve;
+        }),
+    );
+    const scrollIntoView = vi.fn(async () => ({ success: true }));
+    const revealBodyTarget = vi.fn();
+    const pageIndexForBodyTarget = vi.fn();
+    const scrollToPage = vi.fn();
+    const editor = {
+      id: 'editor',
+      authoring: { setSelectionTarget },
+      doc: {
+        bookmarks: {
+          get: vi.fn(async () => ({ range: { from: { blockId: 'w14:para-far' } } })),
+        },
+      },
+      pageMetrics: { revealBodyTarget, pageIndexForBodyTarget, scrollToPage },
+    };
+    const { popover, manager } = createSubject({
+      editor,
+      ui: { viewport: { getHost: () => host, scrollIntoView } },
+    });
+
+    popover.handleLinkClick(createPayload({ href: '#section-far', documentMode: 'editing' }));
+    await tick();
+    manager.open.mock.calls[0][0].props.goToAnchor('#section-far');
+    await tick();
+
+    expect(setSelectionTarget).toHaveBeenCalledWith({
+      target: {
+        kind: 'selection',
+        start: {
+          kind: 'text',
+          blockId: 'w14:para-far',
+          offset: 0,
+          story: { kind: 'story', storyType: 'body' },
+        },
+        end: {
+          kind: 'text',
+          blockId: 'w14:para-far',
+          offset: 0,
+          story: { kind: 'story', storyType: 'body' },
+        },
+        story: { kind: 'story', storyType: 'body' },
+      },
+      collapse: 'start',
+      focus: true,
+    });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    releaseCaret();
+    await tick();
+    await tick();
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      target: { kind: 'text', blockId: 'w14:para-far', range: { start: 0, end: 0 } },
+      block: 'start',
+      behavior: 'instant',
+    });
+    expect(revealBodyTarget).not.toHaveBeenCalled();
+    expect(pageIndexForBodyTarget).not.toHaveBeenCalled();
+    expect(scrollToPage).not.toHaveBeenCalled();
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it('uses the same caret-first model route in suggesting mode', async () => {
+    const events = [];
+    const setSelectionTarget = vi.fn(async () => {
+      events.push('caret');
+    });
+    const scrollIntoView = vi.fn(async () => {
+      events.push('viewport');
+      return { success: true };
+    });
+    const editor = {
+      id: 'editor',
+      authoring: { setSelectionTarget },
+      doc: {
+        bookmarks: {
+          get: vi.fn(async () => ({ range: { from: { blockId: 'w14:para-suggested' } } })),
+        },
+      },
+    };
+    const { popover, manager } = createSubject({ editor, ui: { viewport: { scrollIntoView } } });
+
+    popover.handleLinkClick(createPayload({ href: '#suggested-section', documentMode: 'suggesting' }));
+    await tick();
+    manager.open.mock.calls[0][0].props.goToAnchor('#suggested-section');
+    await tick();
+    await tick();
+
+    expect(events).toEqual(['caret', 'viewport']);
+    expect(setSelectionTarget).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      target: { kind: 'text', blockId: 'w14:para-suggested', range: { start: 0, end: 0 } },
+      block: 'start',
+      behavior: 'instant',
+    });
+  });
+
+  it('routes viewing mode through the model viewport without placing a caret or opening a window', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const setSelectionTarget = vi.fn();
+    const scrollIntoView = vi.fn(async () => ({ success: true }));
+    const editor = {
+      id: 'editor',
+      authoring: { setSelectionTarget },
+      doc: {
+        bookmarks: {
+          get: vi.fn(async () => ({ range: { from: { blockId: 'w14:para-view' } } })),
+        },
+      },
+    };
+    const { popover, manager } = createSubject({ editor, ui: { viewport: { scrollIntoView } } });
+
+    popover.handleLinkClick(createPayload({ href: '#view-target', documentMode: 'viewing' }));
+    await tick();
+    await tick();
+
+    expect(open).not.toHaveBeenCalled();
+    expect(manager.open).not.toHaveBeenCalled();
+    expect(setSelectionTarget).not.toHaveBeenCalled();
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      target: { kind: 'text', blockId: 'w14:para-view', range: { start: 0, end: 0 } },
+      block: 'start',
+      behavior: 'instant',
+    });
+  });
+
+  it('navigates a TOC entry directly through the caret-first model viewport route', async () => {
     const anchor = document.createElement('a');
     anchor.href = '#_Toc228451583';
     const entry = document.createElement('div');
     entry.className = 'superdoc-toc-entry';
     entry.appendChild(anchor);
-    const host = document.createElement('div');
+    const events = [];
     const bookmarkGet = vi.fn(async () => ({ range: { from: { blockId: 'w14:para-h1' } } }));
+    const setSelectionTarget = vi.fn(async () => {
+      events.push('caret');
+    });
+    const scrollIntoView = vi.fn(async () => {
+      events.push('viewport');
+      return { success: true };
+    });
     const editor = {
       id: 'editor',
+      authoring: { setSelectionTarget },
       doc: { bookmarks: { get: bookmarkGet } },
-      pageMetrics: { revealBodyTarget: vi.fn(async () => ({ status: 'rejected', reason: 'editing-not-mounted' })) },
     };
     const { popover, manager } = createSubject({
       editor,
-      ui: { viewport: { getHost: () => host } },
+      ui: { viewport: { scrollIntoView } },
     });
 
     popover.handleLinkClick(createPayload({ href: '#_Toc228451583', element: anchor, documentMode: 'editing' }));
     await tick();
     await tick();
 
-    // A TOC entry link is navigational: the click resolves the heading bookmark
-    // and navigates instead of opening the link editor.
     expect(manager.open).not.toHaveBeenCalled();
     expect(bookmarkGet).toHaveBeenCalledWith({
       target: { kind: 'entity', entityType: 'bookmark', name: '_Toc228451583' },
     });
+    expect(events).toEqual(['caret', 'viewport']);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      target: { kind: 'text', blockId: 'w14:para-h1', range: { start: 0, end: 0 } },
+      block: 'start',
+      behavior: 'instant',
+    });
   });
 
-  it('still opens the link popover for a non-TOC anchor link in editing mode', async () => {
+  it('still opens the link popover before navigating a non-TOC anchor in editing mode', async () => {
     const anchor = document.createElement('a');
     anchor.href = '#section-two';
-    const { popover, manager } = createSubject();
+    const scrollIntoView = vi.fn();
+    const editor = {
+      id: 'editor',
+      doc: { bookmarks: { get: vi.fn(() => ({ range: { from: { blockId: 'w14:para-two' } } })) } },
+    };
+    const { popover, manager } = createSubject({ editor, ui: { viewport: { scrollIntoView } } });
 
     popover.handleLinkClick(createPayload({ href: '#section-two', element: anchor, documentMode: 'editing' }));
     await tick();
     await tick();
 
-    expect(manager.open).toHaveBeenCalled();
-  });
-
-  it('falls back to revealBodyTarget in editing mode when the bookmark is not in the mounted DOM window', async () => {
-    const host = document.createElement('div');
-    const scrollTo = vi.fn();
-    Object.defineProperty(host, 'scrollHeight', { configurable: true, value: 100 });
-    Object.defineProperty(host, 'clientHeight', { configurable: true, value: 50 });
-    host.scrollTo = scrollTo;
-    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ overflowY: 'auto' });
-
-    const revealBodyTarget = vi.fn(async ({ paraId }) => {
-      // Simulate the host mounting the target page as part of the reveal.
-      const paragraph = document.createElement('div');
-      paragraph.dataset.sourceNodeId = paraId;
-      host.appendChild(paragraph);
-      return { status: 'revealed', resolvedOrdinal: 3, paintedParaId: paraId, covered: true, pinnedPageIndex: 4 };
-    });
-    const editor = {
-      id: 'editor',
-      doc: {
-        bookmarks: {
-          get: vi.fn(async ({ target }) =>
-            target.name === 'section-far' ? { range: { from: { blockId: 'w14:para-far' } } } : null,
-          ),
-        },
-      },
-      pageMetrics: { revealBodyTarget },
-    };
-    const { popover, manager } = createSubject({
-      editor,
-      ui: { viewport: { getHost: () => host } },
-    });
-
-    popover.handleLinkClick(createPayload({ href: '#section-far' }));
-    await tick();
-
-    manager.open.mock.calls[0][0].props.goToAnchor('#section-far');
-    await tick();
-    await tick();
-
-    expect(editor.doc.bookmarks.get).toHaveBeenCalledWith({
-      target: { kind: 'entity', entityType: 'bookmark', name: 'section-far' },
-    });
-    expect(revealBodyTarget).toHaveBeenCalledWith({ paraId: 'w14:para-far' });
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
-  });
-
-  it('falls back to pageIndexForBodyTarget + scrollToPage in viewing mode when revealBodyTarget is unavailable', async () => {
-    const open = vi.spyOn(window, 'open').mockReturnValue(null);
-    const host = document.createElement('div');
-    const scrollTo = vi.fn();
-    Object.defineProperty(host, 'scrollHeight', { configurable: true, value: 100 });
-    Object.defineProperty(host, 'clientHeight', { configurable: true, value: 50 });
-    host.scrollTo = scrollTo;
-    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ overflowY: 'auto' });
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      vi.fn((cb) => {
-        setTimeout(cb, 0);
-        return 1;
-      }),
-    );
-
-    const scrollToPage = vi.fn((pageIndex) => {
-      // Simulate the deep-jumped page settling and painting asynchronously
-      // (no promise-based paint signal exists in review/viewing mode).
-      setTimeout(() => {
-        const paragraph = document.createElement('div');
-        paragraph.dataset.sourceNodeId = 'w14:para-view-far';
-        host.appendChild(paragraph);
-      }, 0);
-      return pageIndex >= 0;
-    });
-    const pageIndexForBodyTarget = vi.fn(() => 7);
-    const editor = {
-      id: 'editor',
-      doc: {
-        bookmarks: {
-          get: vi.fn(async ({ target }) =>
-            target.name === 'view-far' ? { range: { from: { blockId: 'w14:para-view-far' } } } : null,
-          ),
-        },
-      },
-      pageMetrics: { pageIndexForBodyTarget, scrollToPage },
-    };
-    const { popover, manager } = createSubject({
-      editor,
-      ui: { viewport: { getHost: () => host } },
-    });
-
-    popover.handleLinkClick(createPayload({ href: '#view-far', documentMode: 'viewing' }));
-    await tick();
-    await tick();
-    await tick();
-
-    vi.unstubAllGlobals();
-
-    expect(open).not.toHaveBeenCalled();
-    expect(manager.open).not.toHaveBeenCalled();
-    expect(pageIndexForBodyTarget).toHaveBeenCalledWith({ paraId: 'w14:para-view-far' });
-    expect(scrollToPage).toHaveBeenCalledWith(7);
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    expect(manager.open).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   it('no-ops when the bookmark is outside the body story', async () => {
-    const host = document.createElement('div');
+    const scrollIntoView = vi.fn();
     const editor = {
       id: 'editor',
       doc: {
@@ -1311,11 +1369,10 @@ describe('useLinkPopover', () => {
           })),
         },
       },
-      pageMetrics: { revealBodyTarget: vi.fn() },
     };
     const { popover, manager } = createSubject({
       editor,
-      ui: { viewport: { getHost: () => host } },
+      ui: { viewport: { scrollIntoView } },
     });
 
     popover.handleLinkClick(createPayload({ href: '#footer-bookmark' }));
@@ -1324,11 +1381,18 @@ describe('useLinkPopover', () => {
     manager.open.mock.calls[0][0].props.goToAnchor('#footer-bookmark');
     await tick();
 
-    expect(editor.pageMetrics.revealBodyTarget).not.toHaveBeenCalled();
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
-  it('no-ops when the bookmark cannot be resolved through the Document API', async () => {
+  it('treats an authoritative model miss as a no-op even when a stale named anchor is mounted', async () => {
     const host = document.createElement('div');
+    host.innerHTML = '<a name="missing-bookmark"></a>';
+    const scrollTo = vi.fn();
+    Object.defineProperty(host, 'scrollHeight', { configurable: true, value: 100 });
+    Object.defineProperty(host, 'clientHeight', { configurable: true, value: 50 });
+    host.scrollTo = scrollTo;
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ overflowY: 'auto' });
+    const scrollIntoView = vi.fn();
     const editor = {
       id: 'editor',
       doc: {
@@ -1338,11 +1402,10 @@ describe('useLinkPopover', () => {
           }),
         },
       },
-      pageMetrics: { revealBodyTarget: vi.fn() },
     };
     const { popover, manager } = createSubject({
       editor,
-      ui: { viewport: { getHost: () => host } },
+      ui: { viewport: { getHost: () => host, scrollIntoView } },
     });
 
     popover.handleLinkClick(createPayload({ href: '#missing-bookmark' }));
@@ -1351,13 +1414,23 @@ describe('useLinkPopover', () => {
     manager.open.mock.calls[0][0].props.goToAnchor('#missing-bookmark');
     await tick();
 
-    expect(editor.pageMetrics.revealBodyTarget).not.toHaveBeenCalled();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it('no-ops when revealBodyTarget rejects the reveal and no viewing-mode fallback is available', async () => {
+  it('treats viewport failure as authoritative without DOM, reveal, page, or window fallback', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
     const host = document.createElement('div');
+    host.innerHTML = '<a name="stale-anchor"></a>';
     const scrollTo = vi.fn();
+    Object.defineProperty(host, 'scrollHeight', { configurable: true, value: 100 });
+    Object.defineProperty(host, 'clientHeight', { configurable: true, value: 50 });
     host.scrollTo = scrollTo;
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ overflowY: 'auto' });
+    const scrollIntoView = vi.fn(async () => ({ success: false }));
+    const revealBodyTarget = vi.fn();
+    const pageIndexForBodyTarget = vi.fn();
+    const scrollToPage = vi.fn();
     const editor = {
       id: 'editor',
       doc: {
@@ -1365,20 +1438,11 @@ describe('useLinkPopover', () => {
           get: vi.fn(() => ({ range: { from: { blockId: 'w14:para-gone' } } })),
         },
       },
-      pageMetrics: {
-        revealBodyTarget: vi.fn(async () => ({
-          status: 'rejected',
-          reason: 'not-found',
-          resolvedOrdinal: null,
-          paintedParaId: null,
-          covered: false,
-          pinnedPageIndex: null,
-        })),
-      },
+      pageMetrics: { revealBodyTarget, pageIndexForBodyTarget, scrollToPage },
     };
     const { popover, manager } = createSubject({
       editor,
-      ui: { viewport: { getHost: () => host } },
+      ui: { viewport: { getHost: () => host, scrollIntoView } },
     });
 
     popover.handleLinkClick(createPayload({ href: '#stale-anchor' }));
@@ -1386,55 +1450,13 @@ describe('useLinkPopover', () => {
 
     manager.open.mock.calls[0][0].props.goToAnchor('#stale-anchor');
     await tick();
+    await tick();
 
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
     expect(scrollTo).not.toHaveBeenCalled();
-  });
-
-  it('does not degrade to the viewing-mode fallback when revealBodyTarget rejects for a real editing-mode reason', async () => {
-    // A rejection reason other than `editing-not-mounted` means the strong,
-    // paint-confirmed path genuinely failed (e.g. the target paragraph
-    // still isn't mounted after the deep jump) — it must stay a no-op even
-    // though `pageIndexForBodyTarget`/`scrollToPage` are available, rather
-    // than silently degrading to the weaker scroll-and-poll path.
-    const host = document.createElement('div');
-    const scrollTo = vi.fn();
-    host.scrollTo = scrollTo;
-    const scrollToPage = vi.fn(() => true);
-    const pageIndexForBodyTarget = vi.fn(() => 9);
-    const editor = {
-      id: 'editor',
-      doc: {
-        bookmarks: {
-          get: vi.fn(async () => ({ range: { from: { blockId: 'w14:para-real-fail' } } })),
-        },
-      },
-      pageMetrics: {
-        revealBodyTarget: vi.fn(async () => ({
-          status: 'rejected',
-          reason: 'target-paragraph-not-mounted',
-          resolvedOrdinal: 12,
-          paintedParaId: null,
-          covered: true,
-          pinnedPageIndex: 9,
-        })),
-        pageIndexForBodyTarget,
-        scrollToPage,
-      },
-    };
-    const { popover, manager } = createSubject({
-      editor,
-      ui: { viewport: { getHost: () => host } },
-    });
-
-    popover.handleLinkClick(createPayload({ href: '#real-fail' }));
-    await tick();
-
-    manager.open.mock.calls[0][0].props.goToAnchor('#real-fail');
-    await tick();
-    await tick();
-
+    expect(revealBodyTarget).not.toHaveBeenCalled();
     expect(pageIndexForBodyTarget).not.toHaveBeenCalled();
     expect(scrollToPage).not.toHaveBeenCalled();
-    expect(scrollTo).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
   });
 });

@@ -92,10 +92,9 @@ import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js'
 
 /**
  * Result of `doc.bookmarks.get()` as read here (Document API `BookmarkInfo`).
- * `range.from.blockId` is the bookmark's `w14:paraId`, used to find/reveal
- * the target paragraph. `address.story` is populated for non-body
- * bookmarks (omitted for body) — used to scope this fix to body targets,
- * since `revealBodyTarget`/`pageIndexForBodyTarget` are body-only.
+ * `range.from.blockId` identifies the model paragraph sent to the viewport.
+ * `address.story` is populated for non-body bookmarks (omitted for body),
+ * which keeps anchor navigation scoped to body targets.
  * @typedef {Object} BookmarkGetResult
  * @property {{ story?: { kind?: string, storyType?: string } }} [address]
  * @property {{ from?: { blockId?: string } }} [range]
@@ -113,16 +112,6 @@ import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js'
  * @property {{ match?: (query: { select: { type: 'text', pattern: string, caseSensitive: boolean }, require: 'any' }) => QueryMatchResult | null | undefined } | null} [query]
  * @property {{ list?: () => HyperlinksListResult | Promise<HyperlinksListResult | null | undefined> | null | undefined, get?: (input: { storyId: string, hyperlinkNodeId: string }) => HyperlinkGetResult | Promise<HyperlinkGetResult | null | undefined> | null | undefined } | null} [hyperlinks]
  * @property {{ get?: (input: { target: { kind: 'entity', entityType: 'bookmark', name: string } }) => BookmarkGetResult | Promise<BookmarkGetResult | null | undefined> | null | undefined } | null} [bookmarks]
- */
-
-/**
- * Result of `activeEditor.pageMetrics.revealBodyTarget()` as read here
- * (`V2EditorHostRevealBodyTargetResult`). Only available in editing/
- * suggesting mode — the host rejects with `editing-not-mounted` in
- * viewing mode.
- * @typedef {Object} RevealBodyTargetResult
- * @property {'revealed' | 'rejected'} [status]
- * @property {string} [reason]
  */
 
 /**
@@ -507,20 +496,8 @@ export function useLinkPopover({
   }
 
   /**
-   * Look up a real `<a name>` anchor, or a bookmark-marker span, in the
-   * currently mounted DOM. The marker span
-   * (`data-bookmark-marker`/`data-bookmark-name`) is a best-effort fast
-   * path only: layout-engine measuring drops those zero-width marker runs
-   * from paint whenever the wrapping paragraph has other visible content
-   * (the standard shape for a TOC bookmark wrapping heading text,
-   * `<w:bookmarkStart .../><w:r>Heading</w:r><w:bookmarkEnd/>`) — but it
-   * DOES survive for a standalone/empty bookmark paragraph (a supported v2
-   * shape, see `v2-layout-adapter/src/empty-paragraph.test.ts` and
-   * `isSyntheticStandaloneBookmarkParagraph` in
-   * `v2-host/src/compose-exact-complete-render.ts`), where it lets a
-   * mounted bookmark scroll immediately without a Document API round trip.
-   * `findPaintedParagraphByParaId` remains the reliable fallback for the
-   * common (marker-not-painted) case.
+   * Find a mounted named anchor for runtimes that do not expose the bookmark
+   * model. Model-backed runtimes never use DOM identity for navigation.
    * @param {HTMLElement | null} container
    * @param {string} escapedAnchorName
    * @returns {HTMLElement | null}
@@ -531,52 +508,6 @@ export function useLinkPopover({
         `a[name='${escapedAnchorName}'], [data-bookmark-marker='start'][data-bookmark-name='${escapedAnchorName}']`,
       ) ?? null
     );
-  }
-
-  /**
-   * Find the painted paragraph element for a `w14:paraId`, mirroring the
-   * attribute chain `paintedParaIdElement` uses in v2-host
-   * (`create-v2-editor-host.ts`) to confirm a paragraph is painted.
-   * @param {HTMLElement | null} container
-   * @param {string} paraId
-   * @returns {HTMLElement | null}
-   */
-  function findPaintedParagraphByParaId(container, paraId) {
-    if (!container) return null;
-    const escaped = cssEscape(paraId);
-    return (
-      container.querySelector(`[data-source-node-id='${escaped}']`) ??
-      container.querySelector(`[data-layout-paraid='${escaped}']`) ??
-      container.querySelector(`[data-block-id$='/${escaped}']`) ??
-      container.querySelector(`[data-layout-block-ref$='/${escaped}']`) ??
-      null
-    );
-  }
-
-  /**
-   * Poll for an element across a bounded number of animation frames. Used
-   * after `scrollToPage()` in review/viewing mode, where — unlike
-   * `revealBodyTarget` in editing mode — there is no promise that resolves
-   * once the deep-jumped page's geometry reconciles and paints.
-   * @param {() => HTMLElement | null} lookup
-   * @param {number} maxTicks
-   * @returns {Promise<HTMLElement | null>}
-   */
-  function pollForElement(lookup, maxTicks = 30) {
-    return new Promise((resolve) => {
-      const raf = typeof window !== 'undefined' ? window.requestAnimationFrame : null;
-      let ticks = 0;
-      const tick = () => {
-        const found = lookup();
-        if (found || ticks >= maxTicks || typeof raf !== 'function') {
-          resolve(found ?? null);
-          return;
-        }
-        ticks += 1;
-        raf(tick);
-      };
-      tick();
-    });
   }
 
   /**
@@ -601,117 +532,62 @@ export function useLinkPopover({
     try {
       await Promise.resolve(setSelectionTarget({ target, collapse: 'start', focus: true }));
     } catch {
-      // Caret placement is best-effort; the navigation scroll already landed.
+      // Caret placement is best-effort; navigation may still continue.
     }
   }
 
   /**
-   * Navigate to an internal `#anchor` link (TOC entries, bookmark links).
-   * Tries a real `<a name>` anchor in the currently mounted DOM first, then
-   * resolves the bookmark's target paragraph through the Document API and
-   * scrolls to that paragraph by its `paraId` — not to a bookmark-marker
-   * element, which layout-engine measuring may have excluded from paint.
-   *
-   * In editing/suggesting mode (`placeCaret`), also moves the caret to the
-   * start of the resolved target paragraph, matching V1's `goToAnchor`.
-   *
-   * If the paragraph isn't mounted (the v2 layout engine only mounts a
-   * sliding window of pages), asks the host to reveal it:
-   *  - In editing/suggesting mode, `pageMetrics.revealBodyTarget` deep-jumps
-   *    into unmounted pages and resolves once the target is painted. Any
-   *    rejection here OTHER than `editing-not-mounted` is a real failure of
-   *    this strong, paint-confirmed path and is left as a no-op rather than
-   *    silently degrading to the weaker path below.
-   *  - In viewing mode the host is mounted in "review" mode, where
-   *    `revealBodyTarget` always rejects with reason `editing-not-mounted`
-   *    (or is simply unpublished); only then falls back to
-   *    `pageIndexForBodyTarget` + `scrollToPage` (neither gated on mount
-   *    mode) and polls for paint, since neither returns a paint-complete
-   *    promise.
-   *
-   * Out of scope: bookmarks outside the body story (headers/footers/
-   * footnotes) — `revealBodyTarget`/`pageIndexForBodyTarget` are body-only.
+   * Navigate to a body bookmark through its model address. A mounted-anchor
+   * fallback is reserved for runtimes without a callable bookmark model.
    * @param {string | null | undefined} anchorUrl
    * @param {{ placeCaret?: boolean }} [options]
    */
   async function navigateToAnchor(anchorUrl, { placeCaret = false } = {}) {
     if (typeof anchorUrl !== 'string' || !anchorUrl.startsWith('#')) return;
     const anchorName = anchorUrl.slice(1);
-    const escapedAnchorName = cssEscape(anchorName);
-
-    const mountedAnchor = findMountedAnchor(getUi()?.viewport?.getHost?.() ?? null, escapedAnchorName);
-    if (mountedAnchor) {
-      scrollToElement(mountedAnchor);
-      return;
-    }
 
     /** @type {LinkPopoverDocumentApi | null | undefined} */
     const doc = getActiveEditor()?.doc;
+    const bookmarkGet = doc?.bookmarks?.get;
+    if (typeof bookmarkGet !== 'function') {
+      const mountedAnchor = findMountedAnchor(getUi()?.viewport?.getHost?.() ?? null, cssEscape(anchorName));
+      if (mountedAnchor) scrollToElement(mountedAnchor, { block: 'start', behavior: 'instant' });
+      return;
+    }
+
     /** @type {BookmarkGetResult | null} */
     let bookmark = null;
     try {
       bookmark = await Promise.resolve(
-        doc?.bookmarks?.get?.({ target: { kind: 'entity', entityType: 'bookmark', name: anchorName } }),
+        bookmarkGet.call(doc.bookmarks, {
+          target: { kind: 'entity', entityType: 'bookmark', name: anchorName },
+        }),
       );
       bookmark ??= null;
     } catch {
-      bookmark = null;
+      return;
     }
     const story = bookmark?.address?.story;
     if (story && story.storyType !== 'body') return;
     const blockId = bookmark?.range?.from?.blockId;
     if (typeof blockId !== 'string') return;
 
-    // Move the caret to the heading first, before any scroll. Placing it after
-    // an in-flight `scrollToElement` races the render surface's scroll gating
-    // and snaps the viewport back to the top; done first (focus uses
-    // `preventScroll`) it is inert, and the scroll below then wins.
     if (placeCaret) await placeCaretAtHeadingStart(blockId);
 
-    const mountedParagraph = findPaintedParagraphByParaId(getUi()?.viewport?.getHost?.() ?? null, blockId);
-    if (mountedParagraph) {
-      scrollToElement(mountedParagraph);
-      return;
-    }
-
-    const pageMetrics = getActiveEditor()?.pageMetrics;
-    const revealBodyTarget =
-      /** @type {((input: { paraId: string }) => Promise<RevealBodyTargetResult>) | undefined} */ (
-        pageMetrics?.revealBodyTarget
-      );
-    let revealResult;
+    const viewport = getUi()?.viewport;
+    const scrollIntoView = viewport?.scrollIntoView;
+    if (typeof scrollIntoView !== 'function') return;
     try {
-      revealResult = await revealBodyTarget?.({ paraId: blockId });
+      await Promise.resolve(
+        scrollIntoView.call(viewport, {
+          target: { kind: 'text', blockId, range: { start: 0, end: 0 } },
+          block: 'start',
+          behavior: 'instant',
+        }),
+      );
     } catch {
-      revealResult = undefined;
+      // The model viewport result is authoritative; do not retry via stale DOM.
     }
-    if (revealResult?.status === 'revealed') {
-      const revealedParagraph = findPaintedParagraphByParaId(getUi()?.viewport?.getHost?.() ?? null, blockId);
-      if (revealedParagraph) scrollToElement(revealedParagraph);
-      return;
-    }
-
-    // Only fall back to the weaker mode-agnostic page-jump primitives when
-    // `revealBodyTarget` was never a viable path to begin with — either it
-    // isn't published (no `pageMetrics`), or the host rejected specifically
-    // because this is viewing mode (`editing-not-mounted`, the host mounts
-    // in "review" mode there). Any OTHER rejection reason in editing mode
-    // (e.g. `target-paragraph-not-mounted`, coverage/timeout reasons) is a
-    // real failure of the strong (paint-confirmed) path and must not
-    // silently degrade into the weaker scroll-and-poll path.
-    if (revealBodyTarget && revealResult?.reason !== 'editing-not-mounted') return;
-
-    const pageIndexForBodyTarget = /** @type {((input: { paraId: string }) => number | null) | undefined} */ (
-      pageMetrics?.pageIndexForBodyTarget
-    );
-    const scrollToPage = /** @type {((pageIndex: number) => boolean) | undefined} */ (pageMetrics?.scrollToPage);
-    const pageIndex = pageIndexForBodyTarget?.({ paraId: blockId });
-    if (typeof pageIndex !== 'number' || !scrollToPage?.(pageIndex)) return;
-
-    const revealedByScroll = await pollForElement(() =>
-      findPaintedParagraphByParaId(getUi()?.viewport?.getHost?.() ?? null, blockId),
-    );
-    if (revealedByScroll) scrollToElement(revealedByScroll);
   }
 
   /**

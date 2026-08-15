@@ -142,8 +142,11 @@ export interface ScrollIntoViewInput {
   target: TextAddress | TextTarget | EntityAddress;
   /** Alignment within the viewport. Defaults to `'center'`. */
   block?: 'start' | 'center' | 'end' | 'nearest';
-  /** Scroll behavior. Defaults to `'smooth'`. */
-  behavior?: 'auto' | 'smooth';
+  /**
+   * Scroll behavior. Defaults to `'smooth'`. `'auto'` follows the computed
+   * CSS `scroll-behavior`; `'instant'` always moves without animation.
+   */
+  behavior?: 'auto' | 'instant' | 'smooth';
 }
 
 /**
