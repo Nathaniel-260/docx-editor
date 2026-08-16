@@ -47,8 +47,12 @@ The limits are deliberate. Arbitrary CSS, embedded active content, and full DOCX
 
 ## Projection and persistence
 
-Direct changes are immediately part of the document. The shared contract names `redline`, `final`, and `original` review projections; this inbound API creates review markup that can be accepted or rejected through the tracked-changes API. Outbound HTML/Markdown projection for those views is deferred to SD-4241. Save and reopen the DOCX before treating a workflow as complete.
+Direct changes are immediately part of the document. This inbound API creates review markup that can be accepted or
+rejected through the tracked-changes API. Detailed outbound HTML and Markdown reads can then project `redline`, `final`,
+or `original` views. Save and reopen the DOCX before treating a mutation workflow as complete.
 
-Standalone outbound conversion of an `SDFragment` to HTML or Markdown is not part of this inbound API. Document reads such as `getHtml()` and `getMarkdown()` have their own output contract.
+Standalone outbound conversion of an `SDFragment` to HTML or Markdown is not part of this inbound API. Document reads
+have a separate [HTML and Markdown projection contract](/document-api/output-projections), including compact string
+getters and detailed reads with review, fidelity, and provenance metadata.
 
 For target discovery, start with [query content](/document-api/query-content). For failure handling, see [receipts and errors](/document-api/receipts-and-errors). The generated [HTML conversion reference](/document-api/reference/html-to-fragment), [insert reference](/document-api/reference/insert), and [replace reference](/document-api/reference/replace) list the complete shapes.

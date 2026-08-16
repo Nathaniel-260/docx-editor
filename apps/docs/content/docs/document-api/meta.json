@@ -5,6 +5,7 @@
     "mental-model",
     "application-data",
     "query-content",
+    "output-projections",
     "rich-content",
     "replace-delete-content",
     "mutation-plans",

@@ -299,12 +299,32 @@ function makeAdapters() {
       diagnostics: [],
     })),
   };
+  const projectionResult = {
+    content: '<p>Hello</p>',
+    status: 'success' as const,
+    reviewMode: 'final' as const,
+    evaluatedRevision: 'r1',
+    story: { kind: 'story' as const, storyType: 'body' as const },
+    scope: { kind: 'story' as const },
+    lossy: false,
+    diagnostics: [],
+    blocks: [],
+    annotations: [],
+  };
+  const projectHtmlAdapter = {
+    projectHtml: mock(async () => ({ ...projectionResult, format: 'html' as const })),
+  };
+  const projectMarkdownAdapter = {
+    projectMarkdown: mock(async () => ({ ...projectionResult, format: 'markdown' as const, content: 'Hello' })),
+  };
 
   const adapters: DocumentApiAdapters = {
     find: findAdapter,
     getNode: getNodeAdapter,
     getText: getTextAdapter,
     htmlToFragment: htmlToFragmentAdapter,
+    projectHtml: projectHtmlAdapter,
+    projectMarkdown: projectMarkdownAdapter,
     info: infoAdapter,
     capabilities: capabilitiesAdapter,
     comments: commentsAdapter,
@@ -320,7 +340,15 @@ function makeAdapters() {
     mutations: mutationsAdapter,
   };
 
-  return { adapters, findAdapter, writeAdapter, commentsAdapter, trackChangesAdapter, htmlToFragmentAdapter };
+  return {
+    adapters,
+    findAdapter,
+    writeAdapter,
+    commentsAdapter,
+    trackChangesAdapter,
+    htmlToFragmentAdapter,
+    projectHtmlAdapter,
+  };
 }
 
 describe('invoke', () => {
@@ -378,6 +406,16 @@ describe('invoke', () => {
       expect(() => api.invoke({ operationId: 'htmlToFragment', input: { html: '<p>Hello</p>' } })).toThrow(
         expect.objectContaining({ code: 'CAPABILITY_UNAVAILABLE' }),
       );
+    });
+
+    it('projectHtml: direct and invoke both infer and resolve the detailed result', async () => {
+      const { adapters, projectHtmlAdapter } = makeAdapters();
+      const api = createDocumentApi(adapters);
+      const input = { reviewMode: 'redline' as const, includeSourceMap: true };
+      const direct = api.projectHtml(input);
+      const invoked = api.invoke({ operationId: 'projectHtml', input });
+      await expect(invoked).resolves.toEqual(await direct);
+      expect(projectHtmlAdapter.projectHtml).toHaveBeenCalledWith(input);
     });
 
     it('insert: invoke forwards options through to adapter-backed execution', () => {

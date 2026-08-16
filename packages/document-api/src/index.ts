@@ -43,6 +43,10 @@ export type {
 export { executeMarkdownToFragment } from './markdown-to-fragment/markdown-to-fragment.js';
 export type { HtmlToFragmentInput, HtmlToFragmentAdapter } from './html-to-fragment/html-to-fragment.js';
 export { executeHtmlToFragment } from './html-to-fragment/html-to-fragment.js';
+export type { ProjectHtmlAdapter } from './project-html/project-html.js';
+export { executeProjectHtml } from './project-html/project-html.js';
+export type { ProjectMarkdownAdapter } from './project-markdown/project-markdown.js';
+export { executeProjectMarkdown } from './project-markdown/project-markdown.js';
 export type {
   HistoryState,
   HistoryActionResult,
@@ -139,6 +143,9 @@ import type { SDDocument } from './types/fragment.js';
 import { executeGetText, type GetTextAdapter, type GetTextInput } from './get-text/get-text.js';
 import { executeGetMarkdown, type GetMarkdownAdapter, type GetMarkdownInput } from './get-markdown/get-markdown.js';
 import { executeGetHtml, type GetHtmlAdapter, type GetHtmlInput } from './get-html/get-html.js';
+import { executeProjectHtml, type ProjectHtmlAdapter } from './project-html/project-html.js';
+import { executeProjectMarkdown, type ProjectMarkdownAdapter } from './project-markdown/project-markdown.js';
+import type { ProjectHtmlInput, ProjectMarkdownInput, SDContentProjectionResult } from './types/content-projection.js';
 import { validateStoryLocator } from './validation/story-validator.js';
 import {
   executeMarkdownToFragment,
@@ -1821,6 +1828,8 @@ export interface DocumentApi {
    * Return the full document content as an HTML string.
    */
   getHtml(input: GetHtmlInput): string;
+  projectHtml(input: ProjectHtmlInput): Promise<SDContentProjectionResult<'html'>>;
+  projectMarkdown(input: ProjectMarkdownInput): Promise<SDContentProjectionResult<'markdown'>>;
   /**
    * Convert a Markdown string into an SDM/1 structural fragment.
    */
@@ -2039,6 +2048,8 @@ export interface DocumentApiAdapters {
   getText: GetTextAdapter;
   getMarkdown: GetMarkdownAdapter;
   getHtml: GetHtmlAdapter;
+  projectHtml?: ProjectHtmlAdapter;
+  projectMarkdown?: ProjectMarkdownAdapter;
   markdownToFragment: MarkdownToFragmentAdapter;
   htmlToFragment?: HtmlToFragmentAdapter;
   info: InfoAdapter;
@@ -2261,6 +2272,12 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
     },
     getHtml(input: GetHtmlInput): string {
       return executeGetHtml(adapters.getHtml, input);
+    },
+    projectHtml(input: ProjectHtmlInput): Promise<SDContentProjectionResult<'html'>> {
+      return executeProjectHtml(adapters.projectHtml, input);
+    },
+    projectMarkdown(input: ProjectMarkdownInput): Promise<SDContentProjectionResult<'markdown'>> {
+      return executeProjectMarkdown(adapters.projectMarkdown, input);
     },
     markdownToFragment(input: MarkdownToFragmentInput): SDMarkdownToFragmentResult {
       return executeMarkdownToFragment(adapters.markdownToFragment, input);

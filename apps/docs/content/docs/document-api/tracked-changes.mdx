@@ -64,6 +64,18 @@ console.log({
 
 The list searches the document body by default. Pass `in: 'all'` when the workflow must include supported headers, footers, footnotes, and endnotes.
 
+## Read final, original, or redline output
+
+Use `projectHtml()` or `projectMarkdown()` when a workflow needs a serialized review view rather than the tracked-change
+catalog. `final` emits accepted-side content, `original` emits the before-side, and `redline` identifies representable
+before/after content with the same logical change IDs returned here. The view applies to structural paragraph, list, and
+table changes as well as inline text. Moves distinguish source and destination; formatting-only changes emit one content
+copy with an annotation carrier.
+
+The projection result records annotations removed by the selected view instead of silently dropping their identity.
+Source targets and maps use tracked coordinates and are valid only at `evaluatedRevision`. Read the
+[HTML and Markdown projection guide](/document-api/output-projections) before saving a map for a later review action.
+
 ## Accept or reject one change
 
 Decide against the logical change ID, and guard the decision with the revision returned by the list operation:

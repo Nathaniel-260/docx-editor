@@ -12,7 +12,7 @@ It is still the default. A `createAgentToolkit()` call that omits `preset` gets 
 
 | Tool                     | Covers                                                               |
 | ------------------------ | -------------------------------------------------------------------- |
-| `superdoc_get_content`   | Read the document as text, markdown, HTML, blocks, or metadata       |
+| `superdoc_get_content`   | Read compact content or detailed HTML/Markdown projections           |
 | `superdoc_search`        | Find content and return stable targets. Takes `select`, not `action` |
 | `superdoc_edit`          | Insert, replace, and delete text, plus undo and redo                 |
 | `superdoc_format`        | Inline and paragraph formatting, styles, direction, and flow         |
@@ -38,6 +38,12 @@ for (const tool of catalog.tools) {
 ```
 
 The [Document API reference](/document-api/reference) documents the operations these tools dispatch to.
+
+For review-aware extraction or citation-backed RAG input, use `html_projection` or `markdown_projection` on
+`superdoc_get_content`. Those actions expose review mode, scope, diagnostics, annotation status, and an optional source
+map. Compact `html` and `markdown` actions still return strings. Source-map targets use tracked coordinates and are valid
+only at the returned `evaluatedRevision`; discard them after any mutation. See
+[Project HTML and Markdown](/document-api/output-projections) for the fidelity and omitted-anchor rules.
 
 ## Choosing between them
 

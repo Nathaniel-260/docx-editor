@@ -154,7 +154,8 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
       'Read document content in various formats. Call this first in any workflow to understand document structure before making edits. ' +
       'Action "blocks" returns structured block data with nodeId, nodeType, textPreview, optional full text when includeText:true, formatting properties (fontFamily, fontSize, color, bold, underline, alignment), and ref handles for immediate use with superdoc_edit or superdoc_format. ' +
       'When you need to evaluate or rewrite existing paragraphs or clauses, prefer action "blocks" with includeText:true so you can identify the correct block and then target it by nodeId. ' +
-      'Action "text" and "markdown" return the full document as plain text or Markdown. Action "html" returns HTML. ' +
+      'Actions "text", "markdown", and "html" return compact strings. Actions "markdown_projection" and "html_projection" return detailed async projections with review modes, scopes, diagnostics, annotations, block maps, and optional source maps. ' +
+      'Projection source targets use tracked coordinates and are valid only at evaluatedRevision; after any mutation, reproject before using them. Treat omitted or partially emitted annotations according to their status instead of guessing an anchor from rendered text. ' +
       'Action "info" returns document metadata: word count, paragraph count, page count, outline, available styles, and capability flags. ' +
       'The "blocks" action supports pagination via "offset" and "limit", and filtering via "nodeTypes". Other actions ignore these parameters. ' +
       'This tool never modifies the document. ' +
@@ -165,6 +166,13 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
       { action: 'blocks', offset: 0, limit: 20, nodeTypes: ['heading', 'paragraph'] },
       { action: 'text' },
       { action: 'info' },
+      { action: 'html_projection', reviewMode: 'redline', includeSourceMap: true },
+      {
+        action: 'markdown_projection',
+        reviewMode: 'original',
+        scope: { kind: 'block', nodeType: 'paragraph', nodeId: 'paragraph-id' },
+        includeSourceMap: true,
+      },
     ],
   },
   edit: {
@@ -559,6 +567,7 @@ function readOperation(
     possibleFailureCodes?: readonly ReceiptFailureCode[];
     deterministicTargetResolution?: boolean;
     remediationHints?: readonly string[];
+    returnsPromise?: boolean;
   } = {},
 ): CommandStaticMetadata {
   return {
@@ -573,6 +582,7 @@ function readOperation(
     },
     deterministicTargetResolution: options.deterministicTargetResolution ?? true,
     remediationHints: options.remediationHints,
+    returnsPromise: options.returnsPromise,
   };
 }
 function mutationOperation(options: {
@@ -829,6 +839,34 @@ export const OPERATION_DEFINITIONS = {
     referenceGroup: 'core',
     intentGroup: 'get_content',
     intentAction: 'html',
+  },
+  projectMarkdown: {
+    memberPath: 'projectMarkdown',
+    description: 'Project document content as Markdown with review, scope, diagnostics, and provenance metadata.',
+    expectedResult: 'Returns a Promise resolving to a detailed Markdown content projection result.',
+    requiresDocumentContext: true,
+    metadata: readOperation({
+      throws: ['INVALID_INPUT', 'CAPABILITY_UNAVAILABLE', ...T_STORY],
+      returnsPromise: true,
+    }),
+    referenceDocPath: 'project-markdown.mdx',
+    referenceGroup: 'core',
+    intentGroup: 'get_content',
+    intentAction: 'markdown_projection',
+  },
+  projectHtml: {
+    memberPath: 'projectHtml',
+    description: 'Project document content as HTML with review, scope, diagnostics, and provenance metadata.',
+    expectedResult: 'Returns a Promise resolving to a detailed HTML content projection result.',
+    requiresDocumentContext: true,
+    metadata: readOperation({
+      throws: ['INVALID_INPUT', 'CAPABILITY_UNAVAILABLE', ...T_STORY],
+      returnsPromise: true,
+    }),
+    referenceDocPath: 'project-html.mdx',
+    referenceGroup: 'core',
+    intentGroup: 'get_content',
+    intentAction: 'html_projection',
   },
   markdownToFragment: {
     memberPath: 'markdownToFragment',

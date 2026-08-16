@@ -393,6 +393,28 @@ const FIND_RESULT: SDFindResult = {
 };
 
 describe('createDocumentApi', () => {
+  it('delegates detailed projection methods through optional root adapter slots', async () => {
+    const htmlResult = {
+      format: 'html' as const,
+      content: '<p>Hello</p>',
+      status: 'success' as const,
+      reviewMode: 'final' as const,
+      evaluatedRevision: 'r1',
+      story: { kind: 'story' as const, storyType: 'body' as const },
+      scope: { kind: 'story' as const },
+      lossy: false,
+      diagnostics: [],
+      blocks: [],
+      annotations: [],
+    };
+    const projectHtml = { projectHtml: mock(async () => htmlResult) };
+    const api = createDocumentApi({ projectHtml } as unknown as DocumentApiAdapters);
+
+    await expect(api.projectHtml({})).resolves.toBe(htmlResult);
+    expect(projectHtml.projectHtml).toHaveBeenCalledWith({});
+    expect(() => api.projectMarkdown({})).toThrow(expect.objectContaining({ code: 'CAPABILITY_UNAVAILABLE' }));
+  });
+
   it('delegates htmlToFragment through the optional root adapter slot', () => {
     const result = {
       fragment: [{ kind: 'paragraph' as const, paragraph: { inlines: [] } }],

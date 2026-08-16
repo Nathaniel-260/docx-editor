@@ -100,6 +100,13 @@ describe('isTextTarget', () => {
     ).toBe(true);
   });
 
+  it('accepts visible and tracked coordinate spaces and rejects unknown values', () => {
+    const target = { kind: 'text', segments: [{ blockId: 'p1', range: { start: 0, end: 5 } }] };
+    expect(isTextTarget({ ...target, coordinateSpace: 'visible' })).toBe(true);
+    expect(isTextTarget({ ...target, coordinateSpace: 'tracked' })).toBe(true);
+    expect(isTextTarget({ ...target, coordinateSpace: 'screen' })).toBe(false);
+  });
+
   it('returns false for wrong kind', () => {
     expect(
       isTextTarget({

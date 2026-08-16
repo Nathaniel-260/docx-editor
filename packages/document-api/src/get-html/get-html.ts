@@ -1,14 +1,14 @@
-import type { StoryLocator } from '../types/story.types.js';
-import { validateStoryLocator } from '../validation/story-validator.js';
-import { DocumentApiValidationError } from '../errors.js';
-import { isRecord } from '../validation-primitives.js';
+import type { SDProjectionReadInput } from '../types/content-projection.js';
+import { validateOptionalBoolean, validateProjectionReadInput } from '../content-projection/validation.js';
 
-export interface GetHtmlInput {
-  /** Restrict the read to a specific story. Omit for body (backward compatible). */
-  in?: StoryLocator;
+const GET_HTML_FIELDS = new Set(['in', 'reviewMode', 'scope', 'unflattenLists']);
+
+export interface GetHtmlInput extends SDProjectionReadInput {
   /**
-   * Convert SuperDoc's internal flat-list representation to proper nested
-   * `<ol>`/`<ul>` HTML. Defaults to `true`.
+   * Accepted for compatibility and ignored by V2. V2 always emits canonical
+   * nested semantic lists.
+   *
+   * @deprecated replaceWith=canonical nested V2 output compat-indefinitely=existing callers may keep passing the option
    */
   unflattenLists?: boolean;
 }
@@ -31,9 +31,7 @@ export interface GetHtmlAdapter {
  * @returns The full document content as an HTML string.
  */
 export function executeGetHtml(adapter: GetHtmlAdapter, input: GetHtmlInput): string {
-  if (!isRecord(input as unknown)) {
-    throw new DocumentApiValidationError('INVALID_INPUT', 'getHtml input must be a non-null object.');
-  }
-  validateStoryLocator(input.in, 'in');
+  validateProjectionReadInput(input, 'getHtml', GET_HTML_FIELDS);
+  validateOptionalBoolean(input.unflattenLists, 'unflattenLists', 'getHtml');
   return adapter.getHtml(input);
 }

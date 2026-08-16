@@ -576,7 +576,7 @@ test('the generated reference model mirrors the canonical operation inventory', 
   const operationPaths = Object.values(model.operations).map((operation) => operation.path);
 
   assert.deepEqual(modelOperationIds, [...contractOperationIds].sort());
-  assert.equal(modelOperationIds.length, 424);
+  assert.equal(modelOperationIds.length, 426);
   assert.equal(new Set(operationPaths).size, modelOperationIds.length);
   assert.equal(model.operations.formatRange.path, 'format/format-range');
   assert.equal(model.operations['format.apply'].path, 'format/apply');

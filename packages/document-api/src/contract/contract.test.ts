@@ -100,6 +100,20 @@ function expectBroadSDFragmentSchema(schema: ContractTestSchemaShape | undefined
 }
 
 describe('document-api contract catalog', () => {
+  it('publishes the complete outbound projection DTO vocabulary without changing operation returns', () => {
+    const schemas = buildInternalContractSchemas();
+    const defs = schemas.$defs as Record<string, ContractTestSchemaShape>;
+    expect(defs.TextTarget?.properties?.coordinateSpace).toEqual({ $ref: '#/$defs/TextCoordinateSpace' });
+    expect(defs.SDProjectionFormat?.enum).toEqual(['html', 'markdown']);
+    expect(defs.SDProjectionReviewMode?.enum).toEqual(['final', 'original', 'redline']);
+    expect(defs.SDProjectionStatus?.enum).toEqual(['success', 'warning', 'failed']);
+    expect(defs.SDProjectionBlockMapEntry?.oneOf).toHaveLength(2);
+    expect(defs.SDProjectionSourceMapSyntheticEntry?.oneOf).toHaveLength(2);
+    expect(defs.SDContentProjectionResult?.required).toContain('evaluatedRevision');
+    expect(schemas.operations.getHtml.output).toEqual({ type: 'string' });
+    expect(schemas.operations.getMarkdown.output).toEqual({ type: 'string' });
+  });
+
   it('keeps operation ids explicit and format-valid', () => {
     expect([...new Set(OPERATION_IDS)]).toHaveLength(OPERATION_IDS.length);
     for (const operationId of OPERATION_IDS) {
@@ -1441,12 +1455,9 @@ describe('document-api contract catalog', () => {
     }
   });
 
-  it('marks exactly templates.apply as the async (returnsPromise) operation', () => {
-    // SD-3247: templates.apply is the only async Document API operation. This
-    // guards the narrow returnsPromise metadata flag from drifting — any new
-    // async operation must update this list intentionally.
+  it('marks exactly the Promise-returning operations as async', () => {
     const asyncOps = OPERATION_IDS.filter((id) => COMMAND_CATALOG[id].returnsPromise === true).sort();
-    expect(asyncOps).toEqual(['templates.apply']);
+    expect(asyncOps).toEqual(['projectHtml', 'projectMarkdown', 'templates.apply']);
 
     // returnsPromise is a strict boolean signal: it is either true or absent.
     for (const id of OPERATION_IDS) {

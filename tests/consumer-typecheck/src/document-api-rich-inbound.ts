@@ -3,6 +3,12 @@ import type { BrowserDocumentApi, DocumentApi } from 'superdoc/ui';
 declare const doc: DocumentApi;
 declare const browserDoc: BrowserDocumentApi;
 
+const compactHtml: string = doc.getHtml({});
+const compactMarkdown: string = doc.getMarkdown({});
+const invokedCompactHtml: string = doc.invoke({ operationId: 'getHtml', input: {} });
+const invokedCompactMarkdown: string = doc.invoke({ operationId: 'getMarkdown', input: {} });
+void [compactHtml, compactMarkdown, invokedCompactHtml, invokedCompactMarkdown];
+
 const selection = {
   kind: 'selection' as const,
   start: { kind: 'text' as const, blockId: 'paragraph-1', offset: 0 },

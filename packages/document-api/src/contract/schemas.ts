@@ -22,6 +22,14 @@ import {
   SD_CONVERSION_DISPOSITIONS,
   SD_CONVERSION_FORMATS,
 } from '../types/sd-contract.js';
+import {
+  SD_PROJECTION_CONSTRUCTS,
+  SD_PROJECTION_DIAGNOSTIC_CODES,
+  SD_PROJECTION_DISPOSITIONS,
+  SD_PROJECTION_FORMATS,
+  SD_PROJECTION_REVIEW_MODES,
+  SD_PROJECTION_STATUSES,
+} from '../types/content-projection.js';
 import { SD_CONVERSION_FRAGMENT_SCHEMA, SD_CONVERSION_FRAGMENT_SCHEMA_DEFS } from './sd-fragment-schema.js';
 type JsonSchema = Record<string, unknown>;
 const trackChangeTypeValues = [
@@ -300,8 +308,168 @@ const SHARED_DEFS: Record<string, JsonSchema> = {
       kind: { const: 'text' },
       segments: { type: 'array', items: ref('TextSegment'), minItems: 1 },
       story: ref('StoryLocator'),
+      coordinateSpace: ref('TextCoordinateSpace'),
     },
     ['kind', 'segments'],
+  ),
+  SDProjectionFormat: { enum: [...SD_PROJECTION_FORMATS] },
+  SDProjectionReviewMode: { enum: [...SD_PROJECTION_REVIEW_MODES] },
+  SDProjectionStatus: { enum: [...SD_PROJECTION_STATUSES] },
+  SDProjectionDisposition: { enum: [...SD_PROJECTION_DISPOSITIONS] },
+  SDProjectionConstruct: { enum: [...SD_PROJECTION_CONSTRUCTS] },
+  SDProjectionScope: {
+    oneOf: [ref('BlockNodeAddress'), ref('SelectionTarget')],
+  },
+  SDResolvedProjectionScope: {
+    oneOf: [
+      objectSchema({ kind: { const: 'story' } }, ['kind']),
+      objectSchema({ kind: { const: 'block' }, target: ref('BlockNodeAddress') }, ['kind', 'target']),
+      objectSchema({ kind: { const: 'range' }, target: ref('SelectionTarget') }, ['kind', 'target']),
+    ],
+  },
+  SDProjectionBlockMapEntry: {
+    oneOf: [
+      objectSchema(
+        {
+          nodeType: { enum: [...BLOCK_NODE_TYPES] },
+          output: ref('Range'),
+          parentBlockId: { type: 'string' },
+          changeIds: arraySchema({ type: 'string' }),
+          commentIds: arraySchema({ type: 'string' }),
+          identity: { const: 'public' },
+          blockId: { type: 'string' },
+        },
+        ['nodeType', 'output', 'identity', 'blockId'],
+      ),
+      objectSchema(
+        {
+          nodeType: { enum: [...BLOCK_NODE_TYPES] },
+          output: ref('Range'),
+          parentBlockId: { type: 'string' },
+          changeIds: arraySchema({ type: 'string' }),
+          commentIds: arraySchema({ type: 'string' }),
+          identity: { const: 'unavailable' },
+          identityUnavailableReason: { const: 'positionDerivedFallback' },
+        },
+        ['nodeType', 'output', 'identity', 'identityUnavailableReason'],
+      ),
+    ],
+  },
+  SDProjectionDiagnostic: objectSchema(
+    {
+      code: { enum: [...SD_PROJECTION_DIAGNOSTIC_CODES] },
+      severity: { enum: ['error', 'warning', 'info'] },
+      message: { type: 'string' },
+      path: diagnosticPathSchema,
+      construct: ref('SDProjectionConstruct'),
+      disposition: ref('SDProjectionDisposition'),
+      lossy: { type: 'boolean' },
+      source: objectSchema(
+        {
+          story: ref('StoryLocator'),
+          blockId: { type: 'string' },
+          range: ref('Range'),
+          coordinateSpace: { const: 'tracked' },
+          changeIds: arraySchema({ type: 'string' }),
+          commentIds: arraySchema({ type: 'string' }),
+        },
+        ['story'],
+      ),
+      output: objectSchema({ format: ref('SDProjectionFormat'), range: ref('Range') }, ['format']),
+    },
+    ['code', 'severity', 'message', 'construct', 'disposition', 'lossy', 'source'],
+  ),
+  SDProjectionSourceMapTextEntry: objectSchema(
+    {
+      kind: { const: 'text' },
+      output: ref('Range'),
+      source: ref('TextTarget'),
+      blockId: { type: 'string' },
+      changeIds: arraySchema({ type: 'string' }),
+      commentIds: arraySchema({ type: 'string' }),
+    },
+    ['kind', 'output', 'source', 'blockId'],
+  ),
+  SDProjectionSourceMapSyntheticEntry: {
+    oneOf: [
+      objectSchema(
+        {
+          kind: { const: 'synthetic' },
+          output: ref('Range'),
+          role: { enum: ['listLabel', 'placeholder'] },
+          changeIds: arraySchema({ type: 'string' }),
+          commentIds: arraySchema({ type: 'string' }),
+          identity: { const: 'public' },
+          blockId: { type: 'string' },
+        },
+        ['kind', 'output', 'role', 'identity', 'blockId'],
+      ),
+      objectSchema(
+        {
+          kind: { const: 'synthetic' },
+          output: ref('Range'),
+          role: { enum: ['listLabel', 'placeholder'] },
+          changeIds: arraySchema({ type: 'string' }),
+          commentIds: arraySchema({ type: 'string' }),
+          identity: { const: 'unavailable' },
+          identityUnavailableReason: { const: 'positionDerivedFallback' },
+        },
+        ['kind', 'output', 'role', 'identity', 'identityUnavailableReason'],
+      ),
+    ],
+  },
+  SDProjectionSourceMap: objectSchema(
+    {
+      version: { const: 'sd-projection-source-map/1' },
+      outputCoordinateSpace: { const: 'utf16' },
+      sourceCoordinateSpace: { const: 'tracked' },
+      entries: arraySchema({
+        oneOf: [ref('SDProjectionSourceMapTextEntry'), ref('SDProjectionSourceMapSyntheticEntry')],
+      }),
+    },
+    ['version', 'outputCoordinateSpace', 'sourceCoordinateSpace', 'entries'],
+  ),
+  SDProjectionAnnotation: objectSchema(
+    {
+      kind: { enum: ['trackedChange', 'comment'] },
+      id: { type: 'string' },
+      blockIds: arraySchema({ type: 'string' }),
+      sourceTarget: ref('TextTarget'),
+      outputRanges: arraySchema(ref('Range')),
+      status: { enum: ['emitted', 'partiallyEmitted', 'omitted'] },
+      omittedReason: { enum: ['reviewMode', 'unsupported'] },
+      side: { enum: ['inserted', 'deleted', 'source', 'destination', 'formatting'] },
+    },
+    ['kind', 'id', 'blockIds', 'outputRanges', 'status'],
+  ),
+  SDContentProjectionResult: objectSchema(
+    {
+      format: ref('SDProjectionFormat'),
+      content: { type: 'string' },
+      status: ref('SDProjectionStatus'),
+      reviewMode: ref('SDProjectionReviewMode'),
+      evaluatedRevision: { type: 'string' },
+      story: ref('StoryLocator'),
+      scope: ref('SDResolvedProjectionScope'),
+      lossy: { type: 'boolean' },
+      diagnostics: arraySchema(ref('SDProjectionDiagnostic')),
+      blocks: arraySchema(ref('SDProjectionBlockMapEntry')),
+      annotations: arraySchema(ref('SDProjectionAnnotation')),
+      sourceMap: ref('SDProjectionSourceMap'),
+    },
+    [
+      'format',
+      'content',
+      'status',
+      'reviewMode',
+      'evaluatedRevision',
+      'story',
+      'scope',
+      'lossy',
+      'diagnostics',
+      'blocks',
+      'annotations',
+    ],
   ),
   // -- Selection-based targeting --
   SelectionEdgeNodeAddress: objectSchema(
@@ -3688,18 +3856,44 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
   getMarkdown: {
     input: objectSchema({
       in: storyLocatorSchema,
+      reviewMode: ref('SDProjectionReviewMode'),
+      scope: ref('SDProjectionScope'),
     }),
     output: { type: 'string' },
   },
   getHtml: {
     input: objectSchema({
       in: storyLocatorSchema,
+      reviewMode: ref('SDProjectionReviewMode'),
+      scope: ref('SDProjectionScope'),
       unflattenLists: {
         type: 'boolean',
-        description: 'When true, flattens nested list structures in output. Default: false.',
+        description: 'Deprecated and ignored by V2. V2 always emits canonical nested semantic lists.',
       },
     }),
     output: { type: 'string' },
+  },
+  projectMarkdown: {
+    input: objectSchema({
+      in: storyLocatorSchema,
+      reviewMode: ref('SDProjectionReviewMode'),
+      scope: ref('SDProjectionScope'),
+      includeSourceMap: { type: 'boolean' },
+    }),
+    output: {
+      allOf: [ref('SDContentProjectionResult'), { type: 'object', properties: { format: { const: 'markdown' } } }],
+    },
+  },
+  projectHtml: {
+    input: objectSchema({
+      in: storyLocatorSchema,
+      reviewMode: ref('SDProjectionReviewMode'),
+      scope: ref('SDProjectionScope'),
+      includeSourceMap: { type: 'boolean' },
+    }),
+    output: {
+      allOf: [ref('SDContentProjectionResult'), { type: 'object', properties: { format: { const: 'html' } } }],
+    },
   },
   markdownToFragment: {
     input: objectSchema({ markdown: { type: 'string' } }, ['markdown']),

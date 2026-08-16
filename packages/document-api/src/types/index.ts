@@ -29,3 +29,4 @@ export * from './adapter-result.js';
 export * from './structural-input.js';
 export * from './story.types.js';
 export * from './clipboard.js';
+export * from './content-projection.js';

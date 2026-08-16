@@ -21,6 +21,16 @@ describe('executeGetMarkdown', () => {
     expect(adapter.getMarkdown).not.toHaveBeenCalled();
   });
 
+  it('passes review and scope options while preserving the string return', () => {
+    const adapter: GetMarkdownAdapter = { getMarkdown: mock(() => 'old') };
+    const input = {
+      reviewMode: 'redline',
+      scope: { kind: 'block', nodeType: 'paragraph', nodeId: 'P1' },
+    } as const;
+    expect(executeGetMarkdown(adapter, input)).toBe('old');
+    expect(adapter.getMarkdown).toHaveBeenCalledWith(input);
+  });
+
   it('allows valid story locator', () => {
     const adapter: GetMarkdownAdapter = { getMarkdown: mock(() => 'md') };
 

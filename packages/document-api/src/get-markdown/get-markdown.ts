@@ -1,12 +1,9 @@
-import type { StoryLocator } from '../types/story.types.js';
-import { validateStoryLocator } from '../validation/story-validator.js';
-import { DocumentApiValidationError } from '../errors.js';
-import { isRecord } from '../validation-primitives.js';
+import type { SDProjectionReadInput } from '../types/content-projection.js';
+import { validateProjectionReadInput } from '../content-projection/validation.js';
 
-export interface GetMarkdownInput {
-  /** Restrict the read to a specific story. Omit for body (backward compatible). */
-  in?: StoryLocator;
-}
+const GET_MARKDOWN_FIELDS = new Set(['in', 'reviewMode', 'scope']);
+
+export interface GetMarkdownInput extends SDProjectionReadInput {}
 
 /**
  * Engine-specific adapter that the getMarkdown API delegates to.
@@ -26,9 +23,6 @@ export interface GetMarkdownAdapter {
  * @returns The full document content as a Markdown-formatted string.
  */
 export function executeGetMarkdown(adapter: GetMarkdownAdapter, input: GetMarkdownInput): string {
-  if (!isRecord(input as unknown)) {
-    throw new DocumentApiValidationError('INVALID_INPUT', 'getMarkdown input must be a non-null object.');
-  }
-  validateStoryLocator(input.in, 'in');
+  validateProjectionReadInput(input, 'getMarkdown', GET_MARKDOWN_FIELDS);
   return adapter.getMarkdown(input);
 }

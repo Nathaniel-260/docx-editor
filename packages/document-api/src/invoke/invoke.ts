@@ -57,6 +57,8 @@ export function buildDispatchTable(api: DocumentApi): TypedDispatchTable {
     getText: (input) => api.getText(input),
     getMarkdown: (input) => api.getMarkdown(input),
     getHtml: (input) => api.getHtml(input),
+    projectMarkdown: (input) => api.projectMarkdown(input),
+    projectHtml: (input) => api.projectHtml(input),
     markdownToFragment: (input) => api.markdownToFragment(input),
     htmlToFragment: (input) => api.htmlToFragment(input),
     info: (input) => api.info(input),

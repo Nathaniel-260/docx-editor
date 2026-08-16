@@ -80,6 +80,77 @@ describe('computeWordListMarker', () => {
     expect(lvl2third.listRenderingAttrs.markerText).toBe('1.1.3');
   });
 
+  it('renders every legal multi-level placeholder as decimal', () => {
+    const manager = createNumberingManager();
+    computeWordListMarker({
+      definition: baseDef({
+        ilvl: 0,
+        numFmt: 'decimal',
+        levelNumberingFormats: [{ ilvl: 0, numFmt: 'decimal' }],
+      }),
+      manager,
+      paragraphOrdinal: 1,
+    });
+    const result = computeWordListMarker({
+      definition: baseDef({
+        ilvl: 1,
+        lvlText: '%1(%2)',
+        numFmt: 'lowerLetter',
+        isLegal: true,
+        levelNumberingFormats: [
+          { ilvl: 0, numFmt: 'decimal' },
+          { ilvl: 1, numFmt: 'lowerLetter' },
+        ],
+      }),
+      manager,
+      paragraphOrdinal: 2,
+    });
+    expect(result.path).toEqual([1, 1]);
+    expect(result.listRenderingAttrs.markerText).toBe('1(1)');
+  });
+
+  it('preserves none levels and resolves bullet templates under legal numbering', () => {
+    const hiddenAncestor = computeWordListMarker({
+      definition: baseDef({
+        ilvl: 1,
+        lvlText: '%1.%2',
+        numFmt: 'lowerLetter',
+        isLegal: true,
+        levelNumberingFormats: [
+          { ilvl: 0, numFmt: 'none' },
+          { ilvl: 1, numFmt: 'lowerLetter' },
+        ],
+      }),
+      manager: createNumberingManager(),
+      paragraphOrdinal: 1,
+    });
+    expect(hiddenAncestor.listRenderingAttrs.markerText).toBe('.1');
+
+    const legalBullet = computeWordListMarker({
+      definition: baseDef({
+        lvlText: '%1)',
+        numFmt: 'bullet',
+        isLegal: true,
+        levelNumberingFormats: [{ ilvl: 0, numFmt: 'bullet' }],
+      }),
+      manager: createNumberingManager(),
+      paragraphOrdinal: 1,
+    });
+    expect(legalBullet.listRenderingAttrs.markerText).toBe('1)');
+
+    const legalGlyph = computeWordListMarker({
+      definition: baseDef({
+        lvlText: '',
+        numFmt: 'bullet',
+        isLegal: true,
+        levelNumberingFormats: [{ ilvl: 0, numFmt: 'bullet' }],
+      }),
+      manager: createNumberingManager(),
+      paragraphOrdinal: 1,
+    });
+    expect(legalGlyph.listRenderingAttrs.markerText).toBe('•');
+  });
+
   it('restarts nested counters when the parent level fires (v1 parity)', () => {
     const manager = createNumberingManager();
     const lvl0 = baseDef({ ilvl: 0, lvlText: '%1.' });

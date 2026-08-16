@@ -37,3 +37,16 @@ The reply is another document mutation. Inspect its receipt before resolving the
 List with `includeResolved: true` when the application needs to show both states. A resolved thread remains in the DOCX unless it is explicitly deleted.
 
 Use [comments in the built-in UI](/editor/built-in-ui/comments) for the standard human workflow. Use [a custom comments UI](/editor/custom-ui/comments) when your application owns the thread list and navigation.
+
+## Follow comments through HTML or Markdown
+
+Detailed HTML and Markdown projections include one annotation record per in-scope comment. A discontinuous comment keeps
+one public ID and can have several source or output ranges. The record is `partiallyEmitted` when only some segments
+survive the chosen scope.
+
+Review mode also affects anchors. A comment attached only to inserted content is `omitted` in the original view; one
+attached only to deleted content is `omitted` in the final view. An omitted record has no output range and reports why.
+Do not search nearby serialized text and invent a replacement anchor. Use the record's tracked `sourceTarget` when it is
+available, keep it with the projection's `evaluatedRevision`, and reproject after a mutation.
+
+See [Project HTML and Markdown](/document-api/output-projections) for the source-map and citation round-trip contract.

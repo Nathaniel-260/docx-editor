@@ -103,6 +103,53 @@ describe('executeTrackChangesDecide validation', () => {
     ).toThrow(/coordinateSpace must be "visible" or "tracked"/);
   });
 
+  it('normalizes inner and outer TextTarget coordinate aliases and rejects conflicts', () => {
+    const decide = mock(() => ({ success: true }) as const);
+    const adapter = { ...stubAdapter(), decide };
+    const range = {
+      kind: 'text' as const,
+      coordinateSpace: 'tracked' as const,
+      segments: [{ blockId: 'p1', range: { start: 1, end: 2 } }],
+    };
+
+    expect(
+      executeTrackChangesDecide(adapter, {
+        decision: 'accept',
+        target: { kind: 'range', range },
+      }).success,
+    ).toBe(true);
+    expect(decide.mock.calls[0]?.[0]).toMatchObject({
+      target: { kind: 'range', coordinateSpace: 'tracked', range },
+    });
+
+    expect(
+      executeTrackChangesDecide(adapter, {
+        decision: 'accept',
+        target: { kind: 'range', coordinateSpace: 'tracked', range },
+      }).success,
+    ).toBe(true);
+
+    expect(() =>
+      executeTrackChangesDecide(adapter, {
+        decision: 'accept',
+        target: { kind: 'range', coordinateSpace: 'visible', range },
+      }),
+    ).toThrow(/coordinateSpace aliases must agree/);
+
+    expect(() =>
+      executeTrackChangesDecide(adapter, {
+        decision: 'accept',
+        target: { kind: 'range', range: { ...range, coordinateSpace: 'screen' } },
+      } as any),
+    ).toThrow(/coordinateSpace must be "visible" or "tracked"/);
+    expect(() =>
+      executeTrackChangesDecide(adapter, {
+        decision: 'accept',
+        target: { kind: 'range', range: { ...range, coordinateSpace: null } },
+      } as any),
+    ).toThrow(/coordinateSpace must be "visible" or "tracked"/);
+  });
+
   it('fails closed when canonical range targets are not supported by the adapter', () => {
     const result = executeTrackChangesDecide(stubAdapter(), {
       decision: 'reject',

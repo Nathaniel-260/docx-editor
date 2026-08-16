@@ -57,6 +57,23 @@ describe('plan.execute failure classification', () => {
     expect(calls).toEqual([]);
   });
 
+  it.each(['projectHtml', 'projectMarkdown'])('rejects pre-wire projection operation %s', (operationId) => {
+    const calls: string[] = [];
+    const plan = planWith({}, calls);
+    expectPlanValidationError(
+      () =>
+        plan.execute({
+          entries: [
+            { operationId, input: {} },
+            { operationId: 'after', input: {} },
+          ],
+        }),
+      'CAPABILITY_UNAVAILABLE',
+      `does not support batching "${operationId}"`,
+    );
+    expect(calls).toEqual([]);
+  });
+
   it('rejects nested plan.execute entries before executing any prefix', () => {
     const calls: string[] = [];
     const plan = planWith({}, calls);

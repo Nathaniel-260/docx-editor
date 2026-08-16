@@ -96,6 +96,8 @@ jobs:
 
       - name: Check examples
         if: needs.detect.outputs.examples == 'true'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm run check:examples
 
       - name: Upload browser traces

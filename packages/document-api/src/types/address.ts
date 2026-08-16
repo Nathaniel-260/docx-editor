@@ -55,6 +55,8 @@ export type TextTarget = {
   segments: [TextSegment, ...TextSegment[]];
   /** Story containing this text target. Omit for body (backward compatible). */
   story?: StoryLocator;
+  /** Coordinate space for segment offsets. Omitted means `visible`. */
+  coordinateSpace?: TextCoordinateSpace;
 };
 
 // ---------------------------------------------------------------------------

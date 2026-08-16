@@ -33,6 +33,14 @@ export interface WordListMarkerDefinition {
   numFmt?: string;
   /** Custom format string when `numFmt === 'custom'`. */
   customFormat?: string;
+  /** True when the level carries Word's legal-numbering semantics. */
+  isLegal?: boolean;
+  /** Effective numbering formats for placeholders that reference each level. */
+  levelNumberingFormats?: Array<{
+    ilvl: number;
+    numFmt?: string;
+    customFormat?: string;
+  }>;
   /** `w:suff`. Defaults to `tab` when absent. */
   suffix?: string;
   /** `w:lvlJc`. Defaults to `left`. */
@@ -116,15 +124,12 @@ export function computeWordListMarker(input: ComputeWordListMarkerInput): Comput
   const numberingType = definition.numFmt ?? 'decimal';
   let markerText = '';
   if (numberingType === 'bullet') {
-    markerText = normalizeLvlTextChar(definition.lvlText) ?? '';
+    const bulletText = definition.isLegal
+      ? formatNumberingTemplate(definition, path, numberingType)
+      : definition.lvlText;
+    markerText = normalizeLvlTextChar(bulletText) ?? '';
   } else {
-    markerText =
-      generateOrderedListIndex({
-        listLevel: path,
-        lvlText: definition.lvlText ?? '',
-        listNumberingType: numberingType,
-        customFormat: definition.customFormat,
-      }) ?? '';
+    markerText = formatNumberingTemplate(definition, path, numberingType);
   }
 
   return {
@@ -138,6 +143,39 @@ export function computeWordListMarker(input: ComputeWordListMarkerInput): Comput
     path,
     counter,
   };
+}
+
+function formatNumberingTemplate(definition: WordListMarkerDefinition, path: number[], numberingType: string): string {
+  const template = definition.lvlText ?? '';
+  if (!definition.levelNumberingFormats || definition.levelNumberingFormats.length === 0) {
+    if (numberingType === 'none') return '';
+    return (
+      generateOrderedListIndex({
+        listLevel: path,
+        lvlText: template,
+        listNumberingType: definition.isLegal ? 'decimal' : numberingType,
+        customFormat: definition.customFormat,
+      }) ?? ''
+    );
+  }
+  const formats = new Map(definition.levelNumberingFormats.map((format) => [format.ilvl, format] as const));
+  return template.replace(/%(\d+)/g, (match, oneBasedLiteral: string) => {
+    const referencedLevel = Number.parseInt(oneBasedLiteral, 10) - 1;
+    const ordinal = path[referencedLevel];
+    if (!Number.isFinite(ordinal)) return match;
+    const format = formats.get(referencedLevel);
+    const effectiveNumberingType = format?.numFmt ?? (referencedLevel === definition.ilvl ? numberingType : 'decimal');
+    const listNumberingType =
+      effectiveNumberingType === 'none' ? 'none' : definition.isLegal ? 'decimal' : effectiveNumberingType;
+    return (
+      generateOrderedListIndex({
+        listLevel: path,
+        lvlText: `%${referencedLevel + 1}`,
+        listNumberingType,
+        customFormat: format?.customFormat,
+      }) ?? ''
+    );
+  });
 }
 
 function normalizeSuffix(suffix: string | undefined): ListRenderingAttrs['suffix'] {

@@ -52,6 +52,13 @@ export function isTextTarget(value: unknown): value is TextTarget {
   if (!isRecord(value)) return false;
   if (value.kind !== 'text') return false;
   const segments = value.segments;
+  if (
+    value.coordinateSpace !== undefined &&
+    value.coordinateSpace !== 'visible' &&
+    value.coordinateSpace !== 'tracked'
+  ) {
+    return false;
+  }
   if (!Array.isArray(segments) || segments.length === 0) return false;
   for (const seg of segments) {
     if (!isRecord(seg)) return false;

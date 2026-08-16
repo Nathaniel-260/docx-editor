@@ -33,6 +33,19 @@ export type {
   ComputeWordListMarkerResult,
   WordListMarkerDefinition,
 } from './list-marker.js';
+export {
+  createReviewAwareWordNumberingSequence,
+  reviewAwareWordNumberingCounterScope,
+} from './review-aware-numbering.js';
+export type {
+  ReviewAwareNumberingMembership,
+  ReviewAwareNumberingStateMode,
+  ReviewAwareWordMarkerFact,
+  ReviewAwareWordNumberingDefinition,
+  ReviewAwareWordNumberingResult,
+  ReviewAwareWordNumberingSequence,
+  ReviewAwareWordNumberingSnapshot,
+} from './review-aware-numbering.js';
 
 /**
  * Computes the complete layout properties for a Word paragraph, including indentation,

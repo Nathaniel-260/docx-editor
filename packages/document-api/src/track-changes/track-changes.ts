@@ -257,7 +257,7 @@ export function executeTrackChangesDecide(
   }
   if (canonical.target.kind === 'all') {
     const { story } = canonical.target;
-    const input = { ...(story ? { story } : {}) };
+    const input = story ? { story } : {};
     if (canonical.decision === 'accept') return adapter.acceptAll(input, revisionOptions);
     return adapter.rejectAll(input, revisionOptions);
   }
@@ -377,7 +377,16 @@ function normalizeReviewDecideTarget(target: Record<string, unknown>): ReviewDec
         };
       }
       validateTextTarget(range, 'target.range');
-      const coordinateSpace = readOptionalTextCoordinateSpace(target);
+      const outerCoordinateSpace = readOptionalTextCoordinateSpace(target);
+      const innerCoordinateSpace = readOptionalTextCoordinateSpace(range as Record<string, unknown>);
+      if (outerCoordinateSpace && innerCoordinateSpace && outerCoordinateSpace !== innerCoordinateSpace) {
+        throw new DocumentApiValidationError(
+          'INVALID_INPUT',
+          'trackChanges.decide range coordinateSpace aliases must agree.',
+          { outerCoordinateSpace, innerCoordinateSpace },
+        );
+      }
+      const coordinateSpace = outerCoordinateSpace ?? innerCoordinateSpace;
       return {
         kind: 'range',
         range: range as TextTarget,
@@ -627,7 +636,7 @@ function normalizeRangeTargetOptions(target: Record<string, unknown>): ReviewDec
 
 function readOptionalTextCoordinateSpace(target: Record<string, unknown>): TextCoordinateSpace | undefined {
   const coordinateSpace = target.coordinateSpace;
-  if (coordinateSpace === undefined || coordinateSpace === null) return undefined;
+  if (coordinateSpace === undefined) return undefined;
   if (coordinateSpace !== 'visible' && coordinateSpace !== 'tracked') {
     throw new DocumentApiValidationError(
       'INVALID_TARGET',

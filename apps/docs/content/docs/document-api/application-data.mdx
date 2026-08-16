@@ -218,3 +218,8 @@ Tabs make this ordinary rather than exotic: a hanging-indent list item begins wi
 Use `doc.citations` when Word and other DOCX tools should recognize the value as a citation backed by a bibliography source. Use `doc.metadata` when the meaning belongs to your application and the document only needs to preserve its ID, payload, and text anchor.
 
 These models are not interchangeable. Check the generated operation reference for the current insertion and presentation capabilities before migrating a citation workflow.
+
+HTML and Markdown projection maps serve a different kind of citation: they map a UTF-16 range in serialized output back
+to a public tracked-coordinate `TextTarget`. They do not create a Word bibliography citation. Keep the map with its
+`evaluatedRevision`, and [reproject after a mutation](/document-api/output-projections#map-output-back-to-document-content)
+before using the target for a comment, link, or application record.

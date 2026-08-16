@@ -1,0 +1,175 @@
+---
+title: Project HTML and Markdown
+navTitle: Output projections
+description: Choose a review view, scope document content, inspect fidelity, and map serialized output back to document targets.
+---
+
+Use `projectHtml()` or `projectMarkdown()` when an application needs more than a display string. These asynchronous reads
+return serialized content together with the document revision, diagnostics, block ranges, annotation status, and an
+optional output-to-source map.
+
+Use [`getHtml()`](/document-api/reference/get-html) or
+[`getMarkdown()`](/document-api/reference/get-markdown) when only the compact string is needed. The compact methods use
+the same V2 projection rules but do not expose diagnostics or provenance metadata. Migrating is additive:
+
+```ts
+const html = doc.getHtml({});
+
+const projection = await doc.projectHtml({
+  reviewMode: 'final',
+  includeSourceMap: true,
+});
+const detailedHtml = projection.content;
+```
+
+In the browser facade, await both forms because browser reads may cross the worker boundary. The headless `DocumentApi`
+keeps the compact getters synchronous for compatibility; the detailed methods are asynchronous in every host.
+
+## Choose the review view
+
+`reviewMode` controls which side of open tracked changes becomes content:
+
+| Mode       | Content                                                                                             |
+| ---------- | --------------------------------------------------------------------------------------------------- |
+| `final`    | Includes insertions and destinations; excludes deletions and move sources                           |
+| `original` | Includes deletions and move sources; excludes insertions and destinations                           |
+| `redline`  | Includes representable before and after sides with semantic change carriers and annotation metadata |
+
+The rule applies to inline text and structural revisions such as paragraphs, list items, table rows and cells, and
+section boundaries. Formatting-only changes emit one content copy in redline with a semantic carrier. Moves share one
+logical change ID and identify source and destination sides separately.
+
+HTML uses semantic elements such as `<ins>` and `<del>` where the HTML content model allows them. Revised table and list
+nodes carry change attributes when a wrapper would be invalid. Markdown uses the documented CommonMark/GFM subset and
+raw semantic HTML when Markdown syntax cannot represent a structural revision without ambiguity.
+
+## Choose the story and scope
+
+Omitting `in` addresses the body story. Pass a supported `StoryLocator` to read a header, footer, footnote, or endnote.
+Within that story, omit `scope` for the whole story, pass a public block address for one block, or pass a contiguous
+`SelectionTarget` for a range:
+
+```ts
+const result = await doc.projectMarkdown({
+  in: { kind: 'story', storyType: 'footnote', noteId: '2' },
+  reviewMode: 'original',
+  scope: {
+    kind: 'selection',
+    start: { kind: 'text', blockId: 'paragraph-a', offset: 4 },
+    end: { kind: 'text', blockId: 'paragraph-b', offset: 12 },
+    coordinateSpace: 'tracked',
+  },
+  includeSourceMap: true,
+});
+```
+
+Text offsets are UTF-16 code units. A visible-coordinate selection counts the chosen rendered review view. A
+tracked-coordinate selection also addresses deletion-side text. The resolved scope in the result always records the
+canonical tracked target used for the projection.
+
+Range projection fails closed when a boundary would cut through a table, field, or another structure whose partial
+serialization would be misleading. Invalid or missing targets remain typed input/address errors; the projection does not
+clip them into a different range.
+
+## Inspect status and fidelity
+
+Check `status`, `lossy`, and `diagnostics` before consuming `content`:
+
+| Status    | Meaning                                                                                            |
+| --------- | -------------------------------------------------------------------------------------------------- |
+| `success` | No lossy diagnostic or fatal error                                                                 |
+| `warning` | Usable output exists, and at least one diagnostic records a lossy fallback or placeholder          |
+| `failed`  | A source, scope, or representation condition prevented a truthful projection; output data is empty |
+
+Diagnostic codes and structured fields are the stable integration surface. Message prose can change. Each diagnostic
+names the source construct, disposition, story, applicable public IDs, and an output range when one exists. Diagnostics
+do not include document excerpts or raw package markup.
+
+The projection contract preserves semantic document content; it is not a DOCX layout renderer or a complete Word-file
+round trip:
+
+| Source construct                                 | HTML projection                                     | Markdown projection                                   |
+| ------------------------------------------------ | --------------------------------------------------- | ----------------------------------------------------- |
+| Paragraphs, headings 1-6, baseline marks         | Semantic HTML                                       | CommonMark/GFM syntax; raw `<u>` for underline        |
+| Lists with exactly resolved Word labels          | Nested lists with explicit visible-label carriers   | Native syntax when exact; otherwise raw semantic HTML |
+| Missing or unresolved list labels                | Readable `[list label unavailable]` placeholder     | The same raw-HTML placeholder                         |
+| Rectangular, simple tables                       | Semantic table                                      | GFM table                                             |
+| Row/column spans or structurally rich tables     | Semantic table with spans                           | Raw semantic HTML table                               |
+| Safe links and visible field results             | Link or visible result                              | Link or visible result                                |
+| Images with a public resolvable URL              | Image element                                       | Markdown image                                        |
+| Package-only media, drawings, OLE, embedded data | Readable deterministic placeholder and warning      | Readable deterministic placeholder and warning        |
+| Math, content controls, unsupported field shape  | Preserved readable content or diagnosed placeholder | Preserved readable content or diagnosed placeholder   |
+| Section, page, and column breaks                 | Semantic marker or diagnosed placeholder            | Semantic marker or diagnosed placeholder              |
+
+Exact Word numbering is resolved per effective list level, including legal numbering and overrides. HTML emits the
+visible label explicitly instead of relying on a browser's list counter. Markdown uses native list syntax only when it
+can reproduce that label and separator; custom, Roman, alphabetic, legal, tab-suffixed, or no-suffix labels can use the
+documented raw-HTML list carrier. This is a deterministic semantic representation, not a claim of Word visual parity.
+
+Use [`extract()`](/document-api/reference/extract) when the application needs the structured SDM snapshot rather than a
+serialized review view. Keep the DOCX itself when the workflow requires package parts, layout, macros, embedded objects,
+or Word-specific semantics that the construct matrix diagnoses or replaces.
+
+## Map output back to document content
+
+Every detailed result contains `blocks`. Block ranges cover the complete serialized carrier and use UTF-16 offsets into
+`content`. A block with `identity: 'public'` includes the ID accepted by block APIs. A structurally emitted table, row,
+or cell that only had a positional source locator reports `identity: 'unavailable'` instead of presenting that locator
+as a stable public ID. Nested block ranges can overlap.
+
+Set `includeSourceMap: true` for fine-grained citations. Text entries map escaped output payload ranges to public
+`TextTarget` values in tracked coordinates. HTML/Markdown delimiters are intentionally unmapped. Synthetic list labels
+and placeholders have output ranges but no invented text target.
+
+```ts
+const projection = await doc.projectHtml({
+  reviewMode: 'redline',
+  includeSourceMap: true,
+});
+
+const outputOffset = projection.content.indexOf('termination');
+const entry = projection.sourceMap?.entries.find(
+  (candidate) =>
+    candidate.kind === 'text' && candidate.output.start <= outputOffset && outputOffset < candidate.output.end,
+);
+
+if (entry?.kind === 'text') {
+  const current = await doc.info({});
+  if (current.revision !== projection.evaluatedRevision) {
+    throw new Error('Projection map is stale; project the document again.');
+  }
+
+  await doc.comments.create(
+    { text: 'Review this source passage.', target: entry.source },
+    { expectedRevision: projection.evaluatedRevision },
+  );
+}
+```
+
+`sourceMap.outputCoordinateSpace` is `utf16`; `sourceMap.sourceCoordinateSpace` is `tracked`. Escaped output remains
+atomic: for example, the full HTML entity `&amp;` can map to one source `&` code unit. Store `evaluatedRevision` with every
+saved map. Any mutation makes the map and its block ranges stale, even when a familiar paragraph ID still exists.
+
+## Handle comments and tracked-change annotations
+
+`annotations` is present even when the fine source map is omitted. Each comment or tracked change reports its public ID,
+public block IDs when available, output ranges, side, and one of these statuses:
+
+| Annotation status  | Meaning                                                                           |
+| ------------------ | --------------------------------------------------------------------------------- |
+| `emitted`          | All representable anchored content for the chosen view and scope was emitted      |
+| `partiallyEmitted` | Only part of a discontinuous or scope-clipped anchor survived                     |
+| `omitted`          | The view removed the anchor, or its construct could not be represented truthfully |
+
+A comment on inserted content is omitted in `original`; a comment on deleted content is omitted in `final`. In
+`redline`, both sides are represented when their structure permits it. An omitted annotation has no output range and
+uses `omittedReason: 'reviewMode'` or `'unsupported'`. Do not guess an anchor by searching nearby rendered text; use its
+`sourceTarget` when present or project a view in which the anchor is emitted.
+
+## Compatibility notes
+
+V2 accepts the deprecated `unflattenLists` option on `getHtml()` for source compatibility but ignores it. Omitted,
+`true`, and `false` all produce canonical nested lists. Detailed `projectHtml()` does not accept the option.
+
+See the generated [`projectHtml()`](/document-api/reference/project-html) and
+[`projectMarkdown()`](/document-api/reference/project-markdown) references for the exact input and result schemas.

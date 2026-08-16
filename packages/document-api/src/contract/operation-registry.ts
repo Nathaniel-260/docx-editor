@@ -36,6 +36,7 @@ import type { GetNodeByIdInput } from '../get-node/get-node.js';
 import type { GetTextInput } from '../get-text/get-text.js';
 import type { GetMarkdownInput } from '../get-markdown/get-markdown.js';
 import type { GetHtmlInput } from '../get-html/get-html.js';
+import type { ProjectHtmlInput, ProjectMarkdownInput, SDContentProjectionResult } from '../types/content-projection.js';
 import type { MarkdownToFragmentInput } from '../markdown-to-fragment/markdown-to-fragment.js';
 import type { HtmlToFragmentInput } from '../html-to-fragment/html-to-fragment.js';
 import type { InfoInput } from '../info/info.js';
@@ -590,6 +591,16 @@ export interface OperationRegistry extends FormatInlineAliasOperationRegistry {
   getText: { input: GetTextInput; options: never; output: string };
   getMarkdown: { input: GetMarkdownInput; options: never; output: string };
   getHtml: { input: GetHtmlInput; options: never; output: string };
+  projectMarkdown: {
+    input: ProjectMarkdownInput;
+    options: never;
+    output: Promise<SDContentProjectionResult<'markdown'>>;
+  };
+  projectHtml: {
+    input: ProjectHtmlInput;
+    options: never;
+    output: Promise<SDContentProjectionResult<'html'>>;
+  };
   markdownToFragment: { input: MarkdownToFragmentInput; options: never; output: SDMarkdownToFragmentResult };
   htmlToFragment: { input: HtmlToFragmentInput; options: never; output: SDHtmlToFragmentResult };
   info: { input: InfoInput; options: never; output: DocumentInfo };

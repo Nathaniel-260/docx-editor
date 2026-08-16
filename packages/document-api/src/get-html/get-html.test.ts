@@ -25,6 +25,16 @@ describe('executeGetHtml', () => {
     expect(adapter.getHtml).toHaveBeenCalledWith({ unflattenLists: false });
   });
 
+  it('passes review and scope options while preserving the string return', () => {
+    const adapter: GetHtmlAdapter = { getHtml: mock(() => '<p>old</p>') };
+    const input = {
+      reviewMode: 'original',
+      scope: { kind: 'block', nodeType: 'paragraph', nodeId: 'P1' },
+    } as const;
+    expect(executeGetHtml(adapter, input)).toBe('<p>old</p>');
+    expect(adapter.getHtml).toHaveBeenCalledWith(input);
+  });
+
   it('rejects invalid story locator', () => {
     const adapter: GetHtmlAdapter = { getHtml: mock(() => '') };
 

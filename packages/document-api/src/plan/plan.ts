@@ -94,7 +94,12 @@ export interface PlanApi<TExecuteResult = PlanExecuteResult> {
 type DynamicInvoke = (operationId: string, input: unknown, options: unknown) => unknown;
 type AsyncDynamicInvoke = (operationId: string, input: unknown, options: unknown) => PromiseLike<unknown>;
 
-const PLAN_EXECUTE_UNSUPPORTED_OPERATION_IDS = new Set<string>(['plan.execute', 'templates.apply']);
+const PLAN_EXECUTE_UNSUPPORTED_OPERATION_IDS = new Set<string>([
+  'plan.execute',
+  'templates.apply',
+  'projectHtml',
+  'projectMarkdown',
+]);
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (
