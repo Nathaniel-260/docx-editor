@@ -15,7 +15,7 @@ import type { SelectionTarget, TargetLocator } from '../types/address.js';
 import type { SDMutationReceipt } from '../types/sd-contract.js';
 import type { SDReplaceInput } from '../types/structural-input.js';
 import type { SDFragment } from '../types/fragment.js';
-import type { StoryLocator } from '../types/story.types.js';
+import type { BodyStoryLocator, StoryLocator } from '../types/story.types.js';
 import type { BlockNodeAddress } from '../types/base.js';
 import type { NestingPolicy } from '../types/placement.js';
 import type { SelectionMutationAdapter } from '../selection-mutation.js';
@@ -37,24 +37,40 @@ import { textReceiptToSDReceipt } from '../receipt-bridge.js';
 // Text replacement input (new shape)
 // ---------------------------------------------------------------------------
 
-/** Text replacement input: uses SelectionTarget / ref. */
-export type TextReplaceInput = TargetLocator & {
-  target?: SelectionTarget;
-  ref?: string;
-  text: string;
-  /** Target a specific document story (body, header, footer, footnote, endnote). */
-  in?: StoryLocator;
-};
+/** Text replacement input: uses SelectionTarget / ref, or the complete main body. */
+export type TextReplaceInput =
+  | (TargetLocator & {
+      target?: SelectionTarget;
+      ref?: string;
+      text: string;
+      /** Target a specific document story (body, header, footer, footnote, endnote). */
+      in?: StoryLocator;
+    })
+  | {
+      target: BodyStoryLocator;
+      text: string;
+      ref?: never;
+      in?: never;
+    };
 
 /** HTML or Markdown replacement input for conversion and structured application. */
-export type RichContentReplaceInput = {
-  value: string;
-  type: 'html' | 'markdown';
-  target?: SelectionTarget | BlockNodeAddress;
-  ref?: string;
-  in?: StoryLocator;
-  nestingPolicy?: NestingPolicy;
-};
+export type RichContentReplaceInput =
+  | {
+      value: string;
+      type: 'html' | 'markdown';
+      target?: SelectionTarget | BlockNodeAddress;
+      ref?: string;
+      in?: StoryLocator;
+      nestingPolicy?: NestingPolicy;
+    }
+  | {
+      value: string;
+      type: 'html' | 'markdown';
+      target: BodyStoryLocator;
+      ref?: never;
+      in?: never;
+      nestingPolicy?: never;
+    };
 
 // ---------------------------------------------------------------------------
 // Discriminated union: text, rich string, or structural SDFragment shape
@@ -111,8 +127,8 @@ function validateTargetLocator(input: Record<string, unknown>, operation: string
     });
   }
 
-  if (hasTarget && !isSelectionTarget(input.target)) {
-    throw new DocumentApiValidationError('INVALID_TARGET', 'target must be a SelectionTarget object.', {
+  if (hasTarget && !isSelectionTarget(input.target) && !isBodyReplaceTarget(input.target)) {
+    throw new DocumentApiValidationError('INVALID_TARGET', 'target must be a SelectionTarget or body StoryLocator.', {
       field: 'target',
       value: input.target,
     });
@@ -179,11 +195,15 @@ function validateRichContentReplaceInput(input: Record<string, unknown>): void {
       fields: ['target', 'ref'],
     });
   }
-  if (hasTarget && !isSelectionTarget(target) && !isBlockNodeAddress(target)) {
-    throw new DocumentApiValidationError('INVALID_TARGET', 'target must be a SelectionTarget or BlockNodeAddress.', {
-      field: 'target',
-      value: target,
-    });
+  if (hasTarget && !isSelectionTarget(target) && !isBlockNodeAddress(target) && !isBodyReplaceTarget(target)) {
+    throw new DocumentApiValidationError(
+      'INVALID_TARGET',
+      'target must be a SelectionTarget or BlockNodeAddress, or body StoryLocator.',
+      {
+        field: 'target',
+        value: target,
+      },
+    );
   }
   if (hasRef && (typeof refValue !== 'string' || refValue === '')) {
     throw new DocumentApiValidationError('INVALID_TARGET', 'ref must be a non-empty string.', {
@@ -206,6 +226,7 @@ function validateRichContentReplaceInput(input: Record<string, unknown>): void {
   }
 
   validateNestingPolicyValue(nestingPolicy);
+  validateBodyReplaceShape(input);
 }
 
 /** Validates the text replacement path (SelectionTarget / ref + text). */
@@ -220,6 +241,7 @@ function validateTextReplaceInput(input: Record<string, unknown>): void {
 
   assertNoUnknownFields(input, TEXT_REPLACE_ALLOWED_KEYS, 'replace');
   validateTargetLocator(input, 'replace');
+  validateBodyReplaceShape(input);
 
   if (typeof input.text !== 'string') {
     throw new DocumentApiValidationError('INVALID_TARGET', `text must be a string, got ${typeof input.text}.`, {
@@ -251,11 +273,15 @@ function validateStructuralReplaceInput(input: Record<string, unknown>): void {
     });
   }
 
-  if (hasTarget && !isBlockNodeAddress(target) && !isSelectionTarget(target)) {
-    throw new DocumentApiValidationError('INVALID_TARGET', 'target must be a BlockNodeAddress or SelectionTarget.', {
-      field: 'target',
-      value: target,
-    });
+  if (hasTarget && !isBlockNodeAddress(target) && !isSelectionTarget(target) && !isBodyReplaceTarget(target)) {
+    throw new DocumentApiValidationError(
+      'INVALID_TARGET',
+      'target must be a BlockNodeAddress, SelectionTarget, or body StoryLocator.',
+      {
+        field: 'target',
+        value: target,
+      },
+    );
   }
 
   if (hasRef && typeof refValue !== 'string') {
@@ -266,7 +292,29 @@ function validateStructuralReplaceInput(input: Record<string, unknown>): void {
   }
 
   validateNestingPolicyValue(nestingPolicy);
+  validateBodyReplaceShape(input);
   validateDocumentFragment(content as SDFragment);
+}
+
+function isBodyReplaceTarget(value: unknown): value is BodyStoryLocator {
+  return (
+    isRecord(value) &&
+    value.kind === 'story' &&
+    value.storyType === 'body' &&
+    Object.keys(value).every((key) => key === 'kind' || key === 'storyType')
+  );
+}
+
+function validateBodyReplaceShape(input: Record<string, unknown>): void {
+  if (!isBodyReplaceTarget(input.target)) return;
+  const conflicts = ['ref', 'in', 'nestingPolicy'].filter((field) => input[field] !== undefined);
+  if (conflicts.length > 0) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      'Whole-body replace does not accept "ref", "in", or "nestingPolicy".',
+      { fields: ['target', ...conflicts] },
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +335,10 @@ export function executeReplace(
   }
 
   // Text replacement path: route through SelectionMutationAdapter
-  const textInput = input as TextReplaceInput;
+  const textInput = input;
+  if (isBodyReplaceTarget(textInput.target)) {
+    return writeAdapter.replaceStructured(textInput, normalizeMutationOptions(options));
+  }
   const request = textInput.target
     ? { kind: 'replace' as const, target: textInput.target, text: textInput.text, in: textInput.in }
     : { kind: 'replace' as const, ref: textInput.ref!, text: textInput.text, in: textInput.in };

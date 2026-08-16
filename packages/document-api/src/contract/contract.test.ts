@@ -303,15 +303,18 @@ describe('document-api contract catalog', () => {
       }>;
     };
 
-    expect(replaceInput.oneOf).toHaveLength(3);
-    const rich = replaceInput.oneOf?.[2];
-    expect(rich?.oneOf).toHaveLength(2);
-    const [targetVariant, refVariant] = rich!.oneOf!;
+    expect(replaceInput.oneOf).toHaveLength(4);
+    const rich = replaceInput.oneOf?.[3];
+    expect(rich?.oneOf).toHaveLength(3);
+    const [targetVariant, refVariant, bodyVariant] = rich!.oneOf!;
     expect(Object.keys(targetVariant.properties!).sort()).toEqual(['in', 'nestingPolicy', 'target', 'type', 'value']);
     expect(targetVariant.required).toEqual(['target', 'value', 'type']);
     expect(targetVariant.additionalProperties).toBe(false);
     expect(refVariant.required).toEqual(['ref', 'value', 'type']);
     expect(refVariant.additionalProperties).toBe(false);
+    expect(Object.keys(bodyVariant.properties!).sort()).toEqual(['target', 'type', 'value']);
+    expect(bodyVariant.required).toEqual(['target', 'value', 'type']);
+    expect(bodyVariant.additionalProperties).toBe(false);
   });
 
   it('publishes a strict HTML conversion schema and a unique reference path', () => {
@@ -652,8 +655,7 @@ describe('document-api contract catalog', () => {
     const replaceInput = schemas.operations.replace.input as {
       oneOf?: Array<{ oneOf?: Array<{ properties?: Record<string, unknown> }> }>;
     };
-    // The structural branch is the second oneOf element
-    const structuralBranch = replaceInput.oneOf![1] as { oneOf?: Array<{ properties?: Record<string, unknown> }> };
+    const structuralBranch = replaceInput.oneOf![2] as { oneOf?: Array<{ properties?: Record<string, unknown> }> };
 
     for (const variant of structuralBranch.oneOf!) {
       expectBroadSDFragmentSchema(variant.properties!.content as ContractTestSchemaShape);
@@ -889,11 +891,18 @@ describe('document-api contract catalog', () => {
         type: 'array',
         items: { oneOf: [{ type: 'string' }, { type: 'integer' }] },
       });
-      expect(properties?.target?.oneOf).toEqual([
+      const expectedTargets: ContractTestSchemaShape[] = [
         { $ref: '#/$defs/BlockNodeAddress' },
         { $ref: '#/$defs/TextAddress' },
         { $ref: '#/$defs/SelectionTarget' },
-      ]);
+      ];
+      expectedTargets.push({
+        type: 'object',
+        properties: { kind: { const: 'story' }, storyType: { const: 'body' } },
+        required: ['kind', 'storyType'],
+        additionalProperties: false,
+      });
+      expect(properties?.target?.oneOf).toEqual(expectedTargets);
     }
   });
 

@@ -1029,6 +1029,10 @@ const textMutationSuccessSchema = ref('TextMutationSuccess');
 const matchRunSchema = ref('MatchRun');
 const matchBlockSchema = ref('MatchBlock');
 const storyLocatorSchema = ref('StoryLocator');
+const bodyStoryLocatorSchema = objectSchema({ kind: { const: 'story' }, storyType: { const: 'body' } }, [
+  'kind',
+  'storyType',
+]);
 // Keep these aliases for internal readability
 void positionSchema;
 void inlineAnchorSchema;
@@ -1543,7 +1547,7 @@ const sdFindResultSchema = objectSchema(
 // ---------------------------------------------------------------------------
 const sdMutationResolutionSchema = objectSchema(
   {
-    target: { oneOf: [textAddressSchema, blockNodeAddressSchema] },
+    target: { oneOf: [textAddressSchema, blockNodeAddressSchema, bodyStoryLocatorSchema] },
     range: textMutationRangeSchema,
     selectionTarget: selectionTargetSchema,
   },
@@ -1570,7 +1574,7 @@ function sdErrorSchemaFor(operationId: OperationId): JsonSchema {
       message: { type: 'string' },
       path: diagnosticPathSchema,
       target: {
-        oneOf: [ref('BlockNodeAddress'), ref('TextAddress'), ref('SelectionTarget')],
+        oneOf: [ref('BlockNodeAddress'), ref('TextAddress'), ref('SelectionTarget'), bodyStoryLocatorSchema],
       },
       details: {},
     },
@@ -4078,6 +4082,13 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
             ['text'],
           ),
         },
+        objectSchema(
+          {
+            target: bodyStoryLocatorSchema,
+            text: { type: 'string', description: 'Complete replacement text for the main body.' },
+          },
+          ['target', 'text'],
+        ),
         // Structural replacement: exactly one of (target | ref) + content
         {
           oneOf: [
@@ -4108,6 +4119,16 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
               },
               ['ref', 'content'],
             ),
+            objectSchema(
+              {
+                target: bodyStoryLocatorSchema,
+                content: {
+                  ...sdFragmentSchema,
+                  description: 'Document fragment that replaces the complete main body.',
+                },
+              },
+              ['target', 'content'],
+            ),
           ],
         },
         {
@@ -4131,6 +4152,14 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
                 nestingPolicy: nestingPolicySchema,
               },
               ['ref', 'value', 'type'],
+            ),
+            objectSchema(
+              {
+                target: bodyStoryLocatorSchema,
+                value: { type: 'string', description: 'HTML or Markdown that replaces the complete main body.' },
+                type: { enum: ['html', 'markdown'] },
+              },
+              ['target', 'value', 'type'],
             ),
           ],
         },

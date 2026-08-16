@@ -8,6 +8,19 @@ Use `replace()` and `delete()` after a query has identified the exact content to
 
 For HTML, Markdown, or `SDFragment` replacement, see [insert HTML and Markdown](/document-api/rich-content). Rich replacement uses the same fresh-target and revision-guard rules described here.
 
+To replace every block in the main body, pass the explicit body target. This is a Document API content mutation: it keeps the open DOCX package and its terminal page setup while replacing the body blocks in one undo step.
+
+```ts
+const body = { kind: 'story', storyType: 'body' } as const;
+
+const receipt = await doc.replace(
+  { target: body, type: 'markdown', value: '# Replacement\n\nNew body.' },
+  { changeMode: 'direct', expectedRevision },
+);
+```
+
+The body target also accepts `text` or a preconverted `content` fragment. It is main-body-only and direct-mode-only. Tracked whole-body replacement fails with `CAPABILITY_UNSUPPORTED`; use a selection or block target when the replacement must remain a review suggestion. To open a different DOCX package, use the editor's file replacement flow instead.
+
 This guide uses the [tracked-changes fixture](/fixtures/tracked-changes.docx). Serve it from `/contract.docx` in your app, or update the document URL in the example.
 
 ## 1. Run two targeted mutations

@@ -186,8 +186,9 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
       'Each format.apply step accepts "inline" (fontFamily, fontSize, bold, underline, color), "alignment", and "scope" in the same step. ' +
       'Use scope: "block" so formatting covers the entire paragraph. ' +
       'Copy the exact property values from the existing get_content blocks (fontFamily, fontSize, color, alignment, bold, underline). Do NOT invent values: use what the blocks show. ' +
-      'Also supports replace, delete, and undo/redo. For replace and delete, pass a "ref" from superdoc_search or superdoc_get_content blocks. ' +
+      'Also supports replace, delete, and undo/redo. For ordinary replace and delete, pass a "ref" from superdoc_search or superdoc_get_content blocks. ' +
       'A search ref covers only the matched substring; a block ref covers the entire block text, so use block refs when rewriting or shortening whole paragraphs. ' +
+      'To replace every block in the main body, use action "replace" with target:{kind:"story",storyType:"body"}, one text/value/content payload, and changeMode:"direct". This replaces body content, not the DOCX package, and does not require a search first. Tracked whole-body replacement is unsupported. ' +
       'For multi-step redlines or whole-clause rewrites, prefer superdoc_mutations with where:{by:"block", nodeType, nodeId} from superdoc_get_content action "blocks" includeText:true rather than relying on text selectors. ' +
       'Refs expire after any mutation; always re-search before the next edit. ' +
       'For 2+ edits that must succeed or fail atomically, use superdoc_mutations instead. ' +
@@ -228,6 +229,13 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
         value: '<strong>Tracked rich replacement</strong>',
         type: 'html',
         changeMode: 'tracked',
+      },
+      {
+        action: 'replace',
+        target: { kind: 'story', storyType: 'body' },
+        value: '# Replacement\n\nComplete new body.',
+        type: 'markdown',
+        changeMode: 'direct',
       },
       { action: 'delete', ref: '<handle.ref>' },
       { action: 'undo' },
@@ -988,7 +996,8 @@ export const OPERATION_DEFINITIONS = {
       'Replace content at a contiguous document selection. ' +
       'Text path accepts a SelectionTarget or ref plus replacement text. ' +
       'Rich string path accepts HTML or Markdown plus a BlockNodeAddress, SelectionTarget, or ref. ' +
-      'Structural path accepts the same locator forms plus SDFragment content.',
+      'Structural path accepts the same locator forms plus SDFragment content. ' +
+      "An explicit {kind:'story', storyType:'body'} target replaces the complete main body in direct mode while preserving the destination DOCX package.",
     expectedResult:
       'Returns an SDMutationReceipt with applied status; receipt reports NO_OP if the target range already contains identical content.',
     requiresDocumentContext: true,

@@ -11,7 +11,7 @@ import type { BlockNodeAddress } from './base.js';
 import type { SelectionTarget } from './address.js';
 import type { SDFragment } from './fragment.js';
 import type { Placement, NestingPolicy } from './placement.js';
-import type { StoryLocator } from './story.types.js';
+import type { BodyStoryLocator, StoryLocator } from './story.types.js';
 
 // ---------------------------------------------------------------------------
 // Structural insert input
@@ -48,14 +48,32 @@ type StructuralReplaceLocator =
       ref: string;
       /** Target to replace. BlockNodeAddress replaces the entire block; SelectionTarget replaces a contiguous selection. */
       target?: undefined;
+    }
+  | {
+      /** Replace the complete main body while preserving the destination DOCX package. */
+      target: BodyStoryLocator;
+      ref?: undefined;
     };
 
-/** Structural shape for the replace operation. */
-export type SDReplaceInput = StructuralReplaceLocator & {
+type StructuralReplaceContent = {
   /** Structural content to replace with. */
   content: SDFragment;
-  /** Target a specific document story (body, header, footer, footnote, endnote). */
-  in?: StoryLocator;
-  /** Nesting policy. Defaults to { tables: 'forbid' }. */
-  nestingPolicy?: NestingPolicy;
 };
+
+/** Structural shape for the replace operation. */
+export type SDReplaceInput =
+  | (Exclude<StructuralReplaceLocator, { target: BodyStoryLocator }> &
+      StructuralReplaceContent & {
+        /** Target a specific document story (body, header, footer, footnote, endnote). */
+        in?: StoryLocator;
+        /** Nesting policy. Defaults to { tables: 'forbid' }. */
+        nestingPolicy?: NestingPolicy;
+      })
+  | {
+      /** Replace the complete main body while preserving the destination DOCX package. */
+      target: BodyStoryLocator;
+      content: SDFragment;
+      ref?: never;
+      in?: never;
+      nestingPolicy?: never;
+    };

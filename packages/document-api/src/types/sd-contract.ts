@@ -5,6 +5,7 @@
 import type { BlockNodeAddress } from './base.js';
 import type { SelectionTarget, TextAddress } from './address.js';
 import type { ReceiptEffects, ReceiptSuccess, TextMutationRange } from './receipt.js';
+import type { BodyStoryLocator } from './story.types.js';
 
 // ---------------------------------------------------------------------------
 // Error model (normative)
@@ -33,7 +34,7 @@ export interface SDError {
   message: string;
   path?: Array<string | number>;
   /** The target that caused the error, when available. */
-  target?: BlockNodeAddress | TextAddress | SelectionTarget;
+  target?: BlockNodeAddress | TextAddress | SelectionTarget | BodyStoryLocator;
   details?: Record<string, unknown>;
 }
 
@@ -46,8 +47,9 @@ export interface SDError {
  *
  * - `TextAddress` (`kind: 'text'`): text-level insert/replace with block-relative offsets.
  * - `BlockNodeAddress` (`kind: 'block'`): structural insert/replace targeting a whole block.
+ * - `BodyStoryLocator` (`kind: 'story'`): explicit complete-main-body replacement.
  */
-export type MutationResolutionTarget = TextAddress | BlockNodeAddress;
+export type MutationResolutionTarget = TextAddress | BlockNodeAddress | BodyStoryLocator;
 
 export interface SDMutationReceipt {
   success: boolean;

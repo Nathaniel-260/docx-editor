@@ -31,6 +31,7 @@ const selectionTarget = {
 };
 
 const blockTarget = { kind: 'block' as const, nodeType: 'paragraph' as const, nodeId: 'p1' };
+const bodyTarget = { kind: 'story' as const, storyType: 'body' as const };
 const fragment = [{ kind: 'paragraph' as const, paragraph: { inlines: [] } }];
 
 describe('executeReplace input union', () => {
@@ -55,6 +56,39 @@ describe('executeReplace input union', () => {
       { target: blockTarget, content: fragment },
       expect.objectContaining({ changeMode: 'direct', dryRun: false }),
     );
+  });
+
+  it('routes all complete-body payloads through the structured adapter', () => {
+    const selection = selectionAdapter();
+    const write = writeAdapter();
+    const inputs: ReplaceInput[] = [
+      { target: bodyTarget, text: 'Plain body' },
+      { target: bodyTarget, type: 'html', value: '<p>HTML body</p>' },
+      { target: bodyTarget, type: 'markdown', value: 'Markdown body' },
+      { target: bodyTarget, content: fragment },
+    ];
+
+    for (const input of inputs) executeReplace(selection, write, input);
+
+    expect(write.replaceStructured).toHaveBeenCalledTimes(4);
+    for (const input of inputs) {
+      expect(write.replaceStructured).toHaveBeenCalledWith(
+        input,
+        expect.objectContaining({ changeMode: 'direct', dryRun: false }),
+      );
+    }
+    expect(selection.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects ambiguous or malformed complete-body locators', () => {
+    expect(() => execute({ target: bodyTarget, text: 'x', ref: 'match-1' })).toThrow(
+      'either "target" or "ref", not both',
+    );
+    expect(() =>
+      execute({ target: bodyTarget, value: 'x', type: 'markdown', nestingPolicy: { tables: 'forbid' } }),
+    ).toThrow('does not accept "ref", "in", or "nestingPolicy"');
+    expect(() => execute({ target: { ...bodyTarget, id: 'extra' }, content: fragment })).toThrow('body StoryLocator');
+    expect(() => execute({ target: { kind: 'story', storyType: 'header' }, text: 'x' })).toThrow('body StoryLocator');
   });
 });
 
