@@ -1,5 +1,8 @@
 import type { OperationId } from '../contract/types.js';
 import type { InlinePropertyStorage, InlinePropertyType, InlineRunPatchKey } from '../format/inline-run-patch.js';
+import type { SDHtmlMarkdownSupportCheckInput, SDHtmlMarkdownSupportCheckResult } from './html-markdown-support.js';
+import { validateSDHtmlMarkdownSupportCheckInput } from './html-markdown-support.js';
+import { DocumentApiValidationError } from '../errors.js';
 
 export const CAPABILITY_REASON_CODES = [
   'COMMAND_UNAVAILABLE',
@@ -91,6 +94,7 @@ export interface DocumentApiCapabilities {
 /** Engine-specific adapter that resolves runtime capabilities for the current editor instance. */
 export interface CapabilitiesAdapter {
   get(): DocumentApiCapabilities;
+  check?(input: SDHtmlMarkdownSupportCheckInput): Promise<SDHtmlMarkdownSupportCheckResult>;
 }
 
 /**
@@ -101,4 +105,19 @@ export interface CapabilitiesAdapter {
  */
 export function executeCapabilities(adapter: CapabilitiesAdapter): DocumentApiCapabilities {
   return adapter.get();
+}
+
+export function executeCapabilitiesCheck(
+  adapter: CapabilitiesAdapter,
+  input: SDHtmlMarkdownSupportCheckInput,
+): Promise<SDHtmlMarkdownSupportCheckResult> {
+  validateSDHtmlMarkdownSupportCheckInput(input);
+  if (!adapter.check) {
+    throw new DocumentApiValidationError(
+      'CAPABILITY_UNAVAILABLE',
+      'capabilities.check is not available. The host engine has not provided an adapter for this capability.',
+      { operation: 'capabilities.check' },
+    );
+  }
+  return adapter.check(input);
 }

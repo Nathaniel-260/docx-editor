@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  deriveSDHtmlMarkdownOutcome,
   deriveSDProjectionStatus,
   validateSDProjectionSourceMap,
   type SDProjectionDiagnostic,
@@ -21,6 +22,13 @@ function diagnostic(severity: 'error' | 'warning' | 'info', lossy: boolean): SDP
 }
 
 describe('outbound projection contract', () => {
+  it('derives the common HTML/Markdown outcome without hiding warnings or loss', () => {
+    expect(deriveSDHtmlMarkdownOutcome([])).toBe('preserved');
+    expect(deriveSDHtmlMarkdownOutcome([diagnostic('info', false)])).toBe('preserved-with-warnings');
+    expect(deriveSDHtmlMarkdownOutcome([diagnostic('warning', true)])).toBe('simplified');
+    expect(deriveSDHtmlMarkdownOutcome([diagnostic('error', false)])).toBe('rejected');
+  });
+
   it('derives status from errors and lossy diagnostics', () => {
     expect(deriveSDProjectionStatus([])).toBe('success');
     expect(deriveSDProjectionStatus([diagnostic('info', false)])).toBe('success');

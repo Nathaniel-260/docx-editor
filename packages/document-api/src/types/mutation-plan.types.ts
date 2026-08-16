@@ -344,4 +344,4 @@ export type PlanExecutionError = {
 // Revision guard options: canonical definitions in write/write.ts
 // ---------------------------------------------------------------------------
 
-export type { RevisionGuardOptions, MutationOptions } from '../write/write.js';
+export type { RevisionGuardOptions, MutationOptions, RichContentMutationOptions } from '../write/write.js';

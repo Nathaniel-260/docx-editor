@@ -8,6 +8,11 @@ Use `projectHtml()` or `projectMarkdown()` when an application needs more than a
 return serialized content together with the document revision, diagnostics, block ranges, annotation status, and an
 optional output-to-source map.
 
+Use `doc.capabilities.check({ operation: 'projectHtml' | 'projectMarkdown', input })` when a workflow needs the same
+structured support envelope used for rich writes. The check runs the detailed projector and returns its complete output
+in `projection`; it does not ask you to repeat a revision-sensitive read. Direct detailed projections and support-check
+projections both include the common fidelity `outcome` alongside `status`, `lossy`, and all diagnostics.
+
 Use [`getHtml()`](/document-api/reference/get-html) or
 [`getMarkdown()`](/document-api/reference/get-markdown) when only the compact string is needed. The compact methods use
 the same V2 projection rules but do not expose diagnostics or provenance metadata. Migrating is additive:
@@ -73,7 +78,8 @@ clip them into a different range.
 
 ## Inspect status and fidelity
 
-Check `status`, `lossy`, and `diagnostics` before consuming `content`:
+Check `outcome`, `status`, `lossy`, and `diagnostics` before consuming `content`. `outcome` distinguishes preserved,
+warning-bearing, simplified, and rejected projections using the same vocabulary as rich input checks:
 
 | Status    | Meaning                                                                                            |
 | --------- | -------------------------------------------------------------------------------------------------- |

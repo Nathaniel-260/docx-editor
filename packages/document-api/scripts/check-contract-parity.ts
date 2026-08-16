@@ -27,20 +27,24 @@ import { buildDispatchTable } from '../src/invoke/invoke.js';
  */
 const META_MEMBER_PATHS = ['invoke', ...REFERENCE_OPERATION_ALIASES.map((alias) => alias.memberPath)];
 
-function collectFunctionMemberPaths(value: unknown, prefix = ''): string[] {
-  if (!value || typeof value !== 'object') return [];
+function collectFunctionMemberPaths(value: unknown, prefix = '', seen = new Set<object>()): string[] {
+  if (!value || (typeof value !== 'object' && typeof value !== 'function')) return [];
+  if (seen.has(value as object)) return [];
+  seen.add(value as object);
 
   const paths: string[] = [];
   const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
 
   for (const [key, member] of entries) {
+    if (member === value) continue;
     const path = prefix ? `${prefix}.${key}` : key;
     if (typeof member === 'function') {
       paths.push(path);
+      paths.push(...collectFunctionMemberPaths(member, path, seen));
       continue;
     }
     if (member && typeof member === 'object') {
-      paths.push(...collectFunctionMemberPaths(member, path));
+      paths.push(...collectFunctionMemberPaths(member, path, seen));
     }
   }
 

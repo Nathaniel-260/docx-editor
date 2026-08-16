@@ -143,7 +143,7 @@ export function buildAgentArtifacts(): GeneratedFile[] {
       {
         id: 'tracked-insert',
         title: 'Tracked insert workflow',
-        operations: ['capabilities.get', 'insert'],
+        operations: ['capabilities.get', 'capabilities.check', 'insert'],
       },
       {
         id: 'comment-thread-lifecycle',
@@ -158,7 +158,7 @@ export function buildAgentArtifacts(): GeneratedFile[] {
       {
         id: 'capabilities-aware-branching',
         title: 'Capabilities-aware branching workflow',
-        operations: ['capabilities.get', 'replace', 'insert'],
+        operations: ['capabilities.get', 'capabilities.check', 'replace', 'insert'],
       },
       {
         id: 'track-change-review',

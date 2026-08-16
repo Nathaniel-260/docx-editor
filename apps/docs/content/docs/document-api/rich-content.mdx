@@ -22,6 +22,22 @@ Each result contains:
 
 A warning-bearing result can still be applied. An error means there is no safe rich fragment to apply. Check diagnostic `severity` and `disposition` instead of treating every lossy result as a failure.
 
+## Check an exact workflow before applying
+
+Use `doc.capabilities()` for a cheap synchronous snapshot of general operation availability. Use
+`doc.capabilities.check()` when the answer must account for exact HTML or Markdown, the current target, the requested
+change mode, and the current document revision. A check does not mutate package bytes, history, tracked changes, or the
+public revision.
+
+A supported write that would change the document returns a guard. Pass it to the unchanged rich `insert()` or
+`replace()` request. The write fails closed when the source, format, target, placement, story, nesting policy, mode,
+analysis result, or document revision no longer matches. The guard digest detects accidental reuse; it is not a
+security signature.
+
+The common `outcome` is `preserved`, `preserved-with-warnings`, `simplified`, `rejected`, `no-op`, `invalid-target`, or
+`outdated`. Read the complete conversion diagnostics and final mutation receipt before choosing application-specific
+fallback behavior.
+
 ## Insert or replace raw source
 
 Pass `value` with `type: 'html'` or `type: 'markdown'` to convert and apply in one call. Rich insert supports a selection, a block with `before` or `after`, a ref, or no target for append. Rich replace accepts a selection, paragraph or heading block, whole table block, ref, or the explicit `{ kind: 'story', storyType: 'body' }` target.
@@ -30,7 +46,7 @@ The body target replaces all main-body blocks in one direct mutation while retai
 
 Use `dryRun: true` to resolve and preflight without creating IDs, history, or document changes. Pair a mutation with `expectedRevision` when it depends on an earlier read.
 
-Successful raw-source receipts include a `conversion` report. They may also include created entity identities, source-path effects, affected stories, text-range shifts, and a transaction ID. Check `success` before using any success-only field.
+Successful raw-source receipts include the final `outcome` and a `conversion` report. They may also include created entity identities, source-path effects, affected stories, text-range shifts, and a transaction ID. Check `success` before using any success-only field.
 
 ## Supported inbound constructs
 

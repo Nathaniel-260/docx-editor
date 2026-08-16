@@ -584,7 +584,7 @@ test('exports the searchable reference experience from contract data', async () 
   const namespaceText = namespace.replaceAll('<!-- -->', '');
   const operationText = operation.replaceAll('<!-- -->', '');
 
-  assert.match(landingText, /Search all 426 operations in contract 0\.1\.0/);
+  assert.match(landingText, /Search all 427 operations in contract 0\.1\.0/);
   assert.match(landing, /Search operation names, paths, and descriptions/);
   assert.match(landing, /contentControls/);
   assert.match(namespaceText, /55 operations/);

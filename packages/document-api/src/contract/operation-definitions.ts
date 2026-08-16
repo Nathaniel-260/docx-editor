@@ -192,6 +192,7 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
       'For multi-step redlines or whole-clause rewrites, prefer superdoc_mutations with where:{by:"block", nodeType, nodeId} from superdoc_get_content action "blocks" includeText:true rather than relying on text selectors. ' +
       'Refs expire after any mutation; always re-search before the next edit. ' +
       'For 2+ edits that must succeed or fail atomically, use superdoc_mutations instead. ' +
+      'Before an exact HTML or Markdown insert/replace that must be fidelity-checked, use action "check_support", review its outcome and diagnostics, then pass its guard back as "supportCheck" on the unchanged write. ' +
       'Supports "dryRun" to preview changes and "changeMode: tracked" to record edits as tracked changes. ' +
       'Do NOT build "target" objects manually when a ref is available; prefer "ref" for simpler, more reliable targeting.',
     inputExamples: [
@@ -229,6 +230,12 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
         value: '<strong>Tracked rich replacement</strong>',
         type: 'html',
         changeMode: 'tracked',
+      },
+      {
+        action: 'check_support',
+        operation: 'insert',
+        input: { type: 'markdown', value: '# Checked section' },
+        options: { changeMode: 'direct' },
       },
       {
         action: 'replace',
@@ -970,6 +977,7 @@ export const OPERATION_DEFINITIONS = {
         'TARGET_NOT_FOUND',
         'PRECONDITION_FAILED',
         'REVISION_MISMATCH',
+        'CHECK_MISMATCH',
         'INTERNAL_ERROR',
       ],
       throws: [
@@ -1021,6 +1029,7 @@ export const OPERATION_DEFINITIONS = {
         'TARGET_NOT_FOUND',
         'PRECONDITION_FAILED',
         'REVISION_MISMATCH',
+        'CHECK_MISMATCH',
         'INTERNAL_ERROR',
       ],
       throws: [
@@ -3046,6 +3055,23 @@ export const OPERATION_DEFINITIONS = {
     }),
     referenceDocPath: 'capabilities/get.mdx',
     referenceGroup: 'capabilities',
+  },
+  'capabilities.check': {
+    memberPath: 'capabilities.check',
+    description:
+      'Check an exact HTML or Markdown insert, replace, or detailed projection against the current document without mutating it.',
+    expectedResult:
+      'Returns a Promise resolving to structured support, fidelity outcome, diagnostics, and a revision-bound guard for supported writes.',
+    requiresDocumentContext: true,
+    metadata: readOperation({
+      idempotency: 'conditional',
+      throws: ['INVALID_INPUT', 'CAPABILITY_UNAVAILABLE'],
+      returnsPromise: true,
+    }),
+    referenceDocPath: 'capabilities/check.mdx',
+    referenceGroup: 'capabilities',
+    intentGroup: 'edit',
+    intentAction: 'check_support',
   },
   // -------------------------------------------------------------------------
   // Create: table

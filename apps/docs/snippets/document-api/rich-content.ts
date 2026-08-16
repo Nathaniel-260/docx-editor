@@ -14,16 +14,26 @@ const superdoc = new SuperDoc({
     const fatal = converted.diagnostics.find((diagnostic) => diagnostic.severity === 'error');
     if (fatal) throw new Error(`HTML conversion failed: ${fatal.message}`);
 
-    const dryRun = await doc.insert({ content: converted.fragment }, { dryRun: true });
-    if (!dryRun.success) throw new Error(`Preflight failed: ${dryRun.failure?.message ?? 'unknown failure'}`);
+    const insertInput = {
+      type: 'html',
+      value: '<h2>Scope</h2><p><strong>Review</strong> this clause.</p>',
+    } as const;
+    const checked = await doc.capabilities.check({
+      operation: 'insert',
+      input: insertInput,
+      options: { changeMode: 'tracked' },
+    });
+    if (checked.operation !== 'insert') {
+      throw new Error(`Unexpected support-check operation: ${checked.operation}`);
+    }
+    if (!checked.supported || !checked.guard) {
+      throw new Error(`Rich insert is not supported: ${checked.failure?.message ?? checked.outcome}`);
+    }
 
-    const insertReceipt = await doc.insert(
-      {
-        type: 'html',
-        value: '<h2>Scope</h2><p><strong>Review</strong> this clause.</p>',
-      },
-      { changeMode: 'tracked' },
-    );
+    const insertReceipt = await doc.insert(insertInput, {
+      changeMode: 'tracked',
+      supportCheck: checked.guard,
+    });
     if (!insertReceipt.success) {
       throw new Error(`Rich insert failed: ${insertReceipt.failure?.message ?? 'unknown failure'}`);
     }
@@ -50,7 +60,7 @@ const superdoc = new SuperDoc({
       throw new Error(`Rich replace failed: ${replaceReceipt.failure?.message ?? 'unknown failure'}`);
     }
 
-    console.log(insertReceipt.conversion, replaceReceipt.conversion);
+    console.log(checked.outcome, insertReceipt.outcome, replaceReceipt.conversion);
   },
 });
 

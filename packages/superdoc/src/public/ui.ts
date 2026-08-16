@@ -144,4 +144,6 @@ export type {
   TrackChangesListResult,
   ContentControlsListResult,
   ContentControlInfo,
+  RichContentInsertInput,
+  SDHtmlMarkdownSupportCheckResult,
 } from './ui/types.js';

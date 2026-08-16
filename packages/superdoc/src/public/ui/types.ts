@@ -44,6 +44,8 @@ export type {
   TrackChangesListResult,
   ContentControlsListResult,
   ContentControlInfo,
+  RichContentInsertInput,
+  SDHtmlMarkdownSupportCheckResult,
 } from '@superdoc/document-api';
 
 // Public style-catalogue shapes (`styles.getCatalog`) re-surfaced through

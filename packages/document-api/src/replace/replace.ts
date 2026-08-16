@@ -10,7 +10,7 @@
  * replacements also accept `BlockNodeAddress`.
  */
 
-import type { MutationOptions } from '../types/mutation-plan.types.js';
+import type { RichContentMutationOptions } from '../write/write.js';
 import type { SelectionTarget, TargetLocator } from '../types/address.js';
 import type { SDMutationReceipt } from '../types/sd-contract.js';
 import type { SDReplaceInput } from '../types/structural-input.js';
@@ -146,7 +146,7 @@ function validateTargetLocator(input: Record<string, unknown>, operation: string
 // Validation
 // ---------------------------------------------------------------------------
 
-function validateReplaceInput(input: unknown): asserts input is ReplaceInput {
+export function validateReplaceInput(input: unknown): asserts input is ReplaceInput {
   if (!isRecord(input)) {
     throw new DocumentApiValidationError('INVALID_TARGET', 'Replace input must be a non-null object.');
   }
@@ -325,13 +325,16 @@ export function executeReplace(
   selectionAdapter: SelectionMutationAdapter,
   writeAdapter: WriteAdapter,
   input: ReplaceInput,
-  options?: MutationOptions,
+  options?: RichContentMutationOptions,
 ): SDMutationReceipt {
   validateReplaceInput(input);
 
   // Structural content path: returns SDMutationReceipt directly
-  if (isStructuralReplaceInput(input) || isRichContentReplaceInput(input)) {
+  if (isStructuralReplaceInput(input)) {
     return writeAdapter.replaceStructured(input, normalizeMutationOptions(options));
+  }
+  if (isRichContentReplaceInput(input)) {
+    return writeAdapter.replaceStructured(input, normalizeMutationOptions(options, 'replace'));
   }
 
   // Text replacement path: route through SelectionMutationAdapter

@@ -204,6 +204,7 @@ export function buildDispatchTable(api: DocumentApi): TypedDispatchTable {
     'plan.execute': (input) => api.plan.execute(input),
     // --- capabilities ---
     'capabilities.get': () => api.capabilities(),
+    'capabilities.check': (input) => api.capabilities.check(input),
     // --- history.* ---
     'history.get': () => api.history.get(),
     'history.undo': () => api.history.undo(),

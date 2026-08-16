@@ -45,6 +45,7 @@
     "/document-api/reference/bookmarks/remove/",
     "/document-api/reference/bookmarks/rename/",
     "/document-api/reference/capabilities/",
+    "/document-api/reference/capabilities/check/",
     "/document-api/reference/capabilities/get/",
     "/document-api/reference/captions/",
     "/document-api/reference/captions/configure/",

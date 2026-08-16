@@ -3,6 +3,8 @@ import type { InsertInput } from '../insert/insert.js';
 import type { ReplaceInput } from '../replace/replace.js';
 import type { StoryLocator } from '../types/story.types.js';
 import { DocumentApiValidationError } from '../errors.js';
+import type { SDHtmlMarkdownCheckGuard } from '../capabilities/html-markdown-support.js';
+import { assertNoUnknownFields, isRecord } from '../validation-primitives.js';
 
 export type ChangeMode = 'direct' | 'tracked';
 
@@ -56,6 +58,11 @@ export interface MutationOptions extends RevisionGuardOptions {
   dryRun?: boolean;
 }
 
+export interface RichContentMutationOptions extends MutationOptions {
+  /** Guard returned by `doc.capabilities.check` for an exact rich write. */
+  supportCheck?: SDHtmlMarkdownCheckGuard;
+}
+
 /**
  * Text insertion request: target-less insert at document end.
  *
@@ -83,13 +90,32 @@ export type WriteRequest = InsertWriteRequest;
 export interface WriteAdapter {
   write(request: InsertWriteRequest, options?: MutationOptions): TextMutationReceipt;
   /** Structured insert for SDFragment or markdown/html content. Returns SDMutationReceipt. */
-  insertStructured(input: InsertInput, options?: MutationOptions): SDMutationReceipt;
+  insertStructured(input: InsertInput, options?: RichContentMutationOptions): SDMutationReceipt;
   /** Structured replace for SDFragment or markdown/html content. Returns SDMutationReceipt. */
-  replaceStructured(input: ReplaceInput, options?: MutationOptions): SDMutationReceipt;
+  replaceStructured(input: ReplaceInput, options?: RichContentMutationOptions): SDMutationReceipt;
 }
 
-export function normalizeMutationOptions(options?: MutationOptions): MutationOptions {
+export function normalizeMutationOptions(
+  options?: MutationOptions | RichContentMutationOptions,
+  supportCheckOperation?: 'insert' | 'replace',
+): RichContentMutationOptions {
   validateChangeMode(options?.changeMode);
+  const supportCheck = (options as RichContentMutationOptions | undefined)?.supportCheck;
+  if (supportCheck !== undefined) {
+    if (!supportCheckOperation) {
+      throw new DocumentApiValidationError(
+        'INVALID_INPUT',
+        'supportCheck is valid only for HTML or Markdown insert and replace requests.',
+      );
+    }
+    validateSupportCheckGuard(supportCheck, supportCheckOperation);
+    if (options?.dryRun) {
+      throw new DocumentApiValidationError(
+        'INVALID_INPUT',
+        'supportCheck cannot be combined with dryRun; capabilities.check is already non-mutating.',
+      );
+    }
+  }
   // `offsetSpace` is a PRIVATE V2 adapter extension (browser editable
   // selections count an inline object as one caret position). It is not part
   // of the public MutationOptions contract; normalization forwards it opaquely
@@ -99,8 +125,35 @@ export function normalizeMutationOptions(options?: MutationOptions): MutationOpt
     expectedRevision: options?.expectedRevision,
     changeMode: options?.changeMode ?? 'direct',
     dryRun: options?.dryRun ?? false,
+    ...(supportCheck ? { supportCheck } : {}),
     ...(offsetSpace === 'selection' || offsetSpace === 'kernel' ? ({ offsetSpace } as object) : {}),
   };
+}
+
+function validateSupportCheckGuard(value: unknown, operation: 'insert' | 'replace'): void {
+  if (!isRecord(value)) {
+    throw new DocumentApiValidationError('INVALID_INPUT', 'supportCheck must be a support-check guard object.');
+  }
+  assertNoUnknownFields(
+    value,
+    new Set(['version', 'operation', 'evaluatedRevision', 'requestSha256', 'analysisSha256']),
+    'supportCheck',
+  );
+  const digest = /^[0-9a-f]{64}$/u;
+  if (
+    value.version !== 'sd-html-markdown-check/1' ||
+    value.operation !== operation ||
+    typeof value.evaluatedRevision !== 'string' ||
+    typeof value.requestSha256 !== 'string' ||
+    !digest.test(value.requestSha256) ||
+    typeof value.analysisSha256 !== 'string' ||
+    !digest.test(value.analysisSha256)
+  ) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      `supportCheck must be a valid ${operation} guard returned by capabilities.check.`,
+    );
+  }
 }
 
 export function executeWrite(

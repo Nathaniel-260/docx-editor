@@ -1,7 +1,7 @@
 import type { BlockNodeAddress, BlockNodeType } from './base.js';
 import type { Range, SelectionTarget, TextTarget } from './address.js';
 import type { StoryLocator } from './story.types.js';
-import type { SDDiagnostic } from './sd-contract.js';
+import type { SDDiagnostic, SDHtmlMarkdownOutcome } from './sd-contract.js';
 
 export const SD_PROJECTION_FORMATS = ['html', 'markdown'] as const;
 export type SDProjectionFormat = (typeof SD_PROJECTION_FORMATS)[number];
@@ -179,6 +179,8 @@ export interface SDContentProjectionResult<TFormat extends SDProjectionFormat = 
   format: TFormat;
   content: string;
   status: SDProjectionStatus;
+  /** Fidelity outcome derived from the complete projection diagnostics. */
+  outcome: SDHtmlMarkdownOutcome;
   reviewMode: SDProjectionReviewMode;
   evaluatedRevision: string;
   story: StoryLocator;
@@ -188,6 +190,15 @@ export interface SDContentProjectionResult<TFormat extends SDProjectionFormat = 
   blocks: SDProjectionBlockMapEntry[];
   annotations: SDProjectionAnnotation[];
   sourceMap?: SDProjectionSourceMap;
+}
+
+export function deriveSDHtmlMarkdownOutcome(
+  diagnostics: readonly Pick<SDDiagnostic, 'severity' | 'lossy'>[],
+): SDHtmlMarkdownOutcome {
+  if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return 'rejected';
+  if (diagnostics.some((diagnostic) => diagnostic.lossy)) return 'simplified';
+  if (diagnostics.length > 0) return 'preserved-with-warnings';
+  return 'preserved';
 }
 
 export function deriveSDProjectionStatus(

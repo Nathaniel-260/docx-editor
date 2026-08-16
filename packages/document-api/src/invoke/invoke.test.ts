@@ -302,6 +302,7 @@ function makeAdapters() {
   const projectionResult = {
     content: '<p>Hello</p>',
     status: 'success' as const,
+    outcome: 'preserved' as const,
     reviewMode: 'final' as const,
     evaluatedRevision: 'r1',
     story: { kind: 'story' as const, storyType: 'body' as const },
@@ -462,6 +463,25 @@ describe('invoke', () => {
       const api = createDocumentApi(adapters);
       const direct = api.capabilities();
       const invoked = api.invoke({ operationId: 'capabilities.get', input: undefined });
+      expect(invoked).toEqual(direct);
+    });
+
+    it('capabilities.check: invoke resolves the same support result as the direct async member', async () => {
+      const { adapters, projectHtmlAdapter } = makeAdapters();
+      const projection = await projectHtmlAdapter.projectHtml({ reviewMode: 'final' });
+      const result = {
+        operation: 'projectHtml' as const,
+        format: 'html' as const,
+        supported: true,
+        outcome: 'preserved' as const,
+        evaluatedRevision: 'r1',
+        projection,
+      };
+      adapters.capabilities.check = mock(async () => result);
+      const api = createDocumentApi(adapters);
+      const input = { operation: 'projectHtml' as const, input: { reviewMode: 'final' as const } };
+      const direct = await api.capabilities.check(input);
+      const invoked = await api.invoke({ operationId: 'capabilities.check', input });
       expect(invoked).toEqual(direct);
     });
 

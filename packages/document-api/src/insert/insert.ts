@@ -1,4 +1,9 @@
-import { executeWrite, normalizeMutationOptions, type MutationOptions, type WriteAdapter } from '../write/write.js';
+import {
+  executeWrite,
+  normalizeMutationOptions,
+  type RichContentMutationOptions,
+  type WriteAdapter,
+} from '../write/write.js';
 import type { SelectionTarget, TargetLocator, SDMutationReceipt } from '../types/index.js';
 import type { SDInsertInput } from '../types/structural-input.js';
 import type { SDFragment } from '../types/fragment.js';
@@ -69,6 +74,10 @@ export type LegacyInsertInput = TextInsertInput;
  */
 export type InsertInput = TextInsertInput | RichContentInsertInput | SDInsertInput;
 
+export function isRichContentInsertInput(input: InsertInput): input is RichContentInsertInput {
+  return 'value' in input && (input.type === 'html' || input.type === 'markdown');
+}
+
 // ---------------------------------------------------------------------------
 // Allowlists for strict field validation
 // ---------------------------------------------------------------------------
@@ -98,7 +107,7 @@ export function isStructuralInsertInput(input: InsertInput): input is SDInsertIn
  * 1. Union conflict detection (mutually exclusive discriminants)
  * 2. Shape-specific field and type validation
  */
-function validateInsertInput(input: unknown): asserts input is InsertInput {
+export function validateInsertInput(input: unknown): asserts input is InsertInput {
   if (!isRecord(input)) {
     throw new DocumentApiValidationError('INVALID_TARGET', 'Insert input must be a non-null object.');
   }
@@ -280,7 +289,7 @@ export function executeInsert(
   selectionAdapter: SelectionMutationAdapter,
   writeAdapter: WriteAdapter,
   input: InsertInput,
-  options?: MutationOptions,
+  options?: RichContentMutationOptions,
 ): SDMutationReceipt {
   validateInsertInput(input);
 
@@ -295,7 +304,7 @@ export function executeInsert(
 
   // For non-text content types, delegate to the adapter's structured insert path.
   if (contentType !== 'text') {
-    return writeAdapter.insertStructured(input, normalizeMutationOptions(options));
+    return writeAdapter.insertStructured(input, normalizeMutationOptions(options, 'insert'));
   }
 
   // Text path with target/ref → route through SelectionMutationAdapter

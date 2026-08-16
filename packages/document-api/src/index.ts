@@ -5,6 +5,7 @@ import { DocumentApiValidationError } from './errors.js';
 export * from './types/index.js';
 export * from './contract/index.js';
 export * from './capabilities/capabilities.js';
+export * from './capabilities/html-markdown-support.js';
 export * from './inline-semantics/index.js';
 export type { HistoryAdapter, HistoryApi } from './history/history.js';
 export { executeHistoryGet, executeHistoryUndo, executeHistoryRedo } from './history/history.js';
@@ -381,13 +382,18 @@ export {
   executeTrackChangesList,
   executeTrackChangesDecide,
 } from './track-changes/track-changes.js';
-import type { MutationOptions, RevisionGuardOptions, WriteAdapter } from './write/write.js';
+import type { MutationOptions, RevisionGuardOptions, RichContentMutationOptions, WriteAdapter } from './write/write.js';
 import type { SelectionMutationAdapter } from './selection-mutation.js';
 import {
   executeCapabilities,
+  executeCapabilitiesCheck,
   type CapabilitiesAdapter,
   type DocumentApiCapabilities,
 } from './capabilities/capabilities.js';
+import type {
+  SDHtmlMarkdownSupportCheckInput,
+  SDHtmlMarkdownSupportCheckResult,
+} from './capabilities/html-markdown-support.js';
 import type { OperationId } from './contract/types.js';
 import type { DynamicInvokeRequest, InvokeRequest, InvokeResult } from './contract/operation-registry.js';
 import { buildDispatchTable } from './invoke/invoke.js';
@@ -1051,7 +1057,7 @@ export type { GetMarkdownAdapter, GetMarkdownInput } from './get-markdown/get-ma
 export type { GetHtmlAdapter, GetHtmlInput } from './get-html/get-html.js';
 export type { InfoAdapter, InfoInput } from './info/info.js';
 export type { ExtractAdapter, ExtractInput } from './extract/extract.js';
-export type { WriteAdapter, WriteRequest } from './write/write.js';
+export type { WriteAdapter, WriteRequest, RichContentMutationOptions } from './write/write.js';
 export type {
   FormatInlineAliasApi,
   FormatInlineAliasInput,
@@ -1766,6 +1772,7 @@ export type TablesAdapter = Omit<TablesApi, 'moveRow'> & {
 export interface CapabilitiesApi {
   (): DocumentApiCapabilities;
   get(): DocumentApiCapabilities;
+  check(input: SDHtmlMarkdownSupportCheckInput): Promise<SDHtmlMarkdownSupportCheckResult>;
 }
 export interface QueryApi {
   /** Accepts canonical nested input or a selector shorthand normalized to `{ select: ... }` internally. */
@@ -1859,11 +1866,11 @@ export interface DocumentApi {
    * Insert content at a target location.
    * If target is omitted, inserts at the end of the document.
    */
-  insert(input: InsertInput, options?: MutationOptions): SDMutationReceipt;
+  insert(input: InsertInput, options?: RichContentMutationOptions): SDMutationReceipt;
   /**
    * Replace text at a target range.
    */
-  replace(input: ReplaceInput, options?: MutationOptions): SDMutationReceipt;
+  replace(input: ReplaceInput, options?: RichContentMutationOptions): SDMutationReceipt;
   /**
    * Delete text at a target range.
    */
@@ -2249,7 +2256,10 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
     }
     return caps;
   };
-  const capabilities: CapabilitiesApi = Object.assign(capFn, { get: capFn });
+  const capabilities: CapabilitiesApi = Object.assign(capFn, {
+    get: capFn,
+    check: (input: SDHtmlMarkdownSupportCheckInput) => executeCapabilitiesCheck(adapters.capabilities, input),
+  });
   const inlineAliasApi = buildFormatInlineAliasApi(adapters.selectionMutation);
   const api: DocumentApi = {
     get(input: SDGetInput): SDDocument {
@@ -2311,10 +2321,10 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
         return executeListComments(adapters.comments, query);
       },
     },
-    insert(input: InsertInput, options?: MutationOptions): SDMutationReceipt {
+    insert(input: InsertInput, options?: RichContentMutationOptions): SDMutationReceipt {
       return executeInsert(adapters.selectionMutation, adapters.write, input, options);
     },
-    replace(input: ReplaceInput, options?: MutationOptions): SDMutationReceipt {
+    replace(input: ReplaceInput, options?: RichContentMutationOptions): SDMutationReceipt {
       return executeReplace(adapters.selectionMutation, adapters.write, input, options);
     },
     delete(input: DeleteInput, options?: MutationOptions): TextMutationReceipt {

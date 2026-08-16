@@ -18,6 +18,7 @@ export type SDErrorCode =
   | 'ADDRESS_STALE'
   | 'PRECONDITION_FAILED'
   | 'REVISION_MISMATCH'
+  | 'CHECK_MISMATCH'
   | 'INVALID_CONTEXT'
   | 'INVALID_NESTING'
   | 'INVALID_PLACEMENT'
@@ -28,6 +29,18 @@ export type SDErrorCode =
   | 'NO_OP'
   | 'UNSUPPORTED_ENVIRONMENT'
   | 'INTERNAL_ERROR';
+
+export const SD_HTML_MARKDOWN_OUTCOMES = [
+  'preserved',
+  'preserved-with-warnings',
+  'simplified',
+  'rejected',
+  'no-op',
+  'invalid-target',
+  'outdated',
+] as const;
+
+export type SDHtmlMarkdownOutcome = (typeof SD_HTML_MARKDOWN_OUTCOMES)[number];
 
 export interface SDError {
   code: SDErrorCode;
@@ -53,6 +66,8 @@ export type MutationResolutionTarget = TextAddress | BlockNodeAddress | BodyStor
 
 export interface SDMutationReceipt {
   success: boolean;
+  /** Rich HTML/Markdown fidelity outcome, when this receipt came from a rich write. */
+  outcome?: SDHtmlMarkdownOutcome;
   failure?: SDError;
   evaluatedRevision?: { before: string; after: string };
   id?: ReceiptSuccess['id'];

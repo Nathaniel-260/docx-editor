@@ -433,6 +433,7 @@ describe('document-api contract catalog', () => {
       'id',
       'inserted',
       'invalidatedRefs',
+      'outcome',
       'remappedRefs',
       'removed',
       'resolution',
@@ -442,7 +443,7 @@ describe('document-api contract catalog', () => {
       'updated',
       'warnings',
     ];
-    const expectedFailureKeys = ['conversion', 'evaluatedRevision', 'failure', 'resolution', 'success'];
+    const expectedFailureKeys = ['conversion', 'evaluatedRevision', 'failure', 'outcome', 'resolution', 'success'];
 
     for (const operationId of ['insert', 'replace'] as const) {
       const operation = schemas.operations[operationId];
@@ -1466,7 +1467,7 @@ describe('document-api contract catalog', () => {
 
   it('marks exactly the Promise-returning operations as async', () => {
     const asyncOps = OPERATION_IDS.filter((id) => COMMAND_CATALOG[id].returnsPromise === true).sort();
-    expect(asyncOps).toEqual(['projectHtml', 'projectMarkdown', 'templates.apply']);
+    expect(asyncOps).toEqual(['capabilities.check', 'projectHtml', 'projectMarkdown', 'templates.apply']);
 
     // returnsPromise is a strict boolean signal: it is either true or absent.
     for (const id of OPERATION_IDS) {

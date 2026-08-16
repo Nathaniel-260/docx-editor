@@ -21,6 +21,7 @@ import {
   SD_CONVERSION_DIAGNOSTIC_CODES,
   SD_CONVERSION_DISPOSITIONS,
   SD_CONVERSION_FORMATS,
+  SD_HTML_MARKDOWN_OUTCOMES,
 } from '../types/sd-contract.js';
 import {
   SD_PROJECTION_CONSTRUCTS,
@@ -447,6 +448,7 @@ const SHARED_DEFS: Record<string, JsonSchema> = {
       format: ref('SDProjectionFormat'),
       content: { type: 'string' },
       status: ref('SDProjectionStatus'),
+      outcome: { enum: [...SD_HTML_MARKDOWN_OUTCOMES] },
       reviewMode: ref('SDProjectionReviewMode'),
       evaluatedRevision: { type: 'string' },
       story: ref('StoryLocator'),
@@ -461,6 +463,7 @@ const SHARED_DEFS: Record<string, JsonSchema> = {
       'format',
       'content',
       'status',
+      'outcome',
       'reviewMode',
       'evaluatedRevision',
       'story',
@@ -1560,6 +1563,7 @@ const evaluatedRevisionSchema = objectSchema({ before: { type: 'string' }, after
 const sdMutationSuccessSchema = objectSchema(
   {
     success: { const: true },
+    outcome: { enum: [...SD_HTML_MARKDOWN_OUTCOMES] },
     resolution: sdMutationResolutionSchema,
     ...receiptSuccessMetadataProperties,
     evaluatedRevision: evaluatedRevisionSchema,
@@ -1585,6 +1589,7 @@ function sdMutationFailureSchemaFor(operationId: OperationId): JsonSchema {
   return objectSchema(
     {
       success: { const: false },
+      outcome: { enum: [...SD_HTML_MARKDOWN_OUTCOMES] },
       failure: sdErrorSchemaFor(operationId),
       resolution: sdMutationResolutionSchema,
       evaluatedRevision: evaluatedRevisionSchema,
@@ -2612,6 +2617,158 @@ const insertInputSchema: JsonSchema = {
         nestingPolicy: nestingPolicySchema,
       },
       ['content'],
+    ),
+  ],
+};
+const supportCheckRichInsertInputSchema: JsonSchema = {
+  oneOf: [
+    objectSchema(
+      {
+        in: storyLocatorSchema,
+        target: { oneOf: [selectionTargetSchema, blockNodeAddressSchema] },
+        value: { type: 'string' },
+        type: { enum: ['html', 'markdown'] },
+        placement: placementSchema,
+      },
+      ['target', 'value', 'type'],
+    ),
+    objectSchema(
+      {
+        in: storyLocatorSchema,
+        ref: { type: 'string', minLength: 1 },
+        value: { type: 'string' },
+        type: { enum: ['html', 'markdown'] },
+        placement: placementSchema,
+      },
+      ['ref', 'value', 'type'],
+    ),
+    objectSchema(
+      {
+        in: storyLocatorSchema,
+        value: { type: 'string' },
+        type: { enum: ['html', 'markdown'] },
+        placement: placementSchema,
+      },
+      ['value', 'type'],
+    ),
+  ],
+};
+const supportCheckRichReplaceInputSchema: JsonSchema = {
+  oneOf: [
+    objectSchema(
+      {
+        in: storyLocatorSchema,
+        target: { oneOf: [selectionTargetSchema, blockNodeAddressSchema] },
+        value: { type: 'string' },
+        type: { enum: ['html', 'markdown'] },
+        nestingPolicy: nestingPolicySchema,
+      },
+      ['target', 'value', 'type'],
+    ),
+    objectSchema(
+      {
+        in: storyLocatorSchema,
+        ref: { type: 'string', minLength: 1 },
+        value: { type: 'string' },
+        type: { enum: ['html', 'markdown'] },
+        nestingPolicy: nestingPolicySchema,
+      },
+      ['ref', 'value', 'type'],
+    ),
+  ],
+};
+const supportCheckProjectionInputSchema = objectSchema({
+  in: storyLocatorSchema,
+  reviewMode: ref('SDProjectionReviewMode'),
+  scope: ref('SDProjectionScope'),
+  includeSourceMap: { type: 'boolean' },
+});
+const supportCheckInputSchema: JsonSchema = {
+  oneOf: [
+    objectSchema(
+      {
+        operation: { const: 'insert' },
+        input: supportCheckRichInsertInputSchema,
+        options: objectSchema({ changeMode: { enum: ['direct', 'tracked'] } }),
+      },
+      ['operation', 'input'],
+    ),
+    objectSchema(
+      {
+        operation: { const: 'replace' },
+        input: supportCheckRichReplaceInputSchema,
+        options: objectSchema({ changeMode: { enum: ['direct', 'tracked'] } }),
+      },
+      ['operation', 'input'],
+    ),
+    objectSchema({ operation: { const: 'projectHtml' }, input: supportCheckProjectionInputSchema }, ['operation']),
+    objectSchema({ operation: { const: 'projectMarkdown' }, input: supportCheckProjectionInputSchema }, ['operation']),
+  ],
+};
+const supportCheckFailureSchema = objectSchema(
+  {
+    code: { type: 'string' },
+    message: { type: 'string' },
+    path: diagnosticPathSchema,
+    target: { oneOf: [blockNodeAddressSchema, textAddressSchema, selectionTargetSchema] },
+    details: {},
+  },
+  ['code', 'message'],
+);
+const supportCheckGuardSchema = objectSchema(
+  {
+    version: { const: 'sd-html-markdown-check/1' },
+    operation: { enum: ['insert', 'replace'] },
+    evaluatedRevision: { type: 'string' },
+    requestSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    analysisSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+  },
+  ['version', 'operation', 'evaluatedRevision', 'requestSha256', 'analysisSha256'],
+);
+const supportCheckCommonProperties: Record<string, JsonSchema> = {
+  format: { enum: ['html', 'markdown'] },
+  supported: { type: 'boolean' },
+  outcome: { enum: [...SD_HTML_MARKDOWN_OUTCOMES] },
+  evaluatedRevision: { type: 'string' },
+  failure: supportCheckFailureSchema,
+};
+const supportCheckOutputSchema: JsonSchema = {
+  oneOf: [
+    objectSchema(
+      {
+        operation: { enum: ['insert', 'replace'] },
+        ...supportCheckCommonProperties,
+        wouldChange: { type: 'boolean' },
+        conversion: conversionReportSchema,
+        plan: objectSchema(
+          {
+            fragment: conversionFragmentSchema,
+            resolution: sdMutationResolutionSchema,
+            changeMode: { enum: ['direct', 'tracked'] },
+            atomic: { const: true },
+          },
+          ['fragment', 'resolution', 'changeMode', 'atomic'],
+        ),
+        guard: supportCheckGuardSchema,
+      },
+      ['operation', 'format', 'supported', 'outcome', 'evaluatedRevision', 'wouldChange', 'conversion'],
+    ),
+    objectSchema(
+      {
+        operation: { enum: ['projectHtml', 'projectMarkdown'] },
+        ...supportCheckCommonProperties,
+        plan: objectSchema(
+          {
+            reviewMode: ref('SDProjectionReviewMode'),
+            story: storyLocatorSchema,
+            scope: ref('SDResolvedProjectionScope'),
+            includeSourceMap: { type: 'boolean' },
+          },
+          ['reviewMode', 'story', 'scope', 'includeSourceMap'],
+        ),
+        projection: ref('SDContentProjectionResult'),
+      },
+      ['operation', 'format', 'supported', 'outcome', 'evaluatedRevision'],
     ),
   ],
 };
@@ -7192,6 +7349,10 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
   'capabilities.get': {
     input: strictEmptyObjectSchema,
     output: capabilitiesOutputSchema,
+  },
+  'capabilities.check': {
+    input: supportCheckInputSchema,
+    output: supportCheckOutputSchema,
   },
   // --- create.table ---
   'create.table': {
