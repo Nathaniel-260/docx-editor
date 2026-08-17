@@ -14,7 +14,10 @@ export interface CompareApplyDebugSnapshot {
 
 export interface CompareApplyDocApi {
   readonly diff: {
-    apply(input: { diff: unknown }, options: { changeMode: 'tracked' | 'direct' }): CompareApplyResult;
+    apply(
+      input: { diff: unknown },
+      options: { changeMode: 'tracked' | 'direct' },
+    ): CompareApplyResult | Promise<CompareApplyResult>;
   };
   getText?(input: Record<string, never>): string;
   readonly doc?: {
@@ -160,11 +163,14 @@ function prefersDirectWs09TableTopologyApply(diff: unknown): boolean {
   );
 }
 
-export function applyCompareWithWs09Fallback(docApi: CompareApplyDocApi, diff: unknown): CompareApplyOutcome {
+export async function applyCompareWithWs09Fallback(
+  docApi: CompareApplyDocApi,
+  diff: unknown,
+): Promise<CompareApplyOutcome> {
   if (prefersDirectWs09TableTopologyApply(diff)) {
     try {
       return {
-        applyResult: docApi.diff.apply({ diff }, { changeMode: 'direct' }),
+        applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
         changeMode: 'direct',
         fallbackFromTracked: true,
       };
@@ -172,7 +178,7 @@ export function applyCompareWithWs09Fallback(docApi: CompareApplyDocApi, diff: u
       if (!isWs07VisualFamilyApplyBlock(error)) throw error;
       const sanitizedDiff = sanitizeWs07VisualFamiliesFromDiff(diff);
       return {
-        applyResult: docApi.diff.apply({ diff: sanitizedDiff }, { changeMode: 'direct' }),
+        applyResult: await docApi.diff.apply({ diff: sanitizedDiff }, { changeMode: 'direct' }),
         changeMode: 'direct',
         fallbackFromTracked: true,
       };
@@ -180,14 +186,14 @@ export function applyCompareWithWs09Fallback(docApi: CompareApplyDocApi, diff: u
   }
   try {
     return {
-      applyResult: docApi.diff.apply({ diff }, { changeMode: 'tracked' }),
+      applyResult: await docApi.diff.apply({ diff }, { changeMode: 'tracked' }),
       changeMode: 'tracked',
       fallbackFromTracked: false,
     };
   } catch (error) {
     if (!isWs09TrackedCompareDeferred(error)) throw error;
     return {
-      applyResult: docApi.diff.apply({ diff }, { changeMode: 'direct' }),
+      applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
       changeMode: 'direct',
       fallbackFromTracked: true,
     };

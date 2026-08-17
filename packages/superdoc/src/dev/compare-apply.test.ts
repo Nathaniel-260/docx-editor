@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vite-plus/test';
 import {
   applyCompareWithWs09Fallback,
@@ -8,9 +11,16 @@ import {
 } from './compare-apply';
 
 describe('dev compare apply fallback', () => {
-  it('keeps tracked compare apply when it succeeds', () => {
-    const apply = vi.fn(() => ({ appliedOperations: 3, diagnostics: [] }));
-    const outcome = applyCompareWithWs09Fallback({ diff: { apply } }, { id: 'diff' });
+  it('awaits the asynchronous host comparison before checking its summary', () => {
+    const testDirectory = dirname(fileURLToPath(import.meta.url));
+    const devAppSource = readFileSync(resolve(testDirectory, 'components/SuperdocDev.vue'), 'utf8');
+
+    expect(devAppSource).toContain('const diff = await liveCompareDocApi.diff.compare({ targetSnapshot });');
+  });
+
+  it('keeps tracked compare apply when an asynchronous host facade succeeds', async () => {
+    const apply = vi.fn(async () => ({ appliedOperations: 3, diagnostics: [] }));
+    const outcome = await applyCompareWithWs09Fallback({ diff: { apply } }, { id: 'diff' });
 
     expect(outcome.changeMode).toBe('tracked');
     expect(outcome.fallbackFromTracked).toBe(false);
@@ -19,19 +29,22 @@ describe('dev compare apply fallback', () => {
     expect(apply).toHaveBeenNthCalledWith(1, { diff: { id: 'diff' } }, { changeMode: 'tracked' });
   });
 
-  it('falls back to direct compare apply for ws09 tracked deferral', () => {
+  it('falls back to direct compare apply for asynchronous ws09 tracked deferral', async () => {
     const deferredError = Object.assign(
       new Error('compare-apply-deferred (ws09): table topology changes are detected'),
       { code: 'CAPABILITY_UNSUPPORTED' },
     );
     const apply = vi
       .fn()
-      .mockImplementationOnce(() => {
+      .mockImplementationOnce(async () => {
         throw deferredError;
       })
-      .mockImplementationOnce(() => ({ appliedOperations: 5, diagnostics: ['body: applied 2 safe operation(s)'] }));
+      .mockImplementationOnce(async () => ({
+        appliedOperations: 5,
+        diagnostics: ['body: applied 2 safe operation(s)'],
+      }));
 
-    const outcome = applyCompareWithWs09Fallback({ diff: { apply } }, { id: 'diff' });
+    const outcome = await applyCompareWithWs09Fallback({ diff: { apply } }, { id: 'diff' });
 
     expect(outcome.changeMode).toBe('direct');
     expect(outcome.fallbackFromTracked).toBe(true);
@@ -41,7 +54,7 @@ describe('dev compare apply fallback', () => {
     expect(apply).toHaveBeenNthCalledWith(2, { diff: { id: 'diff' } }, { changeMode: 'direct' });
   });
 
-  it('prefers direct compare apply for ws09 deferred table topology diffs before tracked apply can partially succeed', () => {
+  it('prefers direct compare apply for ws09 deferred table topology diffs before tracked apply can partially succeed', async () => {
     const apply = vi.fn(() => ({ appliedOperations: 6, diagnostics: [] }));
     const diff = {
       payload: {
@@ -55,7 +68,7 @@ describe('dev compare apply fallback', () => {
       },
     };
 
-    const outcome = applyCompareWithWs09Fallback({ diff: { apply } }, diff);
+    const outcome = await applyCompareWithWs09Fallback({ diff: { apply } }, diff);
 
     expect(outcome.changeMode).toBe('direct');
     expect(outcome.fallbackFromTracked).toBe(true);
@@ -64,7 +77,7 @@ describe('dev compare apply fallback', () => {
     expect(apply).toHaveBeenCalledWith({ diff }, { changeMode: 'direct' });
   });
 
-  it('retries direct compare apply with ws07 visual-only families stripped when they are the only remaining blocker', () => {
+  it('retries direct compare apply with ws07 visual-only families stripped when they are the only remaining blocker', async () => {
     const ws07Error = Object.assign(
       new Error(
         'diff.apply: full diff apply cannot safely replay changed families ' +
@@ -110,7 +123,7 @@ describe('dev compare apply fallback', () => {
       })
       .mockImplementationOnce(() => ({ appliedOperations: 2, diagnostics: [] }));
 
-    const outcome = applyCompareWithWs09Fallback({ diff: { apply } }, diff);
+    const outcome = await applyCompareWithWs09Fallback({ diff: { apply } }, diff);
 
     expect(outcome.changeMode).toBe('direct');
     expect(outcome.fallbackFromTracked).toBe(true);
@@ -137,7 +150,7 @@ describe('dev compare apply fallback', () => {
     ).toBe(false);
   });
 
-  it('retries direct compare apply when only a subset of ws07 visual families blocks apply', () => {
+  it('retries direct compare apply when only a subset of ws07 visual families blocks apply', async () => {
     const ws07Error = Object.assign(
       new Error(
         'diff.apply: full diff apply cannot safely replay changed families ' +
@@ -175,7 +188,7 @@ describe('dev compare apply fallback', () => {
       })
       .mockImplementationOnce(() => ({ appliedOperations: 1, diagnostics: [] }));
 
-    const outcome = applyCompareWithWs09Fallback({ diff: { apply } }, diff);
+    const outcome = await applyCompareWithWs09Fallback({ diff: { apply } }, diff);
 
     expect(outcome.changeMode).toBe('direct');
     expect(outcome.fallbackFromTracked).toBe(true);
@@ -189,13 +202,13 @@ describe('dev compare apply fallback', () => {
     ).toBe(false);
   });
 
-  it('rethrows non-ws09 compare apply failures', () => {
+  it('rethrows non-ws09 compare apply failures', async () => {
     const error = Object.assign(new Error('boom'), { code: 'PRECONDITION_FAILED' });
     const apply = vi.fn(() => {
       throw error;
     });
 
-    expect(() => applyCompareWithWs09Fallback({ diff: { apply } }, { id: 'diff' })).toThrow(error);
+    await expect(applyCompareWithWs09Fallback({ diff: { apply } }, { id: 'diff' })).rejects.toThrow(error);
     expect(apply).toHaveBeenCalledTimes(1);
   });
 

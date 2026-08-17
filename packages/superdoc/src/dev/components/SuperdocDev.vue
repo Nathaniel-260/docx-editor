@@ -386,14 +386,17 @@ const handleCompareFile = async (event) => {
       throw new Error('Compare document API is unavailable on the active editor.');
     }
 
-    const diff = liveCompareDocApi.diff.compare({ targetSnapshot });
+    const diff = await liveCompareDocApi.diff.compare({ targetSnapshot });
 
     if (!diff?.summary?.hasChanges) {
       alert('No differences found between the current document and the comparison DOCX.');
       return;
     }
 
-    const { applyResult, changeMode, fallbackFromTracked } = applyCompareWithWs09Fallback(liveCompareDocApi, diff);
+    const { applyResult, changeMode, fallbackFromTracked } = await applyCompareWithWs09Fallback(
+      liveCompareDocApi,
+      diff,
+    );
     await settleCompareApplyPaint(liveCompareDocApi);
 
     console.info('[SuperDoc Dev] Compare result', { applyResult, changeMode, fallbackFromTracked });
