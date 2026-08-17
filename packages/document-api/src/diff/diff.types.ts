@@ -6,6 +6,10 @@
  * and must not be inspected by consumers.
  */
 
+import type { TrackedChangeAddress } from '../types/address.js';
+import type { StoryLocator } from '../types/story.types.js';
+import type { TrackChangeNavigationTarget } from '../types/track-changes.types.js';
+
 // ---------------------------------------------------------------------------
 // Engine identification
 // ---------------------------------------------------------------------------
@@ -68,9 +72,28 @@ export interface DiffPayload {
   payload: Record<string, unknown>;
 }
 
-/** Result metadata returned after applying a diff. */
+export interface DiffApplyReviewItem {
+  id: string;
+  story: StoryLocator;
+  address: TrackedChangeAddress;
+  navigationTarget?: TrackChangeNavigationTarget;
+}
+
+export type DiffApplyOperationReceipt =
+  | {
+      operationId: string;
+      disposition: 'review-created';
+      reviewItems: [DiffApplyReviewItem, ...DiffApplyReviewItem[]];
+    }
+  | {
+      operationId: string;
+      disposition: 'applied-directly';
+      reviewItems: [];
+    };
+
 export interface DiffApplyResult {
   appliedOperations: number;
+  operationReceipts: DiffApplyOperationReceipt[];
   baseFingerprint: string;
   targetFingerprint: string;
   coverage: DiffCoverage;

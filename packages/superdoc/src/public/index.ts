@@ -49,6 +49,7 @@ export type { DirectSurfaceRequest } from '../core/types/index.js';
 export type { DocRange } from '../core/types/index.js';
 export type { Document } from '../core/types/index.js';
 export type { DocumentApi } from '@superdoc/document-api';
+export type { DiffApplyOperationReceipt, DiffApplyResult, DiffApplyReviewItem } from '@superdoc/document-api';
 export type { DocumentMode } from '../core/types/index.js';
 export type { DocumentProtectionState } from '@superdoc/document-api';
 export type { EntityAddress } from '@superdoc/document-api';

@@ -3965,13 +3965,72 @@ const diffPayloadSchema: JsonSchema = objectSchema(
 const diffApplyResultSchema: JsonSchema = objectSchema(
   {
     appliedOperations: { type: 'integer' },
+    operationReceipts: {
+      type: 'array',
+      items: {
+        oneOf: [
+          objectSchema(
+            {
+              operationId: { type: 'string' },
+              disposition: { const: 'review-created' },
+              reviewItems: {
+                type: 'array',
+                minItems: 1,
+                items: objectSchema(
+                  {
+                    id: { type: 'string' },
+                    story: storyLocatorSchema,
+                    address: trackedChangeAddressSchema,
+                    navigationTarget: objectSchema(
+                      {
+                        kind: { const: 'block' },
+                        story: storyLocatorSchema,
+                        blockId: { type: 'string' },
+                        role: {
+                          enum: [
+                            'primary',
+                            'move-source',
+                            'move-destination',
+                            'formatting-carrier',
+                            'structural-carrier',
+                          ],
+                        },
+                      },
+                      ['kind', 'story', 'blockId', 'role'],
+                    ),
+                  },
+                  ['id', 'story', 'address'],
+                ),
+              },
+            },
+            ['operationId', 'disposition', 'reviewItems'],
+          ),
+          objectSchema(
+            {
+              operationId: { type: 'string' },
+              disposition: { const: 'applied-directly' },
+              reviewItems: { type: 'array', maxItems: 0 },
+            },
+            ['operationId', 'disposition', 'reviewItems'],
+          ),
+        ],
+      },
+    },
     baseFingerprint: { type: 'string' },
     targetFingerprint: { type: 'string' },
     coverage: diffCoverageSchema,
     summary: diffSummarySchema,
     diagnostics: { type: 'array', items: { type: 'string' } },
   },
-  ['appliedOperations', 'baseFingerprint', 'targetFingerprint', 'coverage', 'summary', 'diagnostics'],
+  [
+    'appliedOperations',
+    'operationReceipts',
+    'baseFingerprint',
+    'targetFingerprint',
+    'coverage',
+    'summary',
+    'diagnostics',
+  ],
 );
 const operationSchemas: Record<OperationId, OperationSchemaSet> = {
   get: {

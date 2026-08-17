@@ -423,6 +423,18 @@ import type {
   DiffCompareInput,
   DiffApplyInput,
   DiffApplyOptions,
+  DiffApplyOperationReceipt,
+  DiffApplyReviewItem,
+} from './diff/diff.types.js';
+export type {
+  DiffSnapshot,
+  DiffPayload,
+  DiffApplyResult,
+  DiffCompareInput,
+  DiffApplyInput,
+  DiffApplyOptions,
+  DiffApplyOperationReceipt,
+  DiffApplyReviewItem,
 } from './diff/diff.types.js';
 import type { ExportAdapter, ExportApi } from './export/export.js';
 import { executeExportToDocx } from './export/export.js';

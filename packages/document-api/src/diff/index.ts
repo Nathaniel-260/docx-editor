@@ -11,4 +11,6 @@ export type {
   DiffApplyInput,
   DiffApplyOptions,
   DiffChangeMode,
+  DiffApplyOperationReceipt,
+  DiffApplyReviewItem,
 } from './diff.types.js';

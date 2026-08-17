@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T14:49:25.697Z",
+  "generatedAt": "2026-08-11T21:24:11.538Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -39,6 +39,9 @@
         "ContextMenuSelectPayload",
         "ContextMenuSelectReadiness",
         "DOCX",
+        "DiffApplyOperationReceipt",
+        "DiffApplyResult",
+        "DiffApplyReviewItem",
         "DirectSurfaceRequest",
         "DocRange",
         "Document",
@@ -245,6 +248,9 @@
         "ContextMenuSelectPayload",
         "ContextMenuSelectReadiness",
         "DOCX",
+        "DiffApplyOperationReceipt",
+        "DiffApplyResult",
+        "DiffApplyReviewItem",
         "DirectSurfaceRequest",
         "DocRange",
         "Document",
@@ -457,11 +463,11 @@
     }
   },
   "counts": {
-    "types.import": 197,
-    "types.require": 197,
+    "types.import": 203,
+    "types.require": 203,
     "import": 10,
     "require": 10,
-    "union": 197
+    "union": 203
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -497,6 +503,9 @@
         "ContextMenuSelectContext",
         "ContextMenuSelectPayload",
         "ContextMenuSelectReadiness",
+        "DiffApplyOperationReceipt",
+        "DiffApplyResult",
+        "DiffApplyReviewItem",
         "DirectSurfaceRequest",
         "DocRange",
         "Document",

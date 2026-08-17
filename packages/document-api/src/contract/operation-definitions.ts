@@ -6539,7 +6539,8 @@ export const OPERATION_DEFINITIONS = {
       'Omitted changeMode applies story content directly; explicit tracked mode governs all four story families (body, header/footer parts, footnotes, endnotes). Comments, styles, and numbering are always applied directly. ' +
       'Supported mixed full-diff payloads apply atomically across body, comments, styles, numbering, and header/footers. ' +
       'Unsupported/deferred families such as package-graph/media/hyperlink closure, settings/theme, and textboxes fail closed before mutation.',
-    expectedResult: 'Returns a DiffApplyResult with applied operation count and diagnostics.',
+    expectedResult:
+      'Returns a DiffApplyResult with per-operation review receipts, applied operation count, and diagnostics.',
     requiresDocumentContext: true,
     metadata: mutationOperation({
       idempotency: 'conditional',
