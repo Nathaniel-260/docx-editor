@@ -11990,6 +11990,8 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
   it('routes the table cell-context family through tables.* once the host resolves a table context', async () => {
     const insertRow = vi.fn(() => ({ success: true }));
     const insertRowCommand = vi.fn(() => ({ success: true }));
+    const insertColumn = vi.fn(() => ({ success: true }));
+    const insertColumnCommand = vi.fn(() => ({ success: true }));
     const deleteRow = vi.fn(() => ({ success: true }));
     const deleteColumn = vi.fn(() => ({ success: true }));
     const mergeCells = vi.fn(() => ({ success: true }));
@@ -12008,7 +12010,7 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
         tables: {
           insertRow,
           deleteRow,
-          insertColumn: vi.fn(() => ({ success: true })),
+          insertColumn,
           deleteColumn,
           delete: deleteTable,
           mergeCells,
@@ -12021,7 +12023,9 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
         editorExtra: {
           host: {
             getTableContext,
-            getHandles: () => ({ editing: { tables: { insertRow: insertRowCommand } } }),
+            getHandles: () => ({
+              editing: { tables: { insertRow: insertRowCommand, insertColumn: insertColumnCommand } },
+            }),
           },
         },
       },
@@ -12045,6 +12049,9 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
     expect(await ui.toolbar.execute('table-add-row-after')).toMatchObject({ success: true });
     expect(insertRowCommand).toHaveBeenCalledWith({ nodeId: 'TBL1', rowIndex: 1, position: 'below' });
     expect(insertRow).not.toHaveBeenCalled();
+    expect(await ui.toolbar.execute('table-add-column-before')).toMatchObject({ success: true });
+    expect(insertColumnCommand).toHaveBeenCalledWith({ nodeId: 'TBL1', columnIndex: 0, position: 'left' }, 1);
+    expect(insertColumn).not.toHaveBeenCalled();
     expect(await ui.toolbar.execute('table-delete-row')).toMatchObject({ success: true });
     expect(deleteRow).toHaveBeenCalledWith({ nodeId: 'TBL1', rowIndex: 1 });
     expect(await ui.toolbar.execute('table-delete-column')).toMatchObject({ success: true });
@@ -12104,6 +12111,7 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
     const insertRowCommand = vi.fn(() => ({ success: true }));
     const deleteRow = vi.fn(() => ({ success: true }));
     const insertColumn = vi.fn(() => ({ success: true }));
+    const insertColumnCommand = vi.fn(() => ({ success: true }));
     const deleteColumn = vi.fn(() => ({ success: true }));
     const mergeCells = vi.fn(() => ({ success: true }));
     const splitCell = vi.fn(() => ({ success: true }));
@@ -12134,7 +12142,9 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
         editorExtra: {
           host: {
             getTableContext,
-            getHandles: () => ({ editing: { tables: { insertRow: insertRowCommand } } }),
+            getHandles: () => ({
+              editing: { tables: { insertRow: insertRowCommand, insertColumn: insertColumnCommand } },
+            }),
           },
         },
       },
@@ -12146,7 +12156,8 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
     expect(insertRowCommand).toHaveBeenCalledWith({ nodeId: 'TBL1', rowIndex: 1, position: 'below' }, TRACKED);
     expect(insertRow).not.toHaveBeenCalled();
     expect(await ui.toolbar.execute('table-add-column-before')).toMatchObject({ success: true });
-    expect(insertColumn).toHaveBeenCalledWith({ nodeId: 'TBL1', columnIndex: 0, position: 'left' }, TRACKED);
+    expect(insertColumnCommand).toHaveBeenCalledWith({ nodeId: 'TBL1', columnIndex: 0, position: 'left' }, 1, TRACKED);
+    expect(insertColumn).not.toHaveBeenCalled();
     expect(await ui.toolbar.execute('table-delete-row')).toMatchObject({ success: true });
     expect(deleteRow).toHaveBeenCalledWith({ nodeId: 'TBL1', rowIndex: 1 }, TRACKED);
     expect(await ui.toolbar.execute('table-delete-column')).toMatchObject({ success: true });

@@ -669,6 +669,7 @@ export const makeDefaultItems = ({
         closeDropdown(tableActionsItem);
         const { command } = event;
         superToolbar.emitCommand({ item: tableActionsItem, argument: { command } });
+        refocusEditorSurface(superToolbar);
       },
     });
   }

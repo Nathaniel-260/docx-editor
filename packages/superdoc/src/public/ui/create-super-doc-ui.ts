@@ -8133,11 +8133,22 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       if (spec.action === 'insert-row-before' || spec.action === 'insert-row-after') {
         const host = getHost();
         const handles = typeof host?.getHandles === 'function' ? host.getHandles() : null;
-        const insertRow = (handles?.editing as LooseRecord | undefined)?.tables as LooseRecord | undefined;
-        if (typeof insertRow?.insertRow !== 'function') return false;
+        const tableCommands = (handles?.editing as LooseRecord | undefined)?.tables as LooseRecord | undefined;
+        if (typeof tableCommands?.insertRow !== 'function') return false;
         const options = editorMutationOptionsForRoute(descriptor.docRoute!);
         if (options && options.success === false) return options;
-        return options ? insertRow.insertRow(input, options) : insertRow.insertRow(input);
+        return options ? tableCommands.insertRow(input, options) : tableCommands.insertRow(input);
+      }
+      if (spec.action === 'insert-column-before' || spec.action === 'insert-column-after') {
+        const host = getHost();
+        const handles = typeof host?.getHandles === 'function' ? host.getHandles() : null;
+        const tableCommands = (handles?.editing as LooseRecord | undefined)?.tables as LooseRecord | undefined;
+        if (typeof tableCommands?.insertColumn !== 'function') return false;
+        const options = editorMutationOptionsForRoute(descriptor.docRoute!);
+        if (options && options.success === false) return options;
+        return options
+          ? tableCommands.insertColumn(input, context.rowIndex, options)
+          : tableCommands.insertColumn(input, context.rowIndex);
       }
       return callEditorMutation(descriptor.docRoute!, op, input);
     } catch {
