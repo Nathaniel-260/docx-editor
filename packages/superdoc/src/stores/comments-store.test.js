@@ -2959,6 +2959,7 @@ describe('comments-store v2 pending document comments', () => {
       documentId: 'doc-1',
       getCapabilityState: vi.fn(() => ({ canWrite: true, reason: null })),
       captureCurrentSelection: vi.fn(async () => ({ ok: true, target })),
+      setActiveComment: vi.fn(async () => ({ ok: true })),
       commitPendingComment: vi.fn(async (input) => {
         submittedTargets.push(input.target);
         return {
@@ -2995,6 +2996,9 @@ describe('comments-store v2 pending document comments', () => {
     expect(result.ok).toBe(true);
     expect(store.pendingComment).toBeNull();
     expect(store.currentCommentMentions).toEqual([]);
+    expect(adapter.setActiveComment).toHaveBeenCalledWith('c-created');
+    expect(store.activeComment).toBe('c-created');
+    expect(store.activeFloatingCommentInstanceId).toBe('c-created');
     expect(store.commentsList.map((comment) => comment.commentId)).toEqual(['c-created']);
   });
 
@@ -3075,6 +3079,45 @@ describe('comments-store v2 pending document comments', () => {
         comment: expect.objectContaining({ commentId: 'c-created', mentions }),
       }),
     );
+  });
+
+  it('hands off the active floating row to the created comment for non-v2 pending submit', () => {
+    const pendingDraft = useComment({
+      commentId: 'pending-new-comment',
+      fileId: 'doc-1',
+      commentText: '',
+      selection: {
+        source: 'editor',
+      },
+    });
+    const createdComment = useComment({
+      commentId: 'c-created-sync',
+      fileId: 'doc-1',
+      commentText: 'Created from pending draft',
+    });
+    const superdoc = {
+      activeEditor: {
+        editorVersion: 1,
+        commands: {
+          insertComment: vi.fn(),
+          removeComment: vi.fn(),
+        },
+      },
+      emit: vi.fn(),
+      config: { isInternal: true },
+    };
+
+    store.pendingComment = pendingDraft;
+    store.currentCommentText = '<p>Created from pending draft</p>';
+
+    const result = store.addComment({ superdoc, comment: createdComment, broadcastChanges: false });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(store.pendingComment).toBeNull();
+    expect(store.activeComment).toBe('c-created-sync');
+    expect(store.activeFloatingCommentInstanceId).toBe('c-created-sync');
+    expect(store.commentsList.map((comment) => comment.commentId)).toEqual(['c-created-sync']);
+    expect(superdoc.activeEditor.commands.removeComment).toHaveBeenCalledWith({ commentId: 'pending' });
   });
 });
 

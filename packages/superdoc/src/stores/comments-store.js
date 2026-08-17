@@ -1910,7 +1910,17 @@ export const useCommentsStore = defineStore('comments', () => {
           documentId: v2Adapter.documentId,
           items: outcome.items,
         });
-        if (pendingComment.value) removePendingComment(superdoc);
+        const hadPendingComment = !!pendingComment.value;
+        if (hadPendingComment) removePendingComment(superdoc);
+        // Hand off activeComment/instance to the newly created comment instead
+        // of leaving it null, so the floating sidebar keeps treating this row
+        // as active (viewport exemption, dialog mount, collision pinning) and
+        // never observes an intermediate null in the same reactive flush.
+        const createdId = reconciled?.added?.commentId ?? null;
+        if (hadPendingComment && createdId) {
+          setActiveComment(superdoc, createdId);
+          setActiveFloatingCommentInstance(createdId);
+        }
         if (broadcastChanges) {
           superdoc.emit('comments-update', {
             type: COMMENT_EVENTS.ADD,
@@ -1943,7 +1953,16 @@ export const useCommentsStore = defineStore('comments', () => {
     commentsList.value.push(newComment);
 
     // Clean up the pending comment
+    const hadPendingComment = !!pendingComment.value;
     removePendingComment(superdoc);
+    // Hand off activeComment/instance to the newly created comment instead of
+    // leaving it null, so the floating sidebar keeps treating this row as
+    // active (viewport exemption, dialog mount, collision pinning) and never
+    // observes an intermediate null in the same reactive flush.
+    if (hadPendingComment) {
+      activeComment.value = newComment.commentId;
+      setActiveFloatingCommentInstance(newComment.commentId);
+    }
 
     // If this is not a tracked change, and it belongs to a Super Editor, and its not a child comment
     // We need to let the editor know about the new comment
