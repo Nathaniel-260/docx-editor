@@ -46,6 +46,20 @@ export interface CompareApplyOutcome {
   readonly applyResult: CompareApplyResult;
   readonly changeMode: 'tracked' | 'direct';
   readonly fallbackFromTracked: boolean;
+  readonly fallbackReason: 'tracked-deferred' | 'table-topology' | null;
+}
+
+export class CompareApplyFallbackError extends Error {
+  readonly changeMode = 'direct';
+
+  constructor(
+    readonly fallbackReason: Exclude<CompareApplyOutcome['fallbackReason'], null>,
+    options: { cause: unknown },
+  ) {
+    const causeMessage = options.cause instanceof Error ? options.cause.message : String(options.cause);
+    super(`Direct compare apply failed after tracked mode was deferred: ${causeMessage}`, options);
+    this.name = 'CompareApplyFallbackError';
+  }
 }
 
 export function isWs09TrackedCompareDeferred(error: unknown): boolean {
@@ -55,12 +69,41 @@ export function isWs09TrackedCompareDeferred(error: unknown): boolean {
   return code === 'CAPABILITY_UNSUPPORTED' && /compare-apply-deferred \(ws09\)/i.test(message);
 }
 
-export function compareApplyDeferredMessage(error: unknown): string | null {
-  if (!isWs09TrackedCompareDeferred(error)) return null;
+function isRelationshipBackedTrackedCompareDeferred(error: unknown, diff: unknown): boolean {
+  if (!error || typeof error !== 'object' || !diff || typeof diff !== 'object') return false;
+  const candidate = error as {
+    code?: unknown;
+    details?: { unsupportedReason?: unknown; changedFamilies?: unknown };
+  };
+  const payload = 'payload' in diff ? (diff as { payload?: unknown }).payload : null;
+  const relationshipBackedBody =
+    payload && typeof payload === 'object' && 'relationshipBackedBody' in payload
+      ? (payload as { relationshipBackedBody?: unknown }).relationshipBackedBody
+      : null;
+  const target =
+    relationshipBackedBody && typeof relationshipBackedBody === 'object' && 'target' in relationshipBackedBody
+      ? (relationshipBackedBody as { target?: unknown }).target
+      : null;
+  const targetMedia =
+    target && typeof target === 'object' && 'media' in target ? (target as { media?: unknown }).media : null;
   return (
-    'Tracked compare apply is deferred for ws09 table topology in this build. ' +
-    'SuperDoc Dev retried the same diff in direct mode.'
+    candidate.code === 'CAPABILITY_UNSUPPORTED' &&
+    candidate.details?.unsupportedReason === 'family-apply-lane-unavailable' &&
+    Array.isArray(candidate.details.changedFamilies) &&
+    candidate.details.changedFamilies.includes('media') &&
+    Array.isArray(targetMedia) &&
+    targetMedia.length > 0
   );
+}
+
+export function compareApplyFallbackMessage(outcome: CompareApplyOutcome): string {
+  if (outcome.fallbackReason === 'table-topology') {
+    return 'Tracked compare apply was deferred for table topology, so SuperDoc Dev applied the diff in direct mode. ';
+  }
+  if (outcome.fallbackReason === 'tracked-deferred') {
+    return 'Tracked compare apply was deferred, so SuperDoc Dev applied the diff in direct mode. ';
+  }
+  return '';
 }
 
 function prefersDirectWs09TableTopologyApply(diff: unknown): boolean {
@@ -103,25 +146,36 @@ export async function applyCompareWithWs09Fallback(
   diff: unknown,
 ): Promise<CompareApplyOutcome> {
   if (prefersDirectWs09TableTopologyApply(diff)) {
-    return {
-      applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
-      changeMode: 'direct',
-      fallbackFromTracked: true,
-    };
+    try {
+      return {
+        applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
+        changeMode: 'direct',
+        fallbackFromTracked: true,
+        fallbackReason: 'table-topology',
+      };
+    } catch (error) {
+      throw new CompareApplyFallbackError('table-topology', { cause: error });
+    }
   }
   try {
     return {
       applyResult: await docApi.diff.apply({ diff }, { changeMode: 'tracked' }),
       changeMode: 'tracked',
       fallbackFromTracked: false,
+      fallbackReason: null,
     };
   } catch (error) {
-    if (!isWs09TrackedCompareDeferred(error)) throw error;
-    return {
-      applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
-      changeMode: 'direct',
-      fallbackFromTracked: true,
-    };
+    if (!isWs09TrackedCompareDeferred(error) && !isRelationshipBackedTrackedCompareDeferred(error, diff)) throw error;
+    try {
+      return {
+        applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
+        changeMode: 'direct',
+        fallbackFromTracked: true,
+        fallbackReason: 'tracked-deferred',
+      };
+    } catch (directError) {
+      throw new CompareApplyFallbackError('tracked-deferred', { cause: directError });
+    }
   }
 }
 

@@ -26,7 +26,7 @@ import {
 import {
   applyCompareWithWs09Fallback,
   captureCompareApplyDebugSnapshot,
-  compareApplyDeferredMessage,
+  compareApplyFallbackMessage,
   settleCompareApplyPaint,
 } from '../compare-apply';
 
@@ -393,32 +393,29 @@ const handleCompareFile = async (event) => {
       return;
     }
 
-    const { applyResult, changeMode, fallbackFromTracked } = await applyCompareWithWs09Fallback(
+    const { applyResult, changeMode, fallbackFromTracked, fallbackReason } = await applyCompareWithWs09Fallback(
       liveCompareDocApi,
       diff,
     );
     await settleCompareApplyPaint(liveCompareDocApi);
 
-    console.info('[SuperDoc Dev] Compare result', { applyResult, changeMode, fallbackFromTracked });
+    console.info('[SuperDoc Dev] Compare result', { applyResult, changeMode, fallbackFromTracked, fallbackReason });
     console.info('[SuperDoc Dev] Compare debug snapshot', captureCompareApplyDebugSnapshot(activeEditor.value));
 
     const diagnosticsSuffix =
       Array.isArray(applyResult?.diagnostics) && applyResult.diagnostics.length > 0
         ? ` Diagnostics: ${applyResult.diagnostics.join(' | ')}`
         : '';
-    const fallbackPrefix = fallbackFromTracked
-      ? 'Tracked compare apply was deferred for ws09 table topology, so SuperDoc Dev retried in direct mode. '
-      : '';
+    const fallbackPrefix = compareApplyFallbackMessage({
+      applyResult,
+      changeMode,
+      fallbackFromTracked,
+      fallbackReason,
+    });
     alert(
       `${fallbackPrefix}Applied ${applyResult?.appliedOperations ?? 0} ${changeMode} compare operations.${diagnosticsSuffix}`,
     );
   } catch (error) {
-    const deferredMessage = compareApplyDeferredMessage(error);
-    if (deferredMessage) {
-      console.info('[SuperDoc Dev] Compare apply deferred', error);
-      alert(deferredMessage);
-      return;
-    }
     console.error('[SuperDoc Dev] Compare failed', error);
     const message = error instanceof Error ? error.message : String(error);
     alert(`Compare failed: ${message}`);

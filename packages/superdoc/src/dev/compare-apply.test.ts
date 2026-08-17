@@ -5,8 +5,7 @@ import { describe, expect, it, vi } from 'vite-plus/test';
 import {
   applyCompareWithWs09Fallback,
   captureCompareApplyDebugSnapshot,
-  compareApplyDeferredMessage,
-  isWs09TrackedCompareDeferred,
+  compareApplyFallbackMessage,
   settleCompareApplyPaint,
 } from './compare-apply';
 
@@ -24,6 +23,7 @@ describe('dev compare apply fallback', () => {
 
     expect(outcome.changeMode).toBe('tracked');
     expect(outcome.fallbackFromTracked).toBe(false);
+    expect(outcome.fallbackReason).toBeNull();
     expect(outcome.applyResult.appliedOperations).toBe(3);
     expect(apply).toHaveBeenCalledTimes(1);
     expect(apply).toHaveBeenNthCalledWith(1, { diff: { id: 'diff' } }, { changeMode: 'tracked' });
@@ -48,10 +48,53 @@ describe('dev compare apply fallback', () => {
 
     expect(outcome.changeMode).toBe('direct');
     expect(outcome.fallbackFromTracked).toBe(true);
+    expect(outcome.fallbackReason).toBe('tracked-deferred');
     expect(outcome.applyResult.appliedOperations).toBe(5);
     expect(apply).toHaveBeenCalledTimes(2);
     expect(apply).toHaveBeenNthCalledWith(1, { diff: { id: 'diff' } }, { changeMode: 'tracked' });
     expect(apply).toHaveBeenNthCalledWith(2, { diff: { id: 'diff' } }, { changeMode: 'direct' });
+  });
+
+  it('falls back to direct compare apply for relationship-backed tracked deferral', async () => {
+    const deferredError = Object.assign(new Error('relationship-backed replay is unavailable in tracked mode'), {
+      code: 'CAPABILITY_UNSUPPORTED',
+      details: {
+        changedFamilies: ['body', 'media', 'package-graph'],
+        unsupportedReason: 'family-apply-lane-unavailable',
+      },
+    });
+    const apply = vi
+      .fn()
+      .mockRejectedValueOnce(deferredError)
+      .mockResolvedValueOnce({ appliedOperations: 1, diagnostics: [] });
+    const diff = { payload: { relationshipBackedBody: { target: { media: [{ partUri: '/word/media/image.png' }] } } } };
+
+    const outcome = await applyCompareWithWs09Fallback({ diff: { apply } }, diff);
+
+    expect(outcome).toMatchObject({
+      changeMode: 'direct',
+      fallbackFromTracked: true,
+      fallbackReason: 'tracked-deferred',
+      applyResult: { appliedOperations: 1 },
+    });
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(apply).toHaveBeenNthCalledWith(1, { diff }, { changeMode: 'tracked' });
+    expect(apply).toHaveBeenNthCalledWith(2, { diff }, { changeMode: 'direct' });
+  });
+
+  it('does not retry unrelated body deferrals without relationship-backed media', async () => {
+    const deferredError = Object.assign(new Error('body replay is unavailable'), {
+      code: 'CAPABILITY_UNSUPPORTED',
+      details: {
+        changedFamilies: ['body'],
+        unsupportedReason: 'family-apply-lane-unavailable',
+      },
+    });
+    const apply = vi.fn().mockRejectedValue(deferredError);
+    const diff = { payload: { relationshipBackedBody: { target: { media: [] } } } };
+
+    await expect(applyCompareWithWs09Fallback({ diff: { apply } }, diff)).rejects.toBe(deferredError);
+    expect(apply).toHaveBeenCalledTimes(1);
   });
 
   it('prefers direct compare apply for ws09 deferred table topology diffs before tracked apply can partially succeed', async () => {
@@ -72,6 +115,7 @@ describe('dev compare apply fallback', () => {
 
     expect(outcome.changeMode).toBe('direct');
     expect(outcome.fallbackFromTracked).toBe(true);
+    expect(outcome.fallbackReason).toBe('table-topology');
     expect(outcome.applyResult.appliedOperations).toBe(6);
     expect(apply).toHaveBeenCalledTimes(1);
     expect(apply).toHaveBeenCalledWith({ diff }, { changeMode: 'direct' });
@@ -120,7 +164,11 @@ describe('dev compare apply fallback', () => {
       throw ws07Error;
     });
 
-    await expect(applyCompareWithWs09Fallback({ diff: { apply } }, diff)).rejects.toBe(ws07Error);
+    await expect(applyCompareWithWs09Fallback({ diff: { apply } }, diff)).rejects.toMatchObject({
+      cause: ws07Error,
+      changeMode: 'direct',
+      fallbackReason: 'table-topology',
+    });
 
     expect(apply).toHaveBeenCalledTimes(1);
     expect(apply).toHaveBeenCalledWith({ diff }, { changeMode: 'direct' });
@@ -136,14 +184,37 @@ describe('dev compare apply fallback', () => {
     expect(apply).toHaveBeenCalledTimes(1);
   });
 
-  it('recognizes the ws09 tracked deferral message', () => {
-    const error = Object.assign(
-      new Error('diff.apply: compare-apply-deferred (ws09): table topology changes are detected'),
-      { code: 'CAPABILITY_UNSUPPORTED' },
-    );
+  it('propagates a failed direct retry instead of classifying it as a handled tracked deferral', async () => {
+    const trackedError = Object.assign(new Error('compare-apply-deferred (ws09): tracked apply is unavailable'), {
+      code: 'CAPABILITY_UNSUPPORTED',
+    });
+    const directError = Object.assign(new Error('compare-apply-deferred (ws09): direct apply is unavailable'), {
+      code: 'CAPABILITY_UNSUPPORTED',
+    });
+    const apply = vi.fn().mockRejectedValueOnce(trackedError).mockRejectedValueOnce(directError);
 
-    expect(isWs09TrackedCompareDeferred(error)).toBe(true);
-    expect(compareApplyDeferredMessage(error)).toContain('retried the same diff in direct mode');
+    await expect(applyCompareWithWs09Fallback({ diff: { apply } }, { id: 'diff' })).rejects.toMatchObject({
+      cause: directError,
+      changeMode: 'direct',
+      fallbackReason: 'tracked-deferred',
+    });
+  });
+
+  it('describes successful fallback from its diff context', () => {
+    const genericOutcome = {
+      applyResult: { appliedOperations: 1 },
+      changeMode: 'direct' as const,
+      fallbackFromTracked: true,
+      fallbackReason: 'tracked-deferred' as const,
+    };
+    const tableOutcome = { ...genericOutcome, fallbackReason: 'table-topology' as const };
+
+    expect(compareApplyFallbackMessage(genericOutcome)).toBe(
+      'Tracked compare apply was deferred, so SuperDoc Dev applied the diff in direct mode. ',
+    );
+    expect(compareApplyFallbackMessage(tableOutcome)).toBe(
+      'Tracked compare apply was deferred for table topology, so SuperDoc Dev applied the diff in direct mode. ',
+    );
   });
 
   it('awaits mutation readiness paint when the active editor exposes it', async () => {
