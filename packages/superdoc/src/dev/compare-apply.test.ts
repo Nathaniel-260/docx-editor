@@ -77,7 +77,7 @@ describe('dev compare apply fallback', () => {
     expect(apply).toHaveBeenCalledWith({ diff }, { changeMode: 'direct' });
   });
 
-  it('retries direct compare apply with ws07 visual-only families stripped when they are the only remaining blocker', async () => {
+  it('fails closed when ws07 visual families block a ws09 table topology apply', async () => {
     const ws07Error = Object.assign(
       new Error(
         'diff.apply: full diff apply cannot safely replay changed families ' +
@@ -116,90 +116,14 @@ describe('dev compare apply fallback', () => {
         },
       },
     };
-    const apply = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        throw ws07Error;
-      })
-      .mockImplementationOnce(() => ({ appliedOperations: 2, diagnostics: [] }));
+    const apply = vi.fn(() => {
+      throw ws07Error;
+    });
 
-    const outcome = await applyCompareWithWs09Fallback({ diff: { apply } }, diff);
+    await expect(applyCompareWithWs09Fallback({ diff: { apply } }, diff)).rejects.toBe(ws07Error);
 
-    expect(outcome.changeMode).toBe('direct');
-    expect(outcome.fallbackFromTracked).toBe(true);
-    expect(outcome.applyResult.appliedOperations).toBe(2);
-    expect(apply).toHaveBeenCalledTimes(2);
-    expect(apply.mock.calls[0]).toEqual([{ diff }, { changeMode: 'direct' }]);
-    const retriedDiff = apply.mock.calls[1]?.[0]?.diff as typeof diff;
-    expect(apply.mock.calls[1]).toEqual([{ diff: retriedDiff }, { changeMode: 'direct' }]);
-    expect(retriedDiff.payload.analysis.families.find((family) => family.family === 'sections')?.state).toBe(
-      'unchanged',
-    );
-    expect(retriedDiff.payload.analysis.families.find((family) => family.family === 'settings')?.state).toBe(
-      'unchanged',
-    );
-    expect(retriedDiff.payload.analysis.families.find((family) => family.family === 'theme')?.state).toBe('unchanged');
-    expect(
-      retriedDiff.payload.semanticAnalysis.familyDeltas.find((family) => family.family === 'sections')?.detectedChange,
-    ).toBe(false);
-    expect(
-      retriedDiff.payload.semanticAnalysis.familyDeltas.find((family) => family.family === 'settings')?.detectedChange,
-    ).toBe(false);
-    expect(
-      retriedDiff.payload.semanticAnalysis.familyDeltas.find((family) => family.family === 'theme')?.detectedChange,
-    ).toBe(false);
-  });
-
-  it('retries direct compare apply when only a subset of ws07 visual families blocks apply', async () => {
-    const ws07Error = Object.assign(
-      new Error(
-        'diff.apply: full diff apply cannot safely replay changed families ' +
-          '[sections (deferred: compare-apply-deferred (ws07))] in this build.',
-      ),
-      { code: 'CAPABILITY_UNSUPPORTED' },
-    );
-    const diff = {
-      payload: {
-        analysis: {
-          families: [
-            { family: 'body', state: 'changed-supported' },
-            { family: 'sections', state: 'changed-supported' },
-          ],
-        },
-        semanticAnalysis: {
-          familyDeltas: [
-            { family: 'body', detectedChange: true },
-            { family: 'sections', detectedChange: true },
-          ],
-        },
-        familyPolicy: [
-          { family: 'body', disposition: 'deferred', changed: true, applyRequired: true },
-          { family: 'tables', disposition: 'deferred', changed: true, applyRequired: true },
-        ],
-        mainDocument: {
-          target: { xml: '<w:document><w:body><w:tbl/></w:body></w:document>' },
-        },
-      },
-    };
-    const apply = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        throw ws07Error;
-      })
-      .mockImplementationOnce(() => ({ appliedOperations: 1, diagnostics: [] }));
-
-    const outcome = await applyCompareWithWs09Fallback({ diff: { apply } }, diff);
-
-    expect(outcome.changeMode).toBe('direct');
-    expect(outcome.fallbackFromTracked).toBe(true);
-    expect(apply).toHaveBeenCalledTimes(2);
-    const retriedDiff = apply.mock.calls[1]?.[0]?.diff as typeof diff;
-    expect(retriedDiff.payload.analysis.families.find((family) => family.family === 'sections')?.state).toBe(
-      'unchanged',
-    );
-    expect(
-      retriedDiff.payload.semanticAnalysis.familyDeltas.find((family) => family.family === 'sections')?.detectedChange,
-    ).toBe(false);
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(apply).toHaveBeenCalledWith({ diff }, { changeMode: 'direct' });
   });
 
   it('rethrows non-ws09 compare apply failures', async () => {

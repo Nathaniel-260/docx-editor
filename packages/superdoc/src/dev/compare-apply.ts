@@ -63,71 +63,6 @@ export function compareApplyDeferredMessage(error: unknown): string | null {
   );
 }
 
-function isWs07VisualFamilyApplyBlock(error: unknown): boolean {
-  const code =
-    typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: unknown }).code : null;
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  if (code !== 'CAPABILITY_UNSUPPORTED') return false;
-
-  const families = Array.from(
-    message.matchAll(/\b([a-z-]+)\s+\((?:deferred|blocked):\s+compare-apply-deferred \(ws07\)\)/gi),
-    (match) => match[1] ?? '',
-  ).filter((family) => family.length > 0);
-  if (families.length === 0) return false;
-
-  const allowedFamilies = new Set(['sections', 'settings', 'theme']);
-  return families.every((family) => allowedFamilies.has(family));
-}
-
-function sanitizeWs07VisualFamiliesFromDiff(diff: unknown): unknown {
-  if (!diff || typeof diff !== 'object') return diff;
-  const payload = 'payload' in diff ? (diff as { payload?: unknown }).payload : null;
-  if (!payload || typeof payload !== 'object') return diff;
-
-  const next = structuredClone(diff as Record<string, unknown>) as {
-    payload?: {
-      analysis?: {
-        families?: Array<{ family?: unknown; state?: unknown; blockedReason?: unknown; excludedDecision?: unknown }>;
-      };
-      semanticAnalysis?: {
-        familyDeltas?: Array<{ family?: unknown; detectedChange?: unknown; reason?: unknown; owner?: unknown }>;
-      };
-    };
-  };
-
-  const strippedFamilies = new Set(['sections', 'settings', 'theme']);
-
-  const analysisFamilies = next.payload?.analysis?.families;
-  if (Array.isArray(analysisFamilies)) {
-    next.payload!.analysis!.families = analysisFamilies.map((family) =>
-      strippedFamilies.has(String(family?.family))
-        ? {
-            ...family,
-            state: 'unchanged',
-            blockedReason: undefined,
-            excludedDecision: undefined,
-          }
-        : family,
-    );
-  }
-
-  const familyDeltas = next.payload?.semanticAnalysis?.familyDeltas;
-  if (Array.isArray(familyDeltas)) {
-    next.payload!.semanticAnalysis!.familyDeltas = familyDeltas.map((delta) =>
-      strippedFamilies.has(String(delta?.family))
-        ? {
-            ...delta,
-            detectedChange: false,
-            reason: undefined,
-            owner: undefined,
-          }
-        : delta,
-    );
-  }
-
-  return next;
-}
-
 function prefersDirectWs09TableTopologyApply(diff: unknown): boolean {
   if (!diff || typeof diff !== 'object') return false;
   const payload = 'payload' in diff ? (diff as { payload?: unknown }).payload : null;
@@ -168,21 +103,11 @@ export async function applyCompareWithWs09Fallback(
   diff: unknown,
 ): Promise<CompareApplyOutcome> {
   if (prefersDirectWs09TableTopologyApply(diff)) {
-    try {
-      return {
-        applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
-        changeMode: 'direct',
-        fallbackFromTracked: true,
-      };
-    } catch (error) {
-      if (!isWs07VisualFamilyApplyBlock(error)) throw error;
-      const sanitizedDiff = sanitizeWs07VisualFamiliesFromDiff(diff);
-      return {
-        applyResult: await docApi.diff.apply({ diff: sanitizedDiff }, { changeMode: 'direct' }),
-        changeMode: 'direct',
-        fallbackFromTracked: true,
-      };
-    }
+    return {
+      applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
+      changeMode: 'direct',
+      fallbackFromTracked: true,
+    };
   }
   try {
     return {
