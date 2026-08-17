@@ -6,8 +6,40 @@ description: Open, edit, and export a DOCX from a React component with SuperDoc 
 
 {/* Media decision: none. The component and lifecycle are clearer as one complete code example than as a diagram or screenshot. */}
 
-Use the stable `superdoc` package in React. The component creates one Editor after its mount element exists, waits for
-the document to open, and destroys the Editor when React unmounts it.
+<Callout variant='warning' title='Use the new React package for v2'>
+  `@superdoc-dev/react` is the v1 wrapper. The stable v2 wrapper is `@superdoc/react`.
+</Callout>
+
+SuperDoc v2 has three React-facing imports. Choose the one that matches who should own the editor lifecycle and controls:
+
+| Goal                                   | Use                                            |
+| -------------------------------------- | ---------------------------------------------- |
+| Render the `SuperDocEditor` wrapper    | Install and import `@superdoc/react`           |
+| Create and destroy the editor yourself | Install and import `superdoc`                  |
+| Build React-owned toolbars or panels   | Install `superdoc`; import `superdoc/ui/react` |
+
+If your v1 application already renders `SuperDocEditor`, change the package name and keep the component integration:
+
+```bash
+pnpm remove @superdoc-dev/react
+pnpm add @superdoc/react
+```
+
+```tsx
+import { SuperDocEditor } from '@superdoc/react';
+import '@superdoc/react/style.css';
+
+export function Editor() {
+  return <SuperDocEditor document='/sample.docx' />;
+}
+```
+
+`@superdoc/react` installs its compatible `superdoc` release. Do not match the wrapper version number to the editor
+version manually.
+
+The guide below shows the direct `superdoc` path for applications that own the Editor instance. The component creates
+one Editor after its mount element exists, waits for the document to open, and destroys the Editor when React unmounts
+it.
 
 ## 1. Create a React project
 

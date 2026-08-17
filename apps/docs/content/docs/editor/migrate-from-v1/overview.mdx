@@ -13,17 +13,40 @@ If your v1 application mounts `SuperDoc` from the package root, waits for readin
   directly to an existing v1 collaboration room.
 </Callout>
 
+<Callout variant='warning' title='The React wrapper has a new package name in v2'>
+  `@superdoc-dev/react` is the v1 wrapper. Install `@superdoc/react` for v2. The `superdoc/ui/react` subpath is a
+  different surface for custom controls; it does not replace the `SuperDocEditor` wrapper component.
+</Callout>
+
 <MigrationAgentPrompt />
 
 ## 1. Install the v2 package
 
-SuperDoc v2 is the current `latest` release:
+SuperDoc v2 is the current `latest` release. The core editor keeps the unscoped `superdoc` package name:
 
 ```bash
 pnpm add superdoc
 ```
 
 Keep the package name `superdoc`. Do not add `editorVersion`, `v2`, or `v2Integration` to the editor configuration. The v2 package always runs the v2 DOCX engine and has no runtime fallback to v1.
+
+The React wrapper moved to the new npm scope:
+
+| Integration              | V1 package                        | V2 package          |
+| ------------------------ | --------------------------------- | ------------------- |
+| Core browser editor      | `superdoc`                        | `superdoc`          |
+| React wrapper component  | `@superdoc-dev/react`             | `@superdoc/react`   |
+| React custom UI bindings | `superdoc/headless-toolbar/react` | `superdoc/ui/react` |
+
+If your v1 application renders `SuperDocEditor`, replace the wrapper package:
+
+```bash
+pnpm remove @superdoc-dev/react
+pnpm add @superdoc/react
+```
+
+`@superdoc/react` declares the compatible `superdoc` release. Install the wrapper by package name instead of trying to
+match its version number to the editor version.
 
 ## 2. Keep the supported root integration
 
