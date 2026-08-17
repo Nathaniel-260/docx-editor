@@ -57,16 +57,11 @@ export class CompareApplyFallbackError extends Error {
     options: { cause: unknown },
   ) {
     const causeMessage = options.cause instanceof Error ? options.cause.message : String(options.cause);
-    super(`Direct compare apply failed after tracked mode was deferred: ${causeMessage}`, options);
+    const context =
+      fallbackReason === 'table-topology' ? 'tracked table row replay was unsafe' : 'tracked mode was deferred';
+    super(`Direct compare apply failed after ${context}: ${causeMessage}`, options);
     this.name = 'CompareApplyFallbackError';
   }
-}
-
-export function isWs09TrackedCompareDeferred(error: unknown): boolean {
-  const code =
-    typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: unknown }).code : null;
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return code === 'CAPABILITY_UNSUPPORTED' && /compare-apply-deferred \(ws09\)/i.test(message);
 }
 
 function isRelationshipBackedTrackedCompareDeferred(error: unknown, diff: unknown): boolean {
@@ -98,7 +93,7 @@ function isRelationshipBackedTrackedCompareDeferred(error: unknown, diff: unknow
 
 export function compareApplyFallbackMessage(outcome: CompareApplyOutcome): string {
   if (outcome.fallbackReason === 'table-topology') {
-    return 'Tracked compare apply was deferred for table topology, so SuperDoc Dev applied the diff in direct mode. ';
+    return 'Tracked compare apply could not safely replay the table topology, so SuperDoc Dev applied the diff in direct mode. ';
   }
   if (outcome.fallbackReason === 'tracked-deferred') {
     return 'Tracked compare apply was deferred, so SuperDoc Dev applied the diff in direct mode. ';
@@ -106,7 +101,7 @@ export function compareApplyFallbackMessage(outcome: CompareApplyOutcome): strin
   return '';
 }
 
-function prefersDirectWs09TableTopologyApply(diff: unknown): boolean {
+function hasDirectTableTopologyReplayPayload(diff: unknown): boolean {
   if (!diff || typeof diff !== 'object') return false;
   const payload = 'payload' in diff ? (diff as { payload?: unknown }).payload : null;
   if (!payload || typeof payload !== 'object') return false;
@@ -141,22 +136,24 @@ function prefersDirectWs09TableTopologyApply(diff: unknown): boolean {
   );
 }
 
+function isTrackedTableRowReplayUnsafe(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as {
+    code?: unknown;
+    details?: { unsupportedReason?: unknown; changedFamilies?: unknown };
+  };
+  return (
+    candidate.code === 'CAPABILITY_UNSUPPORTED' &&
+    candidate.details?.unsupportedReason === 'tracked-table-row-replay-unsafe' &&
+    Array.isArray(candidate.details.changedFamilies) &&
+    candidate.details.changedFamilies.includes('tables')
+  );
+}
+
 export async function applyCompareWithWs09Fallback(
   docApi: CompareApplyDocApi,
   diff: unknown,
 ): Promise<CompareApplyOutcome> {
-  if (prefersDirectWs09TableTopologyApply(diff)) {
-    try {
-      return {
-        applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
-        changeMode: 'direct',
-        fallbackFromTracked: true,
-        fallbackReason: 'table-topology',
-      };
-    } catch (error) {
-      throw new CompareApplyFallbackError('table-topology', { cause: error });
-    }
-  }
   try {
     return {
       applyResult: await docApi.diff.apply({ diff }, { changeMode: 'tracked' }),
@@ -165,16 +162,22 @@ export async function applyCompareWithWs09Fallback(
       fallbackReason: null,
     };
   } catch (error) {
-    if (!isWs09TrackedCompareDeferred(error) && !isRelationshipBackedTrackedCompareDeferred(error, diff)) throw error;
+    const fallbackReason =
+      isTrackedTableRowReplayUnsafe(error) && hasDirectTableTopologyReplayPayload(diff)
+        ? 'table-topology'
+        : isRelationshipBackedTrackedCompareDeferred(error, diff)
+          ? 'tracked-deferred'
+          : null;
+    if (!fallbackReason) throw error;
     try {
       return {
         applyResult: await docApi.diff.apply({ diff }, { changeMode: 'direct' }),
         changeMode: 'direct',
         fallbackFromTracked: true,
-        fallbackReason: 'tracked-deferred',
+        fallbackReason,
       };
     } catch (directError) {
-      throw new CompareApplyFallbackError('tracked-deferred', { cause: directError });
+      throw new CompareApplyFallbackError(fallbackReason, { cause: directError });
     }
   }
 }
