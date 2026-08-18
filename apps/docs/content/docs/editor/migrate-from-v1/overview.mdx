@@ -491,48 +491,9 @@ focus or selection state instead. See [Custom content controls](/editor/custom-u
 
 ### Collaboration
 
-#### document.v2Collaboration
+V1 applications supplied an external Y.Doc and provider through `modules.collaboration`. V2 instead takes a supported provider target on `document.v2Collaboration` and owns the provider lifecycle. Do not port the external pair directly.
 
-<MigrationExampleTabs>
-  <MigrationExample version='V2' test='node' testCase='collaboration-config'>
-    ```ts
-    import type { Document, V2CollaborationConfig } from 'superdoc';
-
-    export function collaborativeDocument(
-      data: Blob,
-      id: string,
-      serverUrl: string,
-      token: string,
-      roomMode: 'join' | 'create' = 'join',
-    ): Document {
-      const v2Collaboration: V2CollaborationConfig = {
-        providerType: 'hocuspocus', documentId: id, serverUrl, token, roomMode,
-      };
-      return {
-        id, type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', data, v2Collaboration,
-      };
-    }
-    ```
-
-  </MigrationExample>
-  <MigrationExample version='V1'>
-    ```ts
-    import * as Y from 'yjs';
-    import { HocuspocusProvider } from '@hocuspocus/provider';
-
-    const ydoc = new Y.Doc();
-    const provider = new HocuspocusProvider({ url: serverUrl, name: id, document: ydoc });
-    const modules = { collaboration: { ydoc, provider } };
-    ```
-
-  </MigrationExample>
-</MigrationExampleTabs>
-
-V2 owns the provider and `Y.Doc`; do not pass an external pair through `modules.collaboration`. Use `roomMode: 'join'`
-for an existing room and `'create'` only while seeding a missing room. Wait for `onCollaborationReady` before reading
-`instance.provider`, handle `collaboration-v2-room-missing` and `collaboration-v2-room-already-exists` in `onException`,
-and let `destroy()` release the owned collaboration lifecycle. V2 has no `join-or-create` mode: retrying with a different
-room mode requires a fresh mount.
+[Connect to a collaboration room](/editor/collaboration) owns the provider shapes, room modes, exception codes, readiness, and cleanup contract. Use [Upgrade a document](/editor/collaboration/upgrade-a-document) when a local Editor should create a new room without remounting.
 
 #### Split-origin worker assets
 

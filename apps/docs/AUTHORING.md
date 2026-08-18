@@ -28,6 +28,12 @@ Use one of these shapes before adding custom structure.
 3. Include one minimal example.
 4. Link to a complete workflow instead of repeating it.
 
+## Give every concept one owner
+
+Every concept has exactly one owner page. When another guide needs that concept, state it in one sentence and link to the owner instead of teaching it again.
+
+Repeat a short safety reminder when the reader needs it at the point of action. For example, client configuration is not authorization, and a resolved command still requires its receipt to be checked. These reminders protect the task and do not create a second owner page.
+
 ## Use Markdown first
 
 Write headings, prose, links, lists, code, and images with standard Markdown. This keeps pages useful in HTML, per-page Markdown, `llms.txt`, and `llms-full.txt`.

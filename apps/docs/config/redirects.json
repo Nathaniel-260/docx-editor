@@ -7,10 +7,92 @@
     },
     {
       "source": "/editor/platform/security-and-privacy/",
-      "destination": "/editor/platform/secure-integration/",
+      "destination": "/editor/secure-integration/",
       "reason": "The guide now uses a title that distinguishes integration security from SuperDoc trust and compliance information."
+    },
+    {
+      "source": "/editor/platform/configuration/",
+      "destination": "/editor/configuration/",
+      "reason": "Configuration now belongs to the Essentials stage."
+    },
+    {
+      "source": "/editor/platform/lifecycle-and-events/",
+      "destination": "/editor/lifecycle-and-events/",
+      "reason": "Lifecycle guidance now belongs to the Essentials stage."
+    },
+    {
+      "source": "/editor/platform/document-management/",
+      "destination": "/editor/load-and-save-documents/",
+      "reason": "Document management was merged into the complete load and save workflow."
+    },
+    {
+      "source": "/editor/platform/dialogs-and-floating-surfaces/",
+      "destination": "/editor/dialogs-and-surfaces/",
+      "reason": "Dialogs and surfaces now belong to the Interface stage."
+    },
+    {
+      "source": "/editor/platform/themes-and-fonts/",
+      "destination": "/editor/themes-and-fonts/",
+      "reason": "Themes and fonts now belong to the Interface stage."
+    },
+    {
+      "source": "/editor/platform/accessibility-and-keyboard/",
+      "destination": "/editor/accessibility/",
+      "reason": "Accessibility now belongs to the Production stage."
+    },
+    {
+      "source": "/editor/platform/secure-integration/",
+      "destination": "/editor/secure-integration/",
+      "reason": "Secure integration now belongs to the Production stage."
+    },
+    {
+      "source": "/editor/review/tracked-changes/",
+      "destination": "/editor/track-changes/",
+      "reason": "The tracked-change workflow now appears directly in Features."
+    },
+    {
+      "source": "/editor/ui/choose-an-interface/",
+      "destination": "/editor/who-renders-the-ui/",
+      "reason": "The interface decision now appears directly in the Interface stage."
+    },
+    {
+      "source": "/editor/custom-ui/failures-and-capabilities/",
+      "destination": "/editor/custom-ui/commands-and-state/",
+      "reason": "Failure handling was merged into the command state contract."
+    },
+    {
+      "source": "/start/choose-your-path/",
+      "destination": "/",
+      "reason": "The documentation home now owns the choice between Editor and automation workflows."
+    },
+    {
+      "source": "/start/what-superdoc-does/",
+      "destination": "/resources/how-superdoc-works/",
+      "reason": "The product overview was condensed into the cross-product architecture guide."
+    },
+    {
+      "source": "/start/how-superdoc-works/",
+      "destination": "/resources/how-superdoc-works/",
+      "reason": "The architecture guide now lives with cross-product resources."
+    },
+    {
+      "source": "/start/features-and-surfaces/",
+      "destination": "/resources/how-superdoc-works/",
+      "reason": "Surface ownership and architecture now share one cross-product guide."
+    },
+    {
+      "source": "/editor/telemetry-and-licensing/",
+      "destination": "/editor/telemetry/",
+      "reason": "Telemetry and Editor license configuration now have separate guides."
     }
   ],
-  "redirects": [],
+  "redirects": [
+    {
+      "source": "/md/start/choose-your-path.md",
+      "destination": "/llms.txt",
+      "status": 301,
+      "reason": "The machine-readable documentation index now owns the choice between Editor and automation workflows."
+    }
+  ],
   "retiredRoutes": []
 }

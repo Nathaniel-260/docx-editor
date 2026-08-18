@@ -1,0 +1,38 @@
+---
+title: Upgrade a local document to collaboration
+navTitle: Upgrade a document
+description: Create a new collaboration room from the DOCX already open in a local Editor.
+---
+
+Use `upgradeToCollaboration()` when a single local DOCX is already open and the person decides to make that live Editor collaborative. The operation creates a new room from the current document and comments, then attaches the Editor to it in place.
+
+## Create the room
+
+Wait until the local Editor is ready, then pass a supported collaboration target in create mode:
+
+```ts
+await superdoc.upgradeToCollaboration({
+  v2Collaboration: {
+    providerType: 'hocuspocus',
+    documentId: 'contract-123',
+    serverUrl: 'wss://collaboration.example.com',
+    token: session.collaborationToken,
+    roomMode: 'create',
+  },
+});
+```
+
+The promise resolves when the collaborative runtime is ready. The same Editor instance stays mounted, so application controls and lifecycle ownership remain in place.
+
+The operation supports one DOCX and a new v2 room. It does not join an existing room or merge the local document with remote content. If the target already exists, stop and let the application choose a different room or reopen the document with `roomMode: 'join'`.
+
+<Callout variant='success' title='Verification target'>
+  After the upgrade resolves, open a second Editor that joins the new room. An edit in either Editor should appear in
+  the other.
+</Callout>
+
+## Migrate existing collaboration data separately
+
+Moving a final v1 recovery bundle into a v2 room is a server-side migration, not a live browser upgrade. The Node-only `superdoc/collaboration-upgrade-engine` subpath builds and validates provider-free upgrade artifacts without connecting to a room. It requires Node.js 20 or newer and should be paired with provider-specific read, write, and fresh-client validation.
+
+Start with [Migrate from v1](/editor/migrate-from-v1/overview) before planning that operation. For ordinary browser connections, use [Connect to a collaboration room](/editor/collaboration).

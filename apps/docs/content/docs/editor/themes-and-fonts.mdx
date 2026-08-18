@@ -6,7 +6,7 @@ description: Style SuperDoc chrome without confusing application typography with
 
 SuperDoc has two font concerns. UI typography controls toolbars, comments, menus, and surfaces. Document font resolution controls how logical Word fonts are measured and painted. Configure them separately.
 
-<include>../../../../snippets/editor/theme-and-fonts.ts</include>
+<include>../../../snippets/editor/theme-and-fonts.ts</include>
 
 `createTheme()` injects a scoped CSS-variable class. Apply it to the element that contains the Editor. Start with semantic colors and add raw `--sd-*` variables only for a specific component need. For strict CSP or server rendering, use `buildTheme()` and inject the returned CSS with your own nonce.
 

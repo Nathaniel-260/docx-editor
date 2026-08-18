@@ -1,0 +1,49 @@
+---
+title: Mount SuperDoc in SvelteKit
+navTitle: Use with SvelteKit
+description: Open, edit, and export a DOCX from a SvelteKit route with SuperDoc v2.
+---
+
+{/* Media decision: none. The route component and lifecycle are clearest as one complete, tested example. */}
+
+Mount SuperDoc after the SvelteKit route reaches the browser, then destroy the instance when the route unmounts.
+
+## 1. Install SuperDoc
+
+From an existing SvelteKit application:
+
+```bash
+pnpm add superdoc
+```
+
+Download the sample DOCX and save it as `static/sample.docx`:
+
+<FileDownload
+  href='/fixtures/sample-nda.docx'
+  label='Download the sample document'
+  description='Synthetic agreement with headings, paragraphs, and a list'
+  fileType='DOCX'
+/>
+
+SvelteKit serves files in `static` from the root of the application, so SuperDoc can load it from `/sample.docx`.
+
+## 2. Create the route
+
+Replace `src/routes/+page.svelte` with the tested route from the SuperDoc example:
+
+<include>../../../../../../examples/sveltekit/src/routes/+page.svelte</include>
+
+The `$effect` waits until the mount element exists in the browser. `onReady` enables export after the DOCX opens, and the effect cleanup calls `destroy()` when SvelteKit removes the route.
+
+The complete project is available at [go.superdoc.dev/examples/sveltekit](https://go.superdoc.dev/examples/sveltekit).
+
+## 3. Edit and export
+
+Run `pnpm dev` and open the printed URL. Edit the document, then select **Export DOCX**.
+
+<Callout variant='success' title='Verification target'>
+  Reopen `sample-edited.docx` in Word or SuperDoc. Your edit should be present, and the surrounding formatting should be
+  unchanged.
+</Callout>
+
+Continue with [Load and save documents](/editor/load-and-save-documents), or decide [who renders the Editor UI](/editor/who-renders-the-ui).

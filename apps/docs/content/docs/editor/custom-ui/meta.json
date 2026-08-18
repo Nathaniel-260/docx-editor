@@ -6,17 +6,16 @@
     "controller-setup",
     "react-setup",
     "commands-and-state",
-    "failures-and-capabilities",
     "custom-commands",
-    "zoom-and-document-state",
     "formatting-controls",
-    "selection-and-viewport",
-    "review-highlights",
-    "context-menus",
     "comments",
     "tracked-changes",
-    "content-controls",
     "tables",
-    "search"
+    "content-controls",
+    "context-menus",
+    "search",
+    "zoom-and-document-state",
+    "selection-and-viewport",
+    "review-highlights"
   ]
 }

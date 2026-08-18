@@ -6,7 +6,7 @@ description: Render application UI in SuperDoc-managed dialog and floating layer
 
 Surfaces place application UI above the document without coupling it to Editor internals. Use a dialog for modal decisions and a floating surface for a non-modal tool or inspector.
 
-<include>../../../../snippets/editor/external-surface.ts</include>
+<include>../../../snippets/editor/external-surface.ts</include>
 
 The `render()` callback receives an empty container plus `resolve()` and `close()` controls. Mount DOM, React, Vue, or another framework into that container and return cleanup for any framework root or listener that outlives the nodes themselves.
 

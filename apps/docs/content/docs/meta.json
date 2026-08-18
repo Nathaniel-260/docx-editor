@@ -1,4 +1,4 @@
 {
   "title": "SuperDoc",
-  "pages": ["start", "editor", "agents", "document-api", "resources"]
+  "pages": ["editor", "agents", "document-api", "resources", "editor/migrate-from-v1"]
 }

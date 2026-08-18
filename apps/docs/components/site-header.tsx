@@ -13,7 +13,6 @@ import { VersionMenu } from '@/components/version-menu';
 import { repositoryApiUrl, repositoryUrl } from '@/lib/site-url';
 
 const DOCS_NAV_ITEMS = [
-  { label: 'Get started', href: '/start/what-superdoc-does', activePrefix: '/start' },
   { label: 'Editor', href: '/editor', activePrefix: '/editor' },
   { label: 'Agents & automation', href: '/agents/overview', activePrefix: '/agents' },
   { label: 'Document API', href: '/document-api/mental-model', activePrefix: '/document-api' },

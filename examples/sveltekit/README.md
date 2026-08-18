@@ -27,4 +27,4 @@ The browser test edits a real DOCX, exports it, and verifies the edit in `word/d
 
 Inside this monorepo the example is tested against the current workspace build. A standalone copy installs the versions declared in `package.json`.
 
-See the [configuration reference](https://docs.superdoc.dev/editor/superdoc/configuration).
+See [Mount SuperDoc in SvelteKit](https://docs.superdoc.dev/editor/frameworks/sveltekit) for the guided explanation.

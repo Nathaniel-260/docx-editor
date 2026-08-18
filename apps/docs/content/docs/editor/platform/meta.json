@@ -1,14 +1,5 @@
 {
-  "title": "Integration",
+  "title": "Features",
   "defaultOpen": false,
-  "pages": [
-    "configuration",
-    "lifecycle-and-events",
-    "document-management",
-    "dialogs-and-floating-surfaces",
-    "themes-and-fonts",
-    "proofing",
-    "accessibility-and-keyboard",
-    "secure-integration"
-  ]
+  "pages": ["proofing"]
 }

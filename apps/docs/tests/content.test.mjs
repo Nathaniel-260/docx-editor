@@ -366,7 +366,7 @@ test('the sidebar section picker matches the root navigation sections', async ()
   const layout = await readFile(layoutUrl, 'utf8');
   const links = layout.match(/links:\s*\[([\s\S]*?)\],\s*nav:/u)?.[1] ?? '';
   const linkedSections = new Set(
-    [...links.matchAll(/url:\s*'\/([^/'#?]+)(?:\/[^']*)?'/gu)].map(([, section]) => section),
+    [...links.matchAll(/(?:href=|url:\s*)'\/([^/'#?]+)(?:\/[^']*)?'/gu)].map(([, section]) => section),
   );
   const rootSections = new Set();
 

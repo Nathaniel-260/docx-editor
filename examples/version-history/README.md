@@ -26,4 +26,4 @@ pnpm test
 
 The browser test saves a real DOCX, edits it, saves another version, restores the first version, and verifies the restored DOCX bytes.
 
-See [Manage document files](https://docs.superdoc.dev/editor/platform/document-management) for the storage ownership model.
+See [Add version history](https://docs.superdoc.dev/editor/version-history) for the storage ownership model.

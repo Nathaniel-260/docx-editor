@@ -6,7 +6,7 @@ description: Decide how much of the editor interface SuperDoc renders and how mu
 
 Every Editor integration uses the same DOCX engine, document lifecycle, and public Document API. The interface decision determines who renders the controls around the document.
 
-![The built-in UI and a custom application UI both control the same SuperDoc editor and Document API.](./_media/choose-an-interface/interface-paths.svg)
+![The built-in UI and a custom application UI both control the same SuperDoc editor and Document API.](./_media/who-renders-the-ui/interface-paths.svg)
 
 ## Three ownership modes
 
@@ -32,9 +32,9 @@ The built-in toolbar keeps the Search button visible, but disables it until you 
 
 The one thing this mode does need is a mount target for the toolbar. SuperDoc cannot guess where in your layout that belongs, so a toolbar with nowhere to go does not render.
 
-<include>../../../../snippets/editor/interface-built-in.html</include>
+<include>../../../snippets/editor/interface-built-in.html</include>
 
-<include>../../../../snippets/editor/interface-built-in.ts</include>
+<include>../../../snippets/editor/interface-built-in.ts</include>
 
 Choose this for document editors, review screens, and internal workflows where the standard experience already fits. You still control document mode, the current user, integrations, theme, file lifecycle, and export.
 
@@ -44,9 +44,9 @@ Choose this for document editors, review screens, and internal workflows where t
 
 Most production integrations land here. Replace the one surface your product needs to own and keep the rest.
 
-<include>../../../../snippets/editor/interface-hybrid.html</include>
+<include>../../../snippets/editor/interface-hybrid.html</include>
 
-<include>../../../../snippets/editor/interface-hybrid.ts</include>
+<include>../../../snippets/editor/interface-hybrid.ts</include>
 
 The panel starts empty against the fixture above, which carries no comments. Select text and add one through your own composer, or open a DOCX that already has threads, to see it populate. [Build a custom comments UI](/editor/custom-ui/comments) covers creation, replies, and resolution on the same handle.
 
@@ -66,9 +66,9 @@ The two comment policies answer different questions. `readOnly` refuses every wr
 
 `ui: false` turns off every built-in surface at once.
 
-<include>../../../../snippets/editor/interface-custom.html</include>
+<include>../../../snippets/editor/interface-custom.html</include>
 
-<include>../../../../snippets/editor/interface-custom.ts</include>
+<include>../../../snippets/editor/interface-custom.ts</include>
 
 It removes presentation and nothing else. Editing still works, the Document API still works, `interaction` and `surfaces` still apply, and `superdoc.ui` still reports state and runs commands. That invariant is what makes a fully custom interface possible without giving up the editor underneath it.
 
@@ -93,4 +93,4 @@ Whichever mode you choose:
   selection, and editing behavior.
 </Callout>
 
-[Configure the Editor](/editor/platform/configuration) explains how `ui`, `interaction`, and `surfaces` divide the configuration between them.
+[Configure the Editor](/editor/configuration) explains how `ui`, `interaction`, and `surfaces` divide the configuration between them.

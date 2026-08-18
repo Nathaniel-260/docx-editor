@@ -1,0 +1,94 @@
+---
+title: Connect to a collaboration room
+navTitle: Connect
+description: Connect the browser editor to a v2 collaboration room with y-websocket, Hocuspocus, or Liveblocks.
+---
+
+SuperDoc v2 synchronizes one DOCX through y-websocket, Hocuspocus, or Liveblocks. Supply a `v2Collaboration` target on the document; the Editor then owns the provider, Y.Doc, awareness, and cleanup lifecycle.
+
+## Choose a provider target
+
+All providers use a stable room identity and an explicit room operation:
+
+| Provider    | Required connection fields                                   | Authentication                                  |
+| ----------- | ------------------------------------------------------------ | ----------------------------------------------- |
+| y-websocket | `documentId` and `serverUrl` or `url`                        | String `params` forwarded with the connection   |
+| Hocuspocus  | `providerType: 'hocuspocus'`, `documentId`, and a server URL | `token` or string `params`                      |
+| Liveblocks  | `providerType: 'liveblocks'` and `documentId` or `roomId`    | Exactly one of `publicApiKey` or `authEndpoint` |
+
+These are equivalent join targets:
+
+```ts
+import type { V2CollaborationConfig } from 'superdoc';
+
+const yWebsocket = {
+  providerType: 'y-websocket',
+  documentId: 'contract-123',
+  serverUrl: 'wss://collaboration.example.com',
+  params: { token: session.collaborationToken },
+  roomMode: 'join',
+} satisfies V2CollaborationConfig;
+
+const hocuspocus = {
+  providerType: 'hocuspocus',
+  documentId: 'contract-123',
+  serverUrl: 'wss://collaboration.example.com',
+  token: session.collaborationToken,
+  roomMode: 'join',
+} satisfies V2CollaborationConfig;
+
+const liveblocks = {
+  providerType: 'liveblocks',
+  roomId: 'contract-123',
+  authEndpoint: '/api/liveblocks-auth',
+  roomMode: 'join',
+} satisfies V2CollaborationConfig;
+```
+
+Use an authenticated endpoint instead of a public key when the server must authorize each Liveblocks room.
+
+## Open the collaborative document
+
+Attach one target to a structured document and wait for collaboration readiness:
+
+```ts
+const sharedDocument = {
+  id: 'shared-document',
+  type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  data: docxBlob,
+  v2Collaboration: hocuspocus,
+};
+
+const superdoc = new SuperDoc({
+  selector: '#editor',
+  document: sharedDocument,
+  user: session.user,
+  onCollaborationReady: () => {
+    collaborationControls.disabled = false;
+  },
+  onException: ({ code, error }) => {
+    if (code === 'collaboration-v2-room-missing') showMissingRoom();
+    else if (code === 'collaboration-v2-room-already-exists') showExistingRoom();
+    else reportError(error);
+  },
+});
+```
+
+Call `destroy()` when the owning route unmounts so SuperDoc releases its connection.
+
+## Create once, then join
+
+Use `roomMode: 'create'` once to seed a missing room from the document data. Later clients use `roomMode: 'join'` with the same room identity.
+
+<Callout title='Create and join are explicit'>
+  V2 does not provide a join-or-create mode. Creating an existing room or joining a missing room fails. Retry with a
+  fresh Editor after the application decides which operation is correct.
+</Callout>
+
+## Lock a collaborative document
+
+`superdoc.setLocked(true)` writes the collaboration lock with the current user. Observe `onLocked` or the `locked` event and keep lock policy on the server; a client-side lock guides normal editing but is not authorization.
+
+The [collaboration example](https://go.superdoc.dev/examples/collaboration) provides a complete local setup with an in-memory Hocuspocus server and two synchronized browser pages.
+
+Next, [run the example server](/editor/collaboration/run-a-server) or add [presence and awareness](/editor/collaboration/presence-and-awareness).

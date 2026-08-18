@@ -68,6 +68,30 @@ new SuperDoc({
 
 A URL is fetched by the reader's browser. The server must allow that request and return the DOCX bytes.
 
+## Replace the active document
+
+Use `replaceFile()` when the same Editor surface should open another DOCX. Await the replacement before enabling document-dependent controls:
+
+```ts
+const file = input.files?.[0];
+if (file) {
+  saveButton.disabled = true;
+  const result = await superdoc.replaceFile(file);
+  const replacementResult = result && typeof result === 'object' ? result : null;
+  const replacementState = replacementResult && 'state' in replacementResult ? replacementResult.state : null;
+
+  const replacementSucceeded =
+    replacementState === null || replacementState === 'review-ready' || replacementState === 'editing-ready';
+  if (!replacementSucceeded) {
+    throw new Error('SuperDoc could not open the selected DOCX.');
+  }
+
+  saveButton.disabled = false;
+}
+```
+
+If replacement throws or returns another state, keep document actions disabled and show the failure. Recreate the Editor when the result also contains `mount: null`, or when the route changes initialization-only configuration. A successful replacement keeps the mounted SuperDoc instance and its host integration in place.
+
 ## Download the edited DOCX
 
 `export()` creates a DOCX download by default. Set `exportedName` without the extension:
@@ -118,6 +142,16 @@ if (!response.ok) {
 ```
 
 Your application decides where the file is stored and how the request is authenticated. SuperDoc produces the DOCX bytes but does not provide document storage.
+
+Treat export and persistence as separate outcomes. An exported `Blob` proves that SuperDoc produced bytes; mark the document as saved only after the trusted storage service confirms the write.
+
+The [version history guide](/editor/version-history) uses the same export and replacement operations to save and restore snapshots.
+
+## Put the file lifecycle together
+
+This complete controller keeps open, replace, and save controls disabled while work is pending. It recreates the Editor after a failed replacement so a later file can recover cleanly:
+
+<include>../../../snippets/editor/document-management.ts</include>
 
 ## Verify the round trip
 

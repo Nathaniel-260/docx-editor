@@ -36,8 +36,18 @@ const restoreVersion = async (index: number) => {
   setBusy(true);
   status.textContent = `Restoring version ${index + 1}...`;
   try {
-    await superdoc.replaceFile(versions[index]);
+    const result = await superdoc.replaceFile(versions[index]);
+    const replacementResult = result && typeof result === 'object' ? result : null;
+    const replacementState = replacementResult && 'state' in replacementResult ? replacementResult.state : null;
+    const replacementSucceeded =
+      replacementState === null || replacementState === 'review-ready' || replacementState === 'editing-ready';
+    if (!replacementSucceeded) {
+      throw new Error(`SuperDoc could not restore version ${index + 1}.`);
+    }
     status.textContent = `Version ${index + 1} restored.`;
+  } catch (error) {
+    status.textContent = `Version ${index + 1} could not be restored.`;
+    console.error(error);
   } finally {
     setBusy(false);
   }

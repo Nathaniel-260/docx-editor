@@ -1,0 +1,32 @@
+---
+title: Add version history
+navTitle: Version history
+description: Save DOCX snapshots and restore an earlier version in the mounted Editor.
+---
+
+Build version history by exporting immutable DOCX snapshots to application-owned storage and restoring one with `replaceFile()`.
+
+## Save and restore snapshots
+
+The tested example keeps snapshots in browser memory so the complete lifecycle stays visible:
+
+<include>../../../../../examples/version-history/src/main.ts</include>
+
+The save action sets `triggerDownload: false`, verifies that export returned a `Blob`, and stores that blob as one version. The restore action checks the `replaceFile()` result before announcing success or re-enabling controls.
+
+The complete project is available at [go.superdoc.dev/examples/version-history](https://go.superdoc.dev/examples/version-history).
+
+## Persist version metadata
+
+Store the DOCX bytes together with application metadata such as a version ID, creation time, author ID, and parent version. Keep authorization and retention decisions on the trusted storage service.
+
+Do not mark a version as saved when export finishes. Export only produces bytes; the version exists durably after storage confirms the write.
+
+When restoring, fetch the selected snapshot as a `Blob`, verify the response, and pass it to `replaceFile()`. Keep the prior version until the replacement succeeds so recovery remains possible.
+
+<Callout variant='success' title='Verification target'>
+  Save a version, edit the document, save another, and restore the first. Export after restoring and confirm that the
+  first version's text is present.
+</Callout>
+
+Use [Export options](/editor/export-options) when snapshots need a clean review policy, or [Load and save documents](/editor/load-and-save-documents) for the underlying storage flow.

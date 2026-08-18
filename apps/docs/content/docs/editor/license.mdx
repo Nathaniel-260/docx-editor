@@ -1,0 +1,23 @@
+---
+title: Configure the Editor license
+navTitle: License
+description: Set the browser Editor license identity.
+---
+
+{/* Media decision: none. The runtime configuration is clearer as one small code example. */}
+
+Set the license key at Editor construction. The key identifies your organization to the browser Editor. It is client-visible configuration, not a secret or an authorization credential.
+
+```ts
+const superdoc = new SuperDoc({
+  selector: '#editor',
+  document: '/contract.docx',
+  licenseKey: import.meta.env.VITE_SUPERDOC_LICENSE_KEY,
+});
+```
+
+Browser build variables are visible to the person running the application. Keep document access, collaboration credentials, and service authorization separate from the license identity.
+
+This page covers Editor configuration. See [Licensing](/resources/license) for the open-source and commercial terms and the licensing contact.
+
+Continue with [Telemetry](/editor/telemetry) to make the Editor's network behavior explicit.

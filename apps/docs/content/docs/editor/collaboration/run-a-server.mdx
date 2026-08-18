@@ -1,0 +1,46 @@
+---
+title: Run a collaboration server
+navTitle: Run a server
+description: Start the local Hocuspocus server used by the SuperDoc collaboration example.
+---
+
+Run a local Hocuspocus server when you need to test a complete collaboration room before connecting production authentication and persistence.
+
+## 1. Install the server
+
+In a small Node.js project, install Hocuspocus and a TypeScript runner:
+
+```bash
+pnpm add @hocuspocus/server
+pnpm add --save-dev tsx
+```
+
+Create `server.ts` from the tested collaboration example:
+
+<include>../../../../../../examples/collaboration/server.ts</include>
+
+## 2. Start it
+
+```bash
+pnpm exec tsx server.ts
+```
+
+The example listens on port `1234` and keeps rooms in memory. Restarting the process clears them.
+
+## 3. Connect two editors
+
+Configure the first browser with a Hocuspocus target and `roomMode: 'create'`. After the room exists, open a second browser with the same `documentId` and `roomMode: 'join'`. [Connect to a collaboration room](/editor/collaboration) shows the browser configuration.
+
+The complete two-browser project is available at [go.superdoc.dev/examples/collaboration](https://go.superdoc.dev/examples/collaboration).
+
+<Callout variant='success' title='Verification target'>
+  Edit the first browser. The second browser should show the change and export a DOCX containing the synchronized text.
+</Callout>
+
+## Prepare for production
+
+The minimal server deliberately has no authentication or durable storage. Before deployment, authenticate the WebSocket connection, authorize each room, persist room updates, set connection and document limits, and define backup and recovery behavior in the server layer.
+
+Do not treat a browser `documentId`, token, or hidden control as authorization. The server must decide which authenticated users may create, join, update, or lock each room.
+
+Next, add [presence and awareness](/editor/collaboration/presence-and-awareness).

@@ -1,0 +1,51 @@
+---
+title: Tune performance for large documents
+navTitle: Performance
+description: Keep page rendering responsive, choose a layout, and measure representative DOCX workflows.
+---
+
+SuperDoc virtualizes paginated documents by default. Keep that baseline until measurements from representative DOCX files show a specific scrolling, memory, loading, or worker-startup problem.
+
+## Tune the page window deliberately
+
+The default paginated window is five pages with one overscan page. Set it explicitly only when comparing a measured alternative:
+
+```ts
+const superdoc = new SuperDoc({
+  selector: '#editor',
+  document: '/large-contract.docx',
+  layoutEngineOptions: {
+    virtualization: {
+      enabled: true,
+      window: 5,
+      overscan: 1,
+    },
+  },
+  onPaginationUpdate: ({ totalPages }) => {
+    pageCount.textContent = String(totalPages);
+  },
+});
+```
+
+A larger window can reduce repaints during fast scrolling while keeping more pages mounted. A smaller window reduces mounted work but can make navigation less smooth. Change one value at a time and measure on the devices and documents the product supports.
+
+## Choose print or web layout
+
+Paginated print layout preserves page boundaries and uses page virtualization. Web layout reflows semantic content to the container and does not provide headers, footers, rulers, or page-count updates.
+
+Use `viewOptions: { layout: 'web' }` with `layoutEngineOptions: { flowMode: 'semantic' }` for the continuous surface. [Build a responsive Editor layout](/editor/built-in-ui/responsive-layout) compares the two layouts and their host sizing requirements.
+
+## Control worker startup
+
+Keep the default 30-second `workerStartupTimeoutMs` unless measurements show that the worker bundle needs more time to download or evaluate. Use `workerUrls` when the application must serve the document, collaboration, and review-index module workers from explicit same-origin URLs.
+
+Worker load errors fail immediately; increasing the timeout does not repair a missing file, blocked Content Security Policy, or invalid worker response. See [Secure integration](/editor/secure-integration) for the browser boundary.
+
+## Measure the whole task
+
+Test opening, first interaction, scrolling, editing, collaboration, and export with representative DOCX files. Record document size and page count with the result so a regression can be reproduced.
+
+<Callout variant='success' title='Verification target'>
+  On the slowest supported device, open a representative large DOCX, scroll from start to end, edit text on distant
+  pages, and export. No action should lose document state or leave controls permanently busy.
+</Callout>

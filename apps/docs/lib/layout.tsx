@@ -1,17 +1,16 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
+import { SidebarSectionLink } from '@/components/SidebarSectionLink';
 
 export function baseOptions(): BaseLayoutProps {
   return {
     links: [
       {
-        text: 'Get started',
-        url: '/start/what-superdoc-does',
-        active: 'nested-url',
-      },
-      {
-        text: 'Editor',
-        url: '/editor',
-        active: 'nested-url',
+        type: 'custom',
+        children: (
+          <SidebarSectionLink activePrefix='/editor' excludeActivePrefix='/editor/migrate-from-v1' href='/editor'>
+            Editor
+          </SidebarSectionLink>
+        ),
       },
       {
         text: 'Agents & automation',
@@ -24,9 +23,20 @@ export function baseOptions(): BaseLayoutProps {
         active: 'nested-url',
       },
       {
-        text: 'Resources',
-        url: '/resources/security',
-        active: 'nested-url',
+        type: 'custom',
+        children: (
+          <SidebarSectionLink activePrefix='/resources' href='/resources/how-superdoc-works'>
+            Resources
+          </SidebarSectionLink>
+        ),
+      },
+      {
+        type: 'custom',
+        children: (
+          <SidebarSectionLink activePrefix='/editor/migrate-from-v1' href='/editor/migrate-from-v1/overview'>
+            Migrate from v1
+          </SidebarSectionLink>
+        ),
       },
     ],
     nav: {

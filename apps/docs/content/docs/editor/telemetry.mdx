@@ -1,0 +1,47 @@
+---
+title: Configure telemetry
+navTitle: Telemetry
+description: Make the browser Editor telemetry behavior explicit.
+---
+
+{/* Media decision: none. The configuration and verification target are clearer as code and prose. */}
+
+Telemetry is enabled by default. Configure it at Editor construction. The Editor's [license identity](/editor/license) is configured separately.
+
+## Choose telemetry behavior
+
+Disable telemetry explicitly when the deployment must not initialize the telemetry integration:
+
+```ts
+const superdoc = new SuperDoc({
+  selector: '#editor',
+  document: '/contract.docx',
+  telemetry: { enabled: false },
+});
+```
+
+When telemetry is enabled, `endpoint` selects a custom destination and `metadata` attaches application-defined context:
+
+```ts
+const superdoc = new SuperDoc({
+  selector: '#editor',
+  document: '/contract.docx',
+  telemetry: {
+    enabled: true,
+    endpoint: 'https://telemetry.example.com/v1/events',
+    metadata: {
+      application: 'contract-review',
+      environment: 'production',
+    },
+  },
+});
+```
+
+Do not put document text, comments, names, email addresses, credentials, signed URLs, or other sensitive values in telemetry metadata. Allow the selected endpoint in `connect-src` and apply the same authentication, retention, and logging policy as any other production integration.
+
+<Callout variant='success' title='Verification target'>
+  Inspect browser network requests in the deployed environment. Confirm that disabled telemetry sends no telemetry
+  requests, or that enabled telemetry reaches only the approved endpoint with approved metadata.
+</Callout>
+
+Continue with [Secure integration](/editor/secure-integration) to review every document and metadata boundary.

@@ -104,20 +104,12 @@ It unmounts the editor and releases its listeners and document resources. A page
 
 ## Decide who renders the interface
 
-The editor above renders the document canvas and SuperDoc's default surfaces. It has no toolbar: the built-in toolbar needs an element to mount into, and this example never named one. Adding `ui: { toolbar: { container: '#toolbar' }, search: true }` and a matching element is all it takes.
+The editor above renders the document canvas and SuperDoc's default surfaces. The built-in toolbar needs its own mount target, while a hybrid or fully custom integration can move selected controls into application UI without changing how the DOCX is opened or saved.
 
-Pair the toolbar with `search: true`. The toolbar draws a Search button either way, and that button opens the find/replace surface, so without it the control renders and does nothing.
-
-That is the first of three ownership modes, and moving between them is a configuration change rather than a different architecture.
-
-- **Keep the built-in UI.** Give the toolbar a mount target and configure what you need. [Built-in UI overview](/editor/built-in-ui/overview).
-- **Replace selected surfaces.** Turn off the ones your product owns and keep the rest. This is where most production integrations land.
-- **Build a fully custom UI.** `ui: false` hides all built-in chrome while editing, the Document API, and `superdoc.ui` keep working. [Custom UI overview](/editor/custom-ui/overview).
-
-[Choose an interface](/editor/ui/choose-an-interface) walks through all three with a runnable example of each.
+[Who renders the UI?](/editor/who-renders-the-ui) compares all three ownership modes with a runnable example of each.
 
 ## Continue building
 
 - [Load and save documents](/editor/load-and-save-documents) covers letting people choose their own file, loading from a URL or `Blob`, and saving to a backend.
 - [Document modes](/editor/document-modes) explains editing, suggesting, and viewing, and how to record edits as tracked changes.
-- [Configure the Editor](/editor/platform/configuration) explains how `ui`, `interaction`, and `surfaces` divide up the configuration.
+- [Configure the Editor](/editor/configuration) explains how `ui`, `interaction`, and `surfaces` divide up the configuration.

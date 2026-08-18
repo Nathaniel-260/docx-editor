@@ -26,4 +26,4 @@ pnpm test
 
 The browser test creates the room, joins it from a second browser page, edits the first page, and verifies that the second page exports the synchronized text in its DOCX.
 
-See [Real-time collaboration](https://docs.superdoc.dev/editor/collaboration) for provider and room lifecycle guidance.
+See [Connect to a collaboration room](https://docs.superdoc.dev/editor/collaboration) for provider and room lifecycle guidance.

@@ -16,11 +16,19 @@ const faviconHashes = {
 
 const routes = [
   ['index.html', 'SuperDoc'],
-  ['start/features-and-surfaces/index.html', 'Features and surfaces'],
+  ['resources/how-superdoc-works/index.html', 'How SuperDoc works'],
   ['editor/index.html', 'Editor overview'],
   ['editor/quickstart/index.html', 'Editor quickstart'],
   ['editor/frameworks/react/index.html', 'Mount SuperDoc in React'],
-  ['editor/ui/choose-an-interface/index.html', 'Choose your editor interface'],
+  ['editor/frameworks/sveltekit/index.html', 'Mount SuperDoc in SvelteKit'],
+  ['editor/migrate-from-v1/overview/index.html', 'Migrate from v1'],
+  ['editor/migrate-from-v1/removed-apis/index.html', 'Removed in v2'],
+  ['editor/configuration/index.html', 'Configure the Editor'],
+  ['editor/load-and-save-documents/index.html', 'Load and save documents'],
+  ['editor/export-options/index.html', 'Control DOCX export'],
+  ['editor/document-modes/index.html', 'Document modes'],
+  ['editor/lifecycle-and-events/index.html', 'Handle lifecycle and events'],
+  ['editor/who-renders-the-ui/index.html', 'Choose your editor interface'],
   ['editor/built-in-ui/overview/index.html', 'Built-in UI overview'],
   ['editor/built-in-ui/configure-the-toolbar/index.html', 'Configure the built-in toolbar'],
   ['editor/built-in-ui/comments/index.html', 'Comments in the built-in UI'],
@@ -32,28 +40,31 @@ const routes = [
   ['editor/custom-ui/controller-setup/index.html', 'Custom UI controller setup'],
   ['editor/custom-ui/react-setup/index.html', 'React custom UI setup'],
   ['editor/custom-ui/commands-and-state/index.html', 'Commands and state'],
-  ['editor/custom-ui/failures-and-capabilities/index.html', 'Handle unavailable commands'],
   ['editor/custom-ui/custom-commands/index.html', 'Register custom commands'],
-  ['editor/custom-ui/zoom-and-document-state/index.html', 'Control zoom and document state'],
   ['editor/custom-ui/formatting-controls/index.html', 'Build formatting controls'],
-  ['editor/custom-ui/selection-and-viewport/index.html', 'Preserve selections and position UI'],
   ['editor/custom-ui/comments/index.html', 'Build a custom comments UI'],
   ['editor/custom-ui/tracked-changes/index.html', 'Build tracked-change review controls'],
-  ['editor/custom-ui/content-controls/index.html', 'Build a content-control panel'],
   ['editor/custom-ui/tables/index.html', 'Build contextual table controls'],
+  ['editor/custom-ui/content-controls/index.html', 'Build a content-control panel'],
+  ['editor/custom-ui/context-menus/index.html', 'Application-owned context menus'],
   ['editor/custom-ui/search/index.html', 'Build custom search controls'],
-  ['editor/platform/configuration/index.html', 'Configure the Editor'],
-  ['editor/platform/lifecycle-and-events/index.html', 'Handle lifecycle and events'],
-  ['editor/platform/document-management/index.html', 'Manage document files'],
-  ['editor/platform/dialogs-and-floating-surfaces/index.html', 'Open dialogs and floating surfaces'],
-  ['editor/platform/themes-and-fonts/index.html', 'Theme UI and resolve document fonts'],
+  ['editor/custom-ui/zoom-and-document-state/index.html', 'Control zoom and document state'],
+  ['editor/custom-ui/selection-and-viewport/index.html', 'Preserve selections and position UI'],
+  ['editor/custom-ui/review-highlights/index.html', 'Build durable review highlights'],
+  ['editor/dialogs-and-surfaces/index.html', 'Open dialogs and floating surfaces'],
+  ['editor/themes-and-fonts/index.html', 'Theme UI and resolve document fonts'],
+  ['editor/track-changes/index.html', 'Review tracked changes'],
+  ['editor/collaboration/index.html', 'Connect to a collaboration room'],
+  ['editor/collaboration/run-a-server/index.html', 'Run a collaboration server'],
+  ['editor/collaboration/presence-and-awareness/index.html', 'Show collaboration presence'],
+  ['editor/collaboration/upgrade-a-document/index.html', 'Upgrade a local document to collaboration'],
+  ['editor/version-history/index.html', 'Add version history'],
   ['editor/platform/proofing/index.html', 'Add spelling and grammar proofing'],
-  ['editor/platform/accessibility-and-keyboard/index.html', 'Build accessible Editor experiences'],
-  ['editor/platform/secure-integration/index.html', 'Secure browser document workflows'],
-  ['editor/review/tracked-changes/index.html', 'Review tracked changes'],
-  ['editor/load-and-save-documents/index.html', 'Load and save documents'],
-  ['editor/document-modes/index.html', 'Document modes'],
-  ['editor/migrate-from-v1/overview/index.html', 'Migrate from v1'],
+  ['editor/performance-and-large-documents/index.html', 'Tune performance for large documents'],
+  ['editor/accessibility/index.html', 'Build accessible Editor experiences'],
+  ['editor/secure-integration/index.html', 'Secure browser document workflows'],
+  ['editor/telemetry/index.html', 'Configure telemetry'],
+  ['editor/license/index.html', 'Configure the Editor license'],
   ['agents/overview/index.html', 'Overview'],
   ['agents/build/build-an-agent/index.html', 'Build an agent'],
   ['agents/build/tools/index.html', 'Tools and presets'],
@@ -85,6 +96,83 @@ for (const [outputPath, expectedText] of routes) {
     assert.match(html, new RegExp(expectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   });
 }
+
+function sidebarLinks(html) {
+  const sidebar = html.match(/<aside id="nd-sidebar"[\s\S]*?<\/aside>/u)?.[0];
+  assert.ok(sidebar, 'expected the rendered desktop sidebar');
+
+  return [...sidebar.matchAll(/<a\b([^>]*)>([^<]+)<\/a>/gu)].map(([, attributes, text]) => ({
+    active: attributes.match(/\bdata-active="([^"]+)"/u)?.[1],
+    text,
+  }));
+}
+
+test('exports the condensed primary sections and keeps migration last', async () => {
+  const editor = await readFile(new URL('../out/editor/index.html', import.meta.url), 'utf8');
+  const migrationOverview = await readFile(
+    new URL('../out/editor/migrate-from-v1/overview/index.html', import.meta.url),
+    'utf8',
+  );
+  const migrationRemovedApis = await readFile(
+    new URL('../out/editor/migrate-from-v1/removed-apis/index.html', import.meta.url),
+    'utf8',
+  );
+  const resourcesOverview = await readFile(
+    new URL('../out/resources/how-superdoc-works/index.html', import.meta.url),
+    'utf8',
+  );
+  const resourcesSecurity = await readFile(new URL('../out/resources/security/index.html', import.meta.url), 'utf8');
+  const resourcesLicense = await readFile(new URL('../out/resources/license/index.html', import.meta.url), 'utf8');
+  const expectedPrimaryLabels = [
+    'Editor',
+    'Agents &amp; automation',
+    'Document API',
+    'Resources',
+    'Migrate from v1',
+  ];
+  const editorLinks = sidebarLinks(editor);
+  const migrationLinks = sidebarLinks(migrationOverview);
+  const resourceLinks = sidebarLinks(resourcesOverview);
+
+  assert.deepEqual(
+    editorLinks.slice(0, expectedPrimaryLabels.length).map(({ text }) => text),
+    expectedPrimaryLabels,
+  );
+  assert.ok(editorLinks.some(({ text }) => text === 'Use with React'));
+  assert.ok(editorLinks.some(({ text }) => text === 'Use with SvelteKit'));
+  assert.deepEqual(
+    editorLinks.slice(-2).map(({ text }) => text),
+    ['Telemetry', 'License'],
+  );
+  assert.deepEqual(
+    migrationLinks.slice(expectedPrimaryLabels.length).map(({ text }) => text),
+    ['Overview', 'Removed APIs'],
+  );
+  assert.deepEqual(
+    resourceLinks.slice(expectedPrimaryLabels.length).map(({ text }) => text),
+    ['How SuperDoc works', 'Security', 'License'],
+  );
+
+  const sectionPages = [
+    [editor, 'Editor'],
+    [migrationOverview, 'Migrate from v1'],
+    [migrationRemovedApis, 'Migrate from v1'],
+    [resourcesOverview, 'Resources'],
+    [resourcesSecurity, 'Resources'],
+    [resourcesLicense, 'Resources'],
+  ];
+  for (const [html, expectedActiveLabel] of sectionPages) {
+    const activePrimaryLabels = sidebarLinks(html)
+      .slice(0, expectedPrimaryLabels.length)
+      .filter(({ active }) => active === 'true')
+      .map(({ text }) => text);
+    assert.deepEqual(activePrimaryLabels, [expectedActiveLabel]);
+  }
+
+  const primaryNavigation = editor.match(/<nav[^>]+aria-label="Primary navigation"[\s\S]*?<\/nav>/u)?.[0];
+  assert.ok(primaryNavigation);
+  assert.doesNotMatch(primaryNavigation, />Get started</u);
+});
 
 test('exports the homepage without the documentation sidebar', async () => {
   const homepage = await readFile(new URL('../out/index.html', import.meta.url), 'utf8');
@@ -344,8 +432,8 @@ test('exports the custom UI command-state contract without a copied command matr
 });
 
 test('exports the Editor tracked-change review workflow with the existing review demo', async () => {
-  const article = await readFile(new URL('../out/editor/review/tracked-changes/index.html', import.meta.url), 'utf8');
-  const markdown = await readFile(new URL('../out/md/editor/review/tracked-changes.md', import.meta.url), 'utf8');
+  const article = await readFile(new URL('../out/editor/track-changes/index.html', import.meta.url), 'utf8');
+  const markdown = await readFile(new URL('../out/md/editor/track-changes.md', import.meta.url), 'utf8');
 
   assert.match(article, /Review a tracked change/);
   assert.match(article, /data-preset="tracked-review"/);
@@ -423,16 +511,13 @@ test('exports custom command registration as clean Markdown', async () => {
   assert.doesNotMatch(markdown, /<include>/);
 });
 
-test('exports command failure guidance as clean Markdown', async () => {
-  const markdown = await readFile(
-    new URL('../out/md/editor/custom-ui/failures-and-capabilities.md', import.meta.url),
-    'utf8',
-  );
+test('exports command failure guidance from the command-state owner page', async () => {
+  const markdown = await readFile(new URL('../out/md/editor/custom-ui/commands-and-state.md', import.meta.url), 'utf8');
 
   assert.match(markdown, /Partial<Record<SuperDocUIReason, string>>/);
-  assert.match(markdown, /State is a snapshot, not a guarantee/);
-  assert.match(markdown, /Do not render every ID from the command catalog as a toolbar/);
-  assert.match(markdown, /do not infer success from the absence of an exception/);
+  assert.match(markdown, /State is a snapshot rather than a guarantee/);
+  assert.match(markdown, /Do not render every recognized command automatically/);
+  assert.match(markdown, /Do not treat a resolved promise or the absence of an exception as proof/);
   assert.doesNotMatch(markdown, /<include>/);
 });
 
@@ -510,18 +595,19 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
   assert.doesNotMatch(`${links}\n${structured}\n${responsive}`, /<include>/);
 });
 
-test('exports the Editor platform guidance as clean Markdown', async () => {
+test('exports the redistributed Editor guidance as clean Markdown', async () => {
+  const paths = [
+    'configuration',
+    'lifecycle-and-events',
+    'load-and-save-documents',
+    'dialogs-and-surfaces',
+    'themes-and-fonts',
+    'platform/proofing',
+    'accessibility',
+    'secure-integration',
+  ];
   const pages = await Promise.all(
-    [
-      'configuration',
-      'lifecycle-and-events',
-      'document-management',
-      'dialogs-and-floating-surfaces',
-      'themes-and-fonts',
-      'proofing',
-      'accessibility-and-keyboard',
-      'secure-integration',
-    ].map((slug) => readFile(new URL(`../out/md/editor/platform/${slug}.md`, import.meta.url), 'utf8')),
+    paths.map((path) => readFile(new URL(`../out/md/editor/${path}.md`, import.meta.url), 'utf8')),
   );
   const corpus = pages.join('\n');
 
@@ -534,6 +620,28 @@ test('exports the Editor platform guidance as clean Markdown', async () => {
   assert.match(corpus, /Accessibility remains a shared responsibility/);
   assert.match(corpus, /client code a trusted authorization boundary/);
   assert.doesNotMatch(corpus, /<include>/);
+});
+
+test('exports safe replacement and configuration guidance for the v2 Editor', async () => {
+  const [loadAndSave, exportOptions, configuration, telemetry, license, versionHistory] = await Promise.all([
+    readFile(new URL('../out/md/editor/load-and-save-documents.md', import.meta.url), 'utf8'),
+    readFile(new URL('../out/md/editor/export-options.md', import.meta.url), 'utf8'),
+    readFile(new URL('../out/md/editor/configuration.md', import.meta.url), 'utf8'),
+    readFile(new URL('../out/md/editor/telemetry.md', import.meta.url), 'utf8'),
+    readFile(new URL('../out/md/editor/license.md', import.meta.url), 'utf8'),
+    readFile(new URL('../out/md/editor/version-history.md', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(loadAndSave, /replacementState/);
+  assert.match(versionHistory, /could not be restored/);
+  assert.match(exportOptions, /set it to `false` to return a `Blob` or ZIP/);
+  assert.match(exportOptions, /does not apply `isFinalDoc`/);
+  assert.doesNotMatch(exportOptions, /isFinalDoc: true/);
+  assert.match(configuration, /document's `v2Collaboration` field/);
+  assert.doesNotMatch(configuration, /`modules` configures[^\n]*collaboration/);
+  assert.match(telemetry, /new SuperDoc\([\s\S]*telemetry: \{/);
+  assert.match(license, /licenseKey: import\.meta\.env\.VITE_SUPERDOC_LICENSE_KEY/);
+  assert.match(license, /not a secret or an authorization credential/);
 });
 
 test('exports every generated Document API reference route', async () => {
@@ -646,10 +754,13 @@ test('exports the machine-readable documentation files', async () => {
   const llmsIndex = await readFile(new URL('../out/llms.txt', import.meta.url), 'utf8');
   const fullCorpus = await readFile(new URL('../out/llms-full.txt', import.meta.url), 'utf8');
   const editorMarkdown = await readFile(new URL('../out/md/editor/quickstart.md', import.meta.url), 'utf8');
-  const surfacesMarkdown = await readFile(new URL('../out/md/start/features-and-surfaces.md', import.meta.url), 'utf8');
+  const surfacesMarkdown = await readFile(
+    new URL('../out/md/resources/how-superdoc-works.md', import.meta.url),
+    'utf8',
+  );
   const modesMarkdown = await readFile(new URL('../out/md/editor/document-modes.md', import.meta.url), 'utf8');
   const interfaceMarkdown = await readFile(
-    new URL('../out/md/editor/ui/choose-an-interface.md', import.meta.url),
+    new URL('../out/md/editor/who-renders-the-ui.md', import.meta.url),
     'utf8',
   );
   const customUISetupMarkdown = await readFile(
@@ -693,7 +804,7 @@ test('exports the machine-readable documentation files', async () => {
   // The quickstart's Markdown must carry the layout contract, since that is
   // the part a reader cannot infer from the code alone.
   assert.match(editorMarkdown, /Setting a height without `contained: true` does not constrain the document/);
-  assert.match(surfacesMarkdown, /^# Features and surfaces/m);
+  assert.match(surfacesMarkdown, /^# How SuperDoc works/m);
   assert.match(surfacesMarkdown, /> \*\*Diagram:\*\* People, services, CI, and agents use different SuperDoc surfaces/);
   assert.match(
     surfacesMarkdown,
@@ -729,7 +840,7 @@ test('exports the machine-readable documentation files', async () => {
   assert.match(receiptsMarkdown, /Do not log full document contents/);
   assert.doesNotMatch(receiptsMarkdown, /<Callout\b/);
   assert.match(trackedChangesMarkdown, /^# Work with tracked changes/m);
-  assert.match(trackedChangesMarkdown, /\[Review tracked changes\]\(\/editor\/review\/tracked-changes\)/);
+  assert.match(trackedChangesMarkdown, /\[Review tracked changes\]\(\/editor\/track-changes\)/);
   assert.match(trackedChangesMarkdown, /target: \{ kind: 'id', id: detail\.id \}/);
   assert.match(trackedChangesMarkdown, /A review decision resolves an existing change/);
   assert.doesNotMatch(trackedChangesMarkdown, /<EditorDemo\b/);
@@ -837,7 +948,7 @@ test('exports clean Markdown across the machine-readable corpus', async () => {
   assert.match(reviewWorkflow, /\[Download the tracked-changes fixture\]\(\/fixtures\/tracked-changes\.docx\)/);
   assert.match(reviewWorkflow, /Local DOCX selection: enabled\. Files remain in the browser\./);
 
-  const productOverview = await readFile(new URL('../out/md/start/what-superdoc-does.md', import.meta.url), 'utf8');
+  const productOverview = await readFile(new URL('../out/md/resources/how-superdoc-works.md', import.meta.url), 'utf8');
   assert.match(productOverview, /Interactive editor: Try SuperDoc in the browser/);
   assert.match(productOverview, /Tracked-change review: accept or reject the sample change\./);
 });

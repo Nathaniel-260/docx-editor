@@ -32,6 +32,12 @@ A disabled command often needs context rather than removal. Bold needs a text se
 
 Remove a control when the workflow does not need it. Disable it when the workflow needs it but the current context does not allow it.
 
+Map stable `reason` values to product language. Keep a fallback so newer reasons remain understandable before the application adds tailored copy:
+
+<include>../../../../snippets/editor/command-failures.ts</include>
+
+Use the state fields together. `enabled: false` means the action cannot run now; `supported: false` means the controller cannot route it on this host. State is a snapshot rather than a guarantee, so execution still needs its own result check.
+
 ## Await actions that affect later work
 
 Use `executeAsync()` when saving, navigating, or running another action depends on the command finishing.
@@ -43,6 +49,10 @@ The result can be:
 - A receipt object when the command routes through a document operation.
 
 For a receipt, inspect `success` before continuing. Do not treat a resolved promise or the absence of an exception as proof that the document changed.
+
+Branch on stable reason strings and receipt failure codes. Show the supplied message to developers or adapt it for users, but keep a fallback for codes the application does not recognize yet.
+
+For document-operation capability checks and receipt failure codes, read [Receipts and errors](/document-api/receipts-and-errors).
 
 ## Treat values as command-specific
 

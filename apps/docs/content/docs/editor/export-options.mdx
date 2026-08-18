@@ -1,0 +1,62 @@
+---
+title: Control DOCX export
+navTitle: Export options
+description: Download a DOCX, return its bytes, remove comments, or package related files.
+---
+
+Use `SuperDoc.export()` after the Editor is ready. It downloads a DOCX by default; set options when the application needs a backend upload, a comment-free copy, or a package of related files.
+
+## Choose the output behavior
+
+| Option                 | Default      | Use it for                                                            |
+| ---------------------- | ------------ | --------------------------------------------------------------------- |
+| `exportType`           | `['docx']`   | Select the DOCX output for the browser Editor workflow                |
+| `exportedName`         | Editor title | Set the downloaded filename without its extension                     |
+| `triggerDownload`      | `true`       | Start a browser download; set it to `false` to return a `Blob` or ZIP |
+| `commentsType`         | `'external'` | Keep external comments or use `'clean'` to remove comments            |
+| `isFinalDoc`           | `false`      | Reserved in the export options; the v2 Editor does not apply it       |
+| `additionalFiles`      | `[]`         | Add related `Blob` objects and return or download a ZIP               |
+| `fieldsHighlightColor` | `null`       | Set a field highlight color in the exported DOCX                      |
+
+## Export without comments
+
+This example removes comments and returns bytes for application-owned storage:
+
+```ts
+const result = await superdoc.export({
+  exportType: ['docx'],
+  commentsType: 'clean',
+  exportedName: 'contract-without-comments',
+  triggerDownload: false,
+});
+
+if (!(result instanceof Blob)) {
+  throw new Error('SuperDoc did not return a DOCX blob.');
+}
+
+await saveDocument(result);
+```
+
+The v2 Editor does not apply `isFinalDoc` during export. `commentsType: 'clean'` removes comments, but it does not accept or reject tracked changes. Resolve tracked changes through the [Editor review workflow](/editor/track-changes) before exporting when the destination requires final text.
+
+## Package related files
+
+Pair each additional `Blob` with a filename. When export produces more than one file, SuperDoc returns or downloads a ZIP:
+
+```ts
+const bundle = await superdoc.export({
+  exportType: ['docx'],
+  additionalFiles: [auditLog],
+  additionalFileNames: ['audit.json'],
+  exportedName: 'contract-package',
+  triggerDownload: false,
+});
+```
+
+Keep the arrays in the same order. SuperDoc creates the package; your application still owns access control, retention, and persistence.
+
+<Callout variant='success' title='Verification target'>
+  Reopen the exported DOCX. Confirm that the expected text is present and comments follow the selected policy.
+</Callout>
+
+For the basic download and backend upload paths, see [Load and save documents](/editor/load-and-save-documents).

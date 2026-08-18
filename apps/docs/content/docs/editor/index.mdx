@@ -17,12 +17,13 @@ bind its creation and cleanup to your framework's component lifecycle.
 | --------------------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
 | Vanilla JavaScript or another framework | [Editor quickstart](/editor/quickstart)          | Editor creation, configuration, lifecycle, and export   |
 | React                                   | [React guide](/editor/frameworks/react)          | Mount timing, readiness state, cleanup, and export      |
+| SvelteKit                               | [SvelteKit guide](/editor/frameworks/sveltekit)  | Browser mount timing, cleanup, and export               |
 | React with application-owned controls   | [React custom UI](/editor/custom-ui/react-setup) | Reactive toolbar and panel state over the same instance |
 
 `superdoc/ui/react` provides hooks for custom controls. It is part of the `superdoc` package and does not mount a second
 Editor.
 
-After mounting the Editor, decide who owns the controls around the document. [Choose your editor interface](/editor/ui/choose-an-interface) compares the built-in UI, a configured built-in UI, and application-owned controls.
+After mounting the Editor, decide who owns the controls around the document. [Who renders the UI?](/editor/who-renders-the-ui) compares the built-in UI, a configured built-in UI, and application-owned controls.
 
 ## What v2 changes
 
@@ -58,6 +59,6 @@ Start with the [Document API mental model](/document-api/mental-model) when appl
 ## What to build next
 
 - [Mount the editor and export an edit](/editor/quickstart).
-- [Choose the built-in UI or custom controls](/editor/ui/choose-an-interface).
-- [Understand how SuperDoc preserves DOCX meaning](/start/how-superdoc-works).
+- [Choose the built-in UI or custom controls](/editor/who-renders-the-ui).
+- [Understand how SuperDoc preserves DOCX meaning](/resources/how-superdoc-works).
 - [Learn the Document API operation lifecycle](/document-api/mental-model).

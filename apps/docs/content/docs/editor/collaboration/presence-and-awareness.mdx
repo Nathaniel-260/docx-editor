@@ -1,0 +1,45 @@
+---
+title: Show collaboration presence
+navTitle: Presence and awareness
+description: Identify collaborators, assign cursor colors, and react to awareness updates.
+---
+
+Presence describes who is connected to a collaboration room. Supply the current user's display identity, then use awareness updates when application UI needs its own participant list or status.
+
+## Configure identity and colors
+
+Pass trusted display identity from the authenticated application session. `colors` supplies the palette SuperDoc uses when a user does not have an explicit color:
+
+```ts
+const superdoc = new SuperDoc({
+  selector: '#editor',
+  document: sharedDocument,
+  user: {
+    id: session.user.id,
+    name: session.user.name,
+    email: session.user.email,
+  },
+  colors: ['#1355ff', '#00853d', '#9333ea'],
+  onAwarenessUpdate: ({ states, added, removed }) => {
+    renderParticipants(states);
+    console.log({ added, removed });
+  },
+});
+```
+
+Each `states` entry represents a remote client. It can include `id`, `name`, `email`, `image`, `clientId`, and the resolved `color`. Narrow application-specific fields before using them.
+
+The optional `users` configuration is a directory used by shared people and mention surfaces. It does not prove that those people are connected now; awareness state owns the live participant list.
+
+## Subscribe after construction
+
+Set `onAwarenessUpdate` when the listener is known during Editor creation. Use `superdoc.on('awareness-update', listener)` and the matching `off()` when a later component owns the subscription.
+
+Awareness is transient. Do not use it as an audit log, durable membership record, or authorization decision.
+
+<Callout variant='success' title='Verification target'>
+  Open the same room in two browsers with different users. Each browser should show the other participant with a stable
+  color, then remove that participant after the other browser disconnects.
+</Callout>
+
+Continue with [version history](/editor/version-history) when collaborative edits also need durable snapshots.

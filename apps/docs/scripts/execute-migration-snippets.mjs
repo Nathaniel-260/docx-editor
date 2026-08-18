@@ -115,18 +115,6 @@ const cases = {
     assert.equal(result, selectionTarget);
     assertJson(calls, [{}]);
   },
-  'collaboration-config': async ({ collaborativeDocument }) => {
-    const data = {};
-    const result = collaborativeDocument(data, 'acme:42', 'wss://collab.example.test', 'secret', 'create');
-    assert.equal(result.data, data);
-    assertJson(result.v2Collaboration, {
-      providerType: 'hocuspocus',
-      documentId: 'acme:42',
-      serverUrl: 'wss://collab.example.test',
-      token: 'secret',
-      roomMode: 'create',
-    });
-  },
 };
 
 assert.deepEqual(
