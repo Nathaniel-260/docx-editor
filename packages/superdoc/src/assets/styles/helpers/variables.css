@@ -184,14 +184,14 @@
   --sd-comments-selection-background: #1354ff55;
 
   /* Styles: tracked changes — old names honored via fallback */
-  --sd-tracked-changes-insert-background: var(--sd-track-insert-bg, #1f6feb22);
+  --sd-tracked-changes-insert-background: var(--sd-track-insert-bg);
   --sd-tracked-changes-insert-border: var(--sd-track-insert-border, #1f6feb);
   --sd-tracked-changes-insert-border-width: 1px;
   --sd-tracked-changes-insert-text: currentColor;
   --sd-tracked-changes-insert-decoration-line: none;
   --sd-tracked-changes-insert-decoration-thickness: 1px;
   --sd-tracked-changes-insert-underline-offset: 0px;
-  --sd-tracked-changes-delete-background: var(--sd-track-delete-bg, #cb0e4722);
+  --sd-tracked-changes-delete-background: var(--sd-track-delete-bg);
   --sd-tracked-changes-delete-border: var(--sd-track-delete-border, #cb0e47);
   --sd-tracked-changes-delete-border-width: 1px;
   --sd-tracked-changes-delete-text: currentColor;
@@ -205,8 +205,14 @@
   --sd-tracked-changes-move-from-background: var(--sd-tracked-changes-semantic-background, #00853d22);
   --sd-tracked-changes-move-from-background-focused: var(--sd-tracked-changes-semantic-background-focused, #00853d44);
   --sd-tracked-changes-move-from-text: var(--sd-tracked-changes-semantic-color, #00853d);
-  --sd-tracked-changes-insert-background-focused: #1f6feb44;
-  --sd-tracked-changes-delete-background-focused: #cb0e4744;
+  --sd-tracked-changes-insert-background-focused: var(
+    --sd-track-insert-bg-focused,
+    var(--sd-tracked-changes-insert-background, var(--sd-track-insert-bg, #1f6feb44))
+  );
+  --sd-tracked-changes-delete-background-focused: var(
+    --sd-track-delete-bg-focused,
+    var(--sd-tracked-changes-delete-background, var(--sd-track-delete-bg, #cb0e4744))
+  );
   --sd-tracked-changes-format-background-focused: #ffd70033;
 
   /* Styles: tracked table-structure changes (whole-table / table-row

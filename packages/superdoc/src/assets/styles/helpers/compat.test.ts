@@ -114,6 +114,29 @@ describe('backward compatibility', () => {
       }
     });
 
+    it('keeps focused tracked changes in the host palette', () => {
+      const expected: [string, string, string, string][] = [
+        [
+          '--sd-tracked-changes-insert-background-focused',
+          '--sd-track-insert-bg-focused',
+          '--sd-tracked-changes-insert-background',
+          '--sd-track-insert-bg',
+        ],
+        [
+          '--sd-tracked-changes-delete-background-focused',
+          '--sd-track-delete-bg-focused',
+          '--sd-tracked-changes-delete-background',
+          '--sd-track-delete-bg',
+        ],
+      ];
+      for (const [target, focused, canonical, legacy] of expected) {
+        const pattern = new RegExp(
+          `${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*var\\(\\s*${focused.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*,\\s*var\\(\\s*${canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*,\\s*var\\(\\s*${legacy.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+        );
+        expect(variablesCss, `Expected ${target} to use ${focused}, ${canonical}, then ${legacy}`).toMatch(pattern);
+      }
+    });
+
     it('honors old semantic variable names', () => {
       const expected: [string, string][] = [
         ['--sd-ui-bg', '--sd-surface-card'],
