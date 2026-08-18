@@ -84,7 +84,7 @@ export function computeFixedTableColumnWidths(input: WorkingTableGridInput): Fix
   }
 
   for (const row of input.rows.slice(1)) {
-    applySubsequentRowRequests(columnWidths, row, defaultAddedColumnWidth);
+    applySubsequentRowRequests(columnWidths, row, defaultAddedColumnWidth, preferredTableWidth);
 
     if (preferredTableWidth != null) {
       shrinkToPreferredTableWidth(columnWidths, preferredTableWidth);
@@ -154,6 +154,7 @@ function applySubsequentRowRequests(
   columnWidths: number[],
   row: WorkingTableRowInput,
   defaultAddedColumnWidth: number,
+  preferredTableWidth: number | undefined,
 ): void {
   ensureGridWidth(columnWidths, row.logicalColumnCount, defaultAddedColumnWidth);
 
@@ -162,7 +163,7 @@ function applySubsequentRowRequests(
   }
 
   for (const cell of row.cells) {
-    growCellSpanWidth(columnWidths, cell, defaultAddedColumnWidth);
+    growCellSpanWidth(columnWidths, cell, defaultAddedColumnWidth, preferredTableWidth);
   }
 }
 
@@ -225,8 +226,18 @@ function setCellSpanWidth(columnWidths: number[], cell: WorkingTableCellInput, d
  *
  * Later rows only reconcile by maxima, so a subsequent-row request can enlarge
  * the span but cannot reduce it below the current resolved width.
+ *
+ * Full-grid spans are capped at the preferred table width when one is set.
+ * Otherwise a later merged row whose `tcW` restates the authored grid total
+ * (common for 100%-width fixed tables) inflates the last column and the
+ * following proportional shrink skews the entire grid (SD-3880).
  */
-function growCellSpanWidth(columnWidths: number[], cell: WorkingTableCellInput, defaultAddedColumnWidth: number): void {
+function growCellSpanWidth(
+  columnWidths: number[],
+  cell: WorkingTableCellInput,
+  defaultAddedColumnWidth: number,
+  preferredTableWidth: number | undefined,
+): void {
   const span = Math.max(1, sanitizeColumnCount(cell.span));
   const preferredWidth = sanitizeOptionalWidth(cell.preferredWidth);
   const endColumn = cell.startColumn + span;
@@ -235,8 +246,12 @@ function growCellSpanWidth(columnWidths: number[], cell: WorkingTableCellInput, 
 
   if (preferredWidth == null) return;
 
+  const spansEntireGrid = cell.startColumn === 0 && span === columnWidths.length;
+  const effectivePreferredWidth =
+    spansEntireGrid && preferredTableWidth != null ? Math.min(preferredWidth, preferredTableWidth) : preferredWidth;
+
   const currentSpanWidth = sumSpan(columnWidths, cell.startColumn, span);
-  const deficit = preferredWidth - currentSpanWidth;
+  const deficit = effectivePreferredWidth - currentSpanWidth;
   if (deficit <= 0) return;
 
   const lastColumnIndex = endColumn - 1;
