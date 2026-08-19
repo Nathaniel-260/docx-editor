@@ -70,6 +70,7 @@ import {
   type TableBorderValue,
   EMPTY_SDT_PLACEHOLDER_TEXT,
   effectiveTableCellSpacing,
+  expandRunsForInlineNewlines,
   isEmptySdtPlaceholderRun,
   isShapeTextBaselineWarp,
   isShapeTextSingleBandEnvelopeWarp,
@@ -2588,36 +2589,8 @@ async function measureParagraphBlock(
     return alignPendingTabForWidth(segmentWidth, beforeDecimalWidth);
   };
 
-  // Expand runs to handle inline newlines as explicit break runs
-  let runsToProcess: Run[] = [];
-  for (const run of normalizedRuns as Run[]) {
-    if ((run as TextRun).text && typeof (run as TextRun).text === 'string' && (run as TextRun).text.includes('\n')) {
-      const textRun = run as TextRun;
-      const segments = textRun.text.split('\n');
-      let cursor = textRun.pmStart ?? 0;
-      segments.forEach((seg, idx) => {
-        runsToProcess.push({
-          ...textRun,
-          text: seg,
-          pmStart: cursor,
-          pmEnd: cursor + seg.length,
-        });
-        cursor += seg.length;
-        if (idx !== segments.length - 1) {
-          runsToProcess.push({
-            kind: 'break',
-            breakType: 'line',
-            pmStart: cursor,
-            pmEnd: cursor + 1,
-            sdt: (run as TextRun).sdt,
-          });
-          cursor += 1;
-        }
-      });
-    } else {
-      runsToProcess.push(run as Run);
-    }
-  }
+  // Keep measurement line ranges aligned with the painter's run expansion.
+  let runsToProcess: Run[] = expandRunsForInlineNewlines(normalizedRuns as Run[]);
   let runIndexMap = runsToProcess.map((_, index) => index);
   let runCharOffsetMap = runsToProcess.map(() => 0);
   if (runsToProcess.some((run) => isTextRun(run) && typeof run.text === 'string' && run.text.includes('\t'))) {

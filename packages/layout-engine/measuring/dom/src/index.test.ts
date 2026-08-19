@@ -8,6 +8,7 @@ import type {
   DrawingMeasure,
   DrawingBlock,
   TableMeasure,
+  Run,
   TabRun,
   TextRun,
   InlineBoxSpan,
@@ -1013,6 +1014,55 @@ describe('measureBlock', () => {
       for (let i = 0; i < measure.lines.length - 1; i++) {
         expect(measure.lines[i].width).toBeLessThanOrEqual(100);
       }
+    });
+
+    it('keeps measured newline-expanded run indexes aligned with the painter', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'redline-newline-paragraph',
+        runs: [
+          {
+            text: '[______]',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.67,
+          },
+          {
+            text: 'Review Heading:\n\nLOREM IPSUM DOLOR SIT AMET CONSECTETUR ADIPISCING ELIT SED DO EIUSMOD TEMPOR INCIDIDUNT UT LABORE ET DOLORE MAGNA ALIQUA:',
+            fontFamily: 'Times New Roman',
+            fontSize: 14.67,
+          },
+        ],
+        attrs: { indent: { left: 1.5333333333333332 } },
+      };
+      const expandedRuns = expandRunsForInlineNewlines((block as { runs: Run[] }).runs);
+      const expandedLineText = (line: ParagraphMeasure['lines'][number]): string => {
+        const parts: string[] = [];
+        for (let runIndex = line.fromRun; runIndex <= line.toRun; runIndex += 1) {
+          const run = expandedRuns[runIndex] as { text?: string } | undefined;
+          if (!run || typeof run.text !== 'string') continue;
+          const start = runIndex === line.fromRun ? line.fromChar : 0;
+          const end = runIndex === line.toRun ? line.toChar : run.text.length;
+          parts.push(run.text.slice(start, end));
+        }
+        return parts.join('');
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 601.333));
+      const lineTexts = measure.lines.map(expandedLineText);
+
+      for (const line of measure.lines) {
+        expect(line.fromRun).toBeLessThan(expandedRuns.length);
+        expect(line.toRun).toBeLessThan(expandedRuns.length);
+        for (const segment of line.segments ?? []) {
+          expect(segment.runIndex).toBeLessThan(expandedRuns.length);
+        }
+      }
+      expect(lineTexts).toContain('[______]Review Heading:');
+      expect(lineTexts.some((text) => text.startsWith('LOREM IPSUM'))).toBe(true);
+      expect(lineTexts.some((text) => text.endsWith('MAGNA ALIQUA:'))).toBe(true);
+      expect(lineTexts.join('')).toContain(
+        'LOREM IPSUM DOLOR SIT AMET CONSECTETUR ADIPISCING ELIT SED DO EIUSMOD TEMPOR INCIDIDUNT UT LABORE ET DOLORE MAGNA ALIQUA:',
+      );
     });
 
     it('falls back when text runs are missing font size', async () => {
