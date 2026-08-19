@@ -204,17 +204,10 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/vscode.yml
 
-  docx-privacy:
-    needs: preflight
-    permissions:
-      contents: read
-      pull-requests: read
-    uses: ./.github/workflows/docx-privacy.yml
-
   validate:
     name: CI V2 Public / validate
     if: always()
-    needs: [preflight, core, packages, docs, declarations, document-api, examples, react, vscode, docx-privacy]
+    needs: [preflight, core, packages, docs, declarations, document-api, examples, react, vscode]
     runs-on: ubuntu-latest
     steps:
       - name: Check results

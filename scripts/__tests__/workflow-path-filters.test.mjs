@@ -53,9 +53,8 @@ test('a repo-wide extension filter is never reported', () => {
 });
 
 test('a root-level kind filter is never reported', () => {
-  // Sometimes matching nothing is the point. The DOCX privacy gate watches
-  // `*.[dD][oO][cC][xX]` at the root so a fixture landing there triggers a
-  // scan; a repo with no root-level DOCX is the healthy state.
+  // Sometimes matching nothing is the point: a filter can watch for the first
+  // root-level file of a kind.
   assert.equal(matchesSomething('*.[dD][oO][cC][xX]', TREE), true);
   assert.equal(matchesSomething('*.lock', TREE), true);
 });

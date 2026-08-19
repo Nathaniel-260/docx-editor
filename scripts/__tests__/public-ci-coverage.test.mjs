@@ -42,10 +42,6 @@ const reusableWorkflows = new Map([
       'pnpm --filter superdoc-vscode-ext compile:ext',
     ],
   ],
-  [
-    'docx-privacy.yml',
-    ['node scripts/check-docx-privacy.mjs', 'pnpm run test:docx-privacy'],
-  ],
 ]);
 
 test('the required public gate covers every projected validation lane', () => {
@@ -105,19 +101,24 @@ test('the required public gate covers every projected validation lane', () => {
       `validate.yml no longer includes ${name}`,
     );
   }
+  assert.equal(
+    workflow.includes('docx-privacy'),
+    false,
+    'validate.yml still includes the removed DOCX privacy workflow',
+  );
 
   assert.match(workflow, /name: CI V2 Public \/ validate/u);
   assert.match(workflow, /  validate:\n    name: CI V2 Public \/ validate\n    if: always\(\)\n/u);
   assert.match(
     workflow,
-    /needs: \[preflight, core, packages, docs, declarations, document-api, examples, react, vscode, docx-privacy\]/u,
+    /needs: \[preflight, core, packages, docs, declarations, document-api, examples, react, vscode\]/u,
   );
   assert.match(workflow, /contains\(needs\.\*\.result, 'failure'\)/u);
   assert.match(workflow, /contains\(needs\.\*\.result, 'cancelled'\)/u);
   assert.match(workflow, /contains\(needs\.\*\.result, 'skipped'\)/u);
 
   const blocks = new Map(jobBlocks(workflow).map((block) => [block.id, block.source]));
-  for (const job of ['core', 'packages', 'docs', 'document-api', 'examples', 'react', 'vscode', 'docx-privacy']) {
+  for (const job of ['core', 'packages', 'docs', 'document-api', 'examples', 'react', 'vscode']) {
     assert.match(blocks.get(job), /^    needs: preflight$/mu, `${job}: install can start before preflight`);
   }
 });

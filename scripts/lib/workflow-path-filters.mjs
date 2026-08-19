@@ -124,9 +124,8 @@ export function globToRegExp(glob) {
  *
  * A leaf that starts with a wildcard names a kind of file rather than a
  * location, so no rename can strand it and matching nothing today is a fact
- * about the tree. Sometimes that is the intent: the DOCX privacy gate watches
- * `*.[dD][oO][cC][xX]` so a fixture landing there trips a scan, and a repo with
- * no such file is the healthy state.
+ * about the tree. Sometimes that is the intent: an extension filter can watch
+ * for the first file of a kind, and a repo with no such file is healthy.
  *
  * The directory part still has to exist, because that half CAN go stale: a
  * deleted package makes `packages/gone/*.ts` unreachable even though `*.ts`
