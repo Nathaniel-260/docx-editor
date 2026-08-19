@@ -1235,7 +1235,9 @@ const onV2EditorReady = (payload) => {
   // ui-phase4-002: flip the reactive readiness signal so the ruler template
   // re-evaluates `shouldShowV2Ruler(doc)` now that pageMetrics + pageLayout
   // are attached to the active editor facade.
-  if (pageMetrics && pageLayout) v2RulerReady.value = true;
+  if (pageMetrics && pageLayout) {
+    syncV2RulerActiveEditor();
+  }
 
   // ui-phase3-002 / ui-phase3-003: register the v2 comment + tracked-change
   // adapters on the store so its adapter-identity guard
@@ -1739,10 +1741,7 @@ const onV2RenderCleared = (payload) => {
   commentsStore.setV2TrackedChangesAdapter?.(null);
   commentsStore.clearEditorCommentPositions?.();
   clearActiveV2EditorFacade(payload?.documentId ?? null);
-  // ui-phase4-002: tear down ruler observers on document switch / dispose.
-  cleanupV2RulerObservers();
-  v2RulerHostStyle.value = {};
-  v2RulerReady.value = false;
+  syncV2RulerActiveEditor();
 };
 
 const onV2HostEvent = (document, event) => {
@@ -2723,6 +2722,7 @@ onMounted(() => {
   // Refresh the committed review window and republish geometry as one transition on every
   // document-mode change (viewing/editing/suggesting). See handler comment.
   proxy.$superdoc?.on?.('document-mode-change', handleV2DocumentModeChange);
+  proxy.$superdoc?.on?.('active-editor-change', syncV2RulerActiveEditor);
 
   recalculateCompactCommentsMode();
   ensureCompactMeasurementObserver();
@@ -2859,6 +2859,8 @@ onBeforeUnmount(() => {
   linkPopover.destroy();
   cancelScheduledV2DomSelectionSync();
   cancelScheduledV2SelectionToolbarSync();
+  cleanupV2RulerObservers();
+  cleanupV2RulerContextSubscription();
   for (const documentId of Array.from(v2Runtimes.keys())) {
     clearV2RuntimeRegistration(documentId);
   }
@@ -2895,6 +2897,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', handleDocumentSelectionChange, true);
   document.removeEventListener('selectionchange', handleDocumentSelectionChange);
   proxy.$superdoc?.off?.('document-mode-change', handleV2DocumentModeChange);
+  proxy.$superdoc?.off?.('active-editor-change', syncV2RulerActiveEditor);
 });
 
 const selectionLayer = ref(null);
@@ -3086,12 +3089,11 @@ const shouldShowSelection = computed(() => {
   return !config.readOnly;
 });
 
-// ui-phase4-002: reactive trigger for the ruler template. Flips true once the
-// v2 facade publishes a pageLayout runtime and false on render-cleared /
-// document switch. `proxy.$superdoc.activeEditor` itself is a plain property
-// (no Vue tracking), so we shadow the readiness signal through a ref so the
-// template re-evaluates on hydration.
+// ui-phase4-002: reactive ruler state. `proxy.$superdoc.activeEditor` itself is
+// a plain property (no Vue tracking), so readiness and active-document changes
+// are shadowed through refs for template updates.
 const v2RulerReady = ref(false);
+const v2RulerActiveDocumentId = ref(null);
 
 const unwrapDocField = (value) => {
   if (value && typeof value === 'object' && 'value' in value) return value.value;
@@ -3119,18 +3121,20 @@ const shouldShowV2Ruler = (doc) => {
   const editor = proxy.$superdoc?.activeEditor;
   if (!editor || editor.editorVersion !== 2) return false;
   const docId = unwrapDocField(doc.id);
-  const activeDocumentId = editor.documentId ?? editor.options?.documentId ?? null;
+  const activeDocumentId = v2RulerActiveDocumentId.value;
   if (docId && activeDocumentId && docId !== activeDocumentId) return false;
   return Boolean(editor.pageMetrics && editor.pageLayout);
 };
 
 // ui-phase4-002: ruler container alignment. Mirrors v1 document editor's
-// `syncRulerOffset` but anchors to the v2 paint wrapper (`data-v2-paint-
-// wrapper`) instead of `.presentation-editor__viewport` so the ruler stays
-// aligned with the v2 page stack rather than a v1-specific class name.
+// `syncRulerOffset` but anchors to the active v2 page instead of a
+// v1-specific viewport class.
 const v2RulerHostStyle = ref({});
 let v2RulerEditorObserver = null;
 let v2RulerContainerObserver = null;
+let v2RulerActivePageIndex = 0;
+let v2RulerContextPageLayout = null;
+let unsubscribeV2RulerContext = null;
 
 // Where the ruler mounts, resolved once from the built-in UI profile. The
 // profile folds `ui.ruler.container` over the legacy `rulerContainer` alias and
@@ -3149,14 +3153,25 @@ const resolveV2RulerContainer = () => {
   return typeof HTMLElement !== 'undefined' && container instanceof HTMLElement ? container : null;
 };
 
-const getV2PaintWrapperRect = () => {
-  const activeDocumentId =
-    proxy.$superdoc?.activeEditor?.documentId ?? proxy.$superdoc?.activeEditor?.options?.documentId ?? null;
+const getActiveV2DocumentId = () =>
+  proxy.$superdoc?.activeEditor?.documentId ?? proxy.$superdoc?.activeEditor?.options?.documentId ?? null;
+
+const resolveV2RulerAlignmentContainer = () => {
+  if (resolvedRulerContainer.value) return resolveV2RulerContainer();
+  const activeDocumentId = getActiveV2DocumentId();
+  if (activeDocumentId == null) return null;
+  return subDocumentRoots.get(activeDocumentId) ?? subDocumentRoots.get(String(activeDocumentId)) ?? null;
+};
+
+const getV2ActivePageRect = () => {
+  const activeDocumentId = getActiveV2DocumentId();
   const stage =
     activeDocumentId == null ? latestV2MountStage : (v2MountStagesByDocumentId.get(String(activeDocumentId)) ?? null);
   if (!stage?.isConnected) return null;
   const wrapper = Array.from(stage.children).find((element) => element.dataset?.v2PaintWrapper === 'true') ?? stage;
-  return wrapper.getBoundingClientRect();
+  const pages = Array.from(wrapper.children).filter((element) => element.classList?.contains('superdoc-page'));
+  const activePage = pages.find((element) => Number(element.dataset?.pageIndex) === v2RulerActivePageIndex) ?? pages[0];
+  return (activePage ?? wrapper).getBoundingClientRect();
 };
 
 const syncV2RulerOffset = () => {
@@ -3164,23 +3179,77 @@ const syncV2RulerOffset = () => {
     v2RulerHostStyle.value = {};
     return;
   }
-  const host = resolveV2RulerContainer();
-  if (!host) {
+  const alignmentContainer = resolveV2RulerAlignmentContainer();
+  if (!alignmentContainer) {
     v2RulerHostStyle.value = {};
     return;
   }
-  const wrapperRect = getV2PaintWrapperRect();
-  if (!wrapperRect) {
+  const pageRect = getV2ActivePageRect();
+  if (!pageRect) {
     v2RulerHostStyle.value = {};
     return;
   }
-  const hostRect = host.getBoundingClientRect();
-  const paddingLeft = Math.max(0, wrapperRect.left - hostRect.left);
-  const paddingRight = Math.max(0, hostRect.right - wrapperRect.right);
+  const containerRect = alignmentContainer.getBoundingClientRect();
+  const paddingLeft = Math.max(0, pageRect.left - containerRect.left);
+  const paddingRight = Math.max(0, containerRect.right - pageRect.right);
   v2RulerHostStyle.value = {
     paddingLeft: `${paddingLeft}px`,
     paddingRight: `${paddingRight}px`,
   };
+};
+
+const cleanupV2RulerContextSubscription = () => {
+  const unsubscribe = unsubscribeV2RulerContext;
+  unsubscribeV2RulerContext = null;
+  v2RulerContextPageLayout = null;
+  v2RulerActivePageIndex = 0;
+  try {
+    unsubscribe?.();
+  } catch {
+    /* ignore */
+  }
+};
+
+const setupV2RulerContextSubscription = (pageLayout) => {
+  cleanupV2RulerContextSubscription();
+  if (!pageLayout) return;
+  v2RulerContextPageLayout = pageLayout;
+  try {
+    v2RulerActivePageIndex = pageLayout.getActiveRulerContext?.()?.pageIndex ?? 0;
+    unsubscribeV2RulerContext =
+      pageLayout.subscribeActiveRulerContext?.((context) => {
+        if (v2RulerContextPageLayout !== pageLayout) return;
+        const pageIndex = context?.pageIndex ?? 0;
+        if (pageIndex === v2RulerActivePageIndex) return;
+        v2RulerActivePageIndex = pageIndex;
+        nextTick(() => syncV2RulerOffset());
+      }) ?? null;
+  } catch {
+    cleanupV2RulerContextSubscription();
+  }
+};
+
+const syncV2RulerActiveEditor = () => {
+  const editor = proxy.$superdoc?.activeEditor;
+  const activeDocumentId = editor?.documentId ?? editor?.options?.documentId ?? null;
+  v2RulerActiveDocumentId.value = activeDocumentId;
+
+  if (editor?.editorVersion !== 2 || !editor.pageMetrics || !editor.pageLayout) {
+    cleanupV2RulerObservers();
+    cleanupV2RulerContextSubscription();
+    v2RulerHostStyle.value = {};
+    v2RulerReady.value = false;
+    return;
+  }
+
+  if (v2RulerContextPageLayout !== editor.pageLayout) {
+    setupV2RulerContextSubscription(editor.pageLayout);
+  }
+  v2RulerReady.value = true;
+  nextTick(() => {
+    syncV2RulerOffset();
+    setupV2RulerObservers();
+  });
 };
 
 const cleanupV2RulerObservers = () => {
@@ -3202,14 +3271,14 @@ const setupV2RulerObservers = () => {
   cleanupV2RulerObservers();
   if (typeof ResizeObserver === 'undefined') return;
   const layersEl = layers.value;
-  const host = resolveV2RulerContainer();
+  const alignmentContainer = resolveV2RulerAlignmentContainer();
   if (layersEl) {
     v2RulerEditorObserver = new ResizeObserver(() => syncV2RulerOffset());
     v2RulerEditorObserver.observe(layersEl);
   }
-  if (host) {
+  if (alignmentContainer) {
     v2RulerContainerObserver = new ResizeObserver(() => syncV2RulerOffset());
-    v2RulerContainerObserver.observe(host);
+    v2RulerContainerObserver.observe(alignmentContainer);
   }
 };
 
