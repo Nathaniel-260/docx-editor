@@ -245,6 +245,92 @@ describe('computeFixedTableColumnWidths', () => {
     expect(result.columnWidths[19]).toBeCloseTo(preferredColumnWidths[19]! * scale, 5);
   });
 
+  it('keeps authored proportions when a later remaining-grid span after gridBefore restates the grid total', () => {
+    const preferredColumnWidths = [200, 150, 150, 300];
+    const authoredGridTotal = 800;
+    const preferredTableWidth = 400;
+    const scale = preferredTableWidth / authoredGridTotal;
+    const result = computeFixedTableColumnWidths(
+      buildFixedInput({
+        preferredColumnWidths,
+        preferredTableWidth,
+        rows: [
+          {
+            skippedBefore: [],
+            skippedAfter: [],
+            skippedColumns: [],
+            logicalColumnCount: 4,
+            cells: preferredColumnWidths.map((preferredWidth, startColumn) => ({
+              startColumn,
+              span: 1,
+              preferredWidth,
+            })),
+          },
+          {
+            skippedBefore: [{ columnIndex: 0, preferredWidth: undefined, minContentWidth: 0, maxContentWidth: 0 }],
+            skippedAfter: [],
+            skippedColumns: [{ columnIndex: 0, preferredWidth: undefined, minContentWidth: 0, maxContentWidth: 0 }],
+            logicalColumnCount: 4,
+            cells: [{ startColumn: 1, span: 3, preferredWidth: authoredGridTotal }],
+          },
+        ],
+      }),
+    );
+
+    expect(result.totalWidth).toBe(preferredTableWidth);
+    expect(result.columnWidths).toHaveLength(4);
+    for (let index = 0; index < preferredColumnWidths.length; index++) {
+      expect(result.columnWidths[index]).toBeCloseTo(preferredColumnWidths[index]! * scale, 5);
+    }
+  });
+
+  it('keeps authored proportions when a later skipped column restates the grid total as wBefore', () => {
+    const preferredColumnWidths = [200, 150, 150, 300];
+    const authoredGridTotal = 800;
+    const preferredTableWidth = 400;
+    const scale = preferredTableWidth / authoredGridTotal;
+    const result = computeFixedTableColumnWidths(
+      buildFixedInput({
+        preferredColumnWidths,
+        preferredTableWidth,
+        rows: [
+          {
+            skippedBefore: [],
+            skippedAfter: [],
+            skippedColumns: [],
+            logicalColumnCount: 4,
+            cells: preferredColumnWidths.map((preferredWidth, startColumn) => ({
+              startColumn,
+              span: 1,
+              preferredWidth,
+            })),
+          },
+          {
+            skippedBefore: [
+              { columnIndex: 0, preferredWidth: authoredGridTotal, minContentWidth: 0, maxContentWidth: 0 },
+            ],
+            skippedAfter: [],
+            skippedColumns: [
+              { columnIndex: 0, preferredWidth: authoredGridTotal, minContentWidth: 0, maxContentWidth: 0 },
+            ],
+            logicalColumnCount: 4,
+            cells: [
+              { startColumn: 1, span: 1, preferredWidth: undefined },
+              { startColumn: 2, span: 1, preferredWidth: undefined },
+              { startColumn: 3, span: 1, preferredWidth: undefined },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(result.totalWidth).toBe(preferredTableWidth);
+    expect(result.columnWidths).toHaveLength(4);
+    for (let index = 0; index < preferredColumnWidths.length; index++) {
+      expect(result.columnWidths[index]).toBeCloseTo(preferredColumnWidths[index]! * scale, 5);
+    }
+  });
+
   it('accounts for skipped columns and their preferred widths', () => {
     const result = computeFixedTableColumnWidths(
       buildFixedInput({
