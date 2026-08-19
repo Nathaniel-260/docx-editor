@@ -4,9 +4,11 @@ This is the license text covering the OFL-1.1 fonts bundled in this directory
 (Carlito, Liberation Sans, Liberation Serif, Liberation Mono, Caprasimo,
 Bacasime Antique, Oregano Italic, Gelasio, Cardo, Comic Relief, Noto Sans,
 Selawik, Noto Sans Mono, Inconsolata SemiExpanded, PT Sans, Archivo Black, PT
-Sans Narrow). Copyright notices and any Reserved Font Name statements for those fonts
-are reproduced verbatim below, taken from the fonts' own name tables, so they
-travel with this license text. LICENSES.md restates them for convenience.
+Sans Narrow, Noto Sans Symbols 2). Copyright notices and any Reserved Font Name
+statements are reproduced below so they travel with this license text. The
+existing notices came from the fonts' own name tables; the Noto Sans Symbols 2
+notice came from its official release OFL.txt. LICENSES.md restates them for
+convenience.
 Official OFL text: https://openfontlicense.org/open-font-license-official-text/
 
 -----------------------------------------------------------
@@ -70,6 +72,12 @@ Noto Sans:
     (https://github.com/notofonts/latin-greek-cyrillic)
     Licensed under the SIL Open Font License, Version 1.1.
     (These v2.015 files declare no OFL Reserved Font Name.)
+
+Noto Sans Symbols 2:
+    Copyright 2022 The Noto Project Authors
+    (https://github.com/notofonts/symbols)
+    Licensed under the SIL Open Font License, Version 1.1.
+    (This v2.008 file declares no OFL Reserved Font Name.)
 
 Selawik:
     © 2015 Microsoft Corporation (www.microsoft.com), with Reserved Font Name

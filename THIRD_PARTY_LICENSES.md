@@ -56,6 +56,7 @@ satisfied by the unmodified upstream release pointers recorded in
 | Cardo | Garamond | OFL-1.1 | none | Regular 1.0451; Bold 1.0011; Italic 0.991 |
 | Comic Relief | Comic Sans MS | OFL-1.1 | none | 1.200 |
 | Noto Sans | Tahoma | OFL-1.1 | none | 2.015 |
+| Noto Sans Symbols 2 | Unicode symbols | OFL-1.1 | none | 2.008 |
 | Selawik | Segoe UI | OFL-1.1 | "Selawik" | 1.01 |
 | Noto Sans Mono | Lucida Console | OFL-1.1 | none | 2.014 |
 | Inconsolata SemiExpanded | Consolas | OFL-1.1 | none | 3.001 |
@@ -79,6 +80,7 @@ satisfied by the unmodified upstream release pointers recorded in
 - **Cardo** (OFL-1.1): `Copyright (c) 2002-2011, David J. Perry (hospes02@scholarsfonts.net).` These files declare no OFL Reserved Font Name.
 - **Comic Relief** (OFL-1.1): `Copyright 2013 The Comic Relief Project Authors (https://github.com/loudifier/Comic-Relief).` The v1.200 files declare no OFL Reserved Font Name.
 - **Noto Sans** (OFL-1.1): `Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic).` Noto is a trademark of Google LLC. The v2.015 files declare no OFL Reserved Font Name.
+- **Noto Sans Symbols 2** (OFL-1.1): `Copyright 2022 The Noto Project Authors (https://github.com/notofonts/symbols).` This notice comes from the official release's `OFL.txt`; it declares no OFL Reserved Font Name.
 - **Selawik** (OFL-1.1): `© 2015 Microsoft Corporation (www.microsoft.com), with Reserved Font Name "Selawik". Selawik is a trademark of Microsoft Corporation in the United States and/or other countries.` Selawik is a trademark of the Microsoft group of companies.
 - **Noto Sans Mono** (OFL-1.1): `Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic).` Noto is a trademark of Google LLC. The v2.014 files declare no OFL Reserved Font Name.
 - **Inconsolata SemiExpanded** (OFL-1.1): `Copyright 2006 The Inconsolata Project Authors (https://github.com/cyrealtype/Inconsolata).` These v3.001 files declare no OFL Reserved Font Name.
@@ -94,6 +96,9 @@ No design, metric, glyph, `cmap`, or `name`-table change. Gelasio, Noto Sans,
 and Noto Sans Mono ship as static WOFF2 instances generated from upstream
 variable TrueType sources at the regular and bold weights; Noto Sans and Noto
 Sans Mono are also instanced at normal width.
+
+Noto Sans Symbols 2 is an unmodified, non-subset WOFF2 conversion of the
+official v2.008 unhinted TrueType source.
 
 Verified for this ship set: 55 / 65 faces are static-source conversions with a
 WOFF2 `name` table byte-identical to their source font, and 10 / 65 faces are

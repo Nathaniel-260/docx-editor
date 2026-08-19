@@ -34,6 +34,7 @@ class FakeFontSet implements FontSetLike {
   readonly removed: FontFaceLike[] = [];
   readonly behaviors = new Map<string, Behavior>();
   readonly available = new Set<string>();
+  readonly loadTexts: Array<string | undefined> = [];
 
   add(face: FontFaceLike): void {
     this.added.push(face);
@@ -44,7 +45,8 @@ class FakeFontSet implements FontSetLike {
     if (i >= 0) this.added.splice(i, 1);
     return i >= 0;
   }
-  load(font: string): Promise<FontFaceLike[]> {
+  load(font: string, text?: string): Promise<FontFaceLike[]> {
+    this.loadTexts.push(text);
     const family = parseFamily(font);
     switch (this.behaviors.get(family) ?? 'load-empty') {
       case 'load-ok':
@@ -279,6 +281,16 @@ describe('FontRegistry face-aware APIs', () => {
     expect(res.status).toBe('loaded');
     expect(registry.getFaceStatus({ family: 'Carlito', weight: '700', style: 'italic' })).toBe('loaded');
     expect(registry.getStatus('Carlito')).toBe('loaded'); // family rollup for diagnostics
+  });
+
+  it('passes a text probe through so unicode-range can select a glyph-capable face', async () => {
+    fontSet.behaviors.set('Core Symbols', 'load-ok');
+    const { registry } = makeRegistry(fontSet);
+    await registry.awaitFaceRequest(
+      { family: 'Core Symbols', weight: '400', style: 'normal', text: '\u2708\u2610' },
+      1000,
+    );
+    expect(fontSet.loadTexts).toEqual(['\u2708\u2610']);
   });
 
   it('awaitFaceRequests dedupes by face key but keeps distinct weight/style as separate faces', async () => {

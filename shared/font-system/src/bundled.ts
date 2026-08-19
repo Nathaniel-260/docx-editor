@@ -1,6 +1,7 @@
 import type { FontRegistry } from './registry';
 import type { FontAssetUrlContext, FontAssetUrlResolver } from './types';
 import { BUNDLED_MANIFEST } from './bundled-manifest';
+import { BUNDLED_FACE_UNICODE_RANGES } from './bundled-unicode-ranges';
 
 export type { BundledLicense, BundledFaceFile, BundledFamilyManifest } from './bundled-manifest';
 export type { FontAssetUrlContext, FontAssetUrlResolver } from './types';
@@ -135,6 +136,8 @@ export function installBundledSubstitutes(registry: FontRegistry, options: Insta
   }
   for (const family of BUNDLED_MANIFEST) {
     for (const face of family.faces) {
+      const unicodeRange = BUNDLED_FACE_UNICODE_RANGES[face.file];
+      if (!unicodeRange) throw new Error(`[superdoc] bundled font face "${face.file}" has no Unicode coverage`);
       const context: FontAssetUrlContext = {
         file: face.file,
         family: family.family,
@@ -145,7 +148,7 @@ export function installBundledSubstitutes(registry: FontRegistry, options: Insta
       registry.register({
         family: family.family,
         source: `url(${resolve(context)})`,
-        descriptors: { weight: face.weight, style: face.style },
+        descriptors: { weight: face.weight, style: face.style, unicodeRange },
       });
     }
   }

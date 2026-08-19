@@ -37,7 +37,7 @@ export type {
   FontMeasureContext,
   ResolvePhysicalFamily,
 } from './resolver';
-export { FontResolver, createFontResolver } from './resolver';
+export { FontResolver, createFontResolver, insertFontFamilyBeforeGeneric } from './resolver';
 export {
   resolveFontFamily,
   resolvePhysicalFamily,
@@ -76,6 +76,16 @@ export { buildFontReport, buildFaceReport } from './report';
 
 export type { EmbeddingPolicy } from './os2';
 export { parseEmbeddingPolicy } from './os2';
+
+export type { UnicodeCoverage, UnicodeRange } from './unicode-coverage';
+export { parseUnicodeCoverage, textForUnicodeCoverage, unicodeCoverageIncludes } from './unicode-coverage';
+
+export {
+  CORE_SYMBOL_FALLBACK_COVERAGE,
+  CORE_SYMBOL_FALLBACK_FAMILY,
+  installCoreSymbolFallback,
+  textForCoreSymbolFallback,
+} from './core-symbol-fallback';
 
 export type { FontSetLike, FontFaceLike, FontFaceCtor, FontRegistryOptions, OwnedFaceDescriptor } from './registry';
 export {

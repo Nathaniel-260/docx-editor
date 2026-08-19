@@ -69,6 +69,8 @@ export interface OwnedFaceDescriptor {
   source: ArrayBuffer | ArrayBufferView;
   weight: '400' | '700';
   style: 'normal' | 'italic';
+  /** Exact glyph coverage of the embedded font, expressed as a CSS `unicode-range`. */
+  unicodeRange?: string;
 }
 
 export interface FontRegistryOptions {
@@ -305,10 +307,14 @@ export class FontRegistry {
    * idempotent (a second call returns false).
    */
   registerOwnedFace(descriptor: OwnedFaceDescriptor): (() => boolean) | null {
-    const { family, source, weight, style } = descriptor;
+    const { family, source, weight, style, unicodeRange } = descriptor;
     if (!this.#FontFaceCtor || !this.#fontSet) return null;
     const key = faceKeyOf(family, weight, style);
-    const face = new this.#FontFaceCtor(family, source, { weight, style });
+    const face = new this.#FontFaceCtor(family, source, {
+      weight,
+      style,
+      ...(unicodeRange ? { unicodeRange } : {}),
+    });
     this.#fontSet.add(face);
     this.#addManagedFace(family, key, face);
     // Seed provider and status state so the resolver can see this face and the gate can await it.
@@ -514,15 +520,21 @@ export class FontRegistry {
     options: { timeoutMs?: number } = {},
   ): Promise<FontFaceLoadResult[]> {
     const timeoutMs = options.timeoutMs ?? DEFAULT_FONT_LOAD_TIMEOUT_MS;
-    const seen = new Set<string>();
-    const unique: FontFaceRequest[] = [];
+    const byKey = new Map<string, FontFaceRequest>();
     for (const r of requests) {
       const key = faceKeyOf(r.family, r.weight, r.style);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      unique.push(r);
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, { ...r });
+        continue;
+      }
+      if (r.text) {
+        const characters = new Set(existing.text ?? '');
+        for (const character of r.text) characters.add(character);
+        existing.text = [...characters].join('');
+      }
     }
-    return Promise.all(unique.map((r) => this.awaitFaceRequest(r, timeoutMs)));
+    return Promise.all([...byKey.values()].map((r) => this.awaitFaceRequest(r, timeoutMs)));
   }
 
   async #loadOneFace(request: FontFaceRequest, key: string, timeoutMs: number): Promise<FontFaceLoadResult> {
@@ -540,7 +552,7 @@ export class FontRegistry {
       handle = this.#scheduleTimeout(() => resolve(TIMEOUT), timeoutMs);
     });
     try {
-      const settled = await Promise.race([fontSet.load(probe), timeout]);
+      const settled = await Promise.race([fontSet.load(probe, request.text), timeout]);
       if (settled === TIMEOUT) {
         this.#faceStatus.set(key, 'timed_out');
         return { request, status: 'timed_out' };

@@ -229,6 +229,34 @@ function splitStack(cssFontFamily: string): string[] {
     .filter(Boolean);
 }
 
+const CSS_GENERIC_FAMILIES = new Set([
+  'serif',
+  'sans-serif',
+  'monospace',
+  'cursive',
+  'fantasy',
+  'system-ui',
+  'ui-serif',
+  'ui-sans-serif',
+  'ui-monospace',
+  'ui-rounded',
+  'emoji',
+  'math',
+  'fangsong',
+]);
+
+/** Insert a physical fallback before CSS generic families without changing the primary family. */
+export function insertFontFamilyBeforeGeneric(cssFontFamily: string, fallbackFamily: string): string {
+  const parts = splitStack(cssFontFamily);
+  const fallback = stripFamilyQuotes(fallbackFamily);
+  if (parts.length === 0 || !fallback) return cssFontFamily;
+  if (parts.some((part) => normalizeFamilyKey(part) === normalizeFamilyKey(fallback))) return cssFontFamily;
+  const insertion = parts.findIndex((part) => CSS_GENERIC_FAMILIES.has(normalizeFamilyKey(part)));
+  const quotedFallback = `"${fallback.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  if (insertion < 0) return [...parts, quotedFallback].join(', ');
+  return [...parts.slice(0, insertion), quotedFallback, ...parts.slice(insertion)].join(', ');
+}
+
 /**
  * Per-document logical -> physical font resolver. Seeded with bundled DocFonts fallbacks;
  * also holds per-instance runtime overrides (a customer `fonts.map`). Because each

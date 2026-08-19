@@ -15,6 +15,9 @@ provenance on 2026-06-10. TeX Gyre Bonum was added from CTAN TeX Gyre
 provenance on 2026-06-10. URW Gothic and Selawik were added from DocFonts
 corpus provenance on 2026-06-10._
 
+_Noto Sans Symbols 2 was added from the official notofonts/symbols v2.008
+release on 2026-08-18 as SuperDoc's core Unicode-symbol fallback._
+
 ## Scope (read first)
 
 This record applies to the font software listed below **in every form in which
@@ -61,6 +64,7 @@ Machine-readable asset metadata: `font-assets.manifest.json`.
 | Cardo | Garamond | OFL-1.1 | none | Regular 1.0451; Bold 1.0011; Italic 0.991 | google/fonts c89741abbf4eeabce432c3ed2fd7dc28b022701e, ofl/cardo |
 | Comic Relief | Comic Sans MS | OFL-1.1 | none | 1.200 | google/fonts c89741abbf4eeabce432c3ed2fd7dc28b022701e, ofl/comicrelief |
 | Noto Sans | Tahoma | OFL-1.1 | none | 2.015 | google/fonts c89741abbf4eeabce432c3ed2fd7dc28b022701e, ofl/notosans |
+| Noto Sans Symbols 2 | Unicode symbols | OFL-1.1 | none | 2.008 | github.com/notofonts/symbols release v2.008 |
 | Selawik | Segoe UI | OFL-1.1 | "Selawik" | 1.01 | github.com/microsoft/Selawik release 1.01 |
 | Noto Sans Mono | Lucida Console | OFL-1.1 | none | 2.014 | google/fonts c89741abbf4eeabce432c3ed2fd7dc28b022701e, ofl/notosansmono |
 | Inconsolata SemiExpanded | Consolas | OFL-1.1 | none | 3.001 | google/fonts c89741abbf4eeabce432c3ed2fd7dc28b022701e, ofl/inconsolata/static |
@@ -197,6 +201,16 @@ License description: This Font Software is licensed under the SIL Open Font Lice
 
 No OFL Reserved Font Name is declared in these files.
 
+**Noto Sans Symbols 2** - OFL-1.1
+
+```text
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/symbols)
+License description: This Font Software is licensed under the SIL Open Font License, Version 1.1.
+```
+
+This copyright notice comes from the official release's `OFL.txt`. No OFL
+Reserved Font Name is declared there.
+
 **Selawik** - OFL-1.1
 
 ```text
@@ -259,6 +273,12 @@ weights. Noto Sans and Noto Sans Mono are also instanced at normal width. These
 instances keep the upstream family and license notices, omit WOFF2 metadata, and
 are not subsetted.
 
+Noto Sans Symbols 2 is an unmodified, non-subset format conversion from the
+v2.008 release's unhinted TrueType source. Its source SHA-256 is
+`c4a0a80f0041ce4be81e2478faad22776d23edb98ae3f0d19bd37044820ecf9d`; the
+distributed WOFF2 SHA-256 is
+`39029a9928c61b81e63d3e2f3428da05984b970aa47fb3cb022dab5068fa6d61`.
+
 Because the static-source font data is unchanged except for WOFF2 compression
 and the metadata block is omitted, those conversions are **not "Modified
 Versions"** under OFL-1.1 (OFL FAQ 2.2.1) and lawfully retain the original font
@@ -293,7 +313,7 @@ change.
 
 - OFL-1.1 (Carlito, Liberation, Caprasimo, Archivo Black, Bacasime Antique,
   Oregano Italic, Gelasio, Cardo, Comic Relief, Noto Sans, Selawik, Noto Sans
-  Mono, Inconsolata SemiExpanded, PT Sans, PT Sans Narrow): `OFL.txt` in this
+  Mono, Inconsolata SemiExpanded, PT Sans, PT Sans Narrow, Noto Sans Symbols 2): `OFL.txt` in this
   directory. The copyright notices above are also stacked at the top of that
   file.
 - Apache-2.0 (Caladea): `Apache-2.0.txt` in this directory.

@@ -92,6 +92,8 @@ export interface FontFaceRequest {
   family: string;
   weight: '400' | '700';
   style: 'normal' | 'italic';
+  /** Optional text probe used to select a face whose `unicode-range` covers the required glyphs. */
+  text?: string;
 }
 
 /** Result of awaiting one required face. */

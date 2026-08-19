@@ -9,9 +9,9 @@ import type { FontRegistry } from './registry';
 
 /** Captures registered sources per family without a DOM. */
 class CaptureRegistry {
-  readonly registered: { family: string; source: string }[] = [];
-  register({ family, source }: { family: string; source: string }) {
-    this.registered.push({ family, source: source ?? '' });
+  readonly registered: { family: string; source: string; descriptors?: FontFaceDescriptors }[] = [];
+  register({ family, source, descriptors }: { family: string; source: string; descriptors?: FontFaceDescriptors }) {
+    this.registered.push({ family, source: source ?? '', descriptors });
     return { family, status: 'unloaded' as const };
   }
   asRegistry(): FontRegistry {
@@ -65,6 +65,15 @@ describe('installBundledSubstitutes URL resolution', () => {
       'url(/fonts/TeXGyreBonum-Italic.woff2)',
       'url(/fonts/TeXGyreBonum-BoldItalic.woff2)',
     ]);
+  });
+
+  it('registers every shipped face with its generated cmap coverage', () => {
+    const reg = new CaptureRegistry();
+    installBundledSubstitutes(reg.asRegistry());
+    expect(reg.registered.every((face) => typeof face.descriptors?.unicodeRange === 'string')).toBe(true);
+    const carlito = reg.registered.find((face) => face.source.endsWith('/Carlito-Regular.woff2)'));
+    expect(carlito?.descriptors?.unicodeRange).toContain('U+20-7E');
+    expect(carlito?.descriptors?.unicodeRange).not.toContain('1F5F9');
   });
 
   it('uses assetBaseUrl and normalizes a missing trailing slash', () => {

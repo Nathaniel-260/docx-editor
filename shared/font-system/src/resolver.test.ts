@@ -4,11 +4,24 @@ import {
   FULLY_ACTIVE_BUNDLED,
   createBundledActivation,
   createFontResolver,
+  insertFontFamilyBeforeGeneric,
   resolveFontFamily,
   resolvePhysicalFamilies,
   resolvePhysicalFamily,
   resolvePrimaryPhysicalFamily,
 } from './index';
+
+describe('font stack insertion', () => {
+  it('inserts a physical fallback before generic families and is idempotent', () => {
+    expect(insertFontFamilyBeforeGeneric('"Example Sans", sans-serif', 'Core Symbols')).toBe(
+      '"Example Sans", "Core Symbols", sans-serif',
+    );
+    expect(insertFontFamilyBeforeGeneric('Example Sans', 'Core Symbols')).toBe('Example Sans, "Core Symbols"');
+    expect(insertFontFamilyBeforeGeneric('Example Sans, "Core Symbols", serif', 'Core Symbols')).toBe(
+      'Example Sans, "Core Symbols", serif',
+    );
+  });
+});
 
 describe('font resolver', () => {
   it('maps bundled substitutions and category fallbacks (bare names)', () => {
