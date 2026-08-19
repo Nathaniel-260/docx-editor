@@ -8,6 +8,7 @@ import {
   getColumnGeometry,
   getColumnWidth,
   getColumnX,
+  isValidNonFlowingPageRelativeAnchorDependencyProof,
   isPageRelativeAnchor,
   normalizeColumnLayout,
   rescaleColumnWidths,
@@ -155,6 +156,8 @@ export type IncrementalLayoutResult = {
   footnoteReserveSeed?: FootnoteReserveSeed | null;
   /** Canonical pre-layout furniture heights that can affect body margins. */
   headerFooterGeometryFingerprint: string;
+  /** Immutable input-owned warm seed; consumers must revalidate every key before reuse. */
+  headerFooterGeometrySeed: HeaderFooterGeometrySeed | null;
   layoutReuse?: IncrementalLayoutReuseSummary;
   measureReuse?: {
     mode: 'full-scan' | 'proved-dirty-only' | 'body-stable';
@@ -227,6 +230,9 @@ export type IncrementalLayoutBridgeTiming = {
     pagesSplicedByReuse: number;
     paginationPasses: number;
     pageTokenRelayouts: number;
+    headerFooterPreLayoutReuses: number;
+    headerFooterPreLayoutBodyBlocksEnumerated: number;
+    headerFooterPreLayoutSectionsEnumerated: number;
     footnoteRelayouts: number;
     footnoteReserveRelayouts: number;
     footnoteGrowRelayouts: number;
@@ -237,6 +243,33 @@ export type IncrementalLayoutBridgeTiming = {
     footnoteOtherRelayouts: number;
   };
 };
+
+type HeaderFooterGeometryPlane = {
+  headerContentHeights?: Partial<Record<'default' | 'first' | 'even' | 'odd', number>>;
+  footerContentHeights?: Partial<Record<'default' | 'first' | 'even' | 'odd', number>>;
+  headerContentHeightsByRId?: ReadonlyMap<string, number>;
+  headerContentHeightsBySectionRef?: ReadonlyMap<string, number>;
+  footerContentHeightsByRId?: ReadonlyMap<string, number>;
+  footerContentHeightsBySectionRef?: ReadonlyMap<string, number>;
+};
+
+export type HeaderFooterGeometrySeed = {
+  readonly version: 2;
+  readonly ownerFingerprint: string;
+  readonly fontSignature: string;
+  readonly pageCountFieldsExact: boolean;
+  readonly constraintsFingerprint: string;
+  readonly sectionMetadataFingerprint: string;
+  readonly sectionMetadataHasChapterNumbering: false;
+  readonly geometryFingerprint: string;
+  readonly requiredHeaderVariants: readonly ('default' | 'first' | 'even' | 'odd')[];
+  readonly requiredFooterVariants: readonly ('default' | 'first' | 'even' | 'odd')[];
+  readonly requiredHeaderRelationshipIds: readonly string[];
+  readonly requiredFooterRelationshipIds: readonly string[];
+  readonly geometry: HeaderFooterGeometryPlane;
+};
+
+const issuedHeaderFooterGeometrySeeds = new WeakSet<object>();
 
 const createFlowBlockKindCounters = (): Record<FlowBlock['kind'], number> => ({
   paragraph: 0,
@@ -358,6 +391,190 @@ function buildHeaderFooterGeometryFingerprint(input: {
     footersByRId: entries(input.footerContentHeightsByRId),
     footersBySectionRef: entries(input.footerContentHeightsBySectionRef),
   });
+}
+
+function headerFooterInputFingerprint(value: unknown): string {
+  return JSON.stringify(value, (_key, item) =>
+    item instanceof Map ? [...item].sort(([left], [right]) => String(left).localeCompare(String(right))) : item,
+  );
+}
+
+function cloneFiniteGeometryMap(value: unknown): ReadonlyMap<string, number> | undefined | null {
+  if (value === undefined) return undefined;
+  if (!(value instanceof Map)) return null;
+  const copy = new Map<string, number>();
+  for (const [key, height] of value) {
+    if (
+      typeof key !== 'string' ||
+      key.length === 0 ||
+      typeof height !== 'number' ||
+      !Number.isFinite(height) ||
+      height < 0
+    ) {
+      return null;
+    }
+    copy.set(key, height);
+  }
+  return new Proxy(copy, {
+    get(target, property) {
+      if (property === 'set' || property === 'delete' || property === 'clear') {
+        return () => {
+          throw new Error('header/footer geometry maps are immutable');
+        };
+      }
+      const member = Reflect.get(target, property, target);
+      return typeof member === 'function' ? member.bind(target) : member;
+    },
+  });
+}
+
+function cloneFiniteGeometryVariants(
+  value: unknown,
+): Partial<Record<'default' | 'first' | 'even' | 'odd', number>> | undefined | null {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const copy: Partial<Record<'default' | 'first' | 'even' | 'odd', number>> = {};
+  for (const key of ['default', 'first', 'even', 'odd'] as const) {
+    const height = record[key];
+    if (height === undefined) continue;
+    if (typeof height !== 'number' || !Number.isFinite(height) || height < 0) return null;
+    copy[key] = height;
+  }
+  return Object.freeze(copy);
+}
+
+function cloneValidatedHeaderFooterGeometry(value: unknown): HeaderFooterGeometryPlane | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const geometry = value as Record<string, unknown>;
+  const headerContentHeights = cloneFiniteGeometryVariants(geometry.headerContentHeights);
+  const footerContentHeights = cloneFiniteGeometryVariants(geometry.footerContentHeights);
+  const headerContentHeightsByRId = cloneFiniteGeometryMap(geometry.headerContentHeightsByRId);
+  const headerContentHeightsBySectionRef = cloneFiniteGeometryMap(geometry.headerContentHeightsBySectionRef);
+  const footerContentHeightsByRId = cloneFiniteGeometryMap(geometry.footerContentHeightsByRId);
+  const footerContentHeightsBySectionRef = cloneFiniteGeometryMap(geometry.footerContentHeightsBySectionRef);
+  if (
+    headerContentHeights === null ||
+    footerContentHeights === null ||
+    headerContentHeightsByRId === null ||
+    headerContentHeightsBySectionRef === null ||
+    footerContentHeightsByRId === null ||
+    footerContentHeightsBySectionRef === null
+  )
+    return null;
+  return Object.freeze({
+    ...(headerContentHeights === undefined ? {} : { headerContentHeights }),
+    ...(footerContentHeights === undefined ? {} : { footerContentHeights }),
+    ...(headerContentHeightsByRId === undefined ? {} : { headerContentHeightsByRId }),
+    ...(headerContentHeightsBySectionRef === undefined ? {} : { headerContentHeightsBySectionRef }),
+    ...(footerContentHeightsByRId === undefined ? {} : { footerContentHeightsByRId }),
+    ...(footerContentHeightsBySectionRef === undefined ? {} : { footerContentHeightsBySectionRef }),
+  });
+}
+
+function hasRequiredHeaderFooterGeometry(seed: HeaderFooterGeometrySeed, geometry: HeaderFooterGeometryPlane): boolean {
+  const validVariants = new Set(['default', 'first', 'even', 'odd']);
+  const readKeys = (value: unknown, allowed?: ReadonlySet<string>): readonly string[] | null => {
+    if (!Array.isArray(value)) return null;
+    const keys = value.filter((key): key is string => typeof key === 'string' && key.length > 0);
+    if (keys.length !== value.length || new Set(keys).size !== keys.length) return null;
+    if (allowed && keys.some((key) => !allowed.has(key))) return null;
+    return keys;
+  };
+  const headerVariants = readKeys(seed.requiredHeaderVariants, validVariants);
+  const footerVariants = readKeys(seed.requiredFooterVariants, validVariants);
+  const headerRelationshipIds = readKeys(seed.requiredHeaderRelationshipIds);
+  const footerRelationshipIds = readKeys(seed.requiredFooterRelationshipIds);
+  if (!headerVariants || !footerVariants || !headerRelationshipIds || !footerRelationshipIds) return false;
+  return (
+    headerVariants.every(
+      (key) => geometry.headerContentHeights?.[key as 'default' | 'first' | 'even' | 'odd'] != null,
+    ) &&
+    footerVariants.every(
+      (key) => geometry.footerContentHeights?.[key as 'default' | 'first' | 'even' | 'odd'] != null,
+    ) &&
+    headerRelationshipIds.every((relationshipId) => geometry.headerContentHeightsByRId?.has(relationshipId)) &&
+    footerRelationshipIds.every((relationshipId) => geometry.footerContentHeightsByRId?.has(relationshipId))
+  );
+}
+
+function readReusableHeaderFooterGeometry(input: {
+  retainedSeed: HeaderFooterGeometrySeed | null | undefined;
+  ownerFingerprint: string | null | undefined;
+  fontSignature: string;
+  pageCountFieldsExact: boolean;
+  constraints: HeaderFooterConstraints | null;
+  sectionMetadata: readonly SectionMetadata[];
+}): HeaderFooterGeometryPlane | null {
+  const seed = input.retainedSeed;
+  if (
+    !seed ||
+    seed.version !== 2 ||
+    typeof input.ownerFingerprint !== 'string' ||
+    input.ownerFingerprint.length === 0 ||
+    seed.ownerFingerprint !== input.ownerFingerprint ||
+    seed.fontSignature !== input.fontSignature ||
+    seed.pageCountFieldsExact !== input.pageCountFieldsExact ||
+    !input.constraints ||
+    seed.sectionMetadataHasChapterNumbering !== false ||
+    seed.constraintsFingerprint !== headerFooterInputFingerprint(input.constraints) ||
+    typeof seed.sectionMetadataFingerprint !== 'string' ||
+    seed.sectionMetadataFingerprint.length === 0
+  )
+    return null;
+  if (issuedHeaderFooterGeometrySeeds.has(seed)) return seed.geometry;
+  const geometry = cloneValidatedHeaderFooterGeometry(seed.geometry);
+  return geometry &&
+    hasRequiredHeaderFooterGeometry(seed, geometry) &&
+    buildHeaderFooterGeometryFingerprint(geometry) === seed.geometryFingerprint
+    ? geometry
+    : null;
+}
+
+function createHeaderFooterGeometrySeed(input: {
+  ownerFingerprint: string | null | undefined;
+  fontSignature: string;
+  pageCountFieldsExact: boolean;
+  constraints: HeaderFooterConstraints | null;
+  sectionMetadata: readonly SectionMetadata[];
+  requiredHeaderVariants: readonly ('default' | 'first' | 'even' | 'odd')[];
+  requiredFooterVariants: readonly ('default' | 'first' | 'even' | 'odd')[];
+  requiredHeaderRelationshipIds: readonly string[];
+  requiredFooterRelationshipIds: readonly string[];
+  geometryFingerprint: string;
+  geometry: HeaderFooterGeometryPlane;
+}): HeaderFooterGeometrySeed | null {
+  if (
+    typeof input.ownerFingerprint !== 'string' ||
+    input.ownerFingerprint.length === 0 ||
+    !input.constraints ||
+    sectionsHaveChapterNumbering(input.sectionMetadata as SectionMetadata[])
+  )
+    return null;
+  const geometry = cloneValidatedHeaderFooterGeometry(input.geometry);
+  if (!geometry) return null;
+  const seed: HeaderFooterGeometrySeed = Object.freeze({
+    version: 2,
+    ownerFingerprint: input.ownerFingerprint,
+    fontSignature: input.fontSignature,
+    pageCountFieldsExact: input.pageCountFieldsExact,
+    constraintsFingerprint: headerFooterInputFingerprint(input.constraints),
+    sectionMetadataFingerprint: headerFooterInputFingerprint(input.sectionMetadata),
+    sectionMetadataHasChapterNumbering: false,
+    geometryFingerprint: input.geometryFingerprint,
+    requiredHeaderVariants: Object.freeze([...input.requiredHeaderVariants].sort()),
+    requiredFooterVariants: Object.freeze([...input.requiredFooterVariants].sort()),
+    requiredHeaderRelationshipIds: Object.freeze([...input.requiredHeaderRelationshipIds].sort()),
+    requiredFooterRelationshipIds: Object.freeze([...input.requiredFooterRelationshipIds].sort()),
+    geometry,
+  });
+  if (
+    !hasRequiredHeaderFooterGeometry(seed, geometry) ||
+    buildHeaderFooterGeometryFingerprint(geometry) !== input.geometryFingerprint
+  )
+    return null;
+  issuedHeaderFooterGeometrySeeds.add(seed);
+  return seed;
 }
 
 function computeTimingUnionMs(intervals: readonly { start: number; end: number }[]): number {
@@ -1472,7 +1689,7 @@ function validateRetainedNoteMeasurePlane(
  * Tables recurse: cell paragraphs are measured nested (`TableCellMeasure.
  * blocks`/`paragraph`), and their tab runs carry the same stamps — a warm
  * cache hit on the TABLE otherwise leaves every nested tab width unstamped,
- * which is exactly the freddie browser determinism divergence (painter plan
+ * which is exactly the large-document browser determinism divergence (painter plan
  * debt 1, 2026-07-05: pass 1 measured/stamped, pass 2 cache-hit/unstamped).
  */
 function hydrateTabRunWidthsFromMeasure(block: FlowBlock, measure: Measure): void {
@@ -1636,6 +1853,11 @@ export async function incrementalLayout(
     noteMeasurePlaneRetainedExact?: true;
     /** Extra note/decorative planes paired with the retained note bundle. */
     retainedFootnoteExtras?: { blocks: FlowBlock[]; measures: Measure[] };
+    /** Current immutable host owner and the prior bridge-issued geometry seed. */
+    headerFooterGeometry?: {
+      ownerFingerprint: string;
+      retainedSeed: HeaderFooterGeometrySeed | null;
+    };
   },
   layoutReuse?: IncrementalLayoutReuseOptions,
   measureReuseProof?: IncrementalMeasureReuseProof,
@@ -2099,6 +2321,42 @@ export async function incrementalLayout(
   const hasHeaderBlocks = headerFooter?.headerBlocks && Object.keys(headerFooter.headerBlocks).length > 0;
   const hasHeaderBlocksByRId = headerFooter?.headerBlocksByRId && headerFooter.headerBlocksByRId.size > 0;
   const sectionMetadata = options.sectionMetadata ?? [];
+  const pageCountFieldsExact = headerFooter?.pageCountFieldsExact !== false;
+  const retainedHeaderFooterGeometry = readReusableHeaderFooterGeometry({
+    retainedSeed: warmStart?.headerFooterGeometry?.retainedSeed,
+    ownerFingerprint: warmStart?.headerFooterGeometry?.ownerFingerprint,
+    fontSignature,
+    pageCountFieldsExact,
+    constraints: headerFooter?.constraints ?? null,
+    sectionMetadata,
+  });
+  const headerFooterGeometryReused = retainedHeaderFooterGeometry != null;
+  let headerFooterPrelayoutComplete = true;
+  let prelayoutPageResolver: PageResolver | undefined;
+  let prelayoutPageResolverBuilt = false;
+  let headerFooterPreLayoutBodyBlocksEnumerated = 0;
+  let headerFooterPreLayoutSectionsEnumerated = 0;
+  const getPrelayoutPageResolver = async (): Promise<PageResolver | undefined> => {
+    if (prelayoutPageResolverBuilt) return prelayoutPageResolver;
+    headerFooterPreLayoutBodyBlocksEnumerated = nextBlocks.length;
+    headerFooterPreLayoutSectionsEnumerated = sectionMetadata.length;
+    prelayoutPageResolver = layoutExecution
+      ? await buildConservativePrelayoutPageResolverCooperatively(nextBlocks, sectionMetadata, layoutExecution)
+      : buildConservativePrelayoutPageResolver(nextBlocks, sectionMetadata);
+    prelayoutPageResolverBuilt = true;
+    return prelayoutPageResolver;
+  };
+  if (retainedHeaderFooterGeometry) {
+    headerContentHeights = retainedHeaderFooterGeometry.headerContentHeights
+      ? { ...retainedHeaderFooterGeometry.headerContentHeights }
+      : undefined;
+    headerContentHeightsByRId = retainedHeaderFooterGeometry.headerContentHeightsByRId
+      ? (retainedHeaderFooterGeometry.headerContentHeightsByRId as Map<string, number>)
+      : undefined;
+    headerContentHeightsBySectionRef = retainedHeaderFooterGeometry.headerContentHeightsBySectionRef
+      ? (retainedHeaderFooterGeometry.headerContentHeightsBySectionRef as Map<string, number>)
+      : undefined;
+  }
 
   const measureHeightsByReference = async (
     kind: 'header' | 'footer',
@@ -2190,7 +2448,7 @@ export async function incrementalLayout(
     };
   };
 
-  if (headerFooter?.constraints && (hasHeaderBlocks || hasHeaderBlocksByRId)) {
+  if (!headerFooterGeometryReused && headerFooter?.constraints && (hasHeaderBlocks || hasHeaderBlocksByRId)) {
     const hfPreStart = performance.now();
     const measureFn = headerFooter.measure ?? measureBlock;
 
@@ -2210,9 +2468,7 @@ export async function incrementalLayout(
      * header height calculations. A value of 1 is sufficient as a placeholder.
      */
     const HEADER_PRELAYOUT_PLACEHOLDER_PAGE_COUNT = 1;
-    const prelayoutPageResolver = layoutExecution
-      ? await buildConservativePrelayoutPageResolverCooperatively(nextBlocks, sectionMetadata, layoutExecution)
-      : buildConservativePrelayoutPageResolver(nextBlocks, sectionMetadata);
+    const prelayoutPageResolver = await getPrelayoutPageResolver();
 
     /**
      * Type guard to check if a key is a valid header variant type.
@@ -2285,7 +2541,10 @@ export async function incrementalLayout(
    * Values are the actual content heights in pixels, guaranteed to be finite and non-negative.
    * Undefined if footer pre-layout fails or footers are not present.
    */
-  let footerContentHeights: Partial<Record<'default' | 'first' | 'even' | 'odd', number>> | undefined;
+  let footerContentHeights: Partial<Record<'default' | 'first' | 'even' | 'odd', number>> | undefined =
+    retainedHeaderFooterGeometry?.footerContentHeights
+      ? { ...retainedHeaderFooterGeometry.footerContentHeights }
+      : undefined;
 
   /**
    * Actual measured footer content heights per relationship ID.
@@ -2293,15 +2552,21 @@ export async function incrementalLayout(
    * Keys are relationship IDs (e.g., 'rId8', 'rId9').
    * Values are the actual content heights in pixels.
    */
-  let footerContentHeightsByRId: Map<string, number> | undefined;
-  let footerContentHeightsBySectionRef: Map<string, number> | undefined;
+  let footerContentHeightsByRId: Map<string, number> | undefined =
+    retainedHeaderFooterGeometry?.footerContentHeightsByRId
+      ? (retainedHeaderFooterGeometry.footerContentHeightsByRId as Map<string, number>)
+      : undefined;
+  let footerContentHeightsBySectionRef: Map<string, number> | undefined =
+    retainedHeaderFooterGeometry?.footerContentHeightsBySectionRef
+      ? (retainedHeaderFooterGeometry.footerContentHeightsBySectionRef as Map<string, number>)
+      : undefined;
   let footerPreLayoutTime = 0;
 
   // Check if we have footers via either footerBlocks (by variant) or footerBlocksByRId (by relationship ID)
   const hasFooterBlocks = headerFooter?.footerBlocks && Object.keys(headerFooter.footerBlocks).length > 0;
   const hasFooterBlocksByRId = headerFooter?.footerBlocksByRId && headerFooter.footerBlocksByRId.size > 0;
 
-  if (headerFooter?.constraints && (hasFooterBlocks || hasFooterBlocksByRId)) {
+  if (!headerFooterGeometryReused && headerFooter?.constraints && (hasFooterBlocks || hasFooterBlocksByRId)) {
     const footerPreStart = performance.now();
     const measureFn = headerFooter.measure ?? measureBlock;
 
@@ -2324,9 +2589,7 @@ export async function incrementalLayout(
      * footer height calculations. A value of 1 is sufficient as a placeholder.
      */
     const FOOTER_PRELAYOUT_PLACEHOLDER_PAGE_COUNT = 1;
-    const prelayoutPageResolver = layoutExecution
-      ? await buildConservativePrelayoutPageResolverCooperatively(nextBlocks, sectionMetadata, layoutExecution)
-      : buildConservativePrelayoutPageResolver(nextBlocks, sectionMetadata);
+    const prelayoutPageResolver = await getPrelayoutPageResolver();
 
     /**
      * Type guard to check if a key is a valid footer variant type.
@@ -2394,6 +2657,7 @@ export async function incrementalLayout(
       if (isPrivateV2SourceToLayoutFailure(error)) throw error;
       console.error('[Layout] Footer pre-layout failed:', error);
       footerContentHeights = undefined;
+      headerFooterPrelayoutComplete = false;
     }
 
     const footerPreEnd = performance.now();
@@ -2401,14 +2665,49 @@ export async function incrementalLayout(
     perfLog(`[Perf] 4.1.6 Pre-layout footers for height: ${footerPreLayoutTime.toFixed(2)}ms`);
   }
 
-  const headerFooterGeometryFingerprint = buildHeaderFooterGeometryFingerprint({
-    headerContentHeights,
-    footerContentHeights,
-    headerContentHeightsByRId,
-    headerContentHeightsBySectionRef,
-    footerContentHeightsByRId,
-    footerContentHeightsBySectionRef,
-  });
+  const headerFooterGeometryFingerprint = headerFooterGeometryReused
+    ? warmStart!.headerFooterGeometry!.retainedSeed!.geometryFingerprint
+    : buildHeaderFooterGeometryFingerprint({
+        headerContentHeights,
+        footerContentHeights,
+        headerContentHeightsByRId,
+        headerContentHeightsBySectionRef,
+        footerContentHeightsByRId,
+        footerContentHeightsBySectionRef,
+      });
+  const hasHeaderFooterContent = Boolean(
+    hasHeaderBlocks || hasHeaderBlocksByRId || hasFooterBlocks || hasFooterBlocksByRId,
+  );
+  const nextHeaderFooterGeometrySeed = headerFooterGeometryReused
+    ? (warmStart?.headerFooterGeometry?.retainedSeed ?? null)
+    : headerFooterPrelayoutComplete && hasHeaderFooterContent
+      ? createHeaderFooterGeometrySeed({
+          ownerFingerprint: warmStart?.headerFooterGeometry?.ownerFingerprint,
+          fontSignature,
+          pageCountFieldsExact,
+          constraints: headerFooter?.constraints ?? null,
+          sectionMetadata,
+          requiredHeaderVariants: Object.keys(headerFooter?.headerBlocks ?? {}).filter(
+            (key): key is 'default' | 'first' | 'even' | 'odd' =>
+              key === 'default' || key === 'first' || key === 'even' || key === 'odd',
+          ),
+          requiredFooterVariants: Object.keys(headerFooter?.footerBlocks ?? {}).filter(
+            (key): key is 'default' | 'first' | 'even' | 'odd' =>
+              key === 'default' || key === 'first' || key === 'even' || key === 'odd',
+          ),
+          requiredHeaderRelationshipIds: [...(headerFooter?.headerBlocksByRId?.keys() ?? [])],
+          requiredFooterRelationshipIds: [...(headerFooter?.footerBlocksByRId?.keys() ?? [])],
+          geometryFingerprint: headerFooterGeometryFingerprint,
+          geometry: {
+            headerContentHeights,
+            footerContentHeights,
+            headerContentHeightsByRId,
+            headerContentHeightsBySectionRef,
+            footerContentHeightsByRId,
+            footerContentHeightsBySectionRef,
+          },
+        })
+      : null;
 
   // SD-3432: when a warm-start seed is usable, build the INITIAL pagination
   // directly with the seeded reserves (and the note body heights the slicer
@@ -4734,6 +5033,9 @@ export async function incrementalLayout(
       pagesSplicedByReuse: layoutReuseSummary.pagesSplicedByReuse,
       paginationPasses: initialLayoutInvocationTiming.layoutDocumentCalls + iteration + footnoteRelayouts,
       pageTokenRelayouts: iteration,
+      headerFooterPreLayoutReuses: headerFooterGeometryReused ? 1 : 0,
+      headerFooterPreLayoutBodyBlocksEnumerated,
+      headerFooterPreLayoutSectionsEnumerated,
       footnoteRelayouts,
       footnoteReserveRelayouts: footnoteRelayoutBreakdown.reserve,
       footnoteGrowRelayouts: footnoteRelayoutBreakdown.grow,
@@ -4756,6 +5058,7 @@ export async function incrementalLayout(
     extraMeasures,
     footnoteReserveSeed: nextFootnoteReserveSeed,
     headerFooterGeometryFingerprint,
+    headerFooterGeometrySeed: nextHeaderFooterGeometrySeed,
     layoutReuse: layoutReuseSummary,
     measureReuse: {
       mode:
@@ -5809,7 +6112,7 @@ async function layoutWithOptionalReuse(input: {
     // suffix genuinely is the whole document — maps to index 0. The previous
     // `checkpointPageIndex === 0 → 0` shortcut mislabeled every page-zero
     // partial checkpoint as `current-block-index-stale` and fell to full
-    // layout (observed as the alkuri/nvca first-target admission failures).
+    // layout (observed as first-target admission failures in large documents).
     currentSuffixStartBlockId != null
       ? (reuse.currentBlockIndexById?.get(currentSuffixStartBlockId) ??
         input.blocks.findIndex((block) => block.id === currentSuffixStartBlockId))
@@ -7406,16 +7709,7 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
 function hasCoherentNonFlowingPageRelativeAnchorProof(classes: unknown, proof: unknown): boolean {
   const admitted = Array.isArray(classes) && classes.includes('non-flowing-page-relative-body-anchors');
   if (!admitted) return proof == null;
-  if (!proof || typeof proof !== 'object') return false;
-  const value = proof as NonFlowingPageRelativeAnchorDependencyProof;
-  return (
-    value.version === 1 &&
-    Number.isInteger(value.sourceLayoutEpoch) &&
-    typeof value.inventoryFingerprint === 'string' &&
-    value.inventoryFingerprint.length > 0 &&
-    Array.isArray(value.entries) &&
-    value.entries.length > 0
-  );
+  return isValidNonFlowingPageRelativeAnchorDependencyProof(proof);
 }
 
 function validateNonFlowingPageRelativeAnchorDependency(input: {
@@ -7470,24 +7764,37 @@ function validateNonFlowingPageRelativeAnchorDependency(input: {
     }
     const blockIndex = input.currentBlockIndexById.get(currentBlockId);
     const block = Number.isInteger(blockIndex) ? input.blocks[blockIndex!] : null;
+    const anchoredBlock = block?.kind === 'image' || block?.kind === 'drawing' ? block : null;
+    const blockKindMatches =
+      entry.blockKind === 'image'
+        ? anchoredBlock?.kind === 'image'
+        : anchoredBlock?.kind === 'drawing' && anchoredBlock.drawingKind === entry.drawingKind;
     if (
-      !block ||
-      block.id !== currentBlockId ||
-      block.kind !== 'image' ||
-      block.anchor?.isAnchored !== true ||
-      !isPageRelativeAnchor(block) ||
-      block.wrap?.type !== 'None' ||
-      (block.attrs as { anchorParagraphId?: unknown } | undefined)?.anchorParagraphId !== currentCarrierParagraphId
+      !anchoredBlock ||
+      anchoredBlock.id !== currentBlockId ||
+      !blockKindMatches ||
+      anchoredBlock.anchor?.isAnchored !== true ||
+      !isPageRelativeAnchor(anchoredBlock) ||
+      anchoredBlock.wrap?.type !== 'None' ||
+      (anchoredBlock.attrs as { anchorParagraphId?: unknown } | undefined)?.anchorParagraphId !==
+        currentCarrierParagraphId
     ) {
       return 'page-relative-anchor-current-shape-mismatch';
     }
     const pageRange = input.previousBlockPageIndex.get(entry.blockId);
     const sourcePage = input.previousLayout.pages[entry.sourcePageIndex];
+    const matchingFragments = sourcePage?.fragments.filter((fragment) => fragment.blockId === entry.blockId) ?? [];
+    const sourceFragment = matchingFragments[0];
+    const fragmentKindMatches =
+      entry.blockKind === 'image'
+        ? sourceFragment?.kind === 'image'
+        : sourceFragment?.kind === 'drawing' && sourceFragment.drawingKind === entry.drawingKind;
     if (
       !pageRange ||
       pageRange.firstPage !== entry.sourcePageIndex ||
       pageRange.lastPage !== entry.sourcePageIndex ||
-      !sourcePage?.fragments.some((fragment) => fragment.blockId === entry.blockId) ||
+      matchingFragments.length !== 1 ||
+      !fragmentKindMatches ||
       (sourcePage.sectionIndex ?? 0) !== entry.sectionIndex
     ) {
       return 'page-relative-anchor-source-page-mismatch';

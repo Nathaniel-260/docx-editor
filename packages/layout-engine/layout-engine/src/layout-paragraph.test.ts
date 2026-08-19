@@ -2278,7 +2278,7 @@ describe('layoutParagraphBlock - measuredAtMaxWidth width-change gate', () => {
   });
 
   it('does NOT remeasure a hanging-indent paragraph measured at the current column width', () => {
-    // Regression shape from "Freddie Mac Loan Agreement": column 672, indent
+    // Regression shape from a multi-column loan agreement: column 672, indent
     // left 96, hanging 48. The FIRST line's available width (624) legitimately
     // exceeds the body width (576); the legacy lines[0].maxWidth heuristic
     // remeasured every such paragraph even though the constraint never changed.

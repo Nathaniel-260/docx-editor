@@ -3683,9 +3683,16 @@ export {
 } from './inline-box.js';
 
 export {
+  INCREMENTAL_DEPENDENCY_CERTIFICATE_CLASSES,
   PAGE_CHECKPOINT_DEPENDENCY_CLASSES,
   areValidPageCheckpointDependencyClasses,
+  isValidIncrementalDependencyOwnerVersion,
+  isValidNonFlowingPageRelativeAnchorDependencyProof,
+  isValidPageCheckpointDependencyCertificate,
+  type IncrementalDependencyCertificateClass,
+  type IncrementalDependencyOwnerVersion,
   type NonFlowingPageRelativeAnchorDependencyProof,
+  type PageCheckpointDependencyCertificate,
   type PageCheckpointDependencyClass,
 } from './incremental-dependency.js';
 

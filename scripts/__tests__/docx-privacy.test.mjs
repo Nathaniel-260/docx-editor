@@ -77,6 +77,21 @@ describe('inspectDocx', () => {
     });
   });
 
+  it('reports people-catalog account identifiers', () => {
+    const report = inspectDocx(
+      makeDocx({
+        parts: {
+          'people.xml':
+            '<w15:people><w15:person w15:author="SuperDoc Test User"><w15:presenceInfo w15:userId="S::person@customer.example::1234"/></w15:person></w15:people>',
+        },
+      }),
+    );
+    expect(report.identities).toContainEqual({
+      kind: 'w15:userId',
+      value: 'S::person@customer.example::1234',
+    });
+  });
+
   it('ignores tool bookkeeping properties', () => {
     const custom =
       '<?xml version="1.0"?><Properties><property name="SuperdocVersion"><vt:lpwstr>1.0</vt:lpwstr></property></Properties>';
@@ -239,6 +254,21 @@ describe('sanitizeDocxBuffer', () => {
     expect(xml).toContain('w:date="2026-01-01T00:00:00Z"');
     expect(xml).toContain('<w:t>hi</w:t>');
     expect(xml).not.toContain('Real Person');
+  });
+
+  it('rewrites people-catalog account identifiers but preserves presence metadata', () => {
+    const source = makeDocx({
+      parts: {
+        'people.xml':
+          '<w15:people><w15:person w15:author="SuperDoc Test User"><w15:presenceInfo w15:providerId="AD" w15:userId="S::person@customer.example::1234"/></w15:person></w15:people>',
+      },
+    });
+    const { buffer, changed } = sanitizeDocxBuffer(source);
+    const xml = readZipEntries(buffer).get('word/people.xml').toString();
+    expect(changed).toBe(true);
+    expect(xml).toContain('w15:providerId="AD"');
+    expect(xml).toContain('w15:userId="S::reviewer@example.com::00000000-0000-0000-0000-000000000000"');
+    expect(xml).not.toContain('person@customer.example');
   });
 
   it('rewrites single-quoted author attributes too', () => {

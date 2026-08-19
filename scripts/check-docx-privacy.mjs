@@ -46,6 +46,9 @@ const SYNTHETIC_IDENTITIES = new Set([
   // What sanitize-docx.mjs writes into `*:initials`. The two lists have to
   // agree, or the gate reports fixtures the sanitizer just cleaned.
   'ST',
+  // Structured people-catalog identity written by sanitize-docx.mjs. The
+  // example.com address is reserved and the zero UUID identifies no account.
+  'S::reviewer@example.com::00000000-0000-0000-0000-000000000000',
   'SuperDoc Legal Team',
   'Reviewer',
   'Author',

@@ -5,11 +5,11 @@
  *
  *  - the dirty block's PREDECESSOR lost its checkpoint (its stamp sits ON
  *    the partial-checkpoint page and the strict prefix test dropped it) —
- *    the freddie oracle's 19-of-3,423 missing-boundary-checkpoints family;
+ *    the large-document oracle's 19-of-3,423 missing-boundary-checkpoints family;
  *  - the SUFFIX-START block's stamp came from the local relaid run
  *    (post-break, top-of-window) where cold stamps the pre-break state on
  *    the preceding page — the stitched-plane one-line resume drift family
- *    (alkuri/nvca page-zero partial resumes refusing convergence).
+ *    (page-zero partial resumes refusing convergence).
  *
  * A later resume replays the exact cold break decision only if this map is
  * exact, so the pin sweeps every mid-document edit position and requires

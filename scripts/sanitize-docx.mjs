@@ -3,16 +3,17 @@
  * Rewrite a .docx fixture with synthetic identity metadata.
  *
  * Replaces `dc:creator`, `cp:lastModifiedBy`, `<Company>`, `<Manager>`, and
- * every comment/tracked-change author with an approved synthetic identity, and
- * clears free-text properties that tend to carry document-management IDs
- * (title, subject, keywords, description).
+ * every comment/tracked-change author and people-catalog account identifier
+ * with an approved synthetic identity, and clears free-text properties that
+ * tend to carry document-management IDs (title, subject, keywords,
+ * description).
  *
  * What it changes:
  * ----------------
- * Document properties, revision and comment authors across every `word/*.xml`
- * part, document-management custom properties, `customXml` parts that name an
- * outside organization, and template/matter stamps printed into visible header
- * and footer text.
+ * Document properties, revision and comment identities across every
+ * `word/*.xml` part (including people-catalog account IDs), document-management
+ * custom properties, `customXml` parts that name an outside organization, and
+ * template/matter stamps printed into visible header and footer text.
  *
  * What it deliberately does NOT do:
  * ---------------------------------
@@ -63,6 +64,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 const SYNTHETIC_AUTHOR = 'SuperDoc Test User';
 const SYNTHETIC_COMPANY = 'SuperDoc';
+const SYNTHETIC_USER_ID = 'S::reviewer@example.com::00000000-0000-0000-0000-000000000000';
 // Ends on a letter, not a digit. A stamp ending in `1.0` merges with an
 // adjacent run holding a page number (`…1.0` + `63` reads as `1.063`) and the
 // gate then reports a stamp the sanitizer just wrote.
@@ -121,7 +123,7 @@ function replaceElementText(xml, tag, value) {
   return xml;
 }
 
-function replaceAuthorAttributes(xml) {
+function replaceIdentityAttributes(xml) {
   // Both quote forms, matching the gate: XML permits w:author='…' as readily as
   // w:author="…", and the quote style must not decide whether a name is
   // scrubbed. The original delimiter is captured and replayed, so the rewrite
@@ -143,7 +145,8 @@ function replaceAuthorAttributes(xml) {
   };
   return xml
     .replace(attributePattern('[A-Za-z0-9_.-]+:author'), rewrite(SYNTHETIC_AUTHOR))
-    .replace(attributePattern('[A-Za-z0-9_.-]+:initials'), rewrite('ST'));
+    .replace(attributePattern('[A-Za-z0-9_.-]+:initials'), rewrite('ST'))
+    .replace(attributePattern('[A-Za-z0-9_.-]+:userId'), rewrite(SYNTHETIC_USER_ID));
 }
 
 /**
@@ -175,8 +178,8 @@ export function sanitizeDocxBuffer(buffer) {
     // `author=` skipped any part carrying reviewer initials alone, and testing
     // for a bare `=` skipped the spaced spelling the rewrite now accepts, so in
     // both cases the part was written back untouched.
-    if (!/\s[A-Za-z0-9_.-]+:(?:author|initials)\s*=\s*["']/.test(original)) continue;
-    const updated = replaceAuthorAttributes(original);
+    if (!/\s[A-Za-z0-9_.-]+:(?:author|initials|userId)\s*=\s*["']/.test(original)) continue;
+    const updated = replaceIdentityAttributes(original);
     if (updated !== original) {
       entries.set(name, encodeXmlPart(updated));
       changed = true;

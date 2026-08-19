@@ -90,6 +90,7 @@ export { hydrateTableTextboxMeasures } from './hydrateTableTextboxMeasures';
 export { hashMeasureContent } from './cache';
 export type {
   HeaderFooterLayoutResult,
+  HeaderFooterGeometrySeed,
   IncrementalLayoutBridgeTiming,
   IncrementalLayoutResult,
   IncrementalLayoutExecutionControl,

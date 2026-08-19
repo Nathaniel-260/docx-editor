@@ -941,8 +941,8 @@ export function inspectDocx(buffer) {
     }
   }
 
-  // Authors attached to collaborative artifacts, which survive independently of
-  // the document properties.
+  // Identities attached to collaborative artifacts, which survive independently
+  // of the document properties.
   //
   // Every XML part under word/ is inspected rather than a named few. Tracked
   // changes and comments live wherever their content lives — headers, footers,
@@ -959,6 +959,11 @@ export function inspectDocx(buffer) {
     // already rewrites them. Reporting only the author would approve a fixture
     // whose author was hand-edited while the initials stayed real.
     for (const initials of attributeValues(xml, '[A-Za-z0-9_.-]+:initials')) push('w:initials', initials);
+    // Word's people catalog can carry an account identifier independently of
+    // the display author. Sanitizing `w15:author` alone left the real email in
+    // `w15:presenceInfo w15:userId`, where text-based repository scans cannot
+    // see it inside the DOCX archive.
+    for (const userId of attributeValues(xml, '[A-Za-z0-9_.-]+:userId')) push('w15:userId', userId);
   }
 
   // SharePoint / DMS taxonomy identifies the originating organization even when

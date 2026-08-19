@@ -205,4 +205,109 @@ describe('header/footer pre-layout', () => {
       sectionPageCount: 10,
     });
   });
+
+  it('reuses one validated geometry seed without enumerating body blocks or sections', async () => {
+    const body = [makeParagraph('body-1', 'Body'), makeParagraph('body-2', 'Tail')];
+    const options = {
+      pageSize: { w: 300, h: 300 },
+      margins: { top: 20, right: 20, bottom: 20, left: 20 },
+      sectionMetadata: [{ sectionIndex: 0 }],
+    };
+    const furniture = {
+      headerBlocks: { default: [makeHeaderPageNumber()] },
+      footerBlocks: { default: [makeParagraph('footer', 'Footer')] },
+      constraints: { width: 40, height: 40 },
+      pageCountFieldsExact: false,
+    };
+    const ownerFingerprint = 'owner:options+furniture';
+    const first = await incrementalLayout(
+      [],
+      null,
+      body,
+      options,
+      vi.fn(async () => makeMeasure()),
+      furniture,
+      undefined,
+      undefined,
+      {
+        headerFooterGeometry: { ownerFingerprint, retainedSeed: null },
+      },
+    );
+
+    expect(first.headerFooterGeometrySeed).not.toBeNull();
+    expect(first.headerFooterGeometrySeed).toMatchObject({
+      version: 2,
+      sectionMetadataHasChapterNumbering: false,
+    });
+    expect(first.bridgeTiming.counters).toMatchObject({
+      headerFooterPreLayoutReuses: 0,
+      headerFooterPreLayoutBodyBlocksEnumerated: 2,
+      headerFooterPreLayoutSectionsEnumerated: 1,
+    });
+    expect(headerFooterMocks.layoutHeaderFooterWithCache.mock.calls[0]?.[5]).toBe(
+      headerFooterMocks.layoutHeaderFooterWithCache.mock.calls[1]?.[5],
+    );
+
+    const warmSectionMetadata = new Proxy(options.sectionMetadata, {
+      get(target, property, receiver) {
+        if (property === 'toJSON') {
+          throw new Error('warm geometry validation enumerated section metadata');
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const second = await incrementalLayout(
+      body,
+      first.layout,
+      body,
+      { ...options, sectionMetadata: warmSectionMetadata },
+      vi.fn(async () => makeMeasure()),
+      furniture,
+      first.measures,
+      undefined,
+      {
+        headerFooterGeometry: {
+          ownerFingerprint,
+          retainedSeed: first.headerFooterGeometrySeed,
+        },
+      },
+    );
+
+    expect(second.headerFooterGeometryFingerprint).toBe(first.headerFooterGeometryFingerprint);
+    expect(second.headerFooterGeometrySeed).toBe(first.headerFooterGeometrySeed);
+    expect(second.bridgeTiming.counters).toMatchObject({
+      headerFooterPreLayoutReuses: 1,
+      headerFooterPreLayoutBodyBlocksEnumerated: 0,
+      headerFooterPreLayoutSectionsEnumerated: 0,
+    });
+
+    const corruptedSeed = {
+      ...first.headerFooterGeometrySeed!,
+      geometry: {
+        ...first.headerFooterGeometrySeed!.geometry,
+        headerContentHeights: { default: -1 },
+      },
+    };
+    const third = await incrementalLayout(
+      body,
+      first.layout,
+      body,
+      options,
+      vi.fn(async () => makeMeasure()),
+      furniture,
+      first.measures,
+      undefined,
+      {
+        headerFooterGeometry: {
+          ownerFingerprint,
+          retainedSeed: corruptedSeed,
+        },
+      },
+    );
+    expect(third.bridgeTiming.counters).toMatchObject({
+      headerFooterPreLayoutReuses: 0,
+      headerFooterPreLayoutBodyBlocksEnumerated: 2,
+      headerFooterPreLayoutSectionsEnumerated: 1,
+    });
+  });
 });

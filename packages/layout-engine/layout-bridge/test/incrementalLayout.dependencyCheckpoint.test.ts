@@ -187,7 +187,7 @@ function buildReuse(
       ...(dependencyClass === 'non-flowing-page-relative-body-anchors'
         ? {
             nonFlowingPageRelativeAnchorDependency: {
-              version: 1 as const,
+              version: 2 as const,
               sourceLayoutEpoch: previousLayout.layoutEpoch!,
               inventoryFingerprint: 'page-background-inventory-v1',
               entries: [
@@ -199,6 +199,7 @@ function buildReuse(
                   geometryFingerprint: 'page-background-geometry-v1',
                   measureFingerprint: 'page-background-measure-v1',
                   pageGeometryFingerprint: 'page-background-page-geometry-v1',
+                  blockKind: 'image' as const,
                 },
               ],
             },
