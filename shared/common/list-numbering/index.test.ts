@@ -101,6 +101,68 @@ describe('generateOrderedListIndex', () => {
     expect(at(53)).toBe('aaa)');
   });
 
+  // Expected strings for both Chinese formats are pinned to Word 16 output
+  // (ListFormat.ListString), captured codepoint-by-codepoint. Note the two
+  // distinct zero glyphs: chineseCounting uses U+25CB (○) inside positional
+  // values; chineseCountingThousand uses U+3007 (〇) for interior zero runs.
+  it('formats chineseCounting markers with Word-compatible ideographs', () => {
+    const at = (n: number) =>
+      generateOrderedListIndex({ listLevel: [n], lvlText: '%1', listNumberingType: 'chineseCounting' });
+    expect(at(0)).toBe('○');
+    expect(at(1)).toBe('一');
+    expect(at(9)).toBe('九');
+    expect(at(10)).toBe('十');
+    expect(at(11)).toBe('十一');
+    expect(at(19)).toBe('十九');
+    expect(at(20)).toBe('二十');
+    expect(at(21)).toBe('二十一');
+    expect(at(99)).toBe('九十九');
+    // From 100 upward Word switches to positional digits with U+25CB zeros.
+    expect(at(100)).toBe('一○○');
+    expect(at(101)).toBe('一○一');
+    expect(at(999)).toBe('九九九');
+    expect(at(1000)).toBe('一○○○');
+    expect(at(1010)).toBe('一○一○');
+    expect(at(12345)).toBe('一二三四五');
+    expect(at(100000)).toBe('一○○○○○');
+  });
+
+  it('formats chineseCountingThousand markers with Word-compatible grouped ideographs', () => {
+    const at = (n: number) =>
+      generateOrderedListIndex({ listLevel: [n], lvlText: '%1', listNumberingType: 'chineseCountingThousand' });
+    expect(at(0)).toBe('〇');
+    expect(at(1)).toBe('一');
+    expect(at(10)).toBe('十');
+    expect(at(11)).toBe('十一');
+    expect(at(19)).toBe('十九');
+    expect(at(20)).toBe('二十');
+    expect(at(99)).toBe('九十九');
+    // Unlike values 10-19, larger values keep the leading 一 (一百, 一十万).
+    expect(at(100)).toBe('一百');
+    expect(at(101)).toBe('一百〇一');
+    expect(at(999)).toBe('九百九十九');
+    expect(at(1000)).toBe('一千');
+    expect(at(1001)).toBe('一千〇一');
+    expect(at(1010)).toBe('一千〇一十');
+    expect(at(1100)).toBe('一千一百');
+    expect(at(1101)).toBe('一千一百〇一');
+    expect(at(9999)).toBe('九千九百九十九');
+    expect(at(10000)).toBe('一万');
+    expect(at(10001)).toBe('一万〇一');
+    expect(at(10010)).toBe('一万〇一十');
+    expect(at(10100)).toBe('一万〇一百');
+    expect(at(12345)).toBe('一万二千三百四十五');
+    expect(at(99999)).toBe('九万九千九百九十九');
+    expect(at(100000)).toBe('一十万');
+    expect(at(100001)).toBe('一十万〇一');
+    expect(at(100101)).toBe('一十万〇一百〇一');
+    expect(at(109999)).toBe('一十万〇九千九百九十九');
+    expect(at(110000)).toBe('一十一万');
+    expect(at(999999)).toBe('九十九万九千九百九十九');
+    // Word renders nothing from 1,000,000 upward.
+    expect(at(1000000)).toBe('');
+  });
+
   describe('malformed lvlText', () => {
     it('returns null when lvlText is null', () => {
       const result = generateOrderedListIndex({

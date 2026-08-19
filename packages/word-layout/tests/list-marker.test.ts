@@ -355,6 +355,49 @@ describe('computeWordListMarker', () => {
     expect(b.listRenderingAttrs.markerText).toBe('7.1');
   });
 
+  // SD-4342: Chinese formats through the levelNumberingFormats branch — the
+  // path the v2 adapter always takes. Before the fix this rendered only the
+  // punctuation from lvlText. Zero glyph is U+25CB (○) per Word.
+  it('renders chineseCounting markers via level placeholder formats', () => {
+    const manager = createNumberingManager();
+    const def = baseDef({
+      numFmt: 'chineseCounting',
+      start: 99,
+      levelNumberingFormats: [{ ilvl: 0, numFmt: 'chineseCounting' }],
+    });
+    const a = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 1 });
+    const b = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 2 });
+    expect(a.listRenderingAttrs.markerText).toBe('九十九.');
+    expect(b.listRenderingAttrs.markerText).toBe('一○○.');
+  });
+
+  it('renders chineseCountingThousand markers via level placeholder formats', () => {
+    const manager = createNumberingManager();
+    const def = baseDef({
+      numFmt: 'chineseCountingThousand',
+      start: 12345,
+      levelNumberingFormats: [{ ilvl: 0, numFmt: 'chineseCountingThousand' }],
+    });
+    const a = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 1 });
+    const b = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 2 });
+    expect(a.listRenderingAttrs.markerText).toBe('一万二千三百四十五.');
+    expect(b.listRenderingAttrs.markerText).toBe('一万二千三百四十六.');
+  });
+
+  it('renders mixed multilevel templates where one referenced level is chineseCounting', () => {
+    const manager = createNumberingManager();
+    const levelNumberingFormats = [
+      { ilvl: 0, numFmt: 'decimal' },
+      { ilvl: 1, numFmt: 'chineseCounting' },
+    ];
+    const lvl0 = baseDef({ ilvl: 0, lvlText: '%1.', numFmt: 'decimal', levelNumberingFormats });
+    const lvl1 = baseDef({ ilvl: 1, lvlText: '%1.%2', numFmt: 'chineseCounting', levelNumberingFormats });
+    computeWordListMarker({ definition: lvl0, manager, paragraphOrdinal: 1 });
+    const r = computeWordListMarker({ definition: lvl1, manager, paragraphOrdinal: 2 });
+    expect(r.path).toEqual([1, 1]);
+    expect(r.listRenderingAttrs.markerText).toBe('1.一');
+  });
+
   it('formats decimalZero custom zero-padding (path > 1 entry)', () => {
     const manager = createNumberingManager();
     const lvl0 = baseDef({ ilvl: 0, lvlText: '%1', numFmt: 'decimal' });

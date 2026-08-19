@@ -21,6 +21,10 @@ const handleCustom: NumberingHandler = (path, lvlText, customFormat) =>
 const handleJapaneseCounting: NumberingHandler = (path, lvlText) =>
   generateNumbering(path, lvlText, intToJapaneseCounting);
 const handleDecimalZero: NumberingHandler = (path, lvlText) => generateNumbering(path, lvlText, decimalZeroFormatter);
+const handleChineseCounting: NumberingHandler = (path, lvlText) =>
+  generateNumbering(path, lvlText, intToChineseCounting);
+const handleChineseCountingThousand: NumberingHandler = (path, lvlText) =>
+  generateNumbering(path, lvlText, intToChineseCountingThousand);
 
 const listIndexMap: Record<string, NumberingHandler> = {
   decimal: handleDecimal,
@@ -34,6 +38,8 @@ const listIndexMap: Record<string, NumberingHandler> = {
   cardinalText: handleCardinalText,
   custom: handleCustom,
   japaneseCounting: handleJapaneseCounting,
+  chineseCounting: handleChineseCounting,
+  chineseCountingThousand: handleChineseCountingThousand,
 };
 
 export interface GenerateOrderedListIndexOptions {
@@ -263,6 +269,72 @@ export const intToJapaneseCounting = (num: number): string => {
     result = result.replace(/^一十/, '十');
   }
 
+  return result;
+};
+
+// OOXML w:numFmt values per ECMA-376 §17.18.59, matched to Word 16 output
+// (ListFormat.ListString) where the spec and Word disagree:
+//   chineseCounting         -> tens notation through 99, then positional digits
+//                              with U+25CB zeros (100 -> 一○○, 12345 -> 一二三四五).
+//   chineseCountingThousand -> grouped 十/百/千/万 numerals; interior zero runs
+//                              collapse to one U+3007 (not the spec's U+96F6);
+//                              empty output from 1,000,000 upward, like Word.
+// Values 10-19 drop the leading 一 (十一) only as the whole value; group counts
+// keep it (100000 -> 一十万, 110000 -> 一十一万).
+const CHINESE_DIGITS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+
+const intToChineseCounting = (num: number): string => {
+  if (!Number.isInteger(num) || num < 0) return '';
+  if (num === 0) return '○';
+  if (num === 10) return '十';
+  if (num < 10) return CHINESE_DIGITS[num];
+  if (num < 20) return `十${CHINESE_DIGITS[num % 10]}`;
+  if (num < 100) {
+    const ones = num % 10;
+    return `${CHINESE_DIGITS[Math.floor(num / 10)]}十${ones === 0 ? '' : CHINESE_DIGITS[ones]}`;
+  }
+  return String(num)
+    .split('')
+    .map((digit) => (digit === '0' ? '○' : CHINESE_DIGITS[Number(digit)]))
+    .join('');
+};
+
+const CHINESE_GROUP_UNITS = ['', '十', '百', '千'];
+
+const chineseThousandGroup = (group: number): string => {
+  let result = '';
+  let pendingZero = false;
+  for (let position = 3; position >= 0; position -= 1) {
+    const digit = Math.floor(group / 10 ** position) % 10;
+    if (digit === 0) {
+      if (result) pendingZero = true;
+      continue;
+    }
+    if (pendingZero) {
+      result += '〇';
+      pendingZero = false;
+    }
+    result += CHINESE_DIGITS[digit] + CHINESE_GROUP_UNITS[position];
+  }
+  return result;
+};
+
+const intToChineseCountingThousand = (num: number): string => {
+  if (!Number.isInteger(num) || num < 0 || num >= 1_000_000) return '';
+  if (num === 0) return '〇';
+  if (num >= 10 && num < 20) {
+    const ones = num % 10;
+    return `十${ones === 0 ? '' : CHINESE_DIGITS[ones]}`;
+  }
+  const wan = Math.floor(num / 10_000);
+  const rest = num % 10_000;
+  let result = wan > 0 ? `${chineseThousandGroup(wan)}万` : '';
+  if (rest > 0) {
+    // A zero digit sits between the groups exactly when the 万-group ends in 0
+    // or the remainder has no thousands digit (109999 -> 一十万〇九千九百九十九).
+    const zeroBetweenGroups = wan > 0 && (wan % 10 === 0 || rest < 1000);
+    result += (zeroBetweenGroups ? '〇' : '') + chineseThousandGroup(rest);
+  }
   return result;
 };
 
