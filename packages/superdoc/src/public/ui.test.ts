@@ -4950,6 +4950,95 @@ describe('public ui — track changes workflow parity (row 748)', () => {
     expect(detachReview).toHaveBeenCalledOnce();
   });
 
+  it('keeps explicit focus when a document edit temporarily unpaints the tracked change', () => {
+    let activeReviewTarget: unknown = null;
+    let publishReviewSnapshot:
+      | ((snapshot: { activeReviewTarget: unknown; lastInteractionRejection: unknown }) => void)
+      | null = null;
+    const review = {
+      getActiveReviewTarget: () => activeReviewTarget,
+      subscribe: (listener: (snapshot: { activeReviewTarget: unknown; lastInteractionRejection: unknown }) => void) => {
+        publishReviewSnapshot = listener;
+        return () => undefined;
+      },
+      setActiveReviewTarget: (target: unknown) => {
+        activeReviewTarget = target;
+        publishReviewSnapshot?.({ activeReviewTarget, lastInteractionRejection: null });
+      },
+    };
+    const { superdoc } = makeWorkflowSuperdoc({
+      trackChanges: { list: () => ({ items }) },
+      host: { getHandles: () => ({ review, layout: { generation: 1 } }) },
+    });
+    const ui = createSuperDocUI({ superdoc });
+
+    expect(ui.trackChanges.setActive('tc-1')).toBe(true);
+    activeReviewTarget = null;
+    publishReviewSnapshot?.({
+      activeReviewTarget,
+      lastInteractionRejection: { code: 'review-target-invalidated', detail: 'not-painted' },
+    });
+
+    expect(ui.trackChanges.getSnapshot().activeId).toBe('tc-1');
+  });
+
+  it('clears explicit focus after a remote peer removes the tracked change', async () => {
+    vi.useFakeTimers();
+    try {
+      let currentItems = [...items];
+      let activeReviewTarget: unknown = null;
+      let publishReviewSnapshot:
+        | ((snapshot: { activeReviewTarget: unknown; lastInteractionRejection: unknown }) => void)
+        | null = null;
+      let publishHostEvent: ((event: Record<string, unknown>) => void) | null = null;
+      const review = {
+        getActiveReviewTarget: () => activeReviewTarget,
+        subscribe: (
+          listener: (snapshot: { activeReviewTarget: unknown; lastInteractionRejection: unknown }) => void,
+        ) => {
+          publishReviewSnapshot = listener;
+          return () => undefined;
+        },
+        setActiveReviewTarget: (target: unknown) => {
+          activeReviewTarget = target;
+          publishReviewSnapshot?.({ activeReviewTarget, lastInteractionRejection: null });
+        },
+      };
+      const { superdoc } = makeWorkflowSuperdoc({
+        trackChanges: { list: () => ({ items: currentItems }) },
+        host: {
+          getHandles: () => ({ review, layout: { generation: 1 } }),
+          events: {
+            subscribe: (listener: (event: Record<string, unknown>) => void) => {
+              publishHostEvent = listener;
+              return () => undefined;
+            },
+          },
+        },
+      });
+      const ui = createSuperDocUI({ superdoc });
+
+      expect(ui.trackChanges.setActive('tc-1')).toBe(true);
+      currentItems = currentItems.filter((item) => item.id !== 'tc-1');
+      activeReviewTarget = null;
+      publishReviewSnapshot?.({
+        activeReviewTarget,
+        lastInteractionRejection: { code: 'review-target-invalidated', detail: 'not-painted' },
+      });
+      publishHostEvent?.({
+        type: 'collaboration:remote-changed',
+        changedStoryIds: ['main:/word/document.xml'],
+        changedPartUris: ['/word/document.xml'],
+      });
+
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(ui.trackChanges.getSnapshot().activeId).toBeNull();
+      ui.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('canonicalizes a story-scoped painted alias from the host review target before publishing activeId', () => {
     const footnoteStory = { kind: 'story', storyType: 'footnote', noteId: '1' } as const;
     const canonicalChange = {

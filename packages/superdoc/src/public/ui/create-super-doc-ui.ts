@@ -6302,14 +6302,13 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   const syncTrackedChangeFocusFromHostReviewTarget = (rawTarget: unknown, rawSnapshot?: unknown): boolean => {
     const snapshot = rawSnapshot && typeof rawSnapshot === 'object' ? (rawSnapshot as LooseRecord) : null;
     const rejection = snapshot?.lastInteractionRejection;
-    const transientPaintInvalidation =
-      trackedChangeNavigationInFlight > 0 &&
+    const paintInvalidation =
       rawTarget == null &&
       rejection &&
       typeof rejection === 'object' &&
       (rejection as LooseRecord).code === 'review-target-invalidated' &&
       (rejection as LooseRecord).detail === 'not-painted';
-    if (transientPaintInvalidation) return false;
+    if (paintInvalidation && explicitActiveChange) return false;
     const target = rawTarget && typeof rawTarget === 'object' ? (rawTarget as LooseRecord) : null;
     let next: ExplicitActiveChange | null = null;
     if (target?.entityType === 'trackedChange' && typeof target.entityId === 'string' && target.entityId.length > 0) {
