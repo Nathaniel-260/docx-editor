@@ -2127,6 +2127,44 @@ describe('measureBlock', () => {
       expect(measure.lines[0].lineHeight).toBeCloseTo(1.5 * 1.15 * fontSize, 1);
     });
 
+    it('keeps Calibri line metrics when Carlito is the physical substitute', async () => {
+      const fontSize = 12;
+      const canvasContext = {
+        font: '',
+        fontKerning: 'auto',
+        measureText: vi.fn((text: string) => ({
+          width: text.length * 6,
+          actualBoundingBoxAscent: 9,
+          actualBoundingBoxDescent: 2,
+        })),
+      } as unknown as CanvasRenderingContext2D;
+      const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(canvasContext);
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'calibri-through-carlito-line-height',
+        runs: [{ text: 'Order form text', fontFamily: 'Calibri, sans-serif', fontSize }],
+        attrs: {
+          spacing: { line: 216 / 240, lineUnit: 'multiplier', lineRule: 'auto' },
+        },
+      };
+
+      clearTextMeasurementCaches();
+      try {
+        const measure = expectParagraphMeasure(
+          await measureBlock(block, 400, {
+            fontSignature: 'calibri-through-carlito',
+            resolvePhysical: () => 'Carlito, sans-serif',
+          }),
+        );
+
+        expect(canvasContext.font).toBe('12px Carlito, sans-serif');
+        expect(measure.lines[0].lineHeight).toBeCloseTo(fontSize * 1.219 * (216 / 240), 4);
+      } finally {
+        getContext.mockRestore();
+        clearTextMeasurementCaches();
+      }
+    });
+
     it('applies higher auto multipliers to the baseline line height', async () => {
       const fontSize = 16;
       const block: FlowBlock = {
@@ -5953,6 +5991,60 @@ describe('measureBlock', () => {
       if (measure.kind !== 'table') throw new Error('expected table measure');
       expect(measure.rows.map((row) => row.height)).toEqual([41, 41]);
       expect(measure.totalHeight).toBe(82);
+    });
+
+    it('adds vertical cell padding outside an authored atLeast row height', async () => {
+      const borderWidth = 2 / 3;
+      const verticalPadding = 3.8;
+      const block: FlowBlock = {
+        kind: 'table',
+        id: 'table-at-least-height-with-cell-padding',
+        attrs: {
+          borders: {
+            top: { style: 'single', width: borderWidth },
+            right: { style: 'single', width: borderWidth },
+            bottom: { style: 'single', width: borderWidth },
+            left: { style: 'single', width: borderWidth },
+            insideH: { style: 'single', width: borderWidth },
+            insideV: { style: 'single', width: borderWidth },
+          },
+        },
+        columnWidths: [450.2],
+        rows: [
+          {
+            id: 'first-name-row',
+            attrs: { rowHeight: { rule: 'atLeast', value: 19.6 } },
+            cells: [
+              {
+                id: 'first-name-cell',
+                attrs: {
+                  padding: { top: verticalPadding, right: 7.2, bottom: verticalPadding, left: 7.2 },
+                },
+                blocks: [
+                  {
+                    kind: 'paragraph',
+                    id: 'first-name-paragraph',
+                    runs: [{ text: 'First name', fontFamily: 'Calibri, sans-serif', fontSize: 12 }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const measure = await measureBlock(
+        block,
+        { maxWidth: 600 },
+        {
+          fontSignature: 'template-data-table-row',
+          resolvePhysical: () => 'Carlito, sans-serif',
+        },
+      );
+
+      expect(measure.kind).toBe('table');
+      if (measure.kind !== 'table') throw new Error('expected table measure');
+      expect(measure.rows[0]?.height).toBeCloseTo(19.6 + verticalPadding * 2 + borderWidth, 4);
     });
 
     it('uses provided column widths from w:tblGrid', async () => {

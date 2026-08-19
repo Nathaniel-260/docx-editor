@@ -1092,7 +1092,10 @@ function calculateEmptyParagraphMetrics(
     fontInfo.fontFamily.trim().length > 0
   ) {
     const ctx = getCanvasContext(fontContext);
-    const metrics = measuredFontMetrics(ctx, fontInfo);
+    const metrics = measuredFontMetrics(ctx, {
+      ...fontInfo,
+      wordLineMetricFamily: undefined,
+    });
     ascent = roundValue(metrics.ascent);
     descent = roundValue(metrics.descent);
     naturalSingleLine = metrics.naturalSingleLine;
@@ -1136,6 +1139,7 @@ function lineHeightFontSize(run: TextRun): number {
 function getFontInfoFromRun(run: TextRun, fontContext: FontMeasureContext, resolvedPhysicalFamily?: string): FontInfo {
   return {
     fontFamily: normalizeFontFamily(resolvedPhysicalFamily ?? fontContext.resolvePhysical(run.fontFamily, faceOf(run))),
+    wordLineMetricFamily: run.fontFamily,
     fontSize: normalizeFontSize(lineHeightFontSize(run)),
     bold: run.bold,
     italic: run.italic,
@@ -2041,7 +2045,7 @@ async function measureParagraphBlock(
     const physicalFamily = resolveParagraphPhysicalFamily(run);
     const boldKey = run.bold === undefined ? 'u' : run.bold ? '1' : '0';
     const italicKey = run.italic === undefined ? 'u' : run.italic ? '1' : '0';
-    const key = `${physicalFamily}\u0000${lineHeightFontSize(run)}\u0000${boldKey}\u0000${italicKey}`;
+    const key = `${run.fontFamily}\u0000${physicalFamily}\u0000${lineHeightFontSize(run)}\u0000${boldKey}\u0000${italicKey}`;
     const cached = paragraphFontInfos.get(key);
     if (cached) return cached;
     const resolved = getFontInfoFromRun(run, fontContext, physicalFamily);
@@ -4620,11 +4624,12 @@ async function measureTableBlock(
   // Measure each cell paragraph with appropriate column width based on colspan
   const rows: TableRowMeasure[] = [];
   const rowBaseHeights: number[] = new Array(block.rows.length).fill(0);
+  const rowAuthoredHeightPadding: number[] = Array.from({ length: block.rows.length }, () => 0);
   // `w:trHeight` describes the row's authored inner height. In Word's
-  // collapsed-border model each row also owns the horizontal grid edge at its
-  // top. Keep that chrome separate from automatic cell measurement so an
-  // `atLeast` value cannot replace (and therefore erase) the owned border.
-  const rowAuthoredHeightChrome: number[] = new Array(block.rows.length).fill(0);
+  // collapsed-border model an unmerged row adds its cell margins and owned
+  // horizontal grid edge outside that minimum. Keep those insets separate
+  // from automatic cell measurement so `atLeast` cannot consume them.
+  const rowAuthoredHeightChrome: number[] = Array.from({ length: block.rows.length }, () => 0);
   const spanConstraints: Array<{ startRow: number; rowSpan: number; requiredHeight: number }> = [];
   const rowAssemblyStartedAt = tableMeasurementNow();
   const cellMeasurementBeforeRows = tableObservation.phases['cell-block-measurement'];
@@ -4703,6 +4708,9 @@ async function measureTableBlock(
       const paddingBottom = cellPadding.bottom ?? 0;
       const paddingLeft = cellPadding.left ?? 4;
       const paddingRight = cellPadding.right ?? 4;
+      if (rowspan === 1) {
+        rowAuthoredHeightPadding[rowIndex] = Math.max(rowAuthoredHeightPadding[rowIndex], paddingTop + paddingBottom);
+      }
 
       // The painter uses border-box cells, so nested content is constrained by
       // both horizontal padding and the resolved painted border insets.
@@ -4898,7 +4906,10 @@ async function measureTableBlock(
         if (rule === 'exact') {
           resolvedRowHeights[index] = spec.value;
         } else if (rule === 'atLeast') {
-          resolvedRowHeights[index] = Math.max(resolvedRowHeights[index], spec.value + rowAuthoredHeightChrome[index]);
+          resolvedRowHeights[index] = Math.max(
+            resolvedRowHeights[index],
+            spec.value + rowAuthoredHeightPadding[index] + rowAuthoredHeightChrome[index],
+          );
         }
       }
     });

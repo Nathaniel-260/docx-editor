@@ -18,6 +18,8 @@ import { DomMeasurementInfrastructureError } from './measurement-infrastructure-
  */
 export type FontInfo = {
   fontFamily: string;
+  /** Logical OOXML family retained when `fontFamily` is a substituted physical face. */
+  wordLineMetricFamily?: string;
   fontSize: number;
   bold?: boolean;
   italic?: boolean;
@@ -179,7 +181,7 @@ export class FontMetricsMeasurementCache {
   ): FontMetricsResult {
     if (this.disposed) throw new DomMeasurementInfrastructureError('FontMetricsMeasurementCache has been disposed');
     const font = buildFontStringForMetrics(fontInfo, mode, fonts);
-    const key = `${fontSignature}\u0000${font}`;
+    const key = `${fontSignature}\u0000${fontInfo.wordLineMetricFamily ?? ''}\u0000${font}`;
     const cached = this.entries.get(key);
     if (cached) return cached;
 
@@ -198,7 +200,10 @@ export class FontMetricsMeasurementCache {
             descent: fontInfo.fontSize * 0.2,
           };
 
-    let naturalSingleLine = getCalibratedNaturalSingleLine(fontInfo.fontFamily, fontInfo.fontSize);
+    let naturalSingleLine = getCalibratedNaturalSingleLine(
+      fontInfo.wordLineMetricFamily ?? fontInfo.fontFamily,
+      fontInfo.fontSize,
+    );
     if (
       naturalSingleLine == null &&
       typeof textMetrics.fontBoundingBoxAscent === 'number' &&

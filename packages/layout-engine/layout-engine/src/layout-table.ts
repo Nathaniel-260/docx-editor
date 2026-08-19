@@ -569,7 +569,6 @@ function computeFragmentFitHeight(
 type SplitPointResult = {
   endRow: number; // Exclusive row index (next row after last included)
   partialRow: PartialRowInfo | null; // Null for row-boundary splits, PartialRowInfo for mid-row splits
-  forcePageBreak?: boolean; // When true, force a page break after this fragment (rowspan-aware clean break)
 };
 
 /**
@@ -1202,13 +1201,6 @@ function findSplitPoint(
   let lastFitRow = startRow; // Last row that fit completely (exclusive end index)
   const borderCollapse = block.attrs?.borderCollapse ?? (block.attrs?.cellSpacing != null ? 'separate' : 'collapse');
 
-  // Rowspan-aware splitting: track the farthest row reached by any active rowspan
-  // and the last boundary where no rowspan crosses (a "clean" break point).
-  // When the standard break point splits a rowspan group, prefer the clean break
-  // to avoid continuation cells and match Word's behavior.
-  let maxRowspanEnd = startRow;
-  let lastCleanFitRow = startRow;
-
   for (let i = startRow; i < block.rows.length; i++) {
     const row = block.rows[i];
     const rowMeasure = measure.rows[i];
@@ -1218,26 +1210,11 @@ function findSplitPoint(
       cantSplit = true;
     }
 
-    // Track the farthest rowspan extent from this row's cells
-    if (rowMeasure) {
-      for (const cellMeasure of rowMeasure.cells) {
-        const rs = cellMeasure.rowSpan ?? 1;
-        if (rs > 1) {
-          maxRowspanEnd = Math.max(maxRowspanEnd, i + rs);
-        }
-      }
-    }
-
     // Check if this row fits: use full fragment height (rows + spacing + borders) so pagination matches render
     const fragmentHeightWithRow = computeFragmentFitHeight(measure, startRow, i + 1, 0, borderCollapse);
     if (fragmentHeightWithRow <= availableHeight) {
       // Row fits completely
       lastFitRow = i + 1; // Next row index (exclusive)
-
-      // A boundary is "clean" if no active rowspan crosses it
-      if (maxRowspanEnd <= i + 1) {
-        lastCleanFitRow = i + 1;
-      }
     } else {
       // Row doesn't fit completely; remaining space after last full row set.
       // When lastFitRow === startRow (first row doesn't fit), no rows have been placed yet, so
@@ -1264,10 +1241,6 @@ function findSplitPoint(
         if (lastFitRow === startRow) {
           return { endRow: startRow, partialRow: null };
         }
-        // Prefer a clean break point that avoids splitting rowspan groups
-        if (maxRowspanEnd > lastFitRow && lastCleanFitRow > startRow) {
-          return { endRow: lastCleanFitRow, partialRow: null, forcePageBreak: true };
-        }
         // Break before the cantSplit row
         return { endRow: lastFitRow, partialRow: null };
       }
@@ -1288,10 +1261,6 @@ function findSplitPoint(
         }
       }
 
-      // Can't fit any content from this row - prefer clean break if available
-      if (maxRowspanEnd > lastFitRow && lastCleanFitRow > startRow) {
-        return { endRow: lastCleanFitRow, partialRow: null, forcePageBreak: true };
-      }
       return { endRow: lastFitRow, partialRow: null };
     }
   }
@@ -1758,7 +1727,7 @@ export function layoutTableBlock({
 
     // Normal row processing
     const bodyStartRow = currentRow;
-    const { endRow, partialRow, forcePageBreak } = findSplitPoint(
+    const { endRow, partialRow } = findSplitPoint(
       block,
       measure,
       bodyStartRow,
@@ -1908,12 +1877,7 @@ export function layoutTableBlock({
 
     isTableContinuation = true;
 
-    // If findSplitPoint chose a clean rowspan boundary (earlier than the standard break),
-    // force a page break so the remaining rows start on the next page instead of
-    // continuing to fill the current page with another fragment.
-    if (forcePageBreak && currentRow < block.rows.length) {
-      state = advanceColumn(state);
-    } else if (pendingPartialRow) {
+    if (pendingPartialRow) {
       // The partial row will continue on the same page. Suppress header
       // repetition on the next iteration to avoid mid-page headers.
       samePagePartialContinuation = true;

@@ -1614,6 +1614,51 @@ describe('layoutTableBlock', () => {
       expect(fragments.length).toBeGreaterThan(0);
     });
 
+    it('splits at the last fitting row when a vertical merge crosses the page boundary', () => {
+      const block = createMockTableBlock(
+        6,
+        Array.from({ length: 6 }, () => ({ cantSplit: true })),
+      );
+      const measure = createMockTableMeasure(
+        [100],
+        Array.from({ length: 6 }, () => 20),
+      );
+      measure.rows[1].cells[0].rowSpan = 5;
+
+      const pages = Array.from({ length: 3 }, () => ({ fragments: [] as TableFragment[] }));
+      let pageIndex = 0;
+      let state = {
+        page: pages[pageIndex],
+        columnIndex: 0,
+        cursorY: 0,
+        contentBottom: 60,
+      };
+
+      layoutTableBlock({
+        block,
+        measure,
+        columnWidth: 100,
+        ensurePage: () => state,
+        advanceColumn: () => {
+          pageIndex += 1;
+          state = {
+            page: pages[pageIndex],
+            columnIndex: 0,
+            cursorY: 0,
+            contentBottom: 60,
+          };
+          return state;
+        },
+        columnX: () => 0,
+      });
+
+      expect(pages[0].fragments).toHaveLength(1);
+      expect(pages[0].fragments[0]).toMatchObject({ fromRow: 0, toRow: 3, continuesOnNext: true });
+      expect(pages[1].fragments).toHaveLength(1);
+      expect(pages[1].fragments[0]).toMatchObject({ fromRow: 3, toRow: 6, continuesFromPrev: true });
+      expect(pages[2].fragments).toHaveLength(0);
+    });
+
     it('should handle row that exactly fills available space', () => {
       const block = createMockTableBlock(3);
       const measure = createMockTableMeasure([100], [50, 50, 50]);
