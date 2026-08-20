@@ -216,6 +216,18 @@ function cssEscape(value) {
 }
 
 /**
+ * @param {string} value
+ * @returns {string}
+ */
+function decodeAnchorFragment(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
  * @param {HTMLElement | null | undefined} fragment
  * @returns {number | null}
  */
@@ -544,7 +556,7 @@ export function useLinkPopover({
    */
   async function navigateToAnchor(anchorUrl, { placeCaret = false } = {}) {
     if (typeof anchorUrl !== 'string' || !anchorUrl.startsWith('#')) return;
-    const anchorName = anchorUrl.slice(1);
+    const anchorName = decodeAnchorFragment(anchorUrl.slice(1));
 
     /** @type {LinkPopoverDocumentApi | null | undefined} */
     const doc = getActiveEditor()?.doc;

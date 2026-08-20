@@ -12,6 +12,7 @@ const LINK_DATASET_KEYS = {
 
 const MAX_HREF_LENGTH = 2048;
 const SAFE_ANCHOR_PATTERN = /^[A-Za-z0-9._-]+$/;
+const SAFE_WORD_BOOKMARK_ANCHOR_PATTERN = /^[A-Za-z0-9._\-[\]]+$/;
 const AMBIGUOUS_LINK_PATTERNS = /^(click here|read more|more|link|here|this|download|view)$/i;
 const INVALID_TARGET_CHARS = /[\u0000-\u001F\u007F]/;
 
@@ -57,15 +58,16 @@ export function sanitizeUrl(href: string): string | null {
 
 /**
  * Normalize and validate an anchor fragment identifier for use in hyperlinks.
- * Strips leading '#' if present and validates against safe character pattern.
+ * Strips leading '#' if present and URL-encodes supported Word bookmark
+ * punctuation that is not safe as a raw fragment.
  *
  * @param value - Raw anchor string (with or without leading '#')
  * @returns Normalized anchor with leading '#' (e.g., '#section-1'), or null if invalid
  *
  * @remarks
- * SECURITY: Only allows safe characters (A-Z, a-z, 0-9, ., _, -) to prevent HTML attribute injection.
- * Rejects characters like quotes, angle brackets, colons, and spaces that could break HTML structure
- * or enable XSS attacks when used in href attributes.
+ * SECURITY: Allows raw safe characters (A-Z, a-z, 0-9, ., _, -) and percent-encodes square
+ * brackets used by Word bookmark names. Rejects quotes, angle brackets, colons, and spaces that
+ * could break HTML structure or enable XSS attacks when used in href attributes.
  *
  * @example
  * normalizeAnchor('section-1') // Returns: '#section-1'
@@ -81,13 +83,16 @@ const normalizeAnchor = (value: string | null | undefined): string | null => {
   // Remove leading # if present, then validate
   const anchor = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
 
-  // SECURITY: Only allow safe characters to prevent attribute injection
-  // Rejects characters like quotes, angle brackets, spaces that could break HTML
-  if (!SAFE_ANCHOR_PATTERN.test(anchor)) {
-    return null;
+  if (SAFE_ANCHOR_PATTERN.test(anchor)) {
+    return `#${anchor}`;
   }
 
-  return `#${anchor}`;
+  if (SAFE_WORD_BOOKMARK_ANCHOR_PATTERN.test(anchor)) {
+    const encoded = encodeFragment(anchor);
+    return encoded ? `#${encoded}` : null;
+  }
+
+  return null;
 };
 
 /**

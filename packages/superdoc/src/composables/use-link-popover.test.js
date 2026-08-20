@@ -1159,6 +1159,43 @@ describe('useLinkPopover', () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
+  it('decodes encoded anchor fragments before resolving V2 bookmarks', async () => {
+    const scrollIntoView = vi.fn(async () => ({ success: true }));
+    const editor = {
+      id: 'editor',
+      doc: {
+        bookmarks: {
+          get: vi.fn(async ({ target }) =>
+            target.name === 'Target[1].Clause' ? { range: { from: { blockId: 'w14:target' } } } : null,
+          ),
+        },
+      },
+      pageMetrics: {},
+    };
+    const { popover } = createSubject({
+      editor,
+      ui: {
+        viewport: {
+          getHost: () => document.createElement('div'),
+          scrollIntoView,
+        },
+      },
+    });
+
+    popover.handleLinkClick(createPayload({ href: '#Target%5B1%5D.Clause', documentMode: 'viewing' }));
+    await tick();
+    await tick();
+
+    expect(editor.doc.bookmarks.get).toHaveBeenCalledWith({
+      target: { kind: 'entity', entityType: 'bookmark', name: 'Target[1].Clause' },
+    });
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      target: { kind: 'text', blockId: 'w14:target', range: { start: 0, end: 0 } },
+      block: 'start',
+      behavior: 'instant',
+    });
+  });
+
   it('places the editing caret before invoking the viewport for an unpainted V2 bookmark', async () => {
     const host = document.createElement('div');
     const scrollTo = vi.fn();

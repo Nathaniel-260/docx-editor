@@ -12910,6 +12910,25 @@ describe('normalizeAnchor XSS protection', () => {
     expect(anchor?.getAttribute('href')).toBe('#valid-anchor_123');
   });
 
+  it('URL-encodes Word bookmark anchor names with square brackets', () => {
+    const link = {
+      version: 2,
+      anchor: 'Target[1].Clause',
+    };
+
+    const block = createFlowBlockWithLink(link);
+    const measure = createMeasureForBlock();
+    const layout = createLayout();
+
+    painter = createTestPainter({ blocks: [block], measures: [measure] });
+    painter.paint(layout, mount);
+
+    const anchor = mount.querySelector('a');
+    expect(anchor).toBeTruthy();
+    expect(anchor?.getAttribute('href')).toBe('#Target%5B1%5D.Clause');
+    expect(mount.querySelector('span[data-link-blocked="true"]')).toBeNull();
+  });
+
   it('should handle anchor with leading hash', () => {
     const link = {
       version: 2,
