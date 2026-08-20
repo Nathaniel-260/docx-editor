@@ -620,7 +620,8 @@ export type IncrementalPaginationProof = IncrementalPaginationProofBase &
         profile: 'document-start-local-text';
         globalDependenciesAbsent: false;
         globalDependenciesFencedByDocumentStart: true;
-        multiColumnSectionsProvedNonBalanceable: true;
+        multiColumnSectionsProvedNonBalanceable: boolean;
+        balanceableSectionsBoundaryBlockId?: string;
       }
     | {
         /** Stable dependency-rich documents may replay from an engine-seeded page checkpoint. */
@@ -635,14 +636,20 @@ export type IncrementalPaginationProof = IncrementalPaginationProofBase &
           predecessorBlockId: string | null;
         };
         /**
-         * SD-3772 D1: the host proved (via the shared
+         * SD-3772 D1: true means the host proved (via the shared
          * `hasGenuinelyUnequalExplicitColumnWidths` predicate) that no
          * potentially balanceable multi-column section exists anywhere in the
          * retained document. Balancing is a post-pagination finalizer that a
-         * mid-section checkpoint cannot seed; a packet without this proof
-         * fails validation and takes the canonical full layout.
+         * mid-section checkpoint cannot seed. False is admissible only
+         * together with `balanceableSectionsBoundaryBlockId`: the last
+         * balanceable section break's block id, which the bridge itself
+         * verifies lies on a page strictly before every dirty block's page
+         * (the balanced pages then live in the untouched retained prefix and
+         * no re-layout or tail-adoption boundary can cross them). Anything
+         * else fails validation and takes the canonical full layout.
          */
-        multiColumnSectionsProvedNonBalanceable: true;
+        multiColumnSectionsProvedNonBalanceable: boolean;
+        balanceableSectionsBoundaryBlockId?: string;
       }
   );
 
@@ -5838,11 +5845,42 @@ async function layoutWithOptionalReuse(input: {
   if (provedHeaderFooterOnlyResult) return provedHeaderFooterOnlyResult;
   const warmProofFailure = validateProvedWarmPaginationInputs(reuse, input.blocks, input.dirty);
   if (warmProofFailure) return full(`m4-layout-reuse-disabled-${warmProofFailure}`);
-  const unsupportedDependency = reuse.dependencyProof
-    ? validateIncrementalPaginationProof(reuse.dependencyProof)
-    : 'dependency-proof-missing';
+  const dependencyProof = reuse.dependencyProof;
+  if (!dependencyProof) {
+    return full('m4-layout-reuse-disabled-dependency-proof-missing');
+  }
+  const unsupportedDependency = validateIncrementalPaginationProof(dependencyProof);
   if (unsupportedDependency) {
     return full(`m4-layout-reuse-disabled-${unsupportedDependency}`);
+  }
+  // SD-3772 D1 scoped admission: balanceable multi-column sections exist but
+  // the host named the last balanceable boundary block. The bridge verifies
+  // the page separation itself against the retained layout: every dirty
+  // block that existed in the previous layout must sit on a page strictly
+  // after the boundary's last page, so the balanced pages stay inside the
+  // untouched retained prefix and no splice or tail-adoption boundary can
+  // cross them. Inserted blocks are covered by their splice anchors, which
+  // the proved dirty region always includes as changed or deleted ids.
+  const scopedBalanceableBoundaryBlockId =
+    dependencyProof.profile !== 'single-section-local-text' &&
+    dependencyProof.multiColumnSectionsProvedNonBalanceable !== true
+      ? (dependencyProof.balanceableSectionsBoundaryBlockId ?? null)
+      : null;
+  if (scopedBalanceableBoundaryBlockId != null) {
+    const boundaryPages = reuse.previousBlockPageIndex?.get(scopedBalanceableBoundaryBlockId) ?? null;
+    if (!boundaryPages) {
+      return full('m5-layout-reuse-disabled-balanceable-boundary-unresolved');
+    }
+    const dirtyPreviousBlockIds = [...input.dirty.changedBlockIds, ...input.dirty.deletedBlockIds];
+    if (dirtyPreviousBlockIds.length === 0) {
+      return full('m5-layout-reuse-disabled-balanceable-boundary-no-dirty-evidence');
+    }
+    for (const blockId of dirtyPreviousBlockIds) {
+      const pages = reuse.previousBlockPageIndex?.get(blockId) ?? null;
+      if (!pages || pages.firstPage <= boundaryPages.lastPage) {
+        return full('m5-layout-reuse-disabled-balanceable-boundary-page-shared');
+      }
+    }
   }
   const admittedCheckpointDependencies =
     reuse.dependencyProof?.profile === 'page-checkpoint-local-text'
@@ -7666,13 +7704,23 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
     localKeepDependencyClosure?: unknown;
     nonFlowingPageRelativeAnchorDependency?: unknown;
   };
+  // SD-3772 D1: balanceable multi-column sections fail closed unless the
+  // host either proved every multi-column section genuinely unequal
+  // (balancing inert) or named the last balanceable boundary block, whose
+  // page separation from every dirty block the caller verifies against the
+  // retained layout before any reuse boundary is chosen.
+  const balanceableSectionsAdmissible =
+    (proof as { multiColumnSectionsProvedNonBalanceable?: boolean }).multiColumnSectionsProvedNonBalanceable === true ||
+    (typeof (proof as { balanceableSectionsBoundaryBlockId?: unknown }).balanceableSectionsBoundaryBlockId ===
+      'string' &&
+      ((proof as { balanceableSectionsBoundaryBlockId?: string }).balanceableSectionsBoundaryBlockId?.length ?? 0) > 0);
   const dependencyProfileValid =
     proof.profile === 'single-section-local-text'
       ? runtimeProof.globalDependenciesAbsent === true && runtimeProof.globalDependenciesFencedByDocumentStart !== true
       : proof.profile === 'document-start-local-text'
         ? runtimeProof.globalDependenciesAbsent === false &&
           runtimeProof.globalDependenciesFencedByDocumentStart === true &&
-          runtimeProof.multiColumnSectionsProvedNonBalanceable === true
+          balanceableSectionsAdmissible
         : proof.profile === 'page-checkpoint-local-text'
           ? runtimeProof.globalDependenciesAbsent === false &&
             runtimeProof.globalDependenciesFencedByPageCheckpoint === true &&
@@ -7681,9 +7729,7 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
               runtimeProof.admittedDependencyClasses,
               runtimeProof.localKeepDependencyClosure,
             ) &&
-            // SD-3772 D1: fail closed unless the host proved every
-            // multi-column section genuinely unequal (balancing inert).
-            runtimeProof.multiColumnSectionsProvedNonBalanceable === true
+            balanceableSectionsAdmissible
           : false;
   if (
     !dependencyProfileValid ||
