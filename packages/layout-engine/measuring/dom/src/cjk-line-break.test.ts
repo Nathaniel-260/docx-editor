@@ -80,6 +80,89 @@ const expectCodePointSafeRanges = (block: FlowBlock, measure: ParagraphMeasure):
 };
 
 describe('CJK line breaking', () => {
+  describe('justification opportunities', () => {
+    it('emits UTF-16-safe boundaries across styled CJK runs', async () => {
+      const block = paragraph([
+        { text: '\u{20000}春', bold: true },
+        { text: '天来', color: '#123456' },
+      ]);
+      block.attrs = { alignment: 'justify' };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 10_000));
+
+      expect(measure.lines[0].justificationPlan).toEqual({
+        type: 'inter-character',
+        boundaries: [2, 3, 4],
+      });
+    });
+
+    it('emits plans for CJK lines split by inline newlines', async () => {
+      const block = paragraph([{ text: '春天\n来到' }]);
+      block.attrs = { alignment: 'justify' };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 10_000));
+
+      expect(measure.lines).toHaveLength(2);
+      expect(measure.lines.map((line) => line.justificationPlan)).toEqual([
+        { type: 'inter-character', boundaries: [1] },
+        { type: 'inter-character', boundaries: [1] },
+      ]);
+    });
+
+    it('includes Japanese script-extension letters without admitting punctuation', async () => {
+      const japanese = paragraph([{ text: 'スーパー' }]);
+      japanese.attrs = { alignment: 'justify' };
+      const punctuated = paragraph([{ text: 'スーパー。' }]);
+      punctuated.attrs = { alignment: 'justify' };
+
+      const japaneseMeasure = expectParagraphMeasure(await measureBlock(japanese, 10_000));
+      const punctuatedMeasure = expectParagraphMeasure(await measureBlock(punctuated, 10_000));
+
+      expect(japaneseMeasure.lines[0].justificationPlan).toEqual({
+        type: 'inter-character',
+        boundaries: [1, 2, 3],
+      });
+      expect(punctuatedMeasure.lines[0].justificationPlan).toBeUndefined();
+    });
+
+    it('emits boundaries after complete CJK grapheme clusters', async () => {
+      const hangul = paragraph([{ text: '한글' }]);
+      hangul.attrs = { alignment: 'justify' };
+      const variationSequence = paragraph([{ text: '漢字\uFE0F' }]);
+      variationSequence.attrs = { alignment: 'justify' };
+
+      const hangulMeasure = expectParagraphMeasure(await measureBlock(hangul, 10_000));
+      const variationMeasure = expectParagraphMeasure(await measureBlock(variationSequence, 10_000));
+
+      expect(hangulMeasure.lines[0].justificationPlan).toEqual({
+        type: 'inter-character',
+        boundaries: [3],
+      });
+      expect(variationMeasure.lines[0].justificationPlan).toEqual({
+        type: 'inter-character',
+        boundaries: [1],
+      });
+    });
+
+    it('does not emit an inter-character plan for mixed Latin text', async () => {
+      const block = paragraph([{ text: '春天SuperDoc来到' }]);
+      block.attrs = { alignment: 'justify' };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 10_000));
+
+      expect(measure.lines[0].justificationPlan).toBeUndefined();
+    });
+
+    it('does not reuse punctuation wrapping rules as justification boundaries', async () => {
+      const block = paragraph([{ text: '春天，来到' }]);
+      block.attrs = { alignment: 'justify' };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 10_000));
+
+      expect(measure.lines[0].justificationPlan).toBeUndefined();
+    });
+  });
+
   describe('inter-ideograph break opportunities', () => {
     it('fills the current line remainder instead of stranding a short lead-in run', async () => {
       const lead = '甲方：';

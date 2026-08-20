@@ -2,6 +2,8 @@ import type { FlowBlock, Line, Run, TabRun } from '@superdoc/contracts';
 import {
   shouldApplyJustify,
   calculateJustifySpacing,
+  calculateInterCharacterJustifySpacing,
+  interCharacterJustifyAdvanceBeforeOffset,
   sliceRunsForLine,
   SPACE_CHARS as SHARED_SPACE_CHARS,
 } from '@superdoc/contracts';
@@ -148,6 +150,8 @@ function getMeasurementContext(): CanvasRenderingContext2D | null {
 type JustifyAdjustment = {
   extraPerSpace: number;
   totalSpaces: number;
+  interCharacterSpacing: number;
+  interCharacterBoundaries: readonly number[];
 };
 
 type GetJustifyAdjustmentParams = {
@@ -246,12 +250,12 @@ const getJustifyAdjustment = ({
   skipJustifyOverride,
 }: GetJustifyAdjustmentParams): JustifyAdjustment => {
   if (block.kind !== 'paragraph') {
-    return { extraPerSpace: 0, totalSpaces: 0 };
+    return { extraPerSpace: 0, totalSpaces: 0, interCharacterSpacing: 0, interCharacterBoundaries: [] };
   }
 
   // Guard against empty runs array
   if (block.runs.length === 0) {
-    return { extraPerSpace: 0, totalSpaces: 0 };
+    return { extraPerSpace: 0, totalSpaces: 0, interCharacterSpacing: 0, interCharacterBoundaries: [] };
   }
 
   const alignment = alignmentOverride ?? block.attrs?.alignment;
@@ -274,7 +278,7 @@ const getJustifyAdjustment = ({
   });
 
   if (!shouldJustify) {
-    return { extraPerSpace: 0, totalSpaces: 0 };
+    return { extraPerSpace: 0, totalSpaces: 0, interCharacterSpacing: 0, interCharacterBoundaries: [] };
   }
 
   // Use pre-computed spaceCount if available, otherwise count manually
@@ -310,10 +314,19 @@ const getJustifyAdjustment = ({
     spaceCount: totalSpaces,
     shouldJustify: true, // Already checked above
   });
+  const interCharacterBoundaries = totalSpaces === 0 ? (line.justificationPlan?.boundaries ?? []) : [];
+  const interCharacterSpacing = calculateInterCharacterJustifySpacing({
+    lineWidth,
+    availableWidth,
+    boundaryCount: interCharacterBoundaries.length,
+    shouldJustify: true,
+  });
 
   return {
     extraPerSpace,
     totalSpaces,
+    interCharacterSpacing,
+    interCharacterBoundaries,
   };
 };
 
@@ -380,7 +393,10 @@ function measureCharacterXWithoutInlineBoxes(
   const alignment = alignmentOverride ?? (block.kind === 'paragraph' ? block.attrs?.alignment : undefined);
   // For justify alignment, the line is stretched to fill available width (slack distributed across spaces)
   // For center/right alignment, the line keeps its natural width and is positioned within the available space
-  const renderedLineWidth = alignment === 'justify' && justify.extraPerSpace !== 0 ? availableWidth : line.width;
+  const renderedLineWidth =
+    alignment === 'justify' && (justify.extraPerSpace !== 0 || justify.interCharacterSpacing !== 0)
+      ? availableWidth
+      : line.width;
   const hasExplicitPositioning = line.segments?.some((seg) => seg.x !== undefined);
   const alignmentOffset =
     !hasExplicitPositioning && alignment === 'center'
@@ -477,11 +493,17 @@ function measureCharacterXWithoutInlineBoxes(
       const spacingWidth = computeLetterSpacingWidth(run, offsetInRun, runLength);
       const horizontalScale = getHorizontalScale(run);
       const spacesInPortion = justify.extraPerSpace !== 0 ? countSpaces(text.slice(0, offsetInRun)) : 0;
+      const lineOffset = currentCharOffset + offsetInRun;
       return (
         alignmentOffset +
         currentX +
         (measuredWidth + spacingWidth) * horizontalScale +
-        justify.extraPerSpace * (spaceTally + spacesInPortion)
+        justify.extraPerSpace * (spaceTally + spacesInPortion) +
+        interCharacterJustifyAdvanceBeforeOffset(
+          justify.interCharacterBoundaries,
+          lineOffset,
+          justify.interCharacterSpacing,
+        )
       );
     }
 
@@ -498,7 +520,15 @@ function measureCharacterXWithoutInlineBoxes(
   }
 
   // If we're past the end, return the total width
-  return alignmentOffset + currentX;
+  return (
+    alignmentOffset +
+    currentX +
+    interCharacterJustifyAdvanceBeforeOffset(
+      justify.interCharacterBoundaries,
+      currentCharOffset,
+      justify.interCharacterSpacing,
+    )
+  );
 }
 
 const inlineBoxAdvanceAtOffset = (line: Line, charOffset: number): number =>

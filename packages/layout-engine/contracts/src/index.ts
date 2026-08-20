@@ -71,11 +71,14 @@ export {
 export {
   shouldApplyJustify,
   calculateJustifySpacing,
+  calculateInterCharacterJustifySpacing,
+  interCharacterJustifyAdvanceBeforeOffset,
   getFirstLineIndentOffset,
   adjustAvailableWidthForTextIndent,
   SPACE_CHARS,
   type ShouldApplyJustifyParams,
   type CalculateJustifySpacingParams,
+  type CalculateInterCharacterJustifySpacingParams,
 } from './justify-utils.js';
 
 export {
@@ -2929,6 +2932,12 @@ export type LineInlineBox = {
   cursor?: 'default' | 'pointer' | 'text' | 'help';
 };
 
+export type LineJustificationPlan = {
+  type: 'inter-character';
+  /** Sorted line-relative UTF-16 offsets after eligible characters. */
+  boundaries: number[];
+};
+
 export type Line = {
   fromRun: number;
   fromChar: number;
@@ -2944,6 +2953,8 @@ export type Line = {
   naturalWidth?: number;
   /** Number of spaces in the line (pre-computed for efficiency in justify calculations). */
   spaceCount?: number;
+  /** Measured non-word opportunities available to standard paragraph justification. */
+  justificationPlan?: LineJustificationPlan;
   /** True when this line used author-defined OOXML tab stops, not synthesized default stops. */
   hasExplicitTabStops?: boolean;
   segments?: LineSegment[];

@@ -3,6 +3,8 @@ import {
   SPACE_CHARS,
   shouldApplyJustify,
   calculateJustifySpacing,
+  calculateInterCharacterJustifySpacing,
+  interCharacterJustifyAdvanceBeforeOffset,
   getFirstLineIndentOffset,
   adjustAvailableWidthForTextIndent,
   type ShouldApplyJustifyParams,
@@ -329,6 +331,50 @@ describe('calculateJustifySpacing', () => {
       shouldJustify: false,
     };
     expect(calculateJustifySpacing(params)).toBe(0);
+  });
+});
+
+describe('inter-character justify geometry', () => {
+  it('distributes positive slack across measured character boundaries', () => {
+    expect(
+      calculateInterCharacterJustifySpacing({
+        lineWidth: 40,
+        availableWidth: 70,
+        boundaryCount: 3,
+        shouldJustify: true,
+      }),
+    ).toBe(10);
+  });
+
+  it('does not infer compression without measured support for it', () => {
+    expect(
+      calculateInterCharacterJustifySpacing({
+        lineWidth: 70,
+        availableWidth: 40,
+        boundaryCount: 3,
+        shouldJustify: true,
+      }),
+    ).toBe(0);
+  });
+
+  it('returns zero when there are no measured boundaries', () => {
+    expect(
+      calculateInterCharacterJustifySpacing({
+        lineWidth: 40,
+        availableWidth: 70,
+        boundaryCount: 0,
+        shouldJustify: true,
+      }),
+    ).toBe(0);
+  });
+
+  it('returns cumulative advance at UTF-16 line offsets', () => {
+    const boundaries = [2, 4, 5];
+
+    expect(interCharacterJustifyAdvanceBeforeOffset(boundaries, 0, 3)).toBe(0);
+    expect(interCharacterJustifyAdvanceBeforeOffset(boundaries, 2, 3)).toBe(3);
+    expect(interCharacterJustifyAdvanceBeforeOffset(boundaries, 3, 3)).toBe(3);
+    expect(interCharacterJustifyAdvanceBeforeOffset(boundaries, 5, 3)).toBe(9);
   });
 });
 

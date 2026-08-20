@@ -97,6 +97,13 @@ export type CalculateJustifySpacingParams = {
   shouldJustify: boolean;
 };
 
+export type CalculateInterCharacterJustifySpacingParams = {
+  lineWidth: number;
+  availableWidth: number;
+  boundaryCount: number;
+  shouldJustify: boolean;
+};
+
 /**
  * Calculates the extra spacing to apply per space character for justify.
  *
@@ -165,4 +172,21 @@ export function calculateJustifySpacing(params: CalculateJustifySpacingParams): 
 
   // Distribute slack evenly across all spaces
   return slack / spaceCount;
+}
+
+export function calculateInterCharacterJustifySpacing(params: CalculateInterCharacterJustifySpacingParams): number {
+  const { lineWidth, availableWidth, boundaryCount, shouldJustify } = params;
+  if (!shouldJustify || boundaryCount <= 0 || availableWidth <= lineWidth) return 0;
+  return (availableWidth - lineWidth) / boundaryCount;
+}
+
+export function interCharacterJustifyAdvanceBeforeOffset(
+  boundaries: readonly number[],
+  offset: number,
+  spacing: number,
+): number {
+  if (spacing === 0 || boundaries.length === 0) return 0;
+  let count = 0;
+  while (count < boundaries.length && boundaries[count]! <= offset) count += 1;
+  return count * spacing;
 }

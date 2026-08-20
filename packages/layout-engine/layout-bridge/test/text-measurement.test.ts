@@ -583,6 +583,48 @@ describe('text measurement utility', () => {
       expect(x2Justified).toBeGreaterThan(x2Normal);
     });
 
+    it('keeps CJK caret and hit geometry aligned with measured character boundaries', () => {
+      const block = createBlock([
+        { text: '春天来到', fontFamily: 'Arial', fontSize: 16 },
+        { text: '后续', fontFamily: 'Arial', fontSize: 16 },
+      ]);
+      (block as any).attrs = { alignment: 'justify' };
+      const line = baseLine({
+        fromRun: 0,
+        toRun: 0,
+        toChar: 4,
+        width: 40,
+        maxWidth: 70,
+        justificationPlan: { type: 'inter-character', boundaries: [1, 2, 3] },
+      });
+
+      expect([0, 1, 2, 3, 4].map((offset) => measureCharacterX(block, line, offset, 70))).toEqual([0, 20, 40, 60, 70]);
+      expect(findCharacterAtX(block, line, 35, 0, 70).charOffset).toBe(2);
+    });
+
+    it('applies CJK justify advance only after a complete grapheme', () => {
+      const block = createBlock([
+        { text: '한글', fontFamily: 'Arial', fontSize: 16 },
+        { text: '후속', fontFamily: 'Arial', fontSize: 16 },
+      ]);
+      (block as any).attrs = { alignment: 'justify' };
+      const line = baseLine({
+        fromRun: 0,
+        toRun: 0,
+        toChar: 4,
+        width: 40,
+        maxWidth: 70,
+        justificationPlan: { type: 'inter-character', boundaries: [3] },
+      });
+
+      const natural = [0, 1, 2, 3, 4].map((offset) => measureCharacterX(block, line, offset, 40));
+      const justified = [0, 1, 2, 3, 4].map((offset) => measureCharacterX(block, line, offset, 70));
+
+      expect(justified.slice(0, 3)).toEqual(natural.slice(0, 3));
+      expect(justified[3] - natural[3]).toBe(30);
+      expect(justified[4] - natural[4]).toBe(30);
+    });
+
     it('does not apply justify spacing for non-justified text', () => {
       const block = createBlock([{ text: 'A B', fontFamily: 'Arial', fontSize: 16 }]);
       const line = baseLine({

@@ -78,6 +78,8 @@ import {
   resolveAnchoredGraphicY,
   resolveBaseFontSizeForVerticalText,
   resolveShapeTextContentMeasureWidth,
+  getParagraphInlineDirection,
+  sliceRunsForLine,
 } from '@superdoc/contracts';
 import type { WordParagraphLayoutOutput } from '@superdoc/word-layout';
 import {
@@ -105,6 +107,7 @@ import {
   nextCodePointBoundary,
   resolveKinsokuBoundary,
 } from './cjk-line-break.js';
+import { collectCjkJustificationBoundaries } from './cjk-justification.js';
 import {
   getCalibratedBodyEmptyLine,
   getFontMetrics,
@@ -169,6 +172,7 @@ export {
   nextCodePointBoundary,
   resolveKinsokuBoundary,
 } from './cjk-line-break.js';
+export { collectCjkJustificationBoundaries } from './cjk-justification.js';
 
 /**
  * Clear every font-dependent text-measurement cache owned by `measuring/dom`:
@@ -2590,7 +2594,8 @@ async function measureParagraphBlock(
   };
 
   // Keep measurement line ranges aligned with the painter's run expansion.
-  let runsToProcess: Run[] = expandRunsForInlineNewlines(normalizedRuns as Run[]);
+  const newlineExpandedRuns = expandRunsForInlineNewlines(normalizedRuns as Run[]);
+  let runsToProcess: Run[] = newlineExpandedRuns;
   let runIndexMap = runsToProcess.map((_, index) => index);
   let runCharOffsetMap = runsToProcess.map(() => 0);
   if (runsToProcess.some((run) => isTextRun(run) && typeof run.text === 'string' && run.text.includes('\t'))) {
@@ -4482,6 +4487,15 @@ async function measureParagraphBlock(
           runIndex: runIndexMap[alignment.runIndex] ?? alignment.runIndex,
         }));
       }
+    }
+  }
+
+  if (block.attrs?.alignment === 'justify' && getParagraphInlineDirection(block.attrs) !== 'rtl') {
+    const newlineExpandedBlock = { ...block, runs: newlineExpandedRuns };
+    for (const line of lines) {
+      if ((line.spaceCount ?? 0) !== 0 || line.segments?.some((segment) => segment.x !== undefined)) continue;
+      const boundaries = collectCjkJustificationBoundaries(sliceRunsForLine(newlineExpandedBlock, line));
+      if (boundaries) line.justificationPlan = { type: 'inter-character', boundaries };
     }
   }
 

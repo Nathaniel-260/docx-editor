@@ -19,6 +19,7 @@ import {
   Engines,
   getParagraphInlineDirection,
   isEmptySdtPlaceholderRun,
+  sliceRunsForLine,
 } from '@superdoc/contracts';
 import type { WordParagraphLayoutOutput } from '@superdoc/word-layout';
 import {
@@ -29,6 +30,7 @@ import {
 import { resolveListTextStartPx } from '@superdoc/common/list-marker-utils';
 import {
   getCalibratedNaturalSingleLine,
+  collectCjkJustificationBoundaries,
   isCjkBreakOpportunityChar,
   nextCodePointBoundary,
   resolveKinsokuBoundary,
@@ -2209,6 +2211,14 @@ export function remeasureParagraph(
         bar.x += offsetX;
       });
     });
+  }
+
+  if (attrs?.alignment === 'justify' && getParagraphInlineDirection(block.attrs) !== 'rtl') {
+    for (const line of lines) {
+      if ((line.spaceCount ?? 0) !== 0 || line.segments?.some((segment) => segment.x !== undefined)) continue;
+      const boundaries = collectCjkJustificationBoundaries(sliceRunsForLine(block, line));
+      if (boundaries) line.justificationPlan = { type: 'inter-character', boundaries };
+    }
   }
 
   const totalHeight = lines.reduce((s, l) => s + l.lineHeight, 0);

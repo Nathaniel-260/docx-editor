@@ -22,6 +22,152 @@ const makeRunContext = (overrides: Partial<RunRenderContext> = {}): RunRenderCon
   ...overrides,
 });
 
+describe('renderLine justification', () => {
+  const makeLine = (text: string, overrides: Partial<Line> = {}): Line => ({
+    fromRun: 0,
+    fromChar: 0,
+    toRun: 0,
+    toChar: text.length,
+    width: 40,
+    maxWidth: 70,
+    ascent: 12,
+    descent: 4,
+    lineHeight: 24,
+    segments: [{ runIndex: 0, fromChar: 0, toChar: text.length, width: 40 }],
+    ...overrides,
+  });
+
+  it('paints measured CJK boundaries without a trailing advance', () => {
+    const text = '春天来到';
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'cjk-justify',
+      attrs: { alignment: 'justify' },
+      runs: [{ kind: 'text', text, fontFamily: 'Arial', fontSize: 16, pmStart: 20, pmEnd: 24 }],
+    };
+    const line = makeLine(text, {
+      justificationPlan: { type: 'inter-character', boundaries: [1, 2, 3] },
+    });
+
+    const lineEl = renderLine({
+      block,
+      line,
+      context: { pageNumber: 1, totalPages: 1, section: 'body' },
+      runContext: makeRunContext(),
+    });
+    const textRuns = Array.from(lineEl.querySelectorAll<HTMLElement>('.superdoc-text-run'));
+
+    expect(textRuns.map((run) => run.textContent)).toEqual(['春天来', '到']);
+    expect(textRuns[0]?.style.letterSpacing).toBe('10px');
+    expect(textRuns[0]?.dataset.pmStart).toBe('20');
+    expect(textRuns[0]?.dataset.pmEnd).toBe('23');
+    expect(textRuns[1]?.style.letterSpacing).toBe('');
+    expect(textRuns[1]?.dataset.pmStart).toBe('23');
+    expect(textRuns[1]?.dataset.pmEnd).toBe('24');
+    expect(lineEl.style.wordSpacing).toBe('');
+  });
+
+  it('keeps the final grapheme cluster outside inter-character spacing', () => {
+    const text = '漢字\uFE0F';
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'cjk-grapheme-justify',
+      attrs: { alignment: 'justify' },
+      runs: [{ kind: 'text', text, fontFamily: 'Arial', fontSize: 16, pmStart: 20, pmEnd: 23 }],
+    };
+    const line = makeLine(text, {
+      justificationPlan: { type: 'inter-character', boundaries: [1] },
+    });
+
+    const lineEl = renderLine({
+      block,
+      line,
+      context: { pageNumber: 1, totalPages: 1, section: 'body' },
+      runContext: makeRunContext(),
+    });
+    const textRuns = Array.from(lineEl.querySelectorAll<HTMLElement>('.superdoc-text-run'));
+
+    expect(textRuns.map((run) => run.textContent)).toEqual(['漢', '字\uFE0F']);
+    expect(textRuns.map((run) => run.style.letterSpacing)).toEqual(['30px', '']);
+    expect(textRuns[0]?.dataset.pmEnd).toBe('21');
+    expect(textRuns[1]?.dataset.pmStart).toBe('21');
+    expect(textRuns[1]?.dataset.pmEnd).toBe('23');
+  });
+
+  it('uses run-end advances as opportunities across styled runs', () => {
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'styled-cjk-justify',
+      attrs: { alignment: 'justify' },
+      runs: [
+        { kind: 'text', text: '春天', fontFamily: 'Arial', fontSize: 16, bold: true },
+        { kind: 'text', text: '来到', fontFamily: 'Arial', fontSize: 16, color: '#123456' },
+      ],
+    };
+
+    const lineEl = renderLine({
+      block,
+      line: {
+        ...makeLine('春天来到'),
+        toRun: 1,
+        toChar: 2,
+        segments: [
+          { runIndex: 0, fromChar: 0, toChar: 2, width: 20 },
+          { runIndex: 1, fromChar: 0, toChar: 2, width: 20 },
+        ],
+        justificationPlan: { type: 'inter-character', boundaries: [1, 2, 3] },
+      },
+      context: { pageNumber: 1, totalPages: 1, section: 'body' },
+      runContext: makeRunContext(),
+    });
+    const textRuns = Array.from(lineEl.querySelectorAll<HTMLElement>('.superdoc-text-run'));
+
+    expect(textRuns.map((run) => run.textContent)).toEqual(['春天', '来', '到']);
+    expect(textRuns.map((run) => run.style.letterSpacing)).toEqual(['10px', '10px', '']);
+  });
+
+  it('keeps space-based justification on word-spacing', () => {
+    const text = 'A B';
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'word-justify',
+      attrs: { alignment: 'justify' },
+      runs: [{ kind: 'text', text, fontFamily: 'Arial', fontSize: 16 }],
+    };
+
+    const lineEl = renderLine({
+      block,
+      line: makeLine(text, { spaceCount: 1 }),
+      context: { pageNumber: 1, totalPages: 1, section: 'body' },
+      runContext: makeRunContext(),
+    });
+
+    expect(lineEl.style.wordSpacing).toBe('30px');
+    expect(lineEl.querySelector<HTMLElement>('.superdoc-text-run')?.style.letterSpacing).toBe('');
+  });
+
+  it('leaves the true final line unstretched when the caller skips justify', () => {
+    const text = '春天来到';
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'cjk-final-line',
+      attrs: { alignment: 'justify' },
+      runs: [{ kind: 'text', text, fontFamily: 'Arial', fontSize: 16 }],
+    };
+
+    const lineEl = renderLine({
+      block,
+      line: makeLine(text, { justificationPlan: { type: 'inter-character', boundaries: [1, 2, 3] } }),
+      skipJustify: true,
+      context: { pageNumber: 1, totalPages: 1, section: 'body' },
+      runContext: makeRunContext(),
+    });
+
+    expect(lineEl.querySelectorAll('.superdoc-text-run')).toHaveLength(1);
+    expect(lineEl.querySelector<HTMLElement>('.superdoc-text-run')?.style.letterSpacing).toBe('');
+  });
+});
+
 describe('renderLine positioned tabs with vanished segments', () => {
   it('sizes an underlined positioned tab to the next visible aligned segment', () => {
     const hidden: TextRun = {

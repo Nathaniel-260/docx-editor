@@ -1,6 +1,7 @@
 import type { ImageRun, Line, LineSegment, ParagraphAttrs, ParagraphBlock, Run, TextRun } from '@superdoc/contracts';
 import {
   calculateJustifySpacing,
+  calculateInterCharacterJustifySpacing,
   computeLinePmRange,
   expandRunsForInlineNewlines,
   isEmptyInlineSdtPlaceholderRun,
@@ -150,6 +151,41 @@ const cloneTextRun = (run: TextRun): TextRun => ({
   underline: run.underline ? { ...run.underline } : undefined,
   pageRefMetadata: run.pageRefMetadata ? { ...run.pageRefMetadata } : undefined,
 });
+
+const applyInterCharacterSpacingToRuns = (runs: Run[], spacing: number, boundaries: readonly number[]): Run[] => {
+  if (spacing === 0 || boundaries.length === 0) return runs;
+  let lineOffset = 0;
+
+  return runs.flatMap((run) => {
+    if (!isTextRun(run) || run.text.length === 0) return [run];
+    const runStart = lineOffset;
+    const runEnd = runStart + run.text.length;
+    lineOffset = runEnd;
+    let lastBoundary: number | undefined;
+    for (let index = boundaries.length - 1; index >= 0; index -= 1) {
+      const boundary = boundaries[index]!;
+      if (boundary > runStart && boundary <= runEnd) {
+        lastBoundary = boundary;
+        break;
+      }
+    }
+    if (lastBoundary == null) return [run];
+
+    const splitAt = lastBoundary - runStart;
+    if (splitAt === run.text.length) return [{ ...run, letterSpacing: spacing }];
+
+    const splitPm =
+      run.pmStart != null
+        ? run.pmStart + splitAt
+        : run.pmEnd != null
+          ? run.pmEnd - (run.text.length - splitAt)
+          : undefined;
+    return [
+      { ...run, text: run.text.slice(0, splitAt), pmEnd: splitPm, letterSpacing: spacing },
+      { ...run, text: run.text.slice(splitAt), pmStart: splitPm, letterSpacing: run.letterSpacing },
+    ];
+  });
+};
 
 const normalizeJustifiedRuns = (runsForLine: Run[]): Run[] => {
   const normalized: Run[] = runsForLine.map((run) => {
@@ -595,6 +631,17 @@ export const renderLine = ({
     spaceCount,
     shouldJustify: justifyShouldApply,
   });
+  const interCharacterSpacing = calculateInterCharacterJustifySpacing({
+    lineWidth,
+    availableWidth,
+    boundaryCount: spaceCount === 0 ? (line.justificationPlan?.boundaries.length ?? 0) : 0,
+    shouldJustify: justifyShouldApply,
+  });
+  runsForLine = applyInterCharacterSpacingToRuns(
+    runsForLine,
+    interCharacterSpacing,
+    line.justificationPlan?.boundaries ?? [],
+  );
   // Only a top-aligned, line-expanding image triggers the Word text-bottom
   // workaround. Glyph-like baseline images leave the surrounding text alone.
   const lineContainsLineExpandingImage = runsForLine.some((run) => isLineExpandingImageRun(run, line));
