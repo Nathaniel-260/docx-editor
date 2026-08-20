@@ -8,6 +8,9 @@ export function resolveV2ReviewTargetCommentId(target, getComment) {
   if (!target || typeof target.entityId !== 'string') return null;
   if (target.entityType !== 'comment' && target.entityType !== 'trackedChange') return null;
   const comment = typeof getComment === 'function' ? getComment(target.entityId) : null;
+  if (target.entityType === 'comment' && comment?.trackedChange) {
+    return target.entityId;
+  }
   const commentId = comment?.commentId ?? comment?.importedId ?? target.entityId;
   return commentId != null ? String(commentId) : null;
 }

@@ -80,6 +80,19 @@ describe('v2 review target activation', () => {
     expect(resolveV2ReviewTargetCommentId({ entityType: 'comment', entityId: '2' }, store.getComment)).toBe('2');
   });
 
+  it('keeps the painted comment id while its row hydrates and only a colliding tracked-change alias exists', () => {
+    const trackedChangeRow = makeTrackedChangeRow({
+      commentId: 'tc|main:document.xml|ins|wId:2',
+      importedId: '2',
+      trackedChangeText: 'directory collision',
+    });
+
+    store.commentsList = [];
+    store.reviewDirectoryList = [trackedChangeRow];
+
+    expect(resolveV2ReviewTargetCommentId({ entityType: 'comment', entityId: '2' }, store.getComment)).toBe('2');
+  });
+
   it('rejects unsupported or malformed targets', () => {
     expect(resolveV2ReviewTargetCommentId(null, () => null)).toBeNull();
     expect(resolveV2ReviewTargetCommentId({ entityType: 'bookmark', entityId: 'b1' }, () => null)).toBeNull();
