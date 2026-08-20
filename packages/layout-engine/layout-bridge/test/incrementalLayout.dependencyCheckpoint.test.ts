@@ -52,6 +52,24 @@ function anchoredDrawing(): DrawingBlock {
   };
 }
 
+function flowingPageRelativeDrawing(carrierParagraphId: string): DrawingBlock {
+  return {
+    kind: 'drawing',
+    id: 'flowing-page-anchor',
+    drawingKind: 'vectorShape',
+    geometry: { width: 42, height: 32 },
+    attrs: { anchorParagraphId: carrierParagraphId },
+    anchor: {
+      isAnchored: true,
+      hRelativeFrom: 'page',
+      vRelativeFrom: 'page',
+      offsetH: 60,
+      offsetV: 10,
+    },
+    wrap: { type: 'Square' },
+  };
+}
+
 function nonFlowingPageRelativeImage(carrierParagraphId: string, id = 'page-background'): ImageBlock {
   return {
     kind: 'image',
@@ -354,6 +372,51 @@ describe('incrementalLayout admitted checkpoint dependencies', () => {
       mode: 'tail-splice',
       reason: 'm4-affected-frontier-converged-tail-adopted',
     });
+    expect(incremental.layoutReuse.pagesPaginated).toBeLessThanOrEqual(6);
+    expect(json(incremental.layout)).toEqual(json(cold.layout));
+  });
+
+  it('matches cold layout when a scoped flow-affecting page-relative drawing is beyond the replay window', async () => {
+    const base = paragraphs(48);
+    const previousBlocks: FlowBlock[] = [...base.slice(0, 36), flowingPageRelativeDrawing('p36'), ...base.slice(36)];
+    const previous = await incrementalLayout([], null, previousBlocks, OPTIONS, measureBlock);
+    previous.layout.layoutEpoch = 1;
+    const edit = base[6]!;
+    const nextBlocks = applyOrdinaryTextEdit(previousBlocks, edit);
+    const checkpointReuse = buildReuse(
+      previousBlocks,
+      nextBlocks,
+      previous.layout,
+      'body-anchored-objects',
+      edit.runs[0]!.pmEnd!,
+    );
+    const reuse: IncrementalLayoutReuseOptions = {
+      ...checkpointReuse,
+      requireDocumentStartCheckpoint: true,
+      dependencyProof: {
+        ...checkpointReuse.dependencyProof!,
+        pageRelativeAnchorsScopedBoundary: {
+          blockId: 'flowing-page-anchor',
+          side: 'anchors-after-dirty',
+        },
+      },
+    };
+    const incremental = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      OPTIONS,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      undefined,
+      reuse,
+    );
+
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, nextBlocks, OPTIONS, measureBlock);
+    expect(incremental.layoutReuse).toMatchObject({ mode: 'tail-splice', checkpointPageIndex: 0 });
     expect(incremental.layoutReuse.pagesPaginated).toBeLessThanOrEqual(6);
     expect(json(incremental.layout)).toEqual(json(cold.layout));
   });

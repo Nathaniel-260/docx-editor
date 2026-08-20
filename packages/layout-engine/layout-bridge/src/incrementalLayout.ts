@@ -622,6 +622,10 @@ export type IncrementalPaginationProof = IncrementalPaginationProofBase &
         globalDependenciesFencedByDocumentStart: true;
         multiColumnSectionsProvedNonBalanceable: boolean;
         balanceableSectionsBoundaryBlockId?: string;
+        pageRelativeAnchorsScopedBoundary?: {
+          blockId: string;
+          side: 'anchors-before-dirty' | 'anchors-after-dirty';
+        };
       }
     | {
         /** Stable dependency-rich documents may replay from an engine-seeded page checkpoint. */
@@ -650,6 +654,22 @@ export type IncrementalPaginationProof = IncrementalPaginationProofBase &
          */
         multiColumnSectionsProvedNonBalanceable: boolean;
         balanceableSectionsBoundaryBlockId?: string;
+        /**
+         * Page-relative body anchors exist WITHOUT the validated non-flowing
+         * inventory proof (`admittedDependencyClasses` must then not contain
+         * `non-flowing-page-relative-body-anchors`). The host proved every
+         * dirty ordinal strictly on `side` of every such anchor and names the
+         * page-extremal anchor block; the bridge itself verifies the page
+         * separation against the retained layout and requires the
+         * document-start checkpoint, so the anchor pages stay either in the
+         * replayed-from-start window (re-laid with cold-run preflight inputs)
+         * or in the start-key-proved adopted tail. Anything else fails
+         * validation and takes the canonical full layout.
+         */
+        pageRelativeAnchorsScopedBoundary?: {
+          blockId: string;
+          side: 'anchors-before-dirty' | 'anchors-after-dirty';
+        };
       }
   );
 
@@ -5882,6 +5902,55 @@ async function layoutWithOptionalReuse(input: {
       }
     }
   }
+  // Scoped admission for page-relative body anchors WITHOUT the validated
+  // non-flowing inventory proof: the host named the page-extremal anchor
+  // block and the separation side. The bridge verifies the page separation
+  // itself against the retained layout: every dirty block that existed in the
+  // previous layout must sit strictly on the dirty side of the boundary's
+  // pages, no dirty or inserted block may itself be page-relative anchored,
+  // and pagination must replay from the document-start checkpoint (a
+  // mid-document resume would seed the anchor preflight with checkpoint-page
+  // geometry instead of the cold run's document-start state). The anchor
+  // pages then live either in the untouched retained prefix, in the
+  // replayed-from-start window (re-laid with cold-run inputs), or in the
+  // start-key-proved adopted tail — no reuse boundary crosses them
+  // unverified.
+  const scopedPageRelativeAnchorBoundary =
+    dependencyProof.profile !== 'single-section-local-text'
+      ? (dependencyProof.pageRelativeAnchorsScopedBoundary ?? null)
+      : null;
+  if (scopedPageRelativeAnchorBoundary != null) {
+    if (reuse.requireDocumentStartCheckpoint !== true) {
+      return full('m5-layout-reuse-disabled-page-relative-anchor-scope-requires-document-start');
+    }
+    const boundaryPages = reuse.previousBlockPageIndex?.get(scopedPageRelativeAnchorBoundary.blockId) ?? null;
+    if (!boundaryPages) {
+      return full('m5-layout-reuse-disabled-page-relative-anchor-boundary-unresolved');
+    }
+    const dirtyPreviousBlockIds = [...input.dirty.changedBlockIds, ...input.dirty.deletedBlockIds];
+    if (dirtyPreviousBlockIds.length === 0) {
+      return full('m5-layout-reuse-disabled-page-relative-anchor-no-dirty-evidence');
+    }
+    for (const blockId of dirtyPreviousBlockIds) {
+      const pages = reuse.previousBlockPageIndex?.get(blockId) ?? null;
+      const separated =
+        pages != null &&
+        (scopedPageRelativeAnchorBoundary.side === 'anchors-before-dirty'
+          ? pages.firstPage > boundaryPages.lastPage
+          : pages.lastPage < boundaryPages.firstPage);
+      if (!separated) {
+        return full('m5-layout-reuse-disabled-page-relative-anchor-page-shared');
+      }
+    }
+    for (const blockId of [...input.dirty.changedBlockIds, ...input.dirty.insertedBlockIds]) {
+      const blockIndex = reuse.currentBlockIndexById?.get(blockId);
+      const block = Number.isInteger(blockIndex) ? input.blocks[blockIndex!] : null;
+      const dirtyAnchorBlock = block && 'anchor' in block ? block : null;
+      if (dirtyAnchorBlock?.anchor?.isAnchored === true && isPageRelativeAnchor(dirtyAnchorBlock)) {
+        return full('m5-layout-reuse-disabled-page-relative-anchor-dirty-anchor');
+      }
+    }
+  }
   const admittedCheckpointDependencies =
     reuse.dependencyProof?.profile === 'page-checkpoint-local-text'
       ? reuse.dependencyProof.admittedDependencyClasses
@@ -6178,6 +6247,9 @@ async function layoutWithOptionalReuse(input: {
   let convergenceProbePageHorizon = initialRelaidPageHorizon;
   let terminalSuffixRelayoutAttempted = false;
   let reuseProbePagesPaginated = 0;
+  const scopedAnchorPreflightEndBlockIndexExclusive = scopedPageRelativeAnchorBoundary
+    ? findPageRelativeGraphicPreflightEndBlockIndexExclusive(input.blocks)
+    : 0;
 
   while (true) {
     const maxRelaidPages = convergenceProbePageHorizon;
@@ -6199,13 +6271,23 @@ async function layoutWithOptionalReuse(input: {
     if (boundedLocalEndBlockIndexExclusive == null) {
       return full('m4-layout-reuse-disabled-local-pagination-boundary-not-found');
     }
+    const probeIncludesExactCurrentSuffix = boundedLocalEndBlockIndexExclusive === input.blocks.length;
     // Once the source horizon reaches the retained tail, include every current
     // block. This covers inserted terminal blocks and trailing non-rendering
     // section carriers that have no retained fragment index.
-    const localEndBlockIndexExclusive = boundedLocalEndBlockIndexExclusive;
-    // Non-terminal probes paginate a bounded source segment only. Passing the
-    // complete suffix would run section/anchor/keep prepasses over the untouched
-    // tail even when convergence is local.
+    // A scoped page-relative graphic can sit beyond that pagination horizon,
+    // but the engine pre-registers every such graphic before laying out page
+    // one. Include those blocks in the preflight input while retaining the
+    // bounded page stop; otherwise an edit above a distant wrapping graphic
+    // can converge after page one and publish geometry produced without its
+    // exclusion zone.
+    const localEndBlockIndexExclusive = Math.max(
+      boundedLocalEndBlockIndexExclusive,
+      scopedAnchorPreflightEndBlockIndexExclusive,
+    );
+    // Ordinary non-terminal probes keep both input and pagination bounded.
+    // The scoped-anchor exception may extend only the preflight input; the
+    // page boundary below still bounds the pages it can emit.
     const suffixBlocks = input.blocks.slice(suffixStartBlockIndex, localEndBlockIndexExclusive);
     const suffixMeasures = input.measures.slice(suffixStartBlockIndex, localEndBlockIndexExclusive);
     if (suffixBlocks.length === 0 || suffixBlocks.length !== suffixMeasures.length) {
@@ -6341,7 +6423,7 @@ async function layoutWithOptionalReuse(input: {
       // non-terminal probe keeps an engine-owned hard fence. Once every current
       // block is present, paginate the suffix to completion so the document-end
       // proof is exact.
-      ...(localEndBlockIndexExclusive < input.blocks.length
+      ...(!probeIncludesExactCurrentSuffix
         ? {
             pageBoundary: {
               shouldStopBeforeNewPage: ({ completedPageIndex }: { completedPageIndex: number }) =>
@@ -6350,7 +6432,7 @@ async function layoutWithOptionalReuse(input: {
           }
         : {}),
     };
-    if (localEndBlockIndexExclusive === input.blocks.length) {
+    if (probeIncludesExactCurrentSuffix) {
       // A caller boundary is valid for a cold range layout, but it cannot survive
       // into the exact terminal proof: this probe must consume the complete
       // current suffix before claiming document end.
@@ -6589,7 +6671,7 @@ async function layoutWithOptionalReuse(input: {
     // end of the current document, the emitted suffix is nevertheless complete:
     // retain the proved prefix and publish every newly paginated terminal page.
     // This is not early-stop acceptance and adopts no source tail.
-    if (localEndBlockIndexExclusive === input.blocks.length) {
+    if (probeIncludesExactCurrentSuffix) {
       // SD-3772 D5: `relaid-to-document-end` requires a complete finalized
       // emitted suffix. Prove it structurally — the last fragment-bearing block
       // of the document must appear in the emitted suffix pages; a truncated
@@ -6677,6 +6759,20 @@ async function layoutWithOptionalReuse(input: {
         : 'm4-layout-reuse-bounded-convergence-not-proved',
     );
   }
+}
+
+function findPageRelativeGraphicPreflightEndBlockIndexExclusive(blocks: readonly FlowBlock[]): number {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (
+      (block.kind === 'image' || block.kind === 'drawing') &&
+      block.anchor?.isAnchored === true &&
+      isPageRelativeAnchor(block)
+    ) {
+      return index + 1;
+    }
+  }
+  return 0;
 }
 
 function findLocalPaginationEndBlockIndexExclusive(input: {
@@ -7703,6 +7799,7 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
     pageReferenceDependencyClosure?: unknown;
     localKeepDependencyClosure?: unknown;
     nonFlowingPageRelativeAnchorDependency?: unknown;
+    pageRelativeAnchorsScopedBoundary?: unknown;
   };
   // SD-3772 D1: balanceable multi-column sections fail closed unless the
   // host either proved every multi-column section genuinely unequal
@@ -7745,7 +7842,8 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
     !hasCoherentNonFlowingPageRelativeAnchorProof(
       runtimeProof.admittedDependencyClasses,
       runtimeProof.nonFlowingPageRelativeAnchorDependency,
-    )
+    ) ||
+    !hasCoherentPageRelativeAnchorScopedBoundary(runtimeProof)
   ) {
     return 'dependency-proof-invalid';
   }
@@ -7756,6 +7854,38 @@ function hasCoherentNonFlowingPageRelativeAnchorProof(classes: unknown, proof: u
   const admitted = Array.isArray(classes) && classes.includes('non-flowing-page-relative-body-anchors');
   if (!admitted) return proof == null;
   return isValidNonFlowingPageRelativeAnchorDependencyProof(proof);
+}
+
+/**
+ * The scoped anchor boundary exists exactly because the non-flowing inventory
+ * proof does not: a packet carrying the boundary together with the inventory
+ * proof or its admitted class is contradictory and fails closed, as does a
+ * malformed boundary or one on the dependency-free profile.
+ */
+function hasCoherentPageRelativeAnchorScopedBoundary(proof: {
+  profile?: unknown;
+  admittedDependencyClasses?: unknown;
+  nonFlowingPageRelativeAnchorDependency?: unknown;
+  pageRelativeAnchorsScopedBoundary?: unknown;
+}): boolean {
+  const boundary = proof.pageRelativeAnchorsScopedBoundary;
+  if (boundary == null) return true;
+  if (proof.profile !== 'document-start-local-text' && proof.profile !== 'page-checkpoint-local-text') {
+    return false;
+  }
+  const record = boundary as { blockId?: unknown; side?: unknown };
+  if (
+    typeof record.blockId !== 'string' ||
+    record.blockId.length === 0 ||
+    (record.side !== 'anchors-before-dirty' && record.side !== 'anchors-after-dirty')
+  ) {
+    return false;
+  }
+  if (proof.nonFlowingPageRelativeAnchorDependency != null) return false;
+  return !(
+    Array.isArray(proof.admittedDependencyClasses) &&
+    proof.admittedDependencyClasses.includes('non-flowing-page-relative-body-anchors')
+  );
 }
 
 function validateNonFlowingPageRelativeAnchorDependency(input: {
