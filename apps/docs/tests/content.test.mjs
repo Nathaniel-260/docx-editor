@@ -46,6 +46,7 @@ const registeredComponents = new Set([
   'Cards',
   'Callout',
   'CommandStateDemo',
+  'ConfigReference',
   'CustomBoldDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
@@ -312,6 +313,28 @@ test('the generated proofing reference mirrors the exported fields', async () =>
   assert.equal(providerField.typeName, providerTypeName);
   assert.deepEqual(documentedProviderFields, providerFields);
   assert.ok(providerCheck && providerField.type.includes(`check: ${providerCheck};`));
+});
+
+test('the Editor configuration reference starts with concise essential fields', async () => {
+  const { editorConfigExplorer } = await import('../lib/editor-config-explorer.ts');
+  const { renderConfigReferenceMarkdown } = await import('../lib/config-explorer.ts');
+  const essentials = editorConfigExplorer.fields
+    .filter((field) => field.group === 'essentials')
+    .map((field) => field.name);
+
+  assert.deepEqual(essentials, ['selector', 'document', 'user', 'onReady', 'onContentError', 'onException']);
+  assert.ok(editorConfigExplorer.fields.every((field) => field.summary?.length));
+  assert.ok(editorConfigExplorer.fields.every((field) => !field.summary?.includes('Painter plan')));
+  assert.equal(editorConfigExplorer.fields.find((field) => field.name === 'onSidebarToggle')?.type, '(isOpened: boolean) => void');
+  assert.equal(
+    editorConfigExplorer.fields.find((field) => field.name === 'onException')?.type,
+    '(params: SuperDocExceptionPayload) => void',
+  );
+  assert.equal(
+    editorConfigExplorer.fields.find((field) => field.name === 'rulerContainer')?.deprecatedReplacement,
+    'ui.ruler.container',
+  );
+  assert.match(renderConfigReferenceMarkdown(editorConfigExplorer), /Deprecated\. Use `ui\.ruler\.container` instead/u);
 });
 
 test('mutation and headless examples keep their safety guards', async () => {

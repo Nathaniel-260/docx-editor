@@ -18,7 +18,7 @@ const routes = [
   ['index.html', 'SuperDoc'],
   ['resources/how-superdoc-works/index.html', 'How SuperDoc works'],
   ['editor/index.html', 'Editor overview'],
-  ['editor/quickstart/index.html', 'Editor quickstart'],
+  ['editor/quickstart/index.html', 'Open and edit your first DOCX'],
   ['editor/frameworks/react/index.html', 'Mount SuperDoc in React'],
   ['editor/frameworks/sveltekit/index.html', 'Mount SuperDoc in SvelteKit'],
   ['editor/migrate-from-v1/overview/index.html', 'Migrate from v1'],
@@ -26,7 +26,7 @@ const routes = [
   ['editor/configuration/index.html', 'Configure the Editor'],
   ['editor/load-and-save-documents/index.html', 'Load and save documents'],
   ['editor/export-options/index.html', 'Control DOCX export'],
-  ['editor/document-modes/index.html', 'Document modes'],
+  ['editor/document-modes/index.html', 'Choose how people edit'],
   ['editor/lifecycle-and-events/index.html', 'Handle lifecycle and events'],
   ['editor/who-renders-the-ui/index.html', 'Choose your editor interface'],
   ['editor/built-in-ui/overview/index.html', 'Built-in UI overview'],
@@ -315,9 +315,13 @@ test('exports the editor quickstart sample document', async () => {
 
 test('the editor quickstart offers the clean sample and no review markup', async () => {
   const article = await readFile(new URL('../out/editor/quickstart/index.html', import.meta.url), 'utf8');
+  const quickstartMarkdown = await readFile(new URL('../out/md/editor/quickstart.md', import.meta.url), 'utf8');
+  const configurationMarkdown = await readFile(new URL('../out/md/editor/configuration.md', import.meta.url), 'utf8');
 
   assert.match(article, /Download the sample document/);
   assert.match(article, /href="\/fixtures\/sample-nda\.docx"/);
+  assert.doesNotMatch(quickstartMarkdown, /complete the Word round trip/i);
+  assert.match(configurationMarkdown, /document: '\/sample\.docx'/);
   // The tracked-changes fixture is reserved for review guidance, so the
   // quickstart must not reintroduce it through a download or an embed.
   assert.doesNotMatch(article, /tracked-changes\.docx/);
@@ -344,7 +348,15 @@ test('exports the document modes guide with an interactive mode switcher', async
 
   assert.match(article, /Try document modes/);
   assert.match(article, /data-preset="document-modes"/);
-  assert.match(markdown, /Mode switching: viewing, editing, and suggesting\./);
+  assert.match(article, /aria-label="Document mode"/);
+  assert.match(article, /Reset the sample document/);
+  assert.match(article, /Typing changes the document directly/);
+  assert.match(article, /documentMode: &#x27;editing&#x27;/);
+  assert.doesNotMatch(article, /Run the test edit/);
+  assert.match(markdown, /Editing changes the document directly/);
+  assert.match(markdown, /original, markup, or final document/);
+  assert.match(markdown, /Comments and change markup/);
+  assert.match(markdown, /Hiding comments or tracked changes does not remove them from the DOCX/);
   assert.doesNotMatch(markdown, /<EditorDemo\b/);
 });
 
@@ -363,11 +375,11 @@ test('exports the proofing guide with an interactive editor', async () => {
   assert.match(article, /Behavior/);
   assert.match(article, /Events/);
   assert.match(article, /Reserved/);
-  assert.match(article, /Required\./);
+  assert.match(article, /required for feature/);
   assert.match(markdown, /Proofing: type `mispelled`, `workng`, or `teh`, then right-click the underline\./);
   assert.match(markdown, /\| `enabled` \| `boolean` \| `false` \|/);
   assert.match(markdown, /visibleFirst.*maxConcurrentRequests.*maxSegmentsPerBatch/s);
-  const tableStart = markdown.indexOf('| Field | Type | Default | Description |');
+  const tableStart = markdown.indexOf('| Field | Type | Default | Status | Summary | API details | Guide |');
   const tableEnd = markdown.indexOf('\n\n', tableStart);
   const configRows = markdown.slice(tableStart, tableEnd).split('\n');
   assert.ok(configRows.length > 2);
@@ -637,7 +649,7 @@ test('exports safe replacement and configuration guidance for the v2 Editor', as
   assert.match(exportOptions, /set it to `false` to return a `Blob` or ZIP/);
   assert.match(exportOptions, /does not apply `isFinalDoc`/);
   assert.doesNotMatch(exportOptions, /isFinalDoc: true/);
-  assert.match(configuration, /document's `v2Collaboration` field/);
+  assert.match(configuration, /structured document carrying `v2Collaboration`/);
   assert.doesNotMatch(configuration, /`modules` configures[^\n]*collaboration/);
   assert.match(telemetry, /new SuperDoc\([\s\S]*telemetry: \{/);
   assert.match(license, /licenseKey: import\.meta\.env\.VITE_SUPERDOC_LICENSE_KEY/);
@@ -798,12 +810,10 @@ test('exports the machine-readable documentation files', async () => {
   assert.match(llmsIndex, /\[Guide corpus\]\(\/llms-full\.txt\)/);
   assert.match(llmsIndex, /\[Document API reference corpus\]\(\/llms-reference\.txt\)/);
   assert.match(llmsIndex, /Prefer focused reference pages/);
-  assert.match(fullCorpus, /^# Editor quickstart/m);
-  assert.match(editorMarkdown, /^# Editor quickstart/m);
+  assert.match(fullCorpus, /^# Open and edit your first DOCX/m);
+  assert.match(editorMarkdown, /^# Open and edit your first DOCX/m);
   assert.match(editorMarkdown, /\[Download the sample document\]\(\/fixtures\/sample-nda\.docx\)/);
-  // The quickstart's Markdown must carry the layout contract, since that is
-  // the part a reader cannot infer from the code alone.
-  assert.match(editorMarkdown, /Setting a height without `contained: true` does not constrain the document/);
+  assert.match(editorMarkdown, /`onReady` marked the first safe moment to enable document actions/);
   assert.match(surfacesMarkdown, /^# How SuperDoc works/m);
   assert.match(surfacesMarkdown, /> \*\*Diagram:\*\* People, services, CI, and agents use different SuperDoc surfaces/);
   assert.match(
@@ -811,8 +821,8 @@ test('exports the machine-readable documentation files', async () => {
     /Headless code does not have a toolbar, viewport, DOM selection, or visual review surface/,
   );
   assert.match(surfacesMarkdown, /The Document API is an operation contract, not another runtime/);
-  assert.match(modesMarkdown, /^# Document modes/m);
-  assert.match(modesMarkdown, /Document modes control editor behavior in the browser/);
+  assert.match(modesMarkdown, /^# Choose how people edit/m);
+  assert.match(modesMarkdown, /Modes change Editor behavior in the browser/);
   assert.doesNotMatch(modesMarkdown, /<Callout\b/);
   assert.match(interfaceMarkdown, /^# Choose your editor interface/m);
   assert.match(interfaceMarkdown, /> \*\*Diagram:\*\* The built-in UI and a custom application UI/);

@@ -1,88 +1,79 @@
 ---
-title: Document modes
+title: Choose how people edit
 navTitle: Document modes
-description: Choose whether people can view, edit, or suggest changes to a DOCX.
+description: Compare editing, suggesting, and viewing, then set the behavior your workflow needs.
 ---
 
-Document modes control how a person can interact with the open DOCX. Choose the mode that matches the task, then change it as the workflow moves from authoring to review.
+Switch modes, then replace `30 days` with `60 days`. The same edit changes the text, creates a tracked change, or is
+blocked.
 
-| Mode         | What a person can do                        | Use it for                      |
-| ------------ | ------------------------------------------- | ------------------------------- |
-| `editing`    | Change the document directly                | Authoring and form-like editing |
-| `suggesting` | Make edits recorded as tracked changes      | Review and approval workflows   |
-| `viewing`    | Read and select content without changing it | Previews and read-only review   |
+## Compare the three modes
 
-`editing` is the default.
+<EditorDemo fixture='/fixtures/document-modes.docx' preset='document-modes' title='Try document modes' />
 
-The [document modes example](https://go.superdoc.dev/examples/document-modes) is a complete project that switches one DOCX between all three modes and exports a suggested edit.
+## What to notice
 
-## Try the modes
+| Mode         | Result                             | Use it when                                       |
+| ------------ | ---------------------------------- | ------------------------------------------------- |
+| `editing`    | The text changes directly.         | Changes should become part of the document.       |
+| `suggesting` | The edit becomes a tracked change. | Another person should review the proposed change. |
+| `viewing`    | The edit is blocked.               | A person should read without changing the DOCX.   |
 
-Switch the same document between View, Edit, and Suggest. Editing changes the DOCX directly, suggesting records new edits for review, and viewing prevents changes.
+Modes change Editor behavior in the browser. They do not decide who can open or save the document.
 
-<EditorDemo fixture='/fixtures/tracked-changes.docx' preset='document-modes' title='Try document modes' />
+## Set the starting mode
 
-## Set the initial mode
-
-Pass `documentMode` when you create the editor. This example opens the document in suggesting mode so every new edit is reviewable:
+Pass the starting mode when you create the Editor:
 
 ```ts
-import { SuperDoc } from 'superdoc';
-import 'superdoc/style.css';
-
 const superdoc = new SuperDoc({
   selector: '#editor',
-  document: '/documents/contract.docx',
+  document: '/sample.docx',
   documentMode: 'suggesting',
-  user: {
-    name: 'Jordan Lee',
-    email: 'jordan@example.com',
-  },
+  user: { name: 'Jordan Lee', email: 'jordan@example.com' },
 });
 ```
 
-Provide the current `user` when edits need an author. SuperDoc preserves that author with the tracked changes in the exported DOCX.
+After `onReady`, call `superdoc.setDocumentMode('viewing')` to change modes without remounting. Set `user` from your
+authenticated application so exported tracked changes keep the correct author.
 
-## Change modes after the editor is ready
+## Choose what viewers see
 
-Use `setDocumentMode()` to move the same editor between authoring, review, and read-only states:
+Viewing stays read-only. Add only the review information the person needs:
 
-```ts
-const superdoc = new SuperDoc({
-  selector: '#editor',
-  document: '/documents/contract.docx',
-  onReady: ({ superdoc }) => {
-    superdoc.setDocumentMode('suggesting');
-  },
-});
+| Viewer experience          | Add to `Config`                                |
+| -------------------------- | ---------------------------------------------- |
+| Document without review UI | Nothing                                        |
+| Comments only              | `comments: { visible: true }`                  |
+| Tracked-change markup only | `modules: { trackChanges: { visible: true } }` |
+| Comments and change markup | Combine both settings                          |
 
-superdoc.on('document-mode-change', ({ documentMode }) => {
-  console.log(`Document mode: ${documentMode}`);
-});
-```
-
-`setDocumentMode()` requires a ready editor. Use the initial `documentMode` option when the mode is known before loading, or call the method from `onReady` and later application events.
-
-## Show tracked changes in viewing mode
-
-Viewing mode is read-only. By default, it shows the document before its tracked changes were applied. Enable tracked-change visibility when a read-only reviewer should still see the proposed edits:
+This example shows comments and tracked-change markup:
 
 ```ts
 new SuperDoc({
   selector: '#editor',
-  document: '/documents/contract.docx',
+  document: '/sample.docx',
   documentMode: 'viewing',
+  comments: { visible: true },
   modules: {
-    trackChanges: {
-      visible: true,
-    },
+    trackChanges: { visible: true, mode: 'review' },
   },
 });
 ```
 
-<Callout title='Modes are not access control'>
-  Document modes control editor behavior in the browser. Your application still owns authentication, authorization, and
-  access to the DOCX file.
+Use `modules.trackChanges.mode` to choose how changes render: `original` shows the document before proposals, `review`
+shows markup, and `final` shows the proposed result without markup. Use `setTrackedChangesPreferences()` to change that
+display after the Editor is ready.
+
+Hiding comments or tracked changes does not remove them from the DOCX.
+
+<Callout variant='success' title='Check the tracked change'>
+  In suggesting mode, add an edit and export the DOCX. Reopen it in Microsoft Word. Confirm that the edit appears as a
+  tracked change attributed to the configured user.
 </Callout>
 
-Next, try the [Editor tracked-change review workflow](/editor/track-changes), build a [code-to-human review handoff](/agents/workflows/review-tracked-changes), or return to [loading and saving documents](/editor/load-and-save-documents).
+## Choose what to build next
+
+- [Build a tracked-change review flow](/editor/track-changes) to accept or reject suggestions.
+- [Configure comments](/editor/built-in-ui/comments) to create, reply to, resolve, and reopen threads.

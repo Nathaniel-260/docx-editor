@@ -1,7 +1,7 @@
 'use client';
 
-import { Bold, Check, Expand, Italic, Minus, Plus, Shrink, Underline, Undo2, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Bold, Check, Expand, Italic, Minus, Plus, RotateCcw, Shrink, Underline, Undo2, X } from 'lucide-react';
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
 import type { Config, DocumentMode } from 'superdoc';
 import type { CommandState, SuperDocUI, ZoomSlice } from 'superdoc/ui';
 import { CollapsibleEditorPreview } from './collapsible-editor-preview';
@@ -20,6 +20,12 @@ type EditorDemoProps = {
 };
 
 type DemoState = 'idle' | 'loading' | 'ready' | 'error';
+
+const documentModes = [
+  { id: 'editing', label: 'Editing', note: 'Typing changes the document directly.' },
+  { id: 'suggesting', label: 'Suggesting', note: 'Typing is recorded as a tracked change.' },
+  { id: 'viewing', label: 'Viewing', note: 'Read-only — typing is blocked.' },
+] as const satisfies ReadonlyArray<{ id: DocumentMode; label: string; note: string }>;
 
 type PageMetricsSnapshot = {
   pages: ReadonlyArray<{
@@ -103,6 +109,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   );
   const [fitActive, setFitActive] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [modeResetBusy, setModeResetBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [state, setState] = useState<DemoState>('idle');
   const [trackedChangeCount, setTrackedChangeCount] = useState(0);
@@ -202,6 +209,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     setDocumentMode(initialDocumentMode);
     fitActiveRef.current = true;
     setFitActive(true);
+    setModeResetBusy(false);
     setReviewBusy(false);
     setTrackedChangeCount(0);
     zoomRef.current = initialZoom;
@@ -316,8 +324,50 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
 
   function changeDocumentMode(mode: DocumentMode) {
     if (state !== 'ready') return;
-    instanceRef.current?.setDocumentMode(mode);
+    const instance = instanceRef.current;
+    instance?.setDocumentMode(mode);
     setDocumentMode(mode);
+    const nextTrackedChangesMode = mode === 'viewing' ? 'original' : 'review';
+    instance?.setTrackedChangesPreferences({ mode: nextTrackedChangesMode, enabled: true });
+  }
+
+  async function resetModesDemo() {
+    const instance = instanceRef.current;
+    if (!instance || !fixture || modeResetBusy) return;
+
+    setModeResetBusy(true);
+    try {
+      const result = await instance.replaceFile(await getFixtureFile());
+      const replacement = result && typeof result === 'object' ? (result as { state?: unknown }) : null;
+      const replacementState = replacement?.state ?? null;
+      const replacementSucceeded =
+        replacementState === null || replacementState === 'review-ready' || replacementState === 'editing-ready';
+      if (!replacementSucceeded) throw new Error('SuperDoc could not reset the sample document.');
+
+      instance.setDocumentMode(documentMode);
+      instance.setTrackedChangesPreferences({
+        mode: documentMode === 'viewing' ? 'original' : 'review',
+        enabled: true,
+      });
+    } catch {
+      setState('error');
+    } finally {
+      if (mountedRef.current) setModeResetBusy(false);
+    }
+  }
+
+  function handleViewingKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (documentMode !== 'viewing') return;
+
+    const isTextInput = event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey;
+    const isEditingKey = isTextInput || ['Backspace', 'Delete', 'Enter'].includes(event.key);
+    if (!isEditingKey) return;
+
+    event.preventDefault();
+    const surface = event.currentTarget;
+    surface.classList.remove('sd-editor-demo-surface-blocked');
+    void surface.offsetWidth;
+    surface.classList.add('sd-editor-demo-surface-blocked');
   }
 
   async function decideChange(decision: 'accept' | 'reject') {
@@ -353,54 +403,98 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
 
   const hasActiveChange = Boolean(activeChangeId) && !reviewBusy;
   const countLabel = `${trackedChangeCount} ${trackedChangeCount === 1 ? 'change' : 'changes'}`;
+  const activeDocumentMode = documentModes.find((mode) => mode.id === documentMode) ?? documentModes[0];
 
   return (
-    <section ref={demoRef} className='sd-editor-demo' aria-label={title} data-preset={preset} data-state={state}>
+    <section
+      ref={demoRef}
+      className='sd-editor-demo'
+      aria-label={title}
+      data-document-mode={preset === 'document-modes' ? documentMode : undefined}
+      data-preset={preset}
+      data-state={state}
+    >
       <div className='sd-editor-demo-header'>
         <div className='sd-editor-demo-copy'>
           <strong>{title}</strong>
-          <span>
-            {allowLocalFile
-              ? 'Loads the sample automatically. Files stay in this browser.'
-              : preset === 'document-modes'
-                ? 'Switch modes and try the same DOCX as a viewer, editor, or reviewer.'
+          {preset !== 'document-modes' ? (
+            <span>
+              {allowLocalFile
+                ? 'Loads the sample automatically. Files stay in this browser.'
                 : preset === 'proofing'
                   ? 'Type “mispelled”, “workng”, or “teh”, then right-click its underline.'
                   : 'Loads the sample DOCX in suggesting mode.'}
-          </span>
-        </div>
-        <div className='sd-editor-demo-actions'>
-          {state === 'error' ? (
-            <button type='button' onClick={loadDemo}>
-              Try sample again
-            </button>
-          ) : (
-            <span className='sd-editor-demo-status'>{state === 'ready' ? 'Ready' : 'Loading…'}</span>
-          )}
-          {allowLocalFile ? (
-            <>
-              <button
-                className='sd-editor-demo-file-button'
-                type='button'
-                onClick={openFilePicker}
-                disabled={state === 'loading'}
-              >
-                Open your DOCX
-              </button>
-              <input
-                ref={fileInputRef}
-                className='sd-editor-demo-file-input'
-                hidden
-                type='file'
-                accept='.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                onChange={(event) => {
-                  loadLocalFile(event.currentTarget.files?.[0]);
-                  event.currentTarget.value = '';
-                }}
-              />
-            </>
+            </span>
           ) : null}
         </div>
+        {preset === 'document-modes' ? (
+          <div className='sd-editor-demo-mode-header-actions'>
+            {state === 'error' ? (
+              <button type='button' onClick={loadDemo}>
+                Try sample again
+              </button>
+            ) : (
+              <>
+                <div className='sd-editor-demo-mode-switcher' role='group' aria-label='Document mode'>
+                  {documentModes.map((mode) => (
+                    <button
+                      key={mode.id}
+                      type='button'
+                      aria-pressed={documentMode === mode.id}
+                      disabled={state !== 'ready' || modeResetBusy}
+                      onClick={() => changeDocumentMode(mode.id)}
+                    >
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className='sd-editor-demo-mode-reset'
+                  type='button'
+                  aria-label='Reset the sample document'
+                  title='Reset the sample document'
+                  disabled={state !== 'ready' || modeResetBusy}
+                  onClick={() => void resetModesDemo()}
+                >
+                  <RotateCcw aria-hidden='true' />
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className='sd-editor-demo-actions'>
+            {state === 'error' ? (
+              <button type='button' onClick={loadDemo}>
+                Try sample again
+              </button>
+            ) : (
+              <span className='sd-editor-demo-status'>{state === 'ready' ? 'Ready' : 'Loading…'}</span>
+            )}
+            {allowLocalFile ? (
+              <>
+                <button
+                  className='sd-editor-demo-file-button'
+                  type='button'
+                  onClick={openFilePicker}
+                  disabled={state === 'loading'}
+                >
+                  Open your DOCX
+                </button>
+                <input
+                  ref={fileInputRef}
+                  className='sd-editor-demo-file-input'
+                  hidden
+                  type='file'
+                  accept='.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                  onChange={(event) => {
+                    loadLocalFile(event.currentTarget.files?.[0]);
+                    event.currentTarget.value = '';
+                  }}
+                />
+              </>
+            ) : null}
+          </div>
+        )}
       </div>
       <CollapsibleEditorPreview
         className='sd-editor-demo-preview'
@@ -454,25 +548,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               <Underline aria-hidden='true' />
             </button>
           </div>
-          {preset === 'document-modes' ? (
-            <div
-              className='sd-editor-demo-toolbar-group sd-editor-demo-mode-controls'
-              role='group'
-              aria-label='Document mode'
-            >
-              {(['viewing', 'editing', 'suggesting'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type='button'
-                  aria-pressed={documentMode === mode}
-                  disabled={state !== 'ready'}
-                  onClick={() => changeDocumentMode(mode)}
-                >
-                  {mode === 'viewing' ? 'View' : mode === 'editing' ? 'Edit' : 'Suggest'}
-                </button>
-              ))}
-            </div>
-          ) : preset === 'tracked-review' ? (
+          {preset === 'tracked-review' ? (
             <div
               className='sd-editor-demo-toolbar-group sd-editor-demo-review-controls'
               role='group'
@@ -533,7 +609,19 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
             </button>
           </div>
         </div>
-        <div ref={mountRef} className='sd-editor-demo-surface' hidden={state === 'idle'} />
+        <div
+          ref={mountRef}
+          className='sd-editor-demo-surface'
+          hidden={state === 'idle'}
+          tabIndex={preset === 'document-modes' && documentMode === 'viewing' ? -1 : undefined}
+          onPointerDownCapture={() => {
+            if (preset === 'document-modes' && documentMode === 'viewing') {
+              mountRef.current?.focus({ preventScroll: true });
+            }
+          }}
+          onKeyDownCapture={preset === 'document-modes' ? handleViewingKeyDown : undefined}
+          onAnimationEnd={(event) => event.currentTarget.classList.remove('sd-editor-demo-surface-blocked')}
+        />
         {state === 'idle' ? (
           <div className='sd-editor-demo-poster'>
             <span aria-hidden='true'>DOCX</span>
@@ -547,6 +635,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           </div>
         ) : null}
       </CollapsibleEditorPreview>
+      {preset === 'document-modes' ? (
+        <div className='sd-editor-demo-mode-footer' data-mode={documentMode} aria-label='Document mode status'>
+          <span aria-hidden='true' />
+          <p aria-live='polite'>{activeDocumentMode.note}</p>
+          <code>{`documentMode: '${documentMode}'`}</code>
+        </div>
+      ) : null}
     </section>
   );
 }

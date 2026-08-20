@@ -160,3 +160,16 @@ test('the formatting fixture stays short, clean, and free of review markup', asy
   // The sentence the page tells the reader to select has to actually be there.
   assert.match(document, /Select this sentence and press the Bold button above\./);
 });
+
+test('the document modes fixture keeps its comparison target visible and clean', async () => {
+  const { bytes, document } = await openFixture('document-modes.docx');
+  const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');
+
+  assert.ok(visibleText.length < 200, `document-modes.docx must stay short, got ${visibleText.length} characters`);
+  assert.ok(bytes.length < 8_000, `must stay a small package, got ${bytes.length} bytes`);
+  assert.match(document, /Either party may end this agreement by giving 30 days’ written notice\./);
+
+  for (const element of ['w:ins', 'w:del', 'w:commentReference']) {
+    assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
+  }
+});

@@ -10,6 +10,7 @@ import { DocumentPreview } from '@/components/embeds/document-preview';
 import { EditorDemo } from '@/components/embeds/editor-demo';
 import { DocsHome } from '@/components/docs-home';
 import { Callout } from '@/components/mdx/callout';
+import { ConfigReference } from '@/components/mdx/ConfigReference';
 import { FileDownload } from '@/components/mdx/file-download';
 import { MigrationAgentPrompt } from '@/components/mdx/MigrationAgentPrompt';
 import { MigrationExplorer } from '@/components/mdx/migration-explorer';
@@ -42,6 +43,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
   return {
     ...defaultMdxComponents,
     Callout,
+    ConfigReference,
     CommandStateDemo,
     CustomBoldDemo,
     CustomUiArchitecture,

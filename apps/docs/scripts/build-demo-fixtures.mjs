@@ -1,22 +1,23 @@
 /**
- * Builds the custom UI overview fixture: `public/fixtures/formatting-sample.docx`.
+ * Builds the short fixtures used by focused Editor demos:
+ *
+ * - `public/fixtures/formatting-sample.docx`
+ * - `public/fixtures/document-modes.docx`
  *
  * The other two fixtures are full synthetic NDAs, sized for guides that need a
- * realistic contract. This page needs the opposite: the reader has one job —
- * select a sentence and press Bold — and every extra paragraph is something to
- * scroll past first. So this document is three short paragraphs, authored here
- * rather than derived from `nda.docx`, because trimming a contract down to a
- * prompt leaves contract residue behind.
+ * realistic contract. These demos need the opposite: each reader has one job,
+ * so every extra paragraph is something to scroll past first. The documents
+ * are authored here rather than trimmed from `nda.docx` so only the relevant
+ * content remains.
  *
  * It is deliberately plain: no tracked changes, no comments, no headings that
- * would make the Bold button's effect ambiguous. The one styled run is the
- * sentence the page asks the reader to select.
+ * would make an edit's effect ambiguous.
  *
  * Written as a minimal OOXML package rather than through a library so the bytes
  * are stable: no timestamps, no generated ids, no zip metadata that changes
  * between runs. Regenerating produces no git diff.
  *
- * Run: node scripts/build-custom-ui-fixture.mjs
+ * Run: node scripts/build-demo-fixtures.mjs
  */
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -24,7 +25,22 @@ import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const OUT = path.resolve(HERE, '../public/fixtures/formatting-sample.docx');
+const FIXTURES_DIR = path.resolve(HERE, '../public/fixtures');
+
+const FIXTURES = [
+  {
+    fileName: 'formatting-sample.docx',
+    paragraphs: [
+      'Select this sentence and press the Bold button above.',
+      'The button is part of this documentation page, not part of SuperDoc. It reads whether it can run from the editor, and runs through it.',
+      'Everything else here — the page, the text, the selection you just made — is SuperDoc rendering a real DOCX file.',
+    ],
+  },
+  {
+    fileName: 'document-modes.docx',
+    paragraphs: ['Notice period', 'Either party may end this agreement by giving 30 days’ written notice.'],
+  },
+];
 
 const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
@@ -58,14 +74,10 @@ const paragraph = (text) => `<w:p><w:r><w:t xml:space="preserve">${text}</w:t></
  * The width stays 8.5in so the fitted zoom is computed from a familiar page
  * width; margins are tightened to give the text more of it.
  */
-const DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraph(
-  'Select this sentence and press the Bold button above.',
-)}${paragraph(
-  'The button is part of this documentation page, not part of SuperDoc. It reads whether it can run from the editor, and runs through it.',
-)}${paragraph(
-  'Everything else here — the page, the text, the selection you just made — is SuperDoc rendering a real DOCX file.',
-)}<w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+const documentXml = (paragraphs) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs
+  .map(paragraph)
+  .join('')}<w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
 
 /**
  * Every core property stays empty, including title and description.
@@ -79,30 +91,33 @@ const DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const CORE_PROPERTIES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title></dc:title><dc:subject></dc:subject><dc:creator></dc:creator><cp:keywords></cp:keywords><dc:description></dc:description><cp:lastModifiedBy></cp:lastModifiedBy><cp:revision>1</cp:revision><dcterms:created xsi:type="dcterms:W3CDTF">2025-01-15T00:00:00Z</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">2025-01-15T00:00:00Z</dcterms:modified><cp:category></cp:category></cp:coreProperties>`;
 
-const APP_PROPERTIES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>SuperDoc</Application><Company></Company><Manager></Manager><Template></Template><Paragraphs>3</Paragraphs></Properties>`;
+const appProperties = (paragraphCount) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>SuperDoc</Application><Company></Company><Manager></Manager><Template></Template><Paragraphs>${paragraphCount}</Paragraphs></Properties>`;
 
-const PARTS = [
-  ['[Content_Types].xml', CONTENT_TYPES],
-  ['_rels/.rels', ROOT_RELS],
-  ['word/document.xml', DOCUMENT],
-  ['word/_rels/document.xml.rels', DOCUMENT_RELS],
-  ['word/styles.xml', STYLES],
-  ['docProps/core.xml', CORE_PROPERTIES],
-  ['docProps/app.xml', APP_PROPERTIES],
-];
+for (const fixture of FIXTURES) {
+  const parts = [
+    ['[Content_Types].xml', CONTENT_TYPES],
+    ['_rels/.rels', ROOT_RELS],
+    ['word/document.xml', documentXml(fixture.paragraphs)],
+    ['word/_rels/document.xml.rels', DOCUMENT_RELS],
+    ['word/styles.xml', STYLES],
+    ['docProps/core.xml', CORE_PROPERTIES],
+    ['docProps/app.xml', appProperties(fixture.paragraphs.length)],
+  ];
 
-const zip = new JSZip();
-for (const [name, content] of PARTS) {
-  // A fixed date keeps the archive byte-stable across runs.
-  zip.file(name, content, { date: new Date('2025-01-15T00:00:00Z') });
+  const zip = new JSZip();
+  for (const [name, content] of parts) {
+    // A fixed date keeps the archive byte-stable across runs.
+    zip.file(name, content, { createFolders: false, date: new Date('2025-01-15T00:00:00Z') });
+  }
+
+  const buffer = await zip.generateAsync({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 9 },
+  });
+
+  const out = path.join(FIXTURES_DIR, fixture.fileName);
+  await writeFile(out, buffer);
+  console.log(`Wrote ${path.relative(process.cwd(), out)} (${buffer.length} bytes).`);
 }
-
-const buffer = await zip.generateAsync({
-  type: 'nodebuffer',
-  compression: 'DEFLATE',
-  compressionOptions: { level: 9 },
-});
-
-await writeFile(OUT, buffer);
-console.log(`Wrote ${path.relative(process.cwd(), OUT)} (${buffer.length} bytes).`);

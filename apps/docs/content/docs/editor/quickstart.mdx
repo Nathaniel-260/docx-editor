@@ -1,12 +1,26 @@
 ---
-title: Editor quickstart
+title: Open and edit your first DOCX
 navTitle: Quickstart
-description: Open a real DOCX in the browser, edit it, and export the result.
+description: Install the browser Editor, open a sample DOCX, and export your first edit.
 ---
 
-Use the browser editor when a person needs to read or change a DOCX file inside your application.
+Follow this guide from top to bottom. You will open a sample agreement, change its text, and export a new DOCX.
 
-By the end you will have opened a real DOCX, made an edit, exported it, and reopened the result in Word or SuperDoc. This guide uses a sample non-disclosure agreement, a small synthetic document with headings, body text, and a bulleted list so you can see how faithfully formatting survives the round trip. Any DOCX works.
+## 1. Create a project
+
+Create a Vite project and install SuperDoc:
+
+```bash
+pnpm create vite@latest superdoc-quickstart --template vanilla-ts
+cd superdoc-quickstart
+pnpm add superdoc
+```
+
+The `latest` tag installs SuperDoc v2. Pin the resolved version before shipping so upgrades stay deliberate.
+
+## 2. Add the sample document
+
+Download the sample and save it as `public/sample.docx`:
 
 <FileDownload
   href='/fixtures/sample-nda.docx'
@@ -15,101 +29,55 @@ By the end you will have opened a real DOCX, made an edit, exported it, and reop
   fileType='DOCX'
 />
 
-Want to try SuperDoc first? Open the live [document modes demo](/editor/document-modes) in your browser.
+Vite serves `public/sample.docx` at `/sample.docx`.
 
-## 1. Create a project and install the editor
+## 3. Add the page
 
-Start from any bundler-based setup. A minimal one:
-
-```bash
-pnpm create vite@latest superdoc-quickstart --template vanilla-ts
-cd superdoc-quickstart
-pnpm add superdoc
-```
-
-SuperDoc v2 is the stable major release, so the default `latest` tag installs it. For production, pin the exact version your lockfile resolved so upgrades stay deliberate.
-
-## 2. Add the sample document
-
-Save the sample above as `public/sample.docx`. Vite serves files in `public` from the root of the development server, so the editor can load it from `/sample.docx`.
-
-## 3. Add the editor surface
-
-Replace the body of `index.html` with an export button and a mount point. Keep the `<script type="module" src="/src/main.ts"></script>` tag, which loads your code:
+Replace the body of `index.html` with an export button and an Editor mount point. Keep the existing module script:
 
 ```html
 <button id="export-docx" type="button" disabled>Export DOCX</button>
 <div id="editor"></div>
 ```
 
-The editor grows to the height of the document it opens, and the page scrolls. You do not need to size the container. To keep the editor inside a fixed-height box and scroll the document internally instead, see [choosing a layout](#choose-a-layout) below.
-
-## 4. Mount the document and wire up export
+## 4. Open the document
 
 Replace the contents of `src/main.ts`:
 
 <include>../../../../../examples/vanilla/src/main.ts</include>
 
-The complete project is available at [go.superdoc.dev/examples/vanilla](https://go.superdoc.dev/examples/vanilla).
+Run the project:
 
-The editor opens in editing mode by default, so edits apply directly to the document.
+```bash
+pnpm dev
+```
 
-`onReady` fires once the document is open. Wait for it before enabling anything that depends on the open document, which is why the export button starts disabled.
-
-`onException` reports failures during loading, including a missing file, a blocked cross-origin request, and a file whose bytes cannot be read as a DOCX. Without it, those failures look like an editor that never appears.
+Open the printed URL. The agreement should appear, and **Export DOCX** should become enabled. That button stays disabled
+until `onReady` confirms that the document is open.
 
 ## 5. Make an edit and export
 
-Run `pnpm dev` and open the printed URL. You should see the document with its heading, paragraphs, and list, and the export button should become enabled. Replace a word in the document, then click the button to download `sample-edited.docx`.
+Replace a word in the agreement, then select **Export DOCX**. The browser downloads `sample-edited.docx`.
 
-The handler disables the button while the export runs and re-enables it afterwards, so a slow export cannot be started twice, and a failed one reports itself instead of surfacing as an unhandled rejection.
-
-<Callout variant='success' title='Verification target'>
-  Reopen the exported file in Word or SuperDoc. Your edit should be present, and the heading, paragraph, and list
-  formatting should be unchanged.
+<Callout variant='success' title='Check the exported document'>
+  Reopen `sample-edited.docx` in Word or SuperDoc. Confirm that your edit is present and that the heading, paragraphs,
+  and list still have their original formatting.
 </Callout>
 
-## Choose a layout
+## What just happened
 
-SuperDoc supports two layouts, and the difference is where scrolling happens:
+- `selector` chose where the Editor mounted.
+- `document` gave the browser a DOCX URL to open.
+- `onReady` marked the first safe moment to enable document actions.
+- `export()` created the edited DOCX and triggered the download.
 
-- **Natural height**, the default used above. The editor grows to the full height of the document and the page scrolls. The container needs no height.
-- **Contained**, for embedding the editor in a fixed-height panel. Pass `contained: true` and give the container a definite height. The document then scrolls inside it:
+If the document does not appear, check the `onException` message in the browser console. It reports startup failures
+instead of leaving an unexplained empty mount point.
 
-  ```ts
-  const superdoc = new SuperDoc({
-    selector: '#editor',
-    document: '/sample.docx',
-    contained: true,
-  });
-  ```
+The complete project is available at [go.superdoc.dev/examples/vanilla](https://go.superdoc.dev/examples/vanilla).
 
-  ```css
-  #editor {
-    height: 400px;
-  }
-  ```
+## Choose what to build next
 
-Setting a height without `contained: true` does not constrain the document or scroll it inside the box. The editor still grows to its full height and the page scrolls.
-
-## Clean up
-
-Call `destroy()` when your application removes or replaces the editor, such as when a route unmounts or a component tears down:
-
-```ts
-superdoc.destroy();
-```
-
-It unmounts the editor and releases its listeners and document resources. A page that keeps one editor for its lifetime does not need to call it.
-
-## Decide who renders the interface
-
-The editor above renders the document canvas and SuperDoc's default surfaces. The built-in toolbar needs its own mount target, while a hybrid or fully custom integration can move selected controls into application UI without changing how the DOCX is opened or saved.
-
-[Who renders the UI?](/editor/who-renders-the-ui) compares all three ownership modes with a runnable example of each.
-
-## Continue building
-
-- [Load and save documents](/editor/load-and-save-documents) covers letting people choose their own file, loading from a URL or `Blob`, and saving to a backend.
-- [Document modes](/editor/document-modes) explains editing, suggesting, and viewing, and how to record edits as tracked changes.
-- [Configure the Editor](/editor/configuration) explains how `ui`, `interaction`, and `surfaces` divide up the configuration.
+- [Load and save documents](/editor/load-and-save-documents) to open user files or save exports to your backend.
+- [Configure the Editor](/editor/configuration) to change startup behavior, layout, UI, and events.
+- [Document modes](/editor/document-modes) to compare direct edits, tracked suggestions, and read-only viewing.

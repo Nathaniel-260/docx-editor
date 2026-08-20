@@ -1,33 +1,58 @@
 ---
 title: Configure the Editor
 navTitle: Configuration
-description: Organize SuperDoc initialization around document input, interface, behavior, and host integration.
+description: Start with the fields that open the Editor, then add only the options your integration needs.
 ---
 
-Start with the smallest configuration that loads the document and interface you need. Add a field only when a product requirement justifies it.
+Use `Config` for decisions the Editor needs when it mounts. Use runtime methods for changes made after `onReady`.
 
-## Use one typed configuration
+## Start with a working configuration
 
-<include>../../../snippets/editor/editor-configuration.html</include>
+Use the project setup and `<div id="editor"></div>` mount point from the [Editor quickstart](/editor/quickstart):
 
 <include>../../../snippets/editor/editor-configuration.ts</include>
 
-The important configuration groups are:
+This reopens `/sample.docx`, assigns document activity to Jordan Lee, and logs when the Editor is ready. `satisfies
+Config` checks field names and value shapes before the object reaches `SuperDoc`.
 
-- `selector`, `document`, and `documentMode` establish the Editor and its starting posture.
-- `user` identifies the person for comments, suggestions, and collaboration presence. Supply trusted identity from your application.
-- `ui` decides which built-in interface SuperDoc renders, one surface at a time.
-- `interaction` decides what a user is allowed to do, which outlives the built-in UI: a custom comments panel still has to honor `readOnly`.
-- `surfaces` configures the shared dialog and floating infrastructure both built-in and application-owned UI mount into.
-- `modules` configures integration subsystems such as tracked changes and AI.
-- A structured document's `v2Collaboration` field configures its v2 collaboration room.
-- `zoom`, `contained`, fonts, proofing, and layout options control host behavior.
-- `onReady`, the `onContentError` and `onException` callbacks, and events such as `document-mode-change` connect the Editor to your application's lifecycle.
+Notice the boundary:
 
-Keep the configuration object stable in reactive frameworks. Recreating the Editor to apply a new object can reset selection and transient UI state. Use runtime methods for supported changes such as mode and zoom, and remount deliberately for initialization-only fields such as extensions.
+- `selector` is the only required field.
+- `document` and `user` describe what opens and who is acting.
+- `onReady` marks the first safe moment to enable document actions.
+- `onContentError` reports content and import errors. `onException` reports other runtime exceptions.
 
-Most applications should keep the default 30-second worker startup limit. If your worker bundle needs longer to download or evaluate, set `workerStartupTimeoutMs` to a larger value in milliseconds.
+## Change one startup decision
 
-Rendering and permission are separate decisions, which is why `ui` and `interaction` are separate groups. [Who renders the UI?](/editor/who-renders-the-ui) owns that decision and compares the built-in, hybrid, and fully custom paths.
+Add `documentMode: 'suggesting'` to the configuration object, then reload the application. New edits are now recorded as
+tracked changes instead of changing the document directly.
 
-Client configuration is not authorization. A browser user can inspect or alter client code, so document access and collaboration authorization must be enforced by trusted services.
+[Document modes](/editor/document-modes) explains the three modes and lets you run the same edit in each one.
+
+## Find another option
+
+Choose a group, then choose a field. The first layer explains what the field changes. Expand **API details** only when
+you need the full contract.
+
+<ConfigReference />
+
+## Change a running Editor
+
+After `onReady`, prefer a runtime method when one exists:
+
+| Change           | Runtime method                 |
+| ---------------- | ------------------------------ |
+| Document         | `replaceFile()`                |
+| Document mode    | `setDocumentMode()`            |
+| Zoom             | `setZoom()` or `setZoomMode()` |
+| Measurement unit | `setMeasurementUnit()`         |
+| Bookmarks        | `setShowBookmarks()`           |
+| Formatting marks | `setShowFormattingMarks()`     |
+
+To change `extensions` or `workerUrls`, call `destroy()` and create a new `SuperDoc`. Those fields are read only when the
+Editor mounts. Recreating the Editor can reset selection and temporary interface state.
+
+## Choose the next decision
+
+- [Load and save documents](/editor/load-and-save-documents) to choose where documents come from and where exports go.
+- [Who renders the UI?](/editor/who-renders-the-ui) to choose between built-in, hybrid, and custom interface ownership.

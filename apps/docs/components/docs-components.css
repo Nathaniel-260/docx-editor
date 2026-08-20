@@ -1019,23 +1019,6 @@
   border-left: 1px solid var(--sd-border-soft);
 }
 
-.sd-editor-demo-mode-controls {
-  overflow: hidden;
-  border: 1px solid var(--sd-border);
-  border-radius: var(--sd-radius-sm);
-  background: var(--sd-surface);
-}
-
-.sd-editor-demo-mode-controls button {
-  border: 0;
-  border-right: 1px solid var(--sd-border-soft);
-  border-radius: 0;
-}
-
-.sd-editor-demo-mode-controls button:last-child {
-  border-right: 0;
-}
-
 .sd-editor-demo-review-controls button {
   border-color: var(--sd-border);
   background: var(--sd-surface);
@@ -1388,10 +1371,6 @@
   .sd-editor-demo-review-controls {
     padding-left: 0;
     border-left: 0;
-  }
-
-  .sd-editor-demo-mode-controls button {
-    min-width: auto;
   }
 
   .sd-editor-demo-toolbar button {
@@ -1833,79 +1812,83 @@
 /* Feature configuration is shown in the same shape developers write it. The
    generated contract controls the fields and types; this component only adds
    navigation and examples around that source of truth. */
+.sd-config-explorer-wrap {
+  margin-block: 1rem 1.5rem;
+}
+
 .sd-config-explorer {
   overflow: hidden;
-  margin-block: 1rem 1.5rem;
-  border: 1px solid var(--sd-border-soft);
+  border: 1px solid var(--sd-border);
   border-radius: var(--sd-radius-lg);
   background: var(--sd-surface);
-  box-shadow: var(--sd-shadow-xs);
+  box-shadow: var(--sd-shadow-sm);
 }
 
 .sd-config-explorer-groups {
   display: flex;
-  gap: 1.125rem;
+  gap: 0.45rem;
   overflow-x: auto;
-  padding-inline: 1.125rem;
+  padding: 0.75rem 0.875rem;
   border-bottom: 1px solid var(--sd-border-soft);
+  background: var(--sd-canvas);
 }
 
 .sd-config-explorer-groups button {
   flex: none;
-  margin-bottom: -1px;
-  padding: 0.75rem 0.125rem 0.6875rem;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--sd-text-tertiary);
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--sd-border-soft);
+  border-radius: 999px;
+  background: var(--sd-surface);
+  color: var(--sd-text-secondary);
   cursor: pointer;
-  font: 500 0.75rem/1.25 var(--font-sans);
+  font: 500 0.75rem/1 var(--font-sans);
 }
 
 .sd-config-explorer-groups button:hover {
+  border-color: var(--sd-border);
   color: var(--sd-text-primary);
 }
 
 .sd-config-explorer-groups button[aria-pressed='true'] {
-  border-bottom-color: var(--sd-text-primary);
-  color: var(--sd-text-primary);
-  font-weight: 650;
+  border-color: color-mix(in srgb, var(--sd-blue) 24%, var(--sd-border-soft));
+  background: color-mix(in srgb, var(--sd-blue) 9%, var(--sd-surface));
+  color: var(--sd-blue-600);
 }
 
 .sd-config-explorer-body {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
+  grid-template-columns: minmax(0, 1.04fr) minmax(0, 0.96fr);
+  height: 18.75rem;
 }
 
 .sd-config-explorer-code {
   position: relative;
-  overflow-x: auto;
-  padding-block: 1rem;
+  overflow: auto;
+  height: 100%;
+  padding-block: 1.05rem;
   border-right: 1px solid var(--sd-border-soft);
-  background: var(--sd-code-surface);
-  color: var(--sd-code-text);
-  font: 0.75rem/1.9 var(--font-mono);
+  background: #0e1012;
+  color: #e1e4e8;
+  font: 0.75rem/1.85 var(--font-mono);
 }
 
 .sd-config-explorer-copy {
   position: absolute;
-  top: 0.625rem;
-  right: 0.75rem;
+  top: 0.65rem;
+  right: 0.7rem;
   z-index: 1;
-  display: grid;
-  width: 1.75rem;
-  height: 1.75rem;
-  place-items: center;
-  border: 0;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #2c3035;
   border-radius: var(--sd-radius-sm);
-  background: transparent;
-  color: var(--sd-code-muted);
+  background: #1b1e22;
+  color: #8b949e;
   cursor: pointer;
+  font: 0.625rem/1 var(--font-mono);
 }
 
 .sd-config-explorer-copy:hover {
-  background: var(--sd-canvas);
-  color: var(--sd-code-text);
+  background: #24282d;
+  color: #e1e4e8;
 }
 
 .sd-config-explorer-copy:focus-visible,
@@ -1913,11 +1896,6 @@
 .sd-config-explorer-field:focus-visible {
   outline: 3px solid var(--color-fd-ring);
   outline-offset: -3px;
-}
-
-.sd-config-explorer-copy svg {
-  width: 0.875rem;
-  height: 0.875rem;
 }
 
 .sd-config-explorer-line,
@@ -1930,13 +1908,15 @@
 }
 
 .sd-config-explorer-line-muted {
-  color: var(--sd-code-muted);
+  color: #8b949e;
 }
 
 .sd-config-explorer-field {
-  padding-block: 0;
+  width: calc(100% - 2rem);
+  margin-inline: 1rem;
+  padding: 0 0.65rem;
   border: 0;
-  border-left: 2px solid transparent;
+  border-radius: var(--sd-radius-sm);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -1945,25 +1925,52 @@
 }
 
 .sd-config-explorer-field:hover {
-  background: color-mix(in srgb, var(--sd-blue-300) 7%, transparent);
+  background: color-mix(in srgb, var(--sd-blue) 12%, transparent);
 }
 
 .sd-config-explorer-field[data-selected='true'] {
-  border-left-color: var(--sd-blue);
-  background: color-mix(in srgb, var(--sd-blue) 10%, transparent);
+  background: color-mix(in srgb, var(--sd-blue) 32%, transparent);
 }
 
 .sd-config-explorer-field-name {
-  color: var(--sd-code-key);
+  color: #79b8ff;
 }
 
 .sd-config-explorer-field-value {
-  color: var(--sd-code-value);
+  color: #9ecb8f;
 }
 
 .sd-config-explorer-detail {
   min-width: 0;
-  padding: 1.25rem 1.5rem 1.375rem;
+  overflow-y: auto;
+  padding: 1.35rem 1.4rem 1.5rem;
+  background: var(--sd-surface);
+}
+
+.sd-config-explorer-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.85rem;
+}
+
+.sd-config-explorer-badges span {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid color-mix(in srgb, #22c55e 25%, var(--sd-border-soft));
+  border-radius: 999px;
+  background: color-mix(in srgb, #22c55e 10%, var(--sd-surface));
+  color: #16813f;
+  font: 500 0.625rem/1.2 var(--font-mono);
+}
+
+.dark .sd-config-explorer-badges span {
+  color: #86efac;
+}
+
+.sd-config-explorer-badges span[data-kind='deprecated'] {
+  border-color: color-mix(in srgb, var(--sd-warning) 28%, var(--sd-border-soft));
+  background: color-mix(in srgb, var(--sd-warning) 10%, var(--sd-surface));
+  color: var(--sd-warning);
 }
 
 .sd-config-explorer .sd-config-explorer-detail-heading > code {
@@ -2045,6 +2052,30 @@
   line-height: 1.6;
 }
 
+.sd-config-explorer-api-details {
+  margin-top: 0.875rem;
+  color: var(--sd-text-secondary);
+  font-size: 0.75rem;
+}
+
+.sd-config-explorer-api-details summary {
+  width: fit-content;
+  color: var(--sd-blue-600);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.sd-config-explorer-api-details summary:focus-visible {
+  border-radius: var(--sd-radius-sm);
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.sd-config-explorer-api-details p {
+  margin: 0.625rem 0 0;
+  line-height: 1.6;
+}
+
 .sd-config-explorer-meta {
   display: grid;
   gap: 0.75rem;
@@ -2078,10 +2109,10 @@
 }
 
 .sd-config-explorer .sd-config-explorer-meta code {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--sd-border-soft);
+  border-radius: var(--sd-radius-sm);
+  background: var(--sd-canvas);
   color: var(--sd-text-secondary);
   font-size: 0.734375rem;
 }
@@ -2097,9 +2128,58 @@
   color: var(--sd-warning);
 }
 
-@media (max-width: 48rem) {
+.sd-config-explorer-detail > .sd-config-explorer-note[data-kind='deprecated'] {
+  color: var(--sd-warning);
+}
+
+.sd-config-explorer-guide {
+  display: inline-block;
+  margin-top: 0.875rem;
+  color: var(--sd-blue-600);
+  font-size: 0.78125rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.sd-config-explorer-guide:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.1875rem;
+}
+
+.sd-config-explorer-guide:focus-visible {
+  border-radius: var(--sd-radius-sm);
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.sd-config-explorer-caption {
+  margin: 0;
+  padding: 0.55rem 0.15rem 0;
+  color: var(--sd-text-tertiary);
+  font-size: 0.75rem;
+  text-align: left;
+}
+
+.sd-config-explorer-caption code {
+  color: inherit;
+  font-size: inherit;
+}
+
+/* Fumadocs renders light and dark Shiki tokens together. Code stays on the
+   dark surface in both site themes, so the active token palette must follow. */
+figure.shiki {
+  background: #0e1012 !important;
+  color: var(--shiki-dark) !important;
+}
+
+figure.shiki span[style*='--shiki-dark'] {
+  color: var(--shiki-dark) !important;
+}
+
+@media (max-width: 38rem) {
   .sd-config-explorer-body {
     grid-template-columns: minmax(0, 1fr);
+    height: auto;
   }
 
   .sd-config-explorer-detail {
@@ -2107,6 +2187,168 @@
   }
 
   .sd-config-explorer-code {
+    height: 17rem;
     border-right: 0;
+  }
+
+  .sd-config-explorer-detail {
+    max-height: 20rem;
+  }
+}
+
+.sd-editor-demo-mode-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.sd-editor-demo-mode-switcher {
+  display: flex;
+  gap: 0.125rem;
+  padding: 0.1875rem;
+  border-radius: var(--sd-radius-md);
+  background: var(--sd-canvas);
+}
+
+.sd-editor-demo-header .sd-editor-demo-mode-switcher button {
+  min-height: 2rem;
+  padding: 0.4rem 0.75rem;
+  border: 0;
+  border-radius: var(--sd-radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--sd-text-secondary);
+  font-size: 0.75rem;
+}
+
+.sd-editor-demo-header .sd-editor-demo-mode-switcher button:hover:not(:disabled) {
+  background: var(--sd-surface);
+  color: var(--sd-text-primary);
+}
+
+.sd-editor-demo-header .sd-editor-demo-mode-switcher button[aria-pressed='true'] {
+  background: var(--sd-surface);
+  box-shadow: var(--sd-shadow-xs);
+  color: var(--sd-text-primary);
+}
+
+.sd-editor-demo-header .sd-editor-demo-mode-reset {
+  display: inline-flex;
+  width: 2rem;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sd-text-tertiary);
+}
+
+.sd-editor-demo-header .sd-editor-demo-mode-reset:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--sd-canvas);
+  color: var(--sd-text-primary);
+}
+
+.sd-editor-demo-mode-reset svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.sd-editor-demo[data-document-mode='viewing'] .sd-editor-demo-edit-controls {
+  opacity: 0.4;
+}
+
+.sd-editor-demo-surface-blocked {
+  animation: sd-editor-demo-blocked 180ms ease;
+}
+
+@keyframes sd-editor-demo-blocked {
+  30% {
+    transform: translateX(-2px);
+  }
+
+  70% {
+    transform: translateX(2px);
+  }
+}
+
+.sd-editor-demo-mode-footer {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  min-width: 0;
+  padding: 0.65rem 0.875rem;
+  border-top: 1px solid var(--sd-border-soft);
+  background: var(--sd-surface);
+  color: var(--sd-text-secondary);
+  font-size: 0.75rem;
+}
+
+.sd-editor-demo-mode-footer > span {
+  width: 0.4rem;
+  height: 0.4rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--sd-text-tertiary);
+}
+
+.sd-editor-demo-mode-footer[data-mode='editing'] > span {
+  background: var(--sd-blue);
+}
+
+.sd-editor-demo-mode-footer[data-mode='suggesting'] > span {
+  background: var(--sd-success);
+}
+
+.sd-editor-demo-mode-footer p {
+  min-width: 0;
+  margin: 0;
+}
+
+.sd-editor-demo-mode-footer code {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sd-text-tertiary);
+  font-size: 0.6875rem;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-editor-demo-surface-blocked {
+    animation: none;
+  }
+}
+
+@media (max-width: 38rem) {
+  .sd-editor-demo-mode-header-actions {
+    width: 100%;
+  }
+
+  .sd-editor-demo-mode-switcher {
+    flex: 1;
+  }
+
+  .sd-editor-demo-header .sd-editor-demo-mode-switcher button {
+    width: auto;
+    min-width: 0;
+    flex: 1;
+    padding-inline: 0.4rem;
+  }
+
+  .sd-editor-demo-header .sd-editor-demo-mode-reset {
+    width: 2rem;
+  }
+
+  .sd-editor-demo-mode-footer {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sd-editor-demo-mode-footer code {
+    width: 100%;
+    margin-left: 0.9rem;
   }
 }

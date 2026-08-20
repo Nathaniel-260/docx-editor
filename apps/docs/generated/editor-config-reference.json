@@ -1,0 +1,666 @@
+{
+  "id": "editor-config",
+  "name": "Config",
+  "root": "config",
+  "label": "editor config",
+  "syntax": "typed-variable",
+  "groups": [
+    {
+      "id": "essentials",
+      "label": "Essentials"
+    },
+    {
+      "id": "document",
+      "label": "Document"
+    },
+    {
+      "id": "interface",
+      "label": "Interface"
+    },
+    {
+      "id": "behavior",
+      "label": "Behavior"
+    },
+    {
+      "id": "integrations",
+      "label": "Integrations"
+    },
+    {
+      "id": "lifecycle",
+      "label": "Lifecycle"
+    },
+    {
+      "id": "advanced",
+      "label": "Advanced"
+    }
+  ],
+  "fields": [
+    {
+      "name": "superdocId",
+      "type": "string",
+      "required": false,
+      "description": "The ID of the SuperDoc.",
+      "group": "other"
+    },
+    {
+      "name": "selector",
+      "type": "string | HTMLElement",
+      "required": true,
+      "description": "The selector or element to mount the SuperDoc into.",
+      "group": "other"
+    },
+    {
+      "name": "documentMode",
+      "type": "\"editing\" | \"viewing\" | \"suggesting\"",
+      "required": false,
+      "description": "The mode of the document (default: 'editing').",
+      "group": "other"
+    },
+    {
+      "name": "allowSelectionInViewMode",
+      "type": "boolean",
+      "required": false,
+      "description": "When `documentMode` is `'viewing'`, allow the user to make text selections even though editing is disabled. Defaults to `false`. Forwarded to the underlying editor as `options.allowSelectionInViewMode`.",
+      "group": "other"
+    },
+    {
+      "name": "role",
+      "type": "\"editor\" | \"viewer\" | \"suggester\"",
+      "required": false,
+      "description": "The role of the user in this SuperDoc.",
+      "group": "other"
+    },
+    {
+      "name": "document",
+      "type": "string | object | {\n  lastModified: number;\n  name: string;\n  webkitRelativePath: string;\n  size: number;\n  type: string;\n  arrayBuffer: () => Promise<ArrayBuffer>;\n  bytes: () => Promise<Uint8Array<ArrayBuffer>>;\n  slice: (start: number | undefined, end: number | undefined, contentType: string | undefined) => Blob;\n  stream: () => ReadableStream<Uint8Array<ArrayBuffer>>;\n  text: () => Promise<string>;\n} | {\n  size: number;\n  type: string;\n  arrayBuffer: () => Promise<ArrayBuffer>;\n  bytes: () => Promise<Uint8Array<ArrayBuffer>>;\n  slice: (start: number | undefined, end: number | undefined, contentType: string | undefined) => Blob;\n  stream: () => ReadableStream<Uint8Array<ArrayBuffer>>;\n  text: () => Promise<string>;\n}",
+      "typeName": "string | object | File | Blob",
+      "required": false,
+      "description": "The document to load. If a string, it will be treated as a URL. If a File or Blob, it will be used directly. For a v2 collaboration room, pass a structured document carrying `v2Collaboration`. Omitting this field and `documents` mounts a blank DOCX, so the Editor opens a real document rather than an empty surface. The blank document is a supported v2 source; it is seeded before mount and behaves like any other opened DOCX, including export. Setting the v1 `modules.collaboration` field also suppresses that seeding, but it is not a supported v2 path: the runtime fails closed with `collaboration-v1-config-unsupported` and mounts only enough state to report that error.",
+      "group": "other"
+    },
+    {
+      "name": "password",
+      "type": "string",
+      "required": false,
+      "description": "Password for encrypted DOCX files. Forwarded during document load.",
+      "group": "other"
+    },
+    {
+      "name": "documents",
+      "type": "Document[]",
+      "required": false,
+      "description": "The documents to load → soon to be deprecated.",
+      "group": "other"
+    },
+    {
+      "name": "user",
+      "type": "{\n  color?: string;\n  id?: null | string;\n  name?: null | string;\n  email?: null | string;\n  image?: null | string;\n}",
+      "typeName": "AwarenessUser",
+      "required": false,
+      "description": "The current user of this SuperDoc. Typed as `AwarenessUser` (an extension of `User` with the optional `color` field) so consumers can pass an explicit awareness color and have the runtime honor it as an override - `SuperDoc#assignUserColor()` skips its hash-based assignment when `user.color` is already set.",
+      "group": "other"
+    },
+    {
+      "name": "users",
+      "type": "User[]",
+      "required": false,
+      "description": "All users of this SuperDoc (can be used for \"@\"-mentions).",
+      "group": "other"
+    },
+    {
+      "name": "colors",
+      "type": "string[]",
+      "required": false,
+      "description": "Colors to use for user awareness.",
+      "group": "other"
+    },
+    {
+      "name": "ui",
+      "type": "false | {\n  toolbar?: false | true | { container?: string | HTMLElement; groups?: string[] | Record<string, string[]>; excludeItems?: string[]; icons?: Record<string, unknown>; texts?: Record<string, unknown>; hideButtons?: boolean; responsiveToContainer?: boolean; fonts?: ToolbarFontOption[]; customButtons?: readonly ToolbarCustomButton[]; showFormattingMarksButton?: boolean; showTableOfContentsButton?: boolean; };\n  comments?: false | true | CommentsConfig;\n  contextMenu?: false | true | ContextMenuConfig;\n  loading?: boolean;\n  search?: false | true | FindReplaceConfig;\n  linkPopover?: false | true | LinkPopoverConfig;\n  ruler?: false | true | { container?: string | HTMLElement; };\n  contentControls?: false | true | ContentControlsConfig;\n}",
+      "typeName": "false | UIConfig",
+      "required": false,
+      "description": "Which built-in interface SuperDoc renders. Omit it to keep SuperDoc's historical rendering: comments, the context menu, and content-control chrome are on; search, the link popover, and the ruler are opt-in; and the toolbar renders once it has somewhere to mount. That profile is not symmetrical, and omitting this field reproduces it exactly. Pass `false` when the application owns the interface. SuperDoc then renders no controls, chrome, dialogs, or popovers, while the document, the Document API, and `editor.ui` keep working — so a custom UI drives the same commands the built-in one would have. Pass an object to choose per surface. An omitted key keeps that surface's default rather than following its siblings, so `{ comments: false }` disables comments and changes nothing else.",
+      "group": "other"
+    },
+    {
+      "name": "interaction",
+      "type": "{\n  comments?: { readOnly?: boolean; allowResolve?: boolean; };\n}",
+      "typeName": "InteractionConfig",
+      "required": false,
+      "description": "What the user is permitted to do. Independent of {@link Config.ui}: a `readOnly` policy still applies when the application renders its own comment UI.",
+      "group": "other"
+    },
+    {
+      "name": "surfaces",
+      "type": "{\n  resolver?: null | (request: SurfaceRequest) => SurfaceResolution | null | undefined;\n  dialog?: { closeOnEscape?: boolean; closeOnBackdrop?: boolean; maxWidth?: string | number; };\n  floating?: { placement?: SurfaceFloatingPlacement; width?: string | number; maxWidth?: string | number; maxHeight?: string | number; closeOnEscape?: boolean; closeOnOutsidePointerDown?: boolean; autoFocus?: boolean; };\n}",
+      "typeName": "SurfacesConfig",
+      "required": false,
+      "description": "Shared configuration for dialogs and floating overlays, including ones opened through `superdoc.openSurface()`. Stays active under `ui: false`.",
+      "group": "other"
+    },
+    {
+      "name": "modules",
+      "type": "{\n  contentControls?: { chrome?: \"default\" | \"none\"; };\n  comments?: false | { permissionResolver?: (params: PermissionResolverParams) => boolean | undefined; readOnly?: boolean; allowResolve?: boolean; highlightColors?: { internal?: string; external?: string; activeInternal?: string; activeExternal?: string; }; highlightOpacity?: { active?: number; inactive?: number; }; highlightHoverColor?: string; trackChangeHighlightColors?: { insertBorder?: string; insertBackground?: string; deleteBorder?: string; deleteBackground?: string; formatBorder?: string; }; trackChangeActiveHighlightColors?: { insertBorder?: string; insertBackground?: string; deleteBorder?: string; deleteBackground?: string; formatBorder?: string; }; displayMode?: \"auto\" | \"sidebar\" | \"inline\"; compactMeasurementSelector?: string; compactBreakpointPx?: number; } & Record<string, unknown>;\n  ai?: { apiKey?: string; endpoint?: string; } & Record<string, unknown>;\n  pdf?: { pdfLib: object; workerSrc?: string; setWorker?: boolean; textLayer?: boolean; outputScale?: number; } & Record<string, unknown>;\n  collaboration?: CollaborationConfig;\n  toolbar?: false | true | { selector?: string; excludeItems?: string[]; groups?: Record<string, string[]>; icons?: Record<string, unknown>; texts?: Record<string, string>; fonts?: Array<FontConfig | ToolbarFontOption>; hideButtons?: boolean; responsiveToContainer?: boolean; customButtons?: Array<Record<string, unknown>>; showFormattingMarksButton?: boolean; showTableOfContentsButton?: boolean; } & Record<string, unknown>;\n  links?: { popoverResolver?: LinkPopoverResolver; } & Record<string, unknown>;\n  contextMenu?: ContextMenuConfig;\n  slashMenu?: object;\n  surfaces?: SurfacesModuleConfig;\n  trackChanges?: TrackChangesModuleConfig;\n  whiteboard?: false | { enabled?: boolean; };\n}",
+      "typeName": "Modules",
+      "required": false,
+      "description": "Modules to load.",
+      "group": "other"
+    },
+    {
+      "name": "permissionResolver",
+      "type": "(params: {\n  permission: string;\n  role: string;\n  isInternal: boolean;\n  defaultDecision: boolean;\n  comment: null | object;\n  trackedChange: null | object;\n  currentUser: null | User;\n  superdoc: null | SuperDocClass;\n}) => boolean | undefined",
+      "typeName": "(params: PermissionResolverParams) => boolean | undefined",
+      "required": false,
+      "description": "Top-level override for permission checks.",
+      "group": "other"
+    },
+    {
+      "name": "toolbar",
+      "type": "string | HTMLElement",
+      "required": false,
+      "description": "Where to render the built-in toolbar. Either an `HTMLElement`, or a selector string in one of the supported forms: an id selector (`#toolbar`), a class selector (`.toolbar`), or a bare element id (`toolbar`). Other CSS selector syntax is not supported — an attribute or descendant selector such as `[data-toolbar]` resolves to nothing and leaves the toolbar unrendered. SuperDoc renders into the resolved element but does not manage its placement, and never includes it in the `contained` layout calculation. Where the application puts it therefore decides the space it needs: a sibling of a 400px `contained` Editor adds its own height alongside it, while a toolbar placed inside that host consumes part of the 400px and can overflow it. Omitting this field (and `modules.toolbar.selector`) renders no toolbar. `modules.toolbar: true` on its own does not render one either — it creates the `superdoc.toolbar` handle without a mount target. See {@link Modules.toolbar}.",
+      "group": "other"
+    },
+    {
+      "name": "toolbarGroups",
+      "type": "string[]",
+      "required": false,
+      "description": "Toolbar groups to show.",
+      "group": "other"
+    },
+    {
+      "name": "toolbarIcons",
+      "type": "object",
+      "required": false,
+      "description": "Icons to show in the toolbar.",
+      "group": "other"
+    },
+    {
+      "name": "toolbarTexts",
+      "type": "object",
+      "required": false,
+      "description": "Texts to override in the toolbar.",
+      "group": "other"
+    },
+    {
+      "name": "uiDisplayFallbackFont",
+      "type": "string",
+      "required": false,
+      "description": "The font-family to use for all SuperDoc UI surfaces (toolbar, comments UI, dropdowns, tooltips, etc.). This ensures consistent typography across the entire application and helps match your application's design system. The value should be a valid CSS font-family string. Example (system fonts): uiDisplayFallbackFont: '-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif' Example (custom font): uiDisplayFallbackFont: '\"Inter\", Arial, sans-serif'",
+      "group": "other"
+    },
+    {
+      "name": "isDev",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether the SuperDoc is in development mode.",
+      "group": "other"
+    },
+    {
+      "name": "disablePiniaDevtools",
+      "type": "boolean",
+      "required": false,
+      "description": "Disable Pinia/Vue devtools plugin setup for this SuperDoc instance (useful in non-Vue hosts).",
+      "group": "other"
+    },
+    {
+      "name": "layoutEngineOptions",
+      "type": "{\n  flowMode?: \"paginated\" | \"semantic\";\n  trackedChanges?: object;\n  virtualization?: { enabled?: boolean; window?: number; overscan?: number; };\n  showBookmarks?: boolean;\n  showFormattingMarks?: boolean;\n  paintHud?: boolean;\n}",
+      "typeName": "SuperDocLayoutEngineOptions",
+      "required": false,
+      "description": "Layout engine overrides passed through to DocumentRendererRuntime (page size, margins, virtualization, zoom, debug label, etc.).",
+      "group": "other"
+    },
+    {
+      "name": "experimental",
+      "type": "{\n  unifiedHistory?: boolean;\n  v2Host?: boolean;\n  v2WebSurface?: \"dense-control\" | \"retained-dom\";\n  deferDerivedInvalidations?: boolean;\n}",
+      "typeName": "{ unifiedHistory?: boolean; v2Host?: boolean; v2WebSurface?: \"dense-control\" | \"retained-dom\"; deferDerivedInvalidations?: boolean; }",
+      "required": false,
+      "description": "Advanced DocumentRendererRuntime feature toggles. `unifiedHistory` is enabled by default; set it to `false` to force legacy active-surface undo routing. `v2Host` enables the experimental mode-aware v2 DOCX shell path.",
+      "group": "other"
+    },
+    {
+      "name": "onEditorBeforeCreate",
+      "type": "(params: {\n  editor: Editor;\n}) => void",
+      "typeName": "(params: SuperDocEditorPayload) => void",
+      "required": false,
+      "description": "Callback before an editor is created. Receives a wrapper carrying the editor.",
+      "group": "other"
+    },
+    {
+      "name": "onEditorCreate",
+      "type": "(params: {\n  editor: Editor;\n}) => void",
+      "typeName": "(params: SuperDocEditorPayload) => void",
+      "required": false,
+      "description": "Callback after an editor is created. Receives a wrapper carrying the editor.",
+      "group": "other"
+    },
+    {
+      "name": "onSourceComplete",
+      "type": "() => void",
+      "required": false,
+      "description": "Callback when the v2 document source reaches source-complete posture and diff.capture is safe to call.",
+      "group": "other"
+    },
+    {
+      "name": "onSourceSignalsComplete",
+      "type": "() => void",
+      "required": false,
+      "description": "Callback when v2 source signals finish building (fires after onSourceComplete; diff.capture is synchronously safe).",
+      "group": "other"
+    },
+    {
+      "name": "onTransaction",
+      "type": "(params: {\n  editor: Editor;\n  sourceEditor: Editor;\n  transaction: EditorTransactionLike;\n  duration?: number;\n  surface: \"body\" | \"header\" | \"footer\";\n  headerId?: null | string;\n  sectionType?: null | string;\n}) => void",
+      "typeName": "(params: EditorTransactionEvent) => void",
+      "required": false,
+      "description": "Callback when a transaction is made.",
+      "group": "other"
+    },
+    {
+      "name": "onEditorDestroy",
+      "type": "() => void",
+      "required": false,
+      "description": "Callback after an editor is destroyed.",
+      "group": "other"
+    },
+    {
+      "name": "onContentError",
+      "type": "(params: {\n  error: unknown;\n  editor: Editor;\n  documentId: string;\n  file: null | File | Blob;\n}) => void",
+      "typeName": "(params: { error: unknown; editor: Editor; documentId: string; file: globalThis.File | globalThis.Blob | null | undefined; }) => void",
+      "required": false,
+      "description": "Callback when an editor reports a content error (parse failure, doc import error, etc.). `error` is widened to `unknown` because the document editor side mostly normalizes to `Error` but some emitters (e.g. `insertContentAt`) forward the original caught value. `file` matches `Document.data` (`File | Blob | null | undefined`) since the document can be loaded from any of those shapes. `documentId` is guaranteed at runtime by `#initDocuments`.",
+      "group": "other"
+    },
+    {
+      "name": "onReady",
+      "type": "(params: {\n  superdoc: SuperDocClass;\n}) => void",
+      "typeName": "(params: SuperDocReadyPayload) => void",
+      "required": false,
+      "description": "Callback when the SuperDoc is ready. Receives a wrapper carrying the live SuperDoc instance.",
+      "group": "other"
+    },
+    {
+      "name": "onCommentsUpdate",
+      "type": "(params: {\n  type: string;\n  comment?: Comment;\n  changes?: { key: string; commentId: string; fileId?: string | null; }[];\n  pendingSelection?: null | SelectionInfo;\n}) => void",
+      "typeName": "(params: SuperDocCommentsUpdatePayload) => void",
+      "required": false,
+      "description": "Callback when comments are updated.",
+      "group": "other"
+    },
+    {
+      "name": "onContentControlActiveChange",
+      "type": "(params: {\n  active: null | SdtRef;\n  previous: null | SdtRef;\n  activePath: SdtRef[];\n  source: \"keyboard\" | \"pointer\";\n}) => void",
+      "typeName": "(params: ContentControlActiveChangePayload) => void",
+      "required": false,
+      "description": "Callback when active content control changes.",
+      "group": "other"
+    },
+    {
+      "name": "onContentControlClick",
+      "type": "(params: {\n  target: SdtRef;\n  source: \"pointer\";\n}) => void",
+      "typeName": "(params: ContentControlClickPayload) => void",
+      "required": false,
+      "description": "Callback when user clicks inside a content control.",
+      "group": "other"
+    },
+    {
+      "name": "onAwarenessUpdate",
+      "type": "(params: {\n  states: AwarenessState[];\n  added: number[];\n  removed: number[];\n  superdoc: SuperDocClass;\n}) => void",
+      "typeName": "(params: SuperDocAwarenessUpdatePayload) => void",
+      "required": false,
+      "description": "Callback when awareness is updated.",
+      "group": "other"
+    },
+    {
+      "name": "onLocked",
+      "type": "(params: {\n  isLocked: boolean;\n  lockedBy: null | User;\n}) => void",
+      "typeName": "(params: SuperDocLockedPayload) => void",
+      "required": false,
+      "description": "Callback when the SuperDoc is locked or unlocked.",
+      "group": "other"
+    },
+    {
+      "name": "onPdfDocumentReady",
+      "type": "() => void",
+      "required": false,
+      "description": "Callback when the PDF document is ready.",
+      "group": "other"
+    },
+    {
+      "name": "onSidebarToggle",
+      "type": "(isOpened: boolean) => void",
+      "required": false,
+      "description": "Callback when the sidebar is toggled.",
+      "group": "other"
+    },
+    {
+      "name": "onCollaborationReady",
+      "type": "(params: {\n  editor: Editor;\n}) => void",
+      "typeName": "(params: SuperDocEditorPayload) => void",
+      "required": false,
+      "description": "Callback when collaboration is ready. Receives a wrapper carrying the editor.",
+      "group": "other"
+    },
+    {
+      "name": "onEditorUpdate",
+      "type": "(params: {\n  editor?: Editor;\n  sourceEditor?: Editor;\n  surface: \"body\" | \"header\" | \"footer\";\n  headerId: null | string;\n  sectionType: null | string;\n}) => void",
+      "typeName": "(params: EditorUpdateEvent) => void",
+      "required": false,
+      "description": "Callback when document is updated.",
+      "group": "other"
+    },
+    {
+      "name": "onException",
+      "type": "(params: SuperDocExceptionPayload) => void",
+      "required": false,
+      "description": "Callback when SuperDoc emits an `exception` event. The payload is a union of three runtime shapes (store init, restore failure, editor lifecycle). Narrow with `'stage' in params` (store init) or `'code' in params` (editor) before reading shape-specific fields.",
+      "group": "other"
+    },
+    {
+      "name": "onCommentsListChange",
+      "type": "(params: {\n  isRendered: boolean;\n}) => void",
+      "typeName": "(params: { isRendered: boolean; }) => void",
+      "required": false,
+      "description": "Callback when the comments list is rendered.",
+      "group": "other"
+    },
+    {
+      "name": "onPaginationUpdate",
+      "type": "(params: {\n  totalPages: number;\n  superdoc: SuperDocClass;\n}) => void",
+      "typeName": "(params: { totalPages: number; superdoc: SuperDoc; }) => void",
+      "required": false,
+      "description": "Callback when pagination layout updates (fires after each layout pass with the current page count).",
+      "group": "other"
+    },
+    {
+      "name": "onListDefinitionsChange",
+      "type": "(params: ListDefinitionsPayload) => void",
+      "required": false,
+      "description": "Callback when the list definitions change.",
+      "group": "other"
+    },
+    {
+      "name": "onZoomChange",
+      "type": "(params: {\n  zoom: number;\n  mode: \"manual\" | \"fit-width\";\n}) => void",
+      "typeName": "(params: SuperDocZoomPayload) => void",
+      "required": false,
+      "description": "Callback when the zoom level changes. Fires for every zoom source: `setZoom()`, the toolbar zoom control, and fit-width adjustments.",
+      "group": "other"
+    },
+    {
+      "name": "onViewportChange",
+      "type": "(params: {\n  availableWidth: number;\n  documentWidth: number;\n  fitZoom: number;\n}) => void",
+      "typeName": "(params: SuperDocViewportChangePayload) => void",
+      "required": false,
+      "description": "Callback when the implied fit changes (rounded fit zoom or base page width); pixel-level width jitter does not fire it, and `getViewportMetrics()` always reads latest. Registered before the first emit.",
+      "group": "other"
+    },
+    {
+      "name": "format",
+      "type": "string",
+      "required": false,
+      "description": "The format of the document (docx, pdf, html).",
+      "group": "other"
+    },
+    {
+      "name": "editorExtensions",
+      "type": "object[]",
+      "required": false,
+      "description": "Legacy v1 ProseMirror extensions. `editorExtensions` is a v1/ProseMirror concept and is IGNORED by `superdoc@2`: these objects are never loaded into the v2 runtime. Passing `editorExtensions` records a clear console diagnostic at construction. For v2, use {@link Config.extensions} with `defineSuperDocExtension`; the two are not interchangeable.",
+      "group": "other"
+    },
+    {
+      "name": "extensions",
+      "type": "SuperDocExtension<Record<string, unknown>>[]",
+      "required": false,
+      "description": "v2 SuperDoc extensions, created with `defineSuperDocExtension`. `superdoc@2` IS the v2 editor, so these activate unconditionally — there is no `editorVersion` / `editorIntegration` selector. Each extension owns isolated storage, named events, commands, anchors, and render-only decorations, and mutates the document exclusively through the guarded Document API (`ctx.doc.*`). This is the v2 replacement for the v1/ProseMirror `editorExtensions` path; the two are not interchangeable. Extension arrays are mount-time config: changing the array reference requires a remount to take effect.",
+      "group": "other"
+    },
+    {
+      "name": "isInternal",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether the SuperDoc is internal.",
+      "group": "other"
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "required": false,
+      "description": "The title of the SuperDoc.",
+      "group": "other"
+    },
+    {
+      "name": "conversations",
+      "type": "object[]",
+      "required": false,
+      "description": "The conversations to load.",
+      "group": "other"
+    },
+    {
+      "name": "comments",
+      "type": "{\n  visible?: boolean;\n}",
+      "typeName": "ViewingVisibilityConfig",
+      "required": false,
+      "description": "Toggle comment visibility when `documentMode` is `viewing` (default: false).",
+      "group": "other"
+    },
+    {
+      "name": "trackChanges",
+      "type": "{\n  visible?: boolean;\n}",
+      "typeName": "ViewingVisibilityConfig",
+      "required": false,
+      "description": "Deprecated. Use `modules.trackChanges.visible` instead. Toggle tracked-change visibility when `documentMode` is `viewing` (default: false).",
+      "group": "other"
+    },
+    {
+      "name": "isLocked",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether the SuperDoc is locked.",
+      "group": "other"
+    },
+    {
+      "name": "handleImageUpload",
+      "type": "(file: {\n  lastModified: number;\n  name: string;\n  webkitRelativePath: string;\n  size: number;\n  type: string;\n  arrayBuffer: () => Promise<ArrayBuffer>;\n  bytes: () => Promise<Uint8Array<ArrayBuffer>>;\n  slice: (start: number | undefined, end: number | undefined, contentType: string | undefined) => Blob;\n  stream: () => ReadableStream<Uint8Array<ArrayBuffer>>;\n  text: () => Promise<string>;\n}) => Promise<string>",
+      "typeName": "(file: globalThis.File) => Promise<string>",
+      "required": false,
+      "description": "The function to handle image uploads.",
+      "group": "other"
+    },
+    {
+      "name": "lockedBy",
+      "type": "{\n  id?: null | string;\n  name?: null | string;\n  email?: null | string;\n  image?: null | string;\n}",
+      "typeName": "User",
+      "required": false,
+      "description": "The user who locked the SuperDoc.",
+      "group": "other"
+    },
+    {
+      "name": "rulers",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether to show the ruler in the editor.",
+      "group": "other"
+    },
+    {
+      "name": "rulerContainer",
+      "type": "string | HTMLElement",
+      "required": false,
+      "description": "Element or selector the ruler mounts into. Omit to render it inline above the editor.",
+      "group": "other",
+      "deprecated": true,
+      "deprecatedReplacement": "ui.ruler.container"
+    },
+    {
+      "name": "suppressDefaultDocxStyles",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether to suppress default styles in docx mode.",
+      "group": "other"
+    },
+    {
+      "name": "jsonOverride",
+      "type": "object",
+      "required": false,
+      "description": "Provided JSON to override content with.",
+      "group": "other"
+    },
+    {
+      "name": "disableContextMenu",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether to disable slash / right-click custom context menu.",
+      "group": "other"
+    },
+    {
+      "name": "html",
+      "type": "string",
+      "required": false,
+      "description": "HTML content to initialize the editor with.",
+      "group": "other"
+    },
+    {
+      "name": "markdown",
+      "type": "string",
+      "required": false,
+      "description": "Markdown content to initialize the editor with.",
+      "group": "other"
+    },
+    {
+      "name": "onUnsupportedContent",
+      "type": "(items: { tagName: string; outerHTML: string; count: number; }[]) => void | null",
+      "required": false,
+      "description": "Callback invoked with unsupported HTML elements dropped during import. When provided, console.warn is NOT emitted.",
+      "group": "other"
+    },
+    {
+      "name": "warnOnUnsupportedContent",
+      "type": "boolean",
+      "required": false,
+      "description": "When true and no onUnsupportedContent callback is provided, emits a console.warn with unsupported items.",
+      "group": "other"
+    },
+    {
+      "name": "isDebug",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether to enable debug mode.",
+      "group": "other"
+    },
+    {
+      "name": "viewOptions",
+      "type": "{\n  layout?: \"print\" | \"web\";\n}",
+      "typeName": "ViewOptions",
+      "required": false,
+      "description": "Document view options (OOXML ST_View compatible).",
+      "group": "other"
+    },
+    {
+      "name": "contained",
+      "type": "boolean",
+      "required": false,
+      "description": "Enable contained mode for fixed-height container embedding. SuperDoc supports two layout modes, and the host element's height requirement differs between them: - Natural (default, `false`): the Editor grows to the document's full height and the page scrolls. The host needs no height. Setting one does not constrain the document or enable internal scrolling, because SuperDoc leaves overflow visible in this mode, though application CSS on the host can still clip what is drawn. - Contained (`true`): SuperDoc propagates `height: 100%` through its DOM tree and scrolls the document internally, so multi-page documents stay inside the host. This mode requires the host to have a definite height (for example `height: 400px`); without one there is nothing for the percentage heights to resolve against. A toolbar mounted through `Config.toolbar` or `modules.toolbar.selector` is never part of this calculation. Placed as a sibling of the host, its height adds to the host's: a 400px host with a 40px toolbar occupies 440px in total. Placed inside the host, it consumes part of the 400px instead.",
+      "group": "other"
+    },
+    {
+      "name": "cspNonce",
+      "type": "string",
+      "required": false,
+      "description": "Content Security Policy nonce for dynamically injected styles.",
+      "group": "other"
+    },
+    {
+      "name": "licenseKey",
+      "type": "string",
+      "required": false,
+      "description": "License key for organization identification.",
+      "group": "other"
+    },
+    {
+      "name": "telemetry",
+      "type": "{\n  enabled: boolean;\n  endpoint?: string;\n  metadata?: Record<string, unknown>;\n  licenseKey?: string;\n}",
+      "typeName": "SuperDocTelemetryConfig",
+      "required": false,
+      "description": "Telemetry configuration.",
+      "group": "other"
+    },
+    {
+      "name": "proofing",
+      "type": "ProofingConfig",
+      "required": false,
+      "description": "Proofing / spellcheck configuration.",
+      "group": "other"
+    },
+    {
+      "name": "fonts",
+      "type": "{\n  bundled?: false | true | string[] | Record<string, unknown> | \"baseline\" | \"full\";\n  families?: FontFamilyConfig[];\n  assetBaseUrl?: string;\n  resolveAssetUrl?: (context: import(\"@superdoc/font-system\").FontAssetUrlContext) => string;\n  assetUrl?: string | (context: import(\"@superdoc/font-system\").FontAssetUrlContext) => string;\n}",
+      "typeName": "FontsConfig",
+      "required": false,
+      "description": "Font system configuration. The reviewed fallback pack ships in the optional `@superdoc-dev/fonts` package: pass `superdocFonts` (bundler) or the `SuperDocFonts` global from its `superdoc-fonts.min.js` browser build (CDN). To self-host, set `fonts.assetBaseUrl` (e.g. `/fonts/` or a CDN URL) or `fonts.resolveAssetUrl` for signed/versioned hosting. SuperDoc core ships no fonts; with none configured the toolbar shows the baseline and documents render with system fonts.",
+      "group": "other"
+    },
+    {
+      "name": "workerUrls",
+      "type": "{\n  document?: string | URL;\n  collaboration?: string | URL;\n  reviewIndex?: string | URL;\n}",
+      "typeName": "V2WorkerUrlsConfig",
+      "required": false,
+      "description": "Optional same-origin URLs for v2's browser worker assets. Configure these when the application and SuperDoc bundle are served from different origins. Omitted entries keep SuperDoc's bundled worker URLs.",
+      "group": "other"
+    },
+    {
+      "name": "workerStartupTimeoutMs",
+      "type": "number",
+      "required": false,
+      "description": "Budget for the document worker to start up, in milliseconds (default: 30000). Measured from worker spawn, so it covers script download, parsing, evaluation, and the worker's first response to SuperDoc. Raise it when a large worker chunk is served over a slow connection or a cold dev-server cache; lower it to fail faster. Worker load errors are reported immediately and do not wait for this budget. Must be a finite positive number no greater than 2147483647, the platform timer ceiling above which a delay would fire immediately.",
+      "group": "other"
+    },
+    {
+      "name": "useLayoutEngine",
+      "type": "boolean",
+      "required": false,
+      "description": "Compatibility toggle retained for existing configurations. V2 always uses the OOXML kernel; `viewOptions.layout` selects the mounted renderer.",
+      "group": "other"
+    },
+    {
+      "name": "zoom",
+      "type": "{\n  initial?: number;\n  mode?: \"manual\" | \"fit-width\";\n  fitWidth?: SuperDocFitWidthOptions;\n}",
+      "typeName": "SuperDocZoomConfig",
+      "required": false,
+      "description": "Zoom behavior: the initial zoom level and optional fit-width policy. See `SuperDocZoomConfig`.",
+      "group": "other"
+    },
+    {
+      "name": "measurementUnit",
+      "type": "\"in\" | \"cm\"",
+      "required": false,
+      "description": "Starting measurement unit for rulers and measurement fields (Word's \"measurement units\" preference). Defaults to `'in'` (Word's en-US default). Change it at runtime with `setMeasurementUnit()`. See `SuperDocMeasurementUnit`.",
+      "group": "other"
+    },
+    {
+      "name": "onFontsResolved",
+      "type": "(payload: {\n  report?: FontResolutionRecord[];\n  missingFonts?: string[];\n  documentFonts?: string[];\n  documentFontOptions?: DocumentFontOption[];\n}) => void",
+      "typeName": "(payload: FontsResolvedPayload) => void",
+      "required": false,
+      "description": "Callback fired after the editor reports `fonts-resolved`. The payload contains `documentFonts` and `unsupportedFonts` arrays so hosts can fall back, warn, or block printing on unsupported faces. LEGACY/EARLY: this fires once before fonts load and is not substitution-aware (`unsupportedFonts` over-reports families that render via a bundled substitute). For the authoritative, load-settled picture use {@link onFontsChanged}.",
+      "group": "other"
+    },
+    {
+      "name": "onPageCountKnown",
+      "type": "(payload: {\n  pageCount: number;\n  generation: number;\n}) => void",
+      "typeName": "(payload: { pageCount: number; generation: number; }) => void",
+      "required": false,
+      "description": "Painter plan P7 §1 (@experimental): fires when the paginated page count changes, at layout-end — before resolve or paint, so page counters and minimaps can trust the number as soon as it is knowable. The payload's `generation` identifies the announcing layout pass (informational; the event is keyed on page-count changes, not generations). v2 vertical pagination only; semantic \"web layout\" surfaces never fire it.",
+      "group": "other"
+    },
+    {
+      "name": "onFontsChanged",
+      "type": "(payload: {\n  source?: string;\n  loadSummary?: null | FontLoadSummary;\n  report?: FontResolutionRecord[];\n  missingFonts?: string[];\n  documentFonts?: string[];\n  documentFontOptions?: DocumentFontOption[];\n}) => void",
+      "typeName": "(payload: FontsChangedPayload) => void",
+      "required": false,
+      "description": "Callback fired with the authoritative substitution + load-aware font report: once after the load-before-measure gate settles (`source: 'initial'`), again when a face arrives after a timed-out first paint (`'late-load'`). Each payload carries the full per-font `resolutions`, the genuinely `missingFonts`, and a `loadSummary`. Also available to pull on demand via `superdoc.fonts.getReport()`.",
+      "group": "other"
+    }
+  ]
+}

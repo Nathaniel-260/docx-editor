@@ -1,25 +1,24 @@
 import { SuperDoc, type Config } from 'superdoc';
 import 'superdoc/style.css';
 
-const editorConfig = {
+const config = {
   selector: '#editor',
-  document: '/contract.docx',
-  documentMode: 'editing',
-  user: { name: 'Avery Stone', email: 'avery@example.com' },
-  contained: true,
-  zoom: { mode: 'fit-width', fitWidth: { max: 100, padding: 24 } },
-  ui: {
-    // `container` is what makes the toolbar render; the other keys only
-    // describe it once it has somewhere to go.
-    toolbar: { container: '#toolbar', responsiveToContainer: true },
-    comments: { displayMode: 'auto' },
-    search: true,
+  document: '/sample.docx',
+  user: {
+    name: 'Jordan Lee',
+    email: 'jordan@example.com',
   },
   onReady: () => {
     console.info('SuperDoc is ready.');
   },
+  onContentError: ({ error }) => {
+    console.error('SuperDoc could not read the document.', error);
+  },
+  onException: ({ error }) => {
+    console.error('SuperDoc could not start.', error);
+  },
 } satisfies Config;
 
-const superdoc = new SuperDoc(editorConfig);
+const superdoc = new SuperDoc(config);
 
 window.addEventListener('beforeunload', () => superdoc.destroy());

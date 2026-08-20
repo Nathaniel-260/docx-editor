@@ -4,6 +4,8 @@ import {
   renderReferenceNamespaceMarkdown,
   renderReferenceOperationMarkdown,
 } from './document-api-reference/markdown';
+import { renderConfigReferenceMarkdown } from './config-explorer';
+import { editorConfigExplorer } from './editor-config-explorer';
 import { proofingConfigExplorer } from './proofing-config-explorer';
 
 export const llmPlaceholderComponents = [
@@ -11,6 +13,7 @@ export const llmPlaceholderComponents = [
   'Card',
   'Cards',
   'CommandStateDemo',
+  'ConfigReference',
   'CustomBoldDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
@@ -90,6 +93,9 @@ export function renderLLMMarkdown(markdown: string) {
         '',
       ].join('\n');
     },
+    ConfigReference() {
+      return renderConfigReferenceMarkdown(editorConfigExplorer);
+    },
     CustomBoldDemo() {
       return [
         '> **Live example: one custom control on a real document**',
@@ -137,7 +143,9 @@ export function renderLLMMarkdown(markdown: string) {
       const details = [
         fixture ? `Sample: [open the fixture](${fixture}).` : undefined,
         preset ? `Preset: \`${preset}\`.` : undefined,
-        preset === 'document-modes' ? 'Mode switching: viewing, editing, and suggesting.' : undefined,
+        preset === 'document-modes'
+          ? 'Try the same edit in each mode. Editing changes the document directly and is the default. Suggesting records a tracked change. Viewing blocks the edit and can show the original, markup, or final document.'
+          : undefined,
         preset === 'proofing'
           ? 'Proofing: type `mispelled`, `workng`, or `teh`, then right-click the underline.'
           : undefined,
@@ -201,11 +209,7 @@ export function renderLLMMarkdown(markdown: string) {
       ].join('\n');
     },
     ProofingConfigReference() {
-      const rows = proofingConfigExplorer.fields.map((field) => {
-        const type = field.type.replace(/\s+/gu, ' ').trim().replaceAll('|', '\\|');
-        return `| \`${field.name}\` | \`${type}\` | ${field.default ? `\`${field.default}\`` : '—'} | ${field.description} |`;
-      });
-      return ['| Field | Type | Default | Description |', '| --- | --- | --- | --- |', ...rows, ''].join('\n');
+      return renderConfigReferenceMarkdown(proofingConfigExplorer);
     },
     ReceiptBar({ attributes }) {
       const operation = textAttribute(attributes, 'operation') ?? 'operation';
