@@ -42,4 +42,4 @@ pnpm --filter @superdoc/docs test:export
 
 Generated reference pages, schemas, and models are not committed. Development, build, content-test, and typecheck commands regenerate them before use.
 
-Read `AUTHORING.md` before adding content, `DESIGN.md` before changing the visual system, and `V1-ARCHIVE.md` before touching route dispositions.
+Read `DESIGN.md` before changing the visual system and `V1-ARCHIVE.md` before touching route dispositions.

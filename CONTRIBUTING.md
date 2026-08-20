@@ -13,7 +13,7 @@ you can send.
 
 **Improve the docs.** They live in `apps/docs/` and ship to
 [docs.superdoc.dev](https://docs.superdoc.dev). Run `pnpm run dev:docs` to
-preview, and read `apps/docs/AUTHORING.md` before adding a page.
+preview your changes.
 
 **Add an example.** Keep it runnable and focused on one documented outcome. All examples live in `examples/`.
 
