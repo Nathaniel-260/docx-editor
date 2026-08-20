@@ -26,7 +26,7 @@ const routes = [
   ['editor/configuration/index.html', 'Configure the Editor'],
   ['editor/load-and-save-documents/index.html', 'Load and save documents'],
   ['editor/export-options/index.html', 'Control DOCX export'],
-  ['editor/document-modes/index.html', 'Choose how people edit'],
+  ['editor/document-modes/index.html', 'Choose a document mode'],
   ['editor/lifecycle-and-events/index.html', 'Handle lifecycle and events'],
   ['editor/who-renders-the-ui/index.html', 'Choose your editor interface'],
   ['editor/built-in-ui/overview/index.html', 'Built-in UI overview'],
@@ -355,7 +355,9 @@ test('exports the document modes guide with an interactive mode switcher', async
   assert.doesNotMatch(article, /Run the test edit/);
   assert.match(markdown, /Editing changes the document directly/);
   assert.match(markdown, /original, markup, or final document/);
-  assert.match(markdown, /Comments and change markup/);
+  assert.match(markdown, /trackedChanges: 'markup'/);
+  assert.match(markdown, /superdoc\.setViewingOptions/);
+  assert.match(markdown, /Proposals applied without markup/);
   assert.match(markdown, /Hiding comments or tracked changes does not remove them from the DOCX/);
   assert.doesNotMatch(markdown, /<EditorDemo\b/);
 });
@@ -821,7 +823,7 @@ test('exports the machine-readable documentation files', async () => {
     /Headless code does not have a toolbar, viewport, DOM selection, or visual review surface/,
   );
   assert.match(surfacesMarkdown, /The Document API is an operation contract, not another runtime/);
-  assert.match(modesMarkdown, /^# Choose how people edit/m);
+  assert.match(modesMarkdown, /^# Choose a document mode/m);
   assert.match(modesMarkdown, /Modes change Editor behavior in the browser/);
   assert.doesNotMatch(modesMarkdown, /<Callout\b/);
   assert.match(interfaceMarkdown, /^# Choose your editor interface/m);

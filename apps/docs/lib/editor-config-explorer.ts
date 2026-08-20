@@ -164,7 +164,7 @@ const summaries = {
   isInternal: 'Mark this instance as internal.',
   title: 'Set the Editor title.',
   conversations: 'Load conversation data.',
-  comments: 'Show or hide comments while viewing.',
+  comments: 'Legacy comment visibility setting.',
   trackChanges: 'Legacy tracked-change visibility setting.',
   isLocked: 'Start the Editor in a locked state.',
   handleImageUpload: 'Store images inserted into the document.',
@@ -213,6 +213,14 @@ const presentation = {
     example: { value: "'editing'", code: "documentMode: 'editing'" },
     guide: { label: 'Document modes', href: '/editor/document-modes' },
   },
+  viewing: {
+    default: "{ comments: false, trackedChanges: 'original' }",
+    example: {
+      value: "{ comments: true, trackedChanges: 'markup' }",
+      code: "viewing: {\n  comments: true,\n  trackedChanges: 'markup',\n}",
+    },
+    guide: { label: 'Document modes', href: '/editor/document-modes' },
+  },
   allowSelectionInViewMode: {
     default: 'false',
     guide: { label: 'Document modes', href: '/editor/document-modes' },
@@ -257,8 +265,12 @@ const presentation = {
     guide: { label: 'Themes and fonts', href: '/editor/themes-and-fonts' },
   },
   trackChanges: {
-    status: 'Deprecated. Use modules.trackChanges.',
-    guide: { label: 'Track changes', href: '/editor/track-changes' },
+    status: 'Deprecated. Use viewing.trackedChanges.',
+    guide: { label: 'Document modes', href: '/editor/document-modes' },
+  },
+  comments: {
+    status: 'Deprecated. Use viewing.comments.',
+    guide: { label: 'Document modes', href: '/editor/document-modes' },
   },
   contained: {
     default: 'false',

@@ -327,8 +327,6 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     const instance = instanceRef.current;
     instance?.setDocumentMode(mode);
     setDocumentMode(mode);
-    const nextTrackedChangesMode = mode === 'viewing' ? 'original' : 'review';
-    instance?.setTrackedChangesPreferences({ mode: nextTrackedChangesMode, enabled: true });
   }
 
   async function resetModesDemo() {
@@ -345,10 +343,6 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       if (!replacementSucceeded) throw new Error('SuperDoc could not reset the sample document.');
 
       instance.setDocumentMode(documentMode);
-      instance.setTrackedChangesPreferences({
-        mode: documentMode === 'viewing' ? 'original' : 'review',
-        enabled: true,
-      });
     } catch {
       setState('error');
     } finally {

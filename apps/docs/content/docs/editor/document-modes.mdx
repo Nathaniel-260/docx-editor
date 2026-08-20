@@ -1,7 +1,7 @@
 ---
-title: Choose how people edit
+title: Choose a document mode
 navTitle: Document modes
-description: Compare editing, suggesting, and viewing, then set the behavior your workflow needs.
+description: Compare editing, suggesting, and viewing, then configure what viewers see.
 ---
 
 Switch modes, then replace `30 days` with `60 days`. The same edit changes the text, creates a tracked change, or is
@@ -10,8 +10,6 @@ blocked.
 ## Compare the three modes
 
 <EditorDemo fixture='/fixtures/document-modes.docx' preset='document-modes' title='Try document modes' />
-
-## What to notice
 
 | Mode         | Result                             | Use it when                                       |
 | ------------ | ---------------------------------- | ------------------------------------------------- |
@@ -30,48 +28,44 @@ const superdoc = new SuperDoc({
   selector: '#editor',
   document: '/sample.docx',
   documentMode: 'suggesting',
-  user: { name: 'Jordan Lee', email: 'jordan@example.com' },
 });
 ```
 
-After `onReady`, call `superdoc.setDocumentMode('viewing')` to change modes without remounting. Set `user` from your
-authenticated application so exported tracked changes keep the correct author.
+After `onReady`, call `superdoc.setDocumentMode('viewing')` to change modes without remounting.
 
 ## Choose what viewers see
 
-Viewing stays read-only. Add only the review information the person needs:
-
-| Viewer experience          | Add to `Config`                                |
-| -------------------------- | ---------------------------------------------- |
-| Document without review UI | Nothing                                        |
-| Comments only              | `comments: { visible: true }`                  |
-| Tracked-change markup only | `modules: { trackChanges: { visible: true } }` |
-| Comments and change markup | Combine both settings                          |
-
-This example shows comments and tracked-change markup:
+Viewing stays read-only. Use `viewing` to choose which review information appears:
 
 ```ts
-new SuperDoc({
+const superdoc = new SuperDoc({
   selector: '#editor',
   document: '/sample.docx',
   documentMode: 'viewing',
-  comments: { visible: true },
-  modules: {
-    trackChanges: { visible: true, mode: 'review' },
+  viewing: {
+    comments: true,
+    trackedChanges: 'markup',
   },
 });
 ```
 
-Use `modules.trackChanges.mode` to choose how changes render: `original` shows the document before proposals, `review`
-shows markup, and `final` shows the proposed result without markup. Use `setTrackedChangesPreferences()` to change that
-display after the Editor is ready.
+| `trackedChanges` | Viewer sees                       |
+| ---------------- | --------------------------------- |
+| `original`       | The document before proposals.    |
+| `markup`         | Proposals with change marks.      |
+| `final`          | Proposals applied without markup. |
+
+`original` is the default. Comments are hidden by default.
+
+Change either option after `onReady`. Omitted options keep their current values:
+
+```ts
+superdoc.setViewingOptions({
+  trackedChanges: 'final',
+});
+```
 
 Hiding comments or tracked changes does not remove them from the DOCX.
-
-<Callout variant='success' title='Check the tracked change'>
-  In suggesting mode, add an edit and export the DOCX. Reopen it in Microsoft Word. Confirm that the edit appears as a
-  tracked change attributed to the configured user.
-</Callout>
 
 ## Choose what to build next
 
