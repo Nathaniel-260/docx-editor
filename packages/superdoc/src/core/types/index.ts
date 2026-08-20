@@ -2468,11 +2468,6 @@ export interface Modules {
 }
 
 /**
- * Canonical configuration for the track-changes module. Supersedes the
- * top-level `config.trackChanges` and `config.layoutEngineOptions.trackedChanges`
- * keys, which remain supported as deprecated aliases.
- */
-/**
  * Identity of a tracked-change author, passed to a per-author color
  * {@link TrackChangesAuthorColorsConfig.resolve | resolver}. Mirrors the
  * author metadata SuperDoc carries on each tracked change.
@@ -2599,7 +2594,10 @@ export interface TrackChangesSemanticColorsConfig {
 }
 
 export interface TrackChangesModuleConfig {
-  /** Whether tracked-change indicators are shown in viewing mode. */
+  /**
+   * Whether tracked-change indicators are shown in viewing mode.
+   * @deprecated replaceWith=`viewing.trackedChanges` compat-indefinitely=v2 configuration compatibility
+   */
   visible?: boolean;
   /**
    * Rendering mode for tracked changes (see `TrackedChangesMode` in
@@ -2608,6 +2606,8 @@ export interface TrackChangesModuleConfig {
    * - 'original': show the document as it existed before tracked changes (default for viewing when `visible` is false)
    * - 'final': show the document with changes applied
    * - 'off': disable tracked-change rendering
+   *
+   * @deprecated replaceWith=`viewing.trackedChanges` for viewer projection or `modules.trackChanges.enabled` to disable tracking compat-indefinitely=v2 configuration compatibility
    */
   mode?: 'review' | 'original' | 'final' | 'off';
   /** Whether the layout engine treats tracked changes as active. */
@@ -2903,9 +2903,8 @@ export interface SuperDocLayoutEngineOptions {
    */
   flowMode?: 'paginated' | 'semantic';
   /**
-   * Deprecated. Use `modules.trackChanges` instead. Optional override for
-   * paginated track-changes rendering (e.g., `{ mode: 'original' }` or
-   * `{ enabled: false }`).
+   * Optional override for paginated track-changes rendering.
+   * @deprecated replaceWith=`viewing.trackedChanges` and `modules.trackChanges.enabled` compat-indefinitely=v2 configuration compatibility
    */
   trackedChanges?: object;
   /**
@@ -2959,8 +2958,19 @@ export interface SuperDocLayoutEngineOptions {
   paintHud?: boolean;
 }
 
+/** @deprecated replaceWith=`ViewingOptions` compat-indefinitely=v2 configuration compatibility */
 export interface ViewingVisibilityConfig {
   visible?: boolean;
+}
+
+export type ViewingTrackedChangesMode = 'original' | 'markup' | 'final';
+
+/** What review information is shown when `documentMode` is `viewing`. */
+export interface ViewingOptions {
+  /** Show comment anchors and threads. Defaults to `false`. */
+  comments?: boolean;
+  /** Show the original document, change markup, or the proposed final result. Defaults to `original`. */
+  trackedChanges?: ViewingTrackedChangesMode;
 }
 
 export interface SuperDocTelemetryConfig {
@@ -3387,6 +3397,8 @@ export interface Config {
   selector: string | HTMLElement;
   /** The mode of the document (default: 'editing'). */
   documentMode?: DocumentMode;
+  /** What review information is shown when `documentMode` is `viewing`. */
+  viewing?: ViewingOptions;
   /**
    * When `documentMode` is `'viewing'`, allow the user to make text
    * selections even though editing is disabled. Defaults to `false`.
@@ -3654,12 +3666,14 @@ export interface Config {
   title?: string;
   /** The conversations to load. */
   conversations?: object[];
-  /** Toggle comment visibility when `documentMode` is `viewing` (default: false). */
+  /**
+   * Toggle comment visibility when `documentMode` is `viewing`.
+   * @deprecated replaceWith=`viewing.comments` compat-indefinitely=v2 configuration compatibility
+   */
   comments?: ViewingVisibilityConfig;
   /**
-   * Deprecated. Use `modules.trackChanges.visible` instead. Toggle
-   * tracked-change visibility when `documentMode` is `viewing` (default:
-   * false).
+   * Toggle tracked-change visibility when `documentMode` is `viewing`.
+   * @deprecated replaceWith=`viewing.trackedChanges` compat-indefinitely=v2 configuration compatibility
    */
   trackChanges?: ViewingVisibilityConfig;
   /** Whether the SuperDoc is locked. */

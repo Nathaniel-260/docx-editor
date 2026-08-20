@@ -16,6 +16,7 @@ function createReadyHost(overrides: Record<string, unknown> = {}) {
     subscribe: () => () => {},
     getDocumentMode: () => 'editing',
     setDocumentMode: vi.fn(),
+    setTrackedChangesRenderOptions: vi.fn(),
     dispatch: vi.fn(async () => ({ status: 'committed', receipt: { success: true } })),
     save: vi.fn(async () => new ArrayBuffer(0)),
     dispose: vi.fn(async () => {}),
@@ -25,6 +26,23 @@ function createReadyHost(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+describe('createV2EditorRuntimeAdapter viewing preferences route', () => {
+  it('routes live tracked-change display changes to the mounted v2 host', () => {
+    const setTrackedChangesRenderOptions = vi.fn();
+    const host = createReadyHost({ setTrackedChangesRenderOptions });
+    const { runtime } = createV2EditorRuntimeAdapter({
+      id: 'v2-runtime',
+      documentId: 'doc-1',
+      root: document.createElement('div'),
+      host,
+    });
+
+    runtime.setTrackedChangesRenderOptions({ mode: 'final', enabled: true });
+
+    expect(setTrackedChangesRenderOptions).toHaveBeenCalledWith({ mode: 'final', enabled: true });
+  });
+});
 
 describe('createV2EditorRuntimeAdapter review mutation route', () => {
   it('returns the caller-supplied v2 facade as the legacy projection when provided', () => {

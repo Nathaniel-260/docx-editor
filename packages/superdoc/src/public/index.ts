@@ -161,6 +161,8 @@ export type { UpgradeToCollaborationOptions } from '../core/types/index.js';
 export type { V2CollaborationConfig } from '../core/types/index.js';
 export type { User } from '../core/types/index.js';
 export type { ViewOptions } from '../core/types/index.js';
+export type { ViewingOptions } from '../core/types/index.js';
+export type { ViewingTrackedChangesMode } from '../core/types/index.js';
 export type { ViewingVisibilityConfig } from '../core/types/index.js';
 
 // Source: ./core/extensions — v2 SuperDoc extension authoring API.

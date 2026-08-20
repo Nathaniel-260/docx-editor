@@ -118,6 +118,9 @@ describe('editor-runtime contract  -  compile-time shape', () => {
     expectTypeOf<EditorRuntime['getSelectedText']>().returns.toEqualTypeOf<string>();
     expectTypeOf<EditorRuntime['setDocumentMode']>().parameters.toEqualTypeOf<[EditorRuntimeDocumentMode]>();
     expectTypeOf<EditorRuntime['getDocumentMode']>().returns.toEqualTypeOf<EditorRuntimeDocumentMode>();
+    expectTypeOf<EditorRuntime['setTrackedChangesRenderOptions']>().parameters.toEqualTypeOf<
+      [options?: { mode?: 'review' | 'original' | 'final' | 'off'; enabled?: boolean }]
+    >();
     expectTypeOf<
       EditorRuntime['getSelectionSnapshot']
     >().returns.toEqualTypeOf<EditorRuntimeSelectionSnapshot | null>();

@@ -17,6 +17,7 @@ const fieldsByGroup = {
   essentials: ['selector', 'document', 'user', 'onReady', 'onContentError', 'onException'],
   document: [
     'documentMode',
+    'viewing',
     'role',
     'allowSelectionInViewMode',
     'superdocId',
@@ -111,6 +112,7 @@ const summaries = {
   superdocId: 'Set an ID for this Editor instance.',
   selector: 'Choose the element where the Editor mounts.',
   documentMode: 'Start in editing, suggesting, or viewing mode.',
+  viewing: 'Choose what comments and tracked changes viewers see.',
   allowSelectionInViewMode: 'Let viewers select text without editing.',
   role: 'Limit which document modes the current user can enter.',
   document: 'Open a document from a URL, File, Blob, or collaboration source.',

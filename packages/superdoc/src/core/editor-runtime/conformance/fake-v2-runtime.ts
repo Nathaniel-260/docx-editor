@@ -142,6 +142,7 @@ export function createFakeV2Runtime(options: FakeV2RuntimeOptions = {}): EditorR
     getDocumentMode(): EditorRuntimeDocumentMode {
       return documentMode;
     },
+    setTrackedChangesRenderOptions(): void {},
     getLegacyEditorProjection() {
       return {
         editorVersion: 2,

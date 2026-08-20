@@ -57,6 +57,14 @@
       "group": "other"
     },
     {
+      "name": "viewing",
+      "type": "{\n  comments?: boolean;\n  trackedChanges?: \"original\" | \"markup\" | \"final\";\n}",
+      "typeName": "ViewingOptions",
+      "required": false,
+      "description": "What review information is shown when `documentMode` is `viewing`.",
+      "group": "other"
+    },
+    {
       "name": "allowSelectionInViewMode",
       "type": "boolean",
       "required": false,
@@ -443,16 +451,20 @@
       "type": "{\n  visible?: boolean;\n}",
       "typeName": "ViewingVisibilityConfig",
       "required": false,
-      "description": "Toggle comment visibility when `documentMode` is `viewing` (default: false).",
-      "group": "other"
+      "description": "Toggle comment visibility when `documentMode` is `viewing`.",
+      "group": "other",
+      "deprecated": true,
+      "deprecatedReplacement": "viewing.comments"
     },
     {
       "name": "trackChanges",
       "type": "{\n  visible?: boolean;\n}",
       "typeName": "ViewingVisibilityConfig",
       "required": false,
-      "description": "Deprecated. Use `modules.trackChanges.visible` instead. Toggle tracked-change visibility when `documentMode` is `viewing` (default: false).",
-      "group": "other"
+      "description": "Toggle tracked-change visibility when `documentMode` is `viewing`.",
+      "group": "other",
+      "deprecated": true,
+      "deprecatedReplacement": "viewing.trackedChanges"
     },
     {
       "name": "isLocked",

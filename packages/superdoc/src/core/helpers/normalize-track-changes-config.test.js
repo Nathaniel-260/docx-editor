@@ -45,8 +45,36 @@ describe('normalizeTrackChangesConfig', () => {
     });
   });
 
-  describe('new canonical path (config.modules.trackChanges)', () => {
-    it('reads visible/mode/enabled from the new path without warnings', () => {
+  describe('viewing options', () => {
+    it('prefers the viewer outcome over legacy visibility and render settings', () => {
+      const config = {
+        documentMode: 'viewing',
+        viewing: { trackedChanges: 'final' },
+        modules: { trackChanges: { visible: true, mode: 'review' } },
+      };
+
+      const result = normalizeTrackChangesConfig(config);
+
+      expect(result).toMatchObject({ visible: false, mode: 'final', enabled: true });
+      expect(config.trackChanges).toEqual({ visible: false });
+      expect(config.layoutEngineOptions.trackedChanges).toEqual({ mode: 'final', enabled: true });
+    });
+
+    it.each([
+      ['original', 'original', false],
+      ['markup', 'review', true],
+      ['final', 'final', false],
+    ])('maps viewing.trackedChanges=%s to the internal renderer', (viewingMode, renderMode, visible) => {
+      const config = { documentMode: 'viewing', viewing: { trackedChanges: viewingMode } };
+
+      const result = normalizeTrackChangesConfig(config);
+
+      expect(result).toMatchObject({ visible, mode: renderMode, enabled: true });
+    });
+  });
+
+  describe('track-changes module options', () => {
+    it('keeps deprecated display fields working and points to viewing.trackedChanges', () => {
       const config = {
         modules: {
           trackChanges: { visible: true, mode: 'original', enabled: false },
@@ -55,7 +83,13 @@ describe('normalizeTrackChangesConfig', () => {
       const result = normalizeTrackChangesConfig(config);
 
       expect(result).toEqual({ visible: true, mode: 'original', enabled: false, replacements: 'paired' });
-      expect(warnSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy.mock.calls.map(([message]) => message)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('config.modules.trackChanges.visible'),
+          expect.stringContaining('config.modules.trackChanges.mode'),
+        ]),
+      );
     });
 
     it('preserves the normalized values on the canonical path', () => {
@@ -69,14 +103,14 @@ describe('normalizeTrackChangesConfig', () => {
       expect(config.modules.trackChanges.enabled).toBe(true);
     });
 
-    it('preserves canonical author color config for v2 tracked-change rendering', () => {
+    it('preserves author color config for v2 tracked-change rendering', () => {
       const authorColors = {
         enabled: true,
         overrides: { Ada: '#8250df' },
         resolve: vi.fn(),
       };
       const config = {
-        modules: { trackChanges: { visible: true, authorColors } },
+        modules: { trackChanges: { authorColors } },
       };
       const result = normalizeTrackChangesConfig(config);
 
@@ -94,7 +128,7 @@ describe('normalizeTrackChangesConfig', () => {
         resolve: vi.fn(),
       };
       const config = {
-        modules: { trackChanges: { visible: true, semanticColors } },
+        modules: { trackChanges: { semanticColors } },
       };
       const result = normalizeTrackChangesConfig(config);
 
@@ -108,7 +142,7 @@ describe('normalizeTrackChangesConfig', () => {
       const authorColors = { overrides: { Ada: '#8250df' } };
       const semanticColors = { overrides: { 'cell-merge': '#d4a72c' } };
       const config = {
-        modules: { trackChanges: { visible: true, authorColors, semanticColors } },
+        modules: { trackChanges: { authorColors, semanticColors } },
       };
       const result = normalizeTrackChangesConfig(config);
 
@@ -136,13 +170,13 @@ describe('normalizeTrackChangesConfig', () => {
     it('introduces no legacy alias for semanticColors on either legacy path', () => {
       const semanticColors = { overrides: { 'move-from': '#00853d' } };
       const config = {
-        modules: { trackChanges: { visible: true, semanticColors } },
+        modules: { trackChanges: { semanticColors } },
       };
       normalizeTrackChangesConfig(config);
 
       // Write-through mirrors only visible/mode/enabled to the legacy buckets;
       // semanticColors stays solely on the canonical path.
-      expect(config.trackChanges).toEqual({ visible: true });
+      expect(config.trackChanges).toEqual({ visible: false });
       expect('semanticColors' in config.trackChanges).toBe(false);
       expect(config.layoutEngineOptions.trackedChanges).toEqual({ mode: 'review', enabled: true });
       expect('semanticColors' in config.layoutEngineOptions.trackedChanges).toBe(false);
@@ -151,7 +185,7 @@ describe('normalizeTrackChangesConfig', () => {
     it('keeps semanticColors stable and by-reference across repeated normalizations', () => {
       const semanticColors = { overrides: { 'cell-split': '#bc4c00' }, resolve: vi.fn() };
       const config = {
-        modules: { trackChanges: { visible: true, semanticColors } },
+        modules: { trackChanges: { semanticColors } },
       };
 
       const first = normalizeTrackChangesConfig(config);
@@ -172,7 +206,7 @@ describe('normalizeTrackChangesConfig', () => {
       expect(result.visible).toBe(true);
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy.mock.calls[0][0]).toMatch(/config\.trackChanges/);
-      expect(warnSpy.mock.calls[0][0]).toMatch(/config\.modules\.trackChanges/);
+      expect(warnSpy.mock.calls[0][0]).toMatch(/config\.viewing\.trackedChanges/);
     });
 
     it('mirrors the resolved visible back onto the legacy key', () => {
@@ -395,15 +429,21 @@ describe('normalizeTrackChangesConfig', () => {
       expect(messages.some((m) => /layoutEngineOptions\.trackedChanges/.test(m))).toBe(true);
     });
 
-    it('warns on the legacy bucket even when the canonical value wins', () => {
+    it('warns for both deprecated visibility inputs when the module value wins', () => {
       const config = {
         modules: { trackChanges: { visible: false } },
         trackChanges: { visible: true },
       };
       normalizeTrackChangesConfig(config);
 
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(warnSpy.mock.calls[0][0]).toMatch(/config\.trackChanges/);
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      const messages = warnSpy.mock.calls.map(([message]) => message);
+      expect(messages).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('config.trackChanges'),
+          expect.stringContaining('config.modules.trackChanges.visible'),
+        ]),
+      );
     });
   });
 
@@ -414,12 +454,12 @@ describe('normalizeTrackChangesConfig', () => {
       };
 
       normalizeTrackChangesConfig(config);
-      expect(warnSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
 
       // Second pass on the SAME object — the write-through populated the legacy
       // paths on the first call, but that shouldn't look like new legacy usage.
       normalizeTrackChangesConfig(config);
-      expect(warnSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
     });
 
     it('still warns on a fresh config object even after a previous one was normalized', () => {

@@ -2,6 +2,7 @@
 
 /**
  * @typedef {'review' | 'original' | 'final' | 'off'} TrackChangesMode
+ * @typedef {'original' | 'markup' | 'final'} ViewingTrackedChangesMode
  * @typedef {'paired' | 'independent'} TrackChangesReplacements
  * @typedef {{ enabled?: boolean, overrides?: Record<string, string>, resolve?: (author: { name?: string, email?: string, image?: string }) => (string | undefined) }} AuthorColorsConfig
  * @typedef {import('../types/index.js').TrackedChangeSemanticColorKey} TrackedChangeSemanticColorKey
@@ -12,6 +13,8 @@
 
 /** @type {ReadonlyArray<TrackChangesMode>} */
 const ALLOWED_MODES = ['review', 'original', 'final', 'off'];
+/** @type {ReadonlyArray<ViewingTrackedChangesMode>} */
+const ALLOWED_VIEWING_MODES = ['original', 'markup', 'final'];
 
 /** @type {ReadonlyArray<TrackChangesReplacements>} */
 const ALLOWED_REPLACEMENTS = ['paired', 'independent'];
@@ -64,6 +67,25 @@ function resolveMode(newVal, legacyVal, fallback) {
 
 /**
  * @param {unknown} value
+ * @returns {ViewingTrackedChangesMode | null}
+ */
+function resolveViewingMode(value) {
+  if (typeof value !== 'string' || !ALLOWED_VIEWING_MODES.includes(/** @type {ViewingTrackedChangesMode} */ (value))) {
+    return null;
+  }
+  return /** @type {ViewingTrackedChangesMode} */ (value);
+}
+
+/**
+ * @param {ViewingTrackedChangesMode} value
+ * @returns {TrackChangesMode}
+ */
+function viewingModeToRenderMode(value) {
+  return value === 'markup' ? 'review' : value;
+}
+
+/**
+ * @param {unknown} value
  * @returns {TrackChangesReplacements | null}
  */
 function coerceReplacements(value) {
@@ -83,11 +105,9 @@ function pickObject(value) {
 }
 
 /**
- * Resolves track-changes configuration from the new canonical path
- * (`config.modules.trackChanges`) and the two legacy paths
- * (`config.trackChanges` for visibility, `config.layoutEngineOptions.trackedChanges`
- * for mode/enabled), then mirrors the merged result back to all three
- * paths so internal consumers that still read legacy keys keep working.
+ * Resolves track-changes rendering from `config.viewing.trackedChanges` when
+ * supplied, then falls back to the v2 compatibility paths. The normalized
+ * result is mirrored to those paths while their internal consumers migrate.
  *
  * Precedence per field: canonical > legacy > derived default.
  *
@@ -101,6 +121,8 @@ function pickObject(value) {
  */
 export function normalizeTrackChangesConfig(config) {
   const alreadyNormalized = /** @type {Record<symbol, unknown>} */ (config)[NORMALIZED_MARKER] === true;
+  const fromViewing = pickObject(config.viewing);
+  const viewingMode = resolveViewingMode(fromViewing?.trackedChanges);
 
   if (!pickObject(config.modules)) {
     config.modules = {};
@@ -112,14 +134,25 @@ export function normalizeTrackChangesConfig(config) {
 
   if (!alreadyNormalized) {
     if (fromLegacyVisible) {
-      warnOnce('config.trackChanges', 'config.modules.trackChanges');
+      warnOnce('config.trackChanges', 'config.viewing.trackedChanges');
     }
     if (fromLegacyLayout) {
-      warnOnce('config.layoutEngineOptions.trackedChanges', 'config.modules.trackChanges');
+      warnOnce(
+        'config.layoutEngineOptions.trackedChanges',
+        'config.viewing.trackedChanges for display and config.modules.trackChanges for behavior',
+      );
+    }
+    if (fromCanonical && Object.prototype.hasOwnProperty.call(fromCanonical, 'visible')) {
+      warnOnce('config.modules.trackChanges.visible', 'config.viewing.trackedChanges');
+    }
+    if (fromCanonical && Object.prototype.hasOwnProperty.call(fromCanonical, 'mode')) {
+      warnOnce('config.modules.trackChanges.mode', 'config.viewing.trackedChanges');
     }
   }
 
-  const visible = resolveBool(fromCanonical?.visible, fromLegacyVisible?.visible, false);
+  const visible = viewingMode
+    ? viewingMode === 'markup'
+    : resolveBool(fromCanonical?.visible, fromLegacyVisible?.visible, false);
 
   const enabled = resolveBool(fromCanonical?.enabled, fromLegacyLayout?.enabled, true);
 
@@ -148,7 +181,11 @@ export function normalizeTrackChangesConfig(config) {
   const isViewingMode = config.documentMode === 'viewing';
   /** @type {TrackChangesMode} */
   const defaultMode = isViewingMode ? (visible ? 'review' : 'original') : 'review';
-  const mode = resolveMode(fromCanonical?.mode, fromLegacyLayout?.mode, defaultMode);
+  const mode = viewingMode
+    ? isViewingMode
+      ? viewingModeToRenderMode(viewingMode)
+      : 'review'
+    : resolveMode(fromCanonical?.mode, fromLegacyLayout?.mode, defaultMode);
 
   /** @type {NormalizedTrackChangesConfig} */
   const normalized = { visible, mode, enabled, replacements };
@@ -167,6 +204,11 @@ export function normalizeTrackChangesConfig(config) {
     config.layoutEngineOptions = {};
   }
   config.layoutEngineOptions.trackedChanges = { mode, enabled };
+
+  if (typeof fromViewing?.comments === 'boolean') {
+    if (!pickObject(config.comments)) config.comments = {};
+    config.comments.visible = fromViewing.comments;
+  }
 
   Object.defineProperty(config, NORMALIZED_MARKER, {
     value: true,

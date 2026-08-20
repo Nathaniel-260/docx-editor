@@ -435,6 +435,7 @@ export interface EditorRuntime {
   getSnapshot(): EditorRuntimeSnapshot;
   setDocumentMode(mode: EditorRuntimeDocumentMode): void;
   getDocumentMode(): EditorRuntimeDocumentMode;
+  setTrackedChangesRenderOptions(options?: { mode?: 'review' | 'original' | 'final' | 'off'; enabled?: boolean }): void;
 
   /**
    * Temporary compatibility path backing `SuperDoc.activeEditor`,

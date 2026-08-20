@@ -103,6 +103,51 @@ type ToolbarLike = {
 
 type ProviderEventHandler = (...args: unknown[]) => void;
 
+type TrackedChangesRenderMode = 'review' | 'original' | 'final' | 'off';
+
+const VIEWING_TRACKED_CHANGES_MODES: readonly ViewingTrackedChangesMode[] = ['original', 'markup', 'final'];
+const TRACKED_CHANGES_RENDER_MODES: readonly TrackedChangesRenderMode[] = ['review', 'original', 'final', 'off'];
+
+function isViewingTrackedChangesMode(value: unknown): value is ViewingTrackedChangesMode {
+  return VIEWING_TRACKED_CHANGES_MODES.includes(value as ViewingTrackedChangesMode);
+}
+
+function viewingModeToRenderMode(mode: ViewingTrackedChangesMode): 'review' | 'original' | 'final' {
+  return mode === 'markup' ? 'review' : mode;
+}
+
+function isTrackedChangesRenderMode(value: unknown): value is TrackedChangesRenderMode {
+  return TRACKED_CHANGES_RENDER_MODES.includes(value as TrackedChangesRenderMode);
+}
+
+function getConfiguredTrackedChangesRenderMode(config: Config): TrackedChangesRenderMode | null {
+  const moduleMode = config.modules?.trackChanges?.mode;
+  if (isTrackedChangesRenderMode(moduleMode)) return moduleMode;
+
+  const layoutMode = (config.layoutEngineOptions?.trackedChanges as { mode?: unknown } | undefined)?.mode;
+  return isTrackedChangesRenderMode(layoutMode) ? layoutMode : null;
+}
+
+function resolveViewingState(config: Config, compatibilityRenderMode: TrackedChangesRenderMode | null) {
+  const viewing = config.viewing;
+  const canonicalTrackedChanges = isViewingTrackedChangesMode(viewing?.trackedChanges) ? viewing.trackedChanges : null;
+  const renderMode = canonicalTrackedChanges
+    ? viewingModeToRenderMode(canonicalTrackedChanges)
+    : compatibilityRenderMode
+      ? compatibilityRenderMode
+      : config.trackChanges?.visible === true
+        ? 'review'
+        : 'original';
+
+  return {
+    comments: typeof viewing?.comments === 'boolean' ? viewing.comments : config.comments?.visible === true,
+    renderMode,
+    trackChangesVisible: canonicalTrackedChanges
+      ? canonicalTrackedChanges === 'markup'
+      : config.trackChanges?.visible === true,
+  };
+}
+
 async function createZip(blobs: Blob[], fileNames: string[]): Promise<Blob> {
   const zip = new JSZip();
   blobs.forEach((blob, index) => {
@@ -234,6 +279,8 @@ import type {
   User,
   V2AuthoringFacade,
   V2CollaborationConfig,
+  ViewingOptions,
+  ViewingTrackedChangesMode,
 } from './types/index.js';
 import type { SuperDocActiveEditorExtensions } from './extensions/index.js';
 import type { EditorRuntime, EditorRuntimeId } from './editor-runtime/index.js';
@@ -857,6 +904,8 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    */
   #applyingRuntimeActiveChange = false;
 
+  #compatibilityViewingRenderMode: TrackedChangesRenderMode | null = null;
+
   /**
    * The active configuration. Typed as `InternalConfig` because `#init` runs
    * synchronously in the constructor and normalizes the consumer-provided
@@ -1013,10 +1062,16 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   async #init(config: Config, container: HTMLElement) {
+    this.#compatibilityViewingRenderMode = getConfiguredTrackedChangesRenderMode(config);
     this.config = {
       ...this.config,
       ...config,
+      modules: { ...this.config.modules, ...config.modules },
+      layoutEngineOptions: { ...this.config.layoutEngineOptions, ...config.layoutEngineOptions },
     };
+    if (typeof this.config.viewing?.comments === 'boolean') {
+      this.config.comments = { ...this.config.comments, visible: this.config.viewing.comments };
+    }
     if (!this.config.comments || typeof this.config.comments !== 'object') {
       this.config.comments = { visible: false };
     } else if (typeof this.config.comments.visible !== 'boolean') {
@@ -3167,8 +3222,15 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     // `#syncViewingVisibility` / tracked-change preference writes.
     this.#requireReady('setDocumentMode');
 
-    type = type.toLowerCase() as DocumentMode;
-    this.config.documentMode = type;
+    const requestedMode = type.toLowerCase() as DocumentMode;
+    const effectiveMode =
+      this.config.role === 'viewer'
+        ? 'viewing'
+        : this.config.role === 'suggester' && requestedMode === 'editing'
+          ? 'suggesting'
+          : requestedMode;
+    this.config.documentMode = effectiveMode;
+    normalizeTrackChangesConfig(this.config);
     this.#syncViewingVisibility();
 
     const types = {
@@ -3177,9 +3239,9 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       suggesting: () => this.#setModeSuggesting(),
     };
 
-    if (types[type]) {
-      types[type]();
-      this.emit('document-mode-change', { documentMode: type });
+    if (types[effectiveMode]) {
+      types[effectiveMode]();
+      this.emit('document-mode-change', { documentMode: effectiveMode });
     }
   }
 
@@ -3215,23 +3277,72 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /**
-   * Force DocumentRendererRuntime instances to render a specific tracked-changes mode
-   * or disable tracked-change metadata entirely.
-   *
+   * Update tracked-change rendering for mounted documents.
+   * @deprecated replaceWith=`setViewingOptions()` for viewer projection compat-indefinitely=v2 API compatibility
    * @param [preferences]
    */
   setTrackedChangesPreferences(preferences?: { mode?: 'review' | 'original' | 'final' | 'off'; enabled?: boolean }) {
-    const normalized = preferences && Object.keys(preferences).length ? { ...preferences } : undefined;
+    if (typeof preferences?.enabled === 'boolean') {
+      this.config.modules.trackChanges = {
+        ...this.config.modules.trackChanges,
+        enabled: preferences.enabled,
+      };
+    }
+    this.#applyTrackedChangesRenderOptions(preferences);
+  }
+
+  #applyTrackedChangesRenderOptions(options?: { mode?: 'review' | 'original' | 'final' | 'off'; enabled?: boolean }) {
+    const normalized = options && Object.keys(options).length ? { ...options } : undefined;
     if (!this.config.layoutEngineOptions) {
       this.config.layoutEngineOptions = {};
     }
     this.config.layoutEngineOptions.trackedChanges = normalized;
     this.superdocStore?.documents?.forEach((doc: RuntimeDocument) => {
+      let appliedToRuntime = false;
+      const documentId = typeof doc.id === 'string' && doc.id.length > 0 ? doc.id : null;
+      if (documentId) {
+        for (const runtime of this.#editorRuntimeRegistry.getAllByDocumentId(documentId)) {
+          runtime.setTrackedChangesRenderOptions(normalized);
+          appliedToRuntime = true;
+        }
+      }
+      if (appliedToRuntime) return;
       const documentRuntime = typeof doc.getDocumentRuntime === 'function' ? doc.getDocumentRuntime() : null;
       if (documentRuntime?.setTrackedChangesOverrides) {
         documentRuntime.setTrackedChangesOverrides(normalized);
       }
     });
+  }
+
+  /** Update what viewing mode shows. Omitted fields keep their current values. */
+  setViewingOptions(options: ViewingOptions) {
+    if (!options || typeof options !== 'object') return;
+    this.#requireReady('setViewingOptions');
+
+    const previousViewing = resolveViewingState(this.config, this.#compatibilityViewingRenderMode);
+    const next: ViewingOptions = { ...this.config.viewing };
+    const hasCommentsUpdate = typeof options.comments === 'boolean';
+    const hasTrackedChangesUpdate = isViewingTrackedChangesMode(options.trackedChanges);
+    if (!hasCommentsUpdate && !hasTrackedChangesUpdate) return;
+    if (hasCommentsUpdate) next.comments = options.comments;
+    if (hasTrackedChangesUpdate) next.trackedChanges = options.trackedChanges;
+
+    this.config.viewing = next;
+    if (typeof next.comments === 'boolean') {
+      this.config.comments = { ...this.config.comments, visible: next.comments };
+    }
+    if (hasTrackedChangesUpdate) normalizeTrackChangesConfig(this.config);
+
+    this.#syncViewingVisibility();
+    if (this.config.documentMode === 'viewing') {
+      const nextViewing = resolveViewingState(this.config, this.#compatibilityViewingRenderMode);
+      const hadVisibleReviewInfo = previousViewing.comments || previousViewing.trackChangesVisible;
+      const hasVisibleReviewInfo = nextViewing.comments || nextViewing.trackChangesVisible;
+      this.#setModeViewing({
+        updateTrackedChangesProjection: hasTrackedChangesUpdate,
+        updateCommentVisibility: hadVisibleReviewInfo !== hasVisibleReviewInfo,
+      });
+    }
   }
 
   #setModeEditing() {
@@ -3243,7 +3354,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     }
 
     // Enable tracked changes for editing mode
-    this.setTrackedChangesPreferences({ mode: 'review', enabled: true });
+    this.#applyTrackedChangesRenderOptions({ mode: 'review', enabled: true });
 
     store.documents.forEach((doc: RuntimeDocument) => {
       doc.restoreComments?.();
@@ -3260,7 +3371,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     }
 
     // Enable tracked changes for suggesting mode
-    this.setTrackedChangesPreferences({ mode: 'review', enabled: true });
+    this.#applyTrackedChangesRenderOptions({ mode: 'review', enabled: true });
 
     store.documents.forEach((doc: RuntimeDocument) => {
       doc.restoreComments?.();
@@ -3268,9 +3379,9 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     });
   }
 
-  #setModeViewing() {
+  #setModeViewing(options: { updateTrackedChangesProjection?: boolean; updateCommentVisibility?: boolean } = {}) {
     // Capture the store at the top so a pre-ready call (either direct
-    // or through `setDocumentMode`) throws before `setTrackedChangesPreferences`
+    // or through `setDocumentMode`) throws before tracked-change render options
     // mutates `config.layoutEngineOptions.trackedChanges`.
     const store = this.#requireSuperdocStore('setDocumentMode');
 
@@ -3287,31 +3398,37 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       this.toolbar.activeEditor = null;
     }
 
-    const commentsVisible = this.config.comments?.visible === true;
-    const trackChangesVisible = this.config.trackChanges?.visible === true;
+    const viewing = resolveViewingState(this.config, this.#compatibilityViewingRenderMode);
+    const commentsVisible = viewing.comments;
+    const trackChangesVisible = viewing.trackChangesVisible;
 
-    this.setTrackedChangesPreferences(
-      trackChangesVisible ? { mode: 'review', enabled: true } : { mode: 'original', enabled: true },
-    );
+    if (options.updateTrackedChangesProjection !== false) {
+      this.#applyTrackedChangesRenderOptions({
+        mode: viewing.renderMode,
+        enabled: this.config.modules.trackChanges?.enabled ?? true,
+      });
+    }
 
-    // Clear comment positions to hide floating comment bubbles in viewing mode
-    if (!commentsVisible && !trackChangesVisible) {
+    if (options.updateCommentVisibility !== false && !commentsVisible && !trackChangesVisible) {
       this.commentsStore?.clearEditorCommentPositions?.();
     }
 
     store.documents.forEach((doc: RuntimeDocument) => {
-      if (commentsVisible || trackChangesVisible) {
-        doc.restoreComments?.();
-      } else {
-        doc.removeComments?.();
+      if (options.updateCommentVisibility !== false) {
+        if (commentsVisible || trackChangesVisible) {
+          doc.restoreComments?.();
+        } else {
+          doc.removeComments?.();
+        }
       }
       this.#applyDocumentMode(doc, 'viewing');
     });
   }
 
   #syncViewingVisibility() {
-    const commentsVisible = this.config.comments?.visible === true;
-    const trackChangesVisible = this.config.trackChanges?.visible === true;
+    const viewing = resolveViewingState(this.config, this.#compatibilityViewingRenderMode);
+    const commentsVisible = viewing.comments;
+    const trackChangesVisible = viewing.trackChangesVisible;
     const isViewingMode = this.config.documentMode === 'viewing';
     const shouldRenderCommentsInViewing = commentsVisible || trackChangesVisible;
     if (this.commentsStore?.setViewingVisibility) {

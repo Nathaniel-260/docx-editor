@@ -212,6 +212,8 @@ import type {
   UpgradeToCollaborationOptions,
   User,
   ViewOptions,
+  ViewingOptions,
+  ViewingTrackedChangesMode,
   ViewingVisibilityConfig,
 } from 'superdoc';
 
@@ -410,4 +412,6 @@ const _real_UIConfig: AssertNotAny<UIConfig> = true;
 const _real_UpgradeToCollaborationOptions: AssertNotAny<UpgradeToCollaborationOptions> = true;
 const _real_User: AssertNotAny<User> = true;
 const _real_ViewOptions: AssertNotAny<ViewOptions> = true;
+const _real_ViewingOptions: AssertNotAny<ViewingOptions> = true;
+const _real_ViewingTrackedChangesMode: AssertNotAny<ViewingTrackedChangesMode> = true;
 const _real_ViewingVisibilityConfig: AssertNotAny<ViewingVisibilityConfig> = true;

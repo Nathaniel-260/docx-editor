@@ -1,13 +1,13 @@
 {
   "generatedAt": "2026-06-23T01:53:02.997Z",
   "summary": {
-    "total": 196,
+    "total": 198,
     "byBucket": {
       "legacy-root": 6,
-      "supported-root": 190
+      "supported-root": 192
     },
     "byConfidence": {
-      "high": 144,
+      "high": 146,
       "medium": 52
     }
   },
@@ -2128,6 +2128,28 @@
       "name": "ViewOptions",
       "bucket": "supported-root",
       "rationale": "Customer-facing view configuration type; Config.viewOptions.layout drives v2 print/web layout behavior.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ViewingOptions",
+      "bucket": "supported-root",
+      "rationale": "Canonical viewing-mode display options used by Config.viewing and SuperDoc#setViewingOptions().",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ViewingTrackedChangesMode",
+      "bucket": "supported-root",
+      "rationale": "Public original, markup, and final projection choices used by ViewingOptions.trackedChanges.",
       "confidence": "high",
       "source": "config-supported",
       "inDts": true,

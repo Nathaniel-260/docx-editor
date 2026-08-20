@@ -174,6 +174,7 @@ interface ModeAwareHostLike {
   subscribe(listener: (snapshot: HostSnapshotLike) => void): () => void;
   getDocumentMode(): EditorRuntimeDocumentMode;
   setDocumentMode(mode: EditorRuntimeDocumentMode): void;
+  setTrackedChangesRenderOptions(options?: { mode?: 'review' | 'original' | 'final' | 'off'; enabled?: boolean }): void;
   dispatch(command: HostCommandLike): Promise<HostDispatchResultLike>;
   save(options?: { format?: 'docx'; commentExportMode?: 'preserve' | 'strip' }): Promise<ArrayBuffer>;
   dispose(): Promise<void>;
@@ -800,6 +801,9 @@ export function createV2EditorRuntimeAdapter(options: V2EditorRuntimeAdapterOpti
       host.setDocumentMode(mode);
     },
     getDocumentMode: () => host.getDocumentMode(),
+    setTrackedChangesRenderOptions(options) {
+      host.setTrackedChangesRenderOptions(options);
+    },
     getLegacyEditorProjection: () => getLegacyEditorProjection?.() ?? DEFAULT_V2_LEGACY_PROJECTION,
 
     focus,
