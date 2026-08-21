@@ -621,6 +621,7 @@ export type IncrementalPaginationProof = IncrementalPaginationProofBase &
         globalDependenciesAbsent: false;
         globalDependenciesFencedByDocumentStart: true;
         multiColumnSectionsProvedNonBalanceable: boolean;
+        /** Last balanceable section end; convergence is fenced after its retained page. */
         balanceableSectionsBoundaryBlockId?: string;
         pageRelativeAnchorsScopedBoundary?: {
           blockId: string;
@@ -645,12 +646,12 @@ export type IncrementalPaginationProof = IncrementalPaginationProofBase &
          * potentially balanceable multi-column section exists anywhere in the
          * retained document. Balancing is a post-pagination finalizer that a
          * mid-section checkpoint cannot seed. False is admissible only
-         * together with `balanceableSectionsBoundaryBlockId`: the last
-         * balanceable section break's block id, which the bridge itself
-         * verifies lies on a page strictly before every dirty block's page
-         * (the balanced pages then live in the untouched retained prefix and
-         * no re-layout or tail-adoption boundary can cross them). Anything
-         * else fails validation and takes the canonical full layout.
+         * together with `balanceableSectionsBoundaryBlockId`, the last
+         * page-bearing block at or before the final balanceable section end.
+         * The bridge requires a document-start replay, includes that section
+         * finalizer, and refuses convergence until a stable page strictly
+         * after the retained boundary. Anything else takes the canonical full
+         * layout.
          */
         multiColumnSectionsProvedNonBalanceable: boolean;
         balanceableSectionsBoundaryBlockId?: string;
@@ -5873,34 +5874,42 @@ async function layoutWithOptionalReuse(input: {
   if (unsupportedDependency) {
     return full(`m4-layout-reuse-disabled-${unsupportedDependency}`);
   }
-  // SD-3772 D1 scoped admission: balanceable multi-column sections exist but
-  // the host named the last balanceable boundary block. The bridge verifies
-  // the page separation itself against the retained layout: every dirty
-  // block that existed in the previous layout must sit on a page strictly
-  // after the boundary's last page, so the balanced pages stay inside the
-  // untouched retained prefix and no splice or tail-adoption boundary can
-  // cross them. Inserted blocks are covered by their splice anchors, which
-  // the proved dirty region always includes as changed or deleted ids.
+  // A balanceable section can be reused only from document start. The named
+  // block owns the last retained page touched by any such section; candidate
+  // selection below is fenced strictly after it, so pagination must encounter
+  // and finalize every balanced section before it can adopt retained pages.
   const scopedBalanceableBoundaryBlockId =
     dependencyProof.profile !== 'single-section-local-text' &&
     dependencyProof.multiColumnSectionsProvedNonBalanceable !== true
       ? (dependencyProof.balanceableSectionsBoundaryBlockId ?? null)
       : null;
+  let scopedBalanceableBoundaryPages: { firstPage: number; lastPage: number } | null = null;
+  let scopedBalanceableBoundaryCurrentBlockIndex: number | null = null;
   if (scopedBalanceableBoundaryBlockId != null) {
     const boundaryPages = reuse.previousBlockPageIndex?.get(scopedBalanceableBoundaryBlockId) ?? null;
-    if (!boundaryPages) {
+    if (
+      reuse.requireDocumentStartCheckpoint !== true ||
+      !boundaryPages ||
+      !Number.isInteger(boundaryPages.firstPage) ||
+      !Number.isInteger(boundaryPages.lastPage) ||
+      boundaryPages.firstPage < 0 ||
+      boundaryPages.lastPage < boundaryPages.firstPage ||
+      boundaryPages.lastPage >= previousPages.length
+    ) {
       return full('m5-layout-reuse-disabled-balanceable-boundary-unresolved');
     }
-    const dirtyPreviousBlockIds = [...input.dirty.changedBlockIds, ...input.dirty.deletedBlockIds];
-    if (dirtyPreviousBlockIds.length === 0) {
-      return full('m5-layout-reuse-disabled-balanceable-boundary-no-dirty-evidence');
+    const currentBoundaryBlockId =
+      reuse.blockIdRewrites?.previousToCurrent.get(scopedBalanceableBoundaryBlockId) ??
+      scopedBalanceableBoundaryBlockId;
+    const currentBoundaryBlockIndex = reuse.currentBlockIndexById?.get(currentBoundaryBlockId);
+    if (
+      !Number.isInteger(currentBoundaryBlockIndex) ||
+      input.blocks[currentBoundaryBlockIndex!]?.id !== currentBoundaryBlockId
+    ) {
+      return full('m5-layout-reuse-disabled-balanceable-boundary-current-block-unresolved');
     }
-    for (const blockId of dirtyPreviousBlockIds) {
-      const pages = reuse.previousBlockPageIndex?.get(blockId) ?? null;
-      if (!pages || pages.firstPage <= boundaryPages.lastPage) {
-        return full('m5-layout-reuse-disabled-balanceable-boundary-page-shared');
-      }
-    }
+    scopedBalanceableBoundaryPages = boundaryPages;
+    scopedBalanceableBoundaryCurrentBlockIndex = currentBoundaryBlockIndex!;
   }
   // Scoped admission for page-relative body anchors WITHOUT the validated
   // non-flowing inventory proof: the host named the page-extremal anchor
@@ -6241,9 +6250,13 @@ async function layoutWithOptionalReuse(input: {
   // continuation). Expand inside this bridge call until an exact retained-tail
   // boundary is proved or the exact current suffix is freshly paginated. No
   // intermediate probe escapes to resolve or paint.
-  const initialRelaidPageHorizon = Number.isFinite(reuse.maxRelaidPages)
+  const requestedRelaidPageHorizon = Number.isFinite(reuse.maxRelaidPages)
     ? Math.max(1, Math.floor(reuse.maxRelaidPages!))
     : 3;
+  const balanceableFencePageHorizon = scopedBalanceableBoundaryPages
+    ? Math.max(1, scopedBalanceableBoundaryPages.lastPage + 2 - sourceAffectedFrontierPageIndex)
+    : 1;
+  const initialRelaidPageHorizon = Math.max(requestedRelaidPageHorizon, balanceableFencePageHorizon);
   let convergenceProbePageHorizon = initialRelaidPageHorizon;
   let terminalSuffixRelayoutAttempted = false;
   let reuseProbePagesPaginated = 0;
@@ -6498,6 +6511,22 @@ async function layoutWithOptionalReuse(input: {
         if (!Number.isInteger(sourcePageIndex) || sourcePageIndex < 0 || sourcePageIndex >= previousPages.length) {
           checkpointConvergenceRejection = `target-${targetPageIndex}-source-index-invalid`;
           return false;
+        }
+        if (scopedBalanceableBoundaryPages != null && sourcePageIndex <= scopedBalanceableBoundaryPages.lastPage) {
+          checkpointConvergenceRejection = `target-${targetPageIndex}-before-balanceable-section-fence`;
+          return false;
+        }
+        if (scopedBalanceableBoundaryCurrentBlockIndex != null) {
+          const candidateFirstBlockId = readFirstPageBlockId(completedPage);
+          const candidateFirstBlockIndex =
+            candidateFirstBlockId == null ? null : reuse.currentBlockIndexById?.get(candidateFirstBlockId);
+          if (
+            !Number.isInteger(candidateFirstBlockIndex) ||
+            candidateFirstBlockIndex! <= scopedBalanceableBoundaryCurrentBlockIndex
+          ) {
+            checkpointConvergenceRejection = `target-${targetPageIndex}-did-not-cross-balanceable-section-fence`;
+            return false;
+          }
         }
         const sourcePage = previousPages[sourcePageIndex];
         const pageIndexDelta = targetPageIndex - sourcePageIndex;
@@ -7801,11 +7830,10 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
     nonFlowingPageRelativeAnchorDependency?: unknown;
     pageRelativeAnchorsScopedBoundary?: unknown;
   };
-  // SD-3772 D1: balanceable multi-column sections fail closed unless the
-  // host either proved every multi-column section genuinely unequal
-  // (balancing inert) or named the last balanceable boundary block, whose
-  // page separation from every dirty block the caller verifies against the
-  // retained layout before any reuse boundary is chosen.
+  // Balanceable multi-column sections fail closed unless the host either
+  // proved balancing inert or named the final page-bearing section end. The
+  // caller then enforces document-start replay and a post-boundary convergence
+  // fence against retained layout metadata.
   const balanceableSectionsAdmissible =
     (proof as { multiColumnSectionsProvedNonBalanceable?: boolean }).multiColumnSectionsProvedNonBalanceable === true ||
     (typeof (proof as { balanceableSectionsBoundaryBlockId?: unknown }).balanceableSectionsBoundaryBlockId ===

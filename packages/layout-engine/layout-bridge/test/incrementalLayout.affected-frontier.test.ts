@@ -1449,6 +1449,102 @@ describe('incrementalLayout affected frontier', () => {
     expect(json(incremental.layout)).toEqual(json(full.layout));
   });
 
+  it('replays through a balanced multi-column section before adopting its stable tail', async () => {
+    const sectionStart: FlowBlock = {
+      kind: 'sectionBreak',
+      id: 'section-start',
+      type: 'continuous',
+      columns: { count: 2, gap: 10 },
+      margins: {},
+      attrs: { source: 'sectPr', sectionIndex: 0, isFirstSection: true },
+    };
+    const balancedParagraphs = Array.from({ length: 24 }, (_, index) => ({
+      ...paragraph(`p${index}`, `text-${index}`, 1 + index * 20),
+      attrs: { sectionIndex: 0 },
+    }));
+    const sectionEnd: FlowBlock = {
+      kind: 'sectionBreak',
+      id: 'section-end',
+      type: 'continuous',
+      columns: { count: 1, gap: 0 },
+      margins: {},
+      attrs: { source: 'sectPr', sectionIndex: 1 },
+    };
+    const tailParagraphs = Array.from({ length: 10 }, (_, offset) => {
+      const index = balancedParagraphs.length + offset;
+      return {
+        ...paragraph(`p${index}`, `text-${index}`, 1 + index * 20),
+        attrs: { sectionIndex: 1 },
+      };
+    });
+    const previousBlocks: FlowBlock[] = [sectionStart, ...balancedParagraphs, sectionEnd, ...tailParagraphs];
+    const nextBlocks = previousBlocks.map((block) =>
+      block.kind === 'paragraph' && block.id === 'p2'
+        ? { ...block, runs: [{ ...block.runs[0]!, text: 'text-2!' }] }
+        : block,
+    );
+    const measureBlock = vi.fn(async (block: FlowBlock) => {
+      if (block.kind !== 'paragraph') throw new Error(`Unexpected block kind ${block.kind}`);
+      return measureWithLines(block, 1);
+    });
+    const previous = await incrementalLayout([], null, previousBlocks, options, measureBlock);
+    const boundaryBlockId = 'p23';
+    const boundaryPages = blockPageIndex(previous.layout).get(boundaryBlockId)!;
+    expect(boundaryPages.lastPage).toBeGreaterThan(3);
+    const baseReuse = provedReuse(previousBlocks, nextBlocks, previous.layout);
+    const dirtyBlockIndex = nextBlocks.findIndex((block) => block.id === 'p2');
+    const provedDirtyRegion = {
+      firstDirtyIndex: dirtyBlockIndex,
+      lastStableIndex: dirtyBlockIndex - 1,
+      insertedBlockIds: [],
+      deletedBlockIds: [],
+      changedBlockIds: ['p2'],
+      stableBlockIds: new Set(nextBlocks.map((block) => block.id).filter((blockId) => blockId !== 'p2')),
+    };
+    const incremental = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      options,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      undefined,
+      {
+        ...baseReuse,
+        provedDirtyRegion,
+        dirtyBlockIds: ['p2'],
+        maxRelaidPages: 4,
+        requireDocumentStartCheckpoint: true,
+        pmShift: { atChar: 1 + 2 * 20 + 'text-2'.length, delta: 1 },
+        dependencyProof: {
+          profile: 'page-checkpoint-local-text',
+          blockIdsUnchanged: true,
+          blockIdsUnique: true,
+          globalDependenciesAbsent: false,
+          globalDependenciesFencedByPageCheckpoint: true,
+          admittedDependencyClasses: ['multiple-sections', 'non-balanceable-multi-column-sections'],
+          multiColumnSectionsProvedNonBalanceable: false,
+          balanceableSectionsBoundaryBlockId: boundaryBlockId,
+          renderInputsUnchanged: true,
+          pageReferencesAbsent: true,
+        },
+      },
+    );
+
+    expect(incremental.layoutReuse, incremental.layoutReuse?.reason).toMatchObject({
+      mode: 'tail-splice',
+      checkpointPageIndex: 0,
+      tailDisposition: 'adopted-source-tail',
+    });
+    expect(incremental.layoutReuse?.sourceConvergencePageIndex).toBeGreaterThan(boundaryPages.lastPage);
+    expect(incremental.layoutReuse?.pagesPaginated).toBeLessThan(previous.layout.pages.length);
+    measureCache.clear();
+    const full = await incrementalLayout([], null, nextBlocks, options, measureBlock);
+    expect(paginationGeometry(incremental.layout)).toEqual(paginationGeometry(full.layout));
+  });
+
   it('retains an exact zero-delta tail across a later decimal numbering restart', async () => {
     const before = documentBlocks(8);
     const sectionBreak: FlowBlock = {
