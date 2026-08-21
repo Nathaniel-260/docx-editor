@@ -7,10 +7,9 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { createApp, defineComponent, h, nextTick, ref } from 'vue';
 import type { App, Ref } from 'vue';
-import type { ShallowRef } from 'vue';
 
 import { provideSuperDocUI, useSetSuperDoc, useSuperDocCommand, useSuperDocSlice, useSuperDocUI } from './vue.js';
-import type { SuperDocUIBinding } from './vue.js';
+import type { SuperDocUIBinding, UseSuperDocCommandResult } from './vue.js';
 import type { CommandState, SuperDocLike } from './types.js';
 
 const apps: App[] = [];
@@ -171,15 +170,18 @@ describe('superdoc/ui/vue composables', () => {
 
   it('useSuperDocCommand re-subscribes when a reactive id changes', async () => {
     let commandId!: Ref<string>;
-    let state!: Readonly<ShallowRef<CommandState>>;
+    let command!: UseSuperDocCommandResult;
 
     const { binding } = mountWithChild(() => {
       commandId = ref('bold');
-      state = useSuperDocCommand(commandId);
-      return state;
+      command = useSuperDocCommand(commandId);
+      return command;
     });
 
-    expect(state.value).toEqual({ enabled: false, active: false, supported: false });
+    expect(command.state.value).toEqual({ enabled: false, active: false, supported: false });
+    expect(command.enabled.value).toBe(false);
+    expect(command.active.value).toBe(false);
+    expect(command.supported.value).toBe(false);
 
     binding.setSuperDoc(hostWithoutUi());
     await nextTick();
@@ -219,20 +221,66 @@ describe('superdoc/ui/vue composables', () => {
     } as unknown as SuperDocLike;
 
     let commandId!: Ref<string>;
-    let state!: Readonly<ShallowRef<CommandState>>;
+    let command!: UseSuperDocCommandResult;
     const { binding } = mountWithChild(() => {
       commandId = ref('bold');
-      state = useSuperDocCommand(commandId);
-      return state;
+      command = useSuperDocCommand(commandId);
+      return command;
     });
 
     binding.setSuperDoc(hostWithCommands);
     await nextTick();
-    expect(state.value).toEqual(states.bold);
+    expect(command.state.value).toEqual(states.bold);
+    expect(command.enabled.value).toBe(true);
+    expect(command.active.value).toBe(true);
 
     commandId.value = 'italic';
     await nextTick();
-    expect(state.value).toEqual(states.italic);
+    expect(command.state.value).toEqual(states.italic);
+    expect(command.active.value).toBe(false);
+  });
+
+  it('useSuperDocCommand executes the current reactive id and fails closed before binding', async () => {
+    const execute = vi.fn(() => true);
+    const executeAsync = vi.fn(async () => true);
+    const hostWithCommands = {
+      activeEditor: null,
+      config: {},
+      on: () => {},
+      off: () => {},
+      ui: {
+        commands: {
+          get: () => ({
+            getState: () => ({ enabled: true, active: false, supported: true }),
+            observe: () => () => {},
+          }),
+          execute,
+          executeAsync,
+        },
+      },
+    } as unknown as SuperDocLike;
+
+    let commandId!: Ref<string>;
+    let command!: UseSuperDocCommandResult;
+    const { binding } = mountWithChild(() => {
+      commandId = ref('bold');
+      command = useSuperDocCommand(commandId);
+      return command;
+    });
+    const payload = { value: 'test' };
+
+    expect(command.execute(payload)).toBe(false);
+    await expect(command.executeAsync(payload)).resolves.toBe(false);
+
+    binding.setSuperDoc(hostWithCommands);
+    await nextTick();
+    commandId.value = 'italic';
+    await nextTick();
+
+    expect(command.execute(payload)).toBe(true);
+    await expect(command.executeAsync(payload)).resolves.toBe(true);
+    expect(execute).toHaveBeenCalledWith('italic', payload);
+    expect(executeAsync).toHaveBeenCalledWith('italic', payload);
   });
 
   it('a setter captured in setup() still binds from a later ready callback', async () => {

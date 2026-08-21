@@ -12,9 +12,9 @@ import {
   useSuperDocSlice,
   useSuperDocUI,
 } from 'superdoc/ui/vue';
-import type { SuperDocHost, SuperDocUIBinding } from 'superdoc/ui/vue';
+import type { SuperDocHost, SuperDocUIBinding, UseSuperDocCommandResult } from 'superdoc/ui/vue';
 import type { CommandState, SuperDocUIState } from 'superdoc/ui';
-import type { MaybeRefOrGetter, ShallowRef } from 'vue';
+import type { ComputedRef, MaybeRefOrGetter, ShallowRef } from 'vue';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type AssertEqual<A, B> = Equal<A, B> extends true ? true : never;
@@ -34,10 +34,12 @@ const _clearShape: AssertEqual<ReturnType<typeof useClearSuperDoc>, (expectedHos
 type PublishedUi = NonNullable<ReturnType<typeof useSuperDocUI>['value']>;
 const _noDestroy: AssertEqual<'destroy' extends keyof PublishedUi ? true : false, false> = true;
 
-// Command state is the typed slice, and the id parameter accepts a plain
-// string, a ref, or a getter.
-const _commandReturns: AssertEqual<ReturnType<typeof useSuperDocCommand>, Readonly<ShallowRef<CommandState>>> = true;
+// Command state is exposed as Vue refs beside execution methods, and the id
+// parameter accepts a plain string, a ref, or a getter.
+const _commandReturns: AssertEqual<ReturnType<typeof useSuperDocCommand>, UseSuperDocCommandResult> = true;
 const _commandParams: AssertEqual<Parameters<typeof useSuperDocCommand>, [id: MaybeRefOrGetter<string>]> = true;
+const _commandState: AssertEqual<UseSuperDocCommandResult['state'], Readonly<ShallowRef<CommandState>>> = true;
+const _commandEnabled: AssertEqual<UseSuperDocCommandResult['enabled'], Readonly<ComputedRef<boolean>>> = true;
 
 // The generic slice composable accepts a raw `ui.select(...)` subscribable and
 // returns a ref of the selected slice type.
@@ -52,5 +54,7 @@ void _clearShape;
 void _noDestroy;
 void _commandReturns;
 void _commandParams;
+void _commandState;
+void _commandEnabled;
 void _binding;
 void _modeShape;

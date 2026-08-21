@@ -57,3 +57,11 @@ export interface SuperDocEditorExpose {
   /** Returns the core instance after the editor is ready. */
   getInstance(): SuperDocInstance | null;
 }
+
+/** Minimal lifecycle binding accepted by the component's `uiBinding` prop. */
+export interface SuperDocEditorUIBinding {
+  /** Publish a ready SuperDoc instance to custom UI consumers. */
+  setSuperDoc(superdoc: SuperDocInstance): void;
+  /** Clear the same instance during replacement or teardown. */
+  clearSuperDoc(expectedHost: SuperDocInstance): boolean;
+}

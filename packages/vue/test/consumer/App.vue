@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 
 import { SuperDocEditor } from '@superdoc/vue';
+import { provideSuperDocUI } from 'superdoc/ui/vue';
 import type {
   DocumentMode,
   SuperDocContentErrorEvent,
@@ -31,6 +32,7 @@ const editor = ref<InstanceType<typeof SuperDocEditor> | null>(null);
 const document = ref<File | null>(null);
 const mode = ref<DocumentMode>('editing');
 const ui = { toolbar: false } as const;
+const uiBinding = provideSuperDocUI();
 
 const onReady = (_event: SuperDocReadyEvent): void => {};
 const onEditorCreate = (_event: SuperDocEditorCreateEvent): void => {};
@@ -56,6 +58,7 @@ function formatError(error: unknown): string {
     v-model:document-mode="mode"
     :document="document"
     :ui="ui"
+    :ui-binding="uiBinding"
     contained
     @ready="onReady"
     @editor-create="onEditorCreate"

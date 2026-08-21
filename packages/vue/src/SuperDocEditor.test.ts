@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
-import { createApp, defineComponent, h, nextTick, reactive } from 'vue';
+import { createApp, defineComponent, h, nextTick, reactive, shallowRef } from 'vue';
 import type { App } from 'vue';
 
 import { SuperDocEditor } from './SuperDocEditor';
-import type { SuperDocEditorExpose } from './types';
+import type { SuperDocEditorExpose, SuperDocEditorUIBinding } from './types';
 // The Vitest alias makes this the same class the component imports at runtime.
 import { SuperDoc as MockSuperDoc } from 'superdoc';
 
@@ -30,6 +30,18 @@ function lastInstance(): MockInstance {
   const all = instances();
   expect(all.length).toBeGreaterThan(0);
   return all[all.length - 1];
+}
+
+function createUiBindingMock() {
+  const setSuperDoc = vi.fn();
+  const clearSuperDoc = vi.fn(() => true);
+  const binding = {
+    ui: shallowRef(null),
+    host: shallowRef(null),
+    setSuperDoc,
+    clearSuperDoc,
+  } as unknown as SuperDocEditorUIBinding;
+  return { binding, setSuperDoc, clearSuperDoc };
 }
 
 function mount(initialProps: Record<string, unknown> = {}, options: { slots?: Record<string, () => unknown> } = {}) {
@@ -315,6 +327,33 @@ describe('SuperDocEditor', () => {
     await settle();
 
     expect(getExposed()?.getInstance()).toBe(lastInstance());
+  });
+
+  it('owns custom-UI binding across replacement, rebuild, and unmount', async () => {
+    const firstBinding = createUiBindingMock();
+    const secondBinding = createUiBindingMock();
+    const { props } = mount({ document: 'first.docx', uiBinding: firstBinding.binding });
+    await settle();
+    const firstInstance = lastInstance();
+
+    expect(firstBinding.setSuperDoc).toHaveBeenCalledWith(firstInstance);
+
+    props.uiBinding = secondBinding.binding;
+    await settle();
+
+    expect(instances()).toHaveLength(1);
+    expect(firstBinding.clearSuperDoc).toHaveBeenCalledWith(firstInstance);
+    expect(secondBinding.setSuperDoc).toHaveBeenCalledWith(firstInstance);
+
+    props.document = 'second.docx';
+    await settle();
+    const secondInstance = lastInstance();
+
+    expect(secondBinding.clearSuperDoc).toHaveBeenCalledWith(firstInstance);
+    expect(secondBinding.setSuperDoc).toHaveBeenCalledWith(secondInstance);
+
+    apps.pop()?.unmount();
+    expect(secondBinding.clearSuperDoc).toHaveBeenCalledWith(secondInstance);
   });
 
   it('rebuilds when user content actually changes and when modules identity changes', async () => {

@@ -36,4 +36,4 @@ export {
   useSuperDocZoom,
 } from './ui/vue.js';
 
-export type { SuperDocHost, SuperDocUIBinding } from './ui/vue.js';
+export type { SuperDocHost, SuperDocUIBinding, UseSuperDocCommandResult } from './ui/vue.js';

@@ -7,6 +7,7 @@ export type {
   SuperDocEditorConfig,
   SuperDocEditorCreateEvent,
   SuperDocEditorExpose,
+  SuperDocEditorUIBinding,
   SuperDocEditorUpdateEvent,
   SuperDocExceptionEvent,
   SuperDocInstance,

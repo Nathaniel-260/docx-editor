@@ -24,8 +24,8 @@
  * range) if that error appears with a provider plainly in the tree.
  */
 
-import { inject, onScopeDispose, provide, shallowRef, toRaw, toValue, watch } from 'vue';
-import type { InjectionKey, MaybeRefOrGetter, ShallowRef } from 'vue';
+import { computed, inject, onScopeDispose, provide, shallowRef, toRaw, toValue, watch } from 'vue';
+import type { ComputedRef, InjectionKey, MaybeRefOrGetter, ShallowRef } from 'vue';
 
 import { createSuperDocUI } from './create-super-doc-ui.js';
 import { toSliceSource } from './slice-source.js';
@@ -33,6 +33,7 @@ import type { SliceSource } from './slice-source.js';
 
 import type {
   BorrowedSuperDocUI,
+  CommandExecutionResult,
   CommandState,
   CommentsSlice,
   ContentControlsSlice,
@@ -351,35 +352,67 @@ export function useSuperDocToolbar(): Readonly<ShallowRef<ToolbarSnapshotSlice>>
 
 const EMPTY_COMMAND: CommandState = { enabled: false, active: false, supported: false };
 
+/** Reactive state and execution methods for one SuperDoc command. */
+export interface UseSuperDocCommandResult {
+  /** Complete command state. */
+  state: Readonly<ShallowRef<CommandState>>;
+  /** Whether the command can run in the current editor state. */
+  enabled: Readonly<ComputedRef<boolean>>;
+  /** Whether the command is active for the current selection. */
+  active: Readonly<ComputedRef<boolean>>;
+  /** Whether the bound editor supports the command. */
+  supported: Readonly<ComputedRef<boolean>>;
+  /** Run the command against the currently bound editor. */
+  execute: (payload?: unknown) => CommandExecutionResult;
+  /** Run the command and await the routed operation's settled result. */
+  executeAsync: (payload?: unknown) => Promise<CommandExecutionResult>;
+}
+
 /**
- * Subscribe to a single command's enable/active state. Accepts a plain id, a
- * ref, or a getter; a reactive id re-subscribes to the new command.
+ * Subscribe to and execute a single command. Accepts a plain id, a ref, or a
+ * getter; a reactive id re-subscribes and routes execution to the new command.
  */
-export function useSuperDocCommand(id: MaybeRefOrGetter<string>): Readonly<ShallowRef<CommandState>> {
+export function useSuperDocCommand(id: MaybeRefOrGetter<string>): UseSuperDocCommandResult {
   const ui = useSuperDocUI();
-  const value = shallowRef<CommandState>(EMPTY_COMMAND);
+  const state = shallowRef<CommandState>(EMPTY_COMMAND);
 
   watch(
     [ui, () => toValue(id)] as const,
     ([currentUi, currentId], _previous, onCleanup) => {
       if (!currentUi) {
-        value.value = EMPTY_COMMAND;
+        state.value = EMPTY_COMMAND;
         return;
       }
       const command = currentUi.commands.get(currentId);
       // `CommandHandle.observe` notifies on change only; read the current
       // state first so an already-enabled command renders enabled on mount.
-      value.value = command.getState();
+      state.value = command.getState();
       onCleanup(
         command.observe((next) => {
-          value.value = next;
+          state.value = next;
         }),
       );
     },
     { immediate: true },
   );
 
-  return value;
+  const execute = (payload?: unknown): CommandExecutionResult => {
+    const currentUi = ui.value;
+    return currentUi ? currentUi.commands.execute(toValue(id), payload) : false;
+  };
+  const executeAsync = (payload?: unknown): Promise<CommandExecutionResult> => {
+    const currentUi = ui.value;
+    return currentUi ? currentUi.commands.executeAsync(toValue(id), payload) : Promise.resolve(false);
+  };
+
+  return {
+    state,
+    enabled: computed(() => state.value.enabled),
+    active: computed(() => state.value.active),
+    supported: computed(() => state.value.supported),
+    execute,
+    executeAsync,
+  };
 }
 
 /** Subscribe to the document slice. */

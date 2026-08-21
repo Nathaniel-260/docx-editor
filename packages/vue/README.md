@@ -37,6 +37,7 @@ const mode = ref<DocumentMode>('editing');
 | `user`, `users` | Rebuilds     | Compared by value                                                      |
 | `modules`       | Rebuilds     | Compared by reference because it can contain live objects              |
 | `ui`            | Rebuilds     | Compared by reference; `{ toolbar: false }` hides the built-in toolbar |
+| `ui-binding`    | Updates      | Connects custom UI to the editor lifecycle                             |
 | `contained`     | Rebuilds     | Fits and scrolls inside a fixed-height parent                          |
 | `config`        | Ignored      | Read at startup; later changes log a warning                           |
 
@@ -78,34 +79,34 @@ The `#error` slot only handles startup failures. Use `@content-error` for docume
 ## Custom UI
 
 To build your own toolbar, set `ui.toolbar` to `false` and use the composables from `superdoc/ui/vue`. Call
-`provideSuperDocUI()` in an ancestor of the components that use `useSuperDoc*`; a component cannot consume its
-own provider.
-
-Bind the provider when the editor is ready, then clear that same instance when it is destroyed:
+`provideSuperDocUI()` in an ancestor of the components that use `useSuperDoc*`, then pass its binding to
+`ui-binding`. The editor binds and clears each instance for you.
 
 ```vue
 <script setup lang="ts">
-import { SuperDocEditor, type SuperDocInstance, type SuperDocReadyEvent } from '@superdoc/vue';
+import { SuperDocEditor } from '@superdoc/vue';
 import { provideSuperDocUI } from 'superdoc/ui/vue';
+import CustomToolbar from './CustomToolbar.vue';
 
-const { setSuperDoc, clearSuperDoc } = provideSuperDocUI();
+const uiBinding = provideSuperDocUI();
 const ui = { toolbar: false };
-let boundSuperDoc: SuperDocInstance | null = null;
-
-function handleReady({ superdoc }: SuperDocReadyEvent) {
-  boundSuperDoc = superdoc;
-  setSuperDoc(superdoc);
-}
-
-function handleDestroy() {
-  if (boundSuperDoc) clearSuperDoc(boundSuperDoc);
-  boundSuperDoc = null;
-}
 </script>
 
 <template>
-  <SuperDocEditor :ui="ui" @ready="handleReady" @editor-destroy="handleDestroy" />
+  <SuperDocEditor :ui="ui" :ui-binding="uiBinding" />
   <CustomToolbar />
+</template>
+```
+
+```vue
+<script setup lang="ts">
+import { useSuperDocCommand } from 'superdoc/ui/vue';
+
+const { enabled, active, executeAsync } = useSuperDocCommand('bold');
+</script>
+
+<template>
+  <button :disabled="!enabled" :aria-pressed="active" @click="executeAsync()">Bold</button>
 </template>
 ```
 

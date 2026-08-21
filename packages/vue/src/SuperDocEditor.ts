@@ -15,6 +15,7 @@ import type {
   SuperDocContentErrorEvent,
   SuperDocEditorConfig,
   SuperDocEditorExpose,
+  SuperDocEditorUIBinding,
   SuperDocEditorCreateEvent,
   SuperDocEditorUpdateEvent,
   SuperDocExceptionEvent,
@@ -37,6 +38,7 @@ interface SuperDocEditorProps {
   users?: SuperDocConfig['users'];
   modules?: SuperDocModules;
   ui?: SuperDocUIConfig;
+  uiBinding?: SuperDocEditorUIBinding;
   contained?: boolean;
   config?: SuperDocEditorConfig;
 }
@@ -120,6 +122,8 @@ const SuperDocEditorImplementation = defineComponent({
     modules: { type: Object as PropType<SuperDocModules>, default: undefined },
     /** Built-in UI config. Compared by reference; changing it rebuilds. */
     ui: { type: [Object, Boolean] as PropType<SuperDocUIConfig>, default: undefined },
+    /** Custom-UI binding returned by `provideSuperDocUI()`. Managed in place. */
+    uiBinding: { type: Object as PropType<SuperDocEditorUIBinding>, default: undefined },
     /** Fit and scroll inside a fixed-height parent. */
     contained: { type: Boolean, default: false },
     /**
@@ -161,6 +165,8 @@ const SuperDocEditorImplementation = defineComponent({
     let appliedMode: DocumentMode | null = null;
     /** Stops wrapper teardown from emitting a second destroy event. */
     let coreEmittedDestroy = false;
+    /** Binding currently publishing this component's ready instance. */
+    let boundUiBinding: SuperDocEditorUIBinding | null = null;
 
     // Render a toolbar host unless it is disabled or the consumer supplies one.
     const rendersToolbar = (): boolean => {
@@ -171,10 +177,18 @@ const SuperDocEditorImplementation = defineComponent({
       return uiToolbar !== false && !consumerOwnsContainer;
     };
 
+    const replaceUiBinding = (current: SuperDocInstance, next: SuperDocEditorUIBinding | null): void => {
+      if (boundUiBinding === next) return;
+      boundUiBinding?.clearSuperDoc(current);
+      boundUiBinding = next;
+      boundUiBinding?.setSuperDoc(current);
+    };
+
     const destroyInstance = (): void => {
       const current = instance;
       instance = null;
       coreEmittedDestroy = false;
+      if (current) replaceUiBinding(current, null);
       try {
         // Keep the generation valid while core may emit `onEditorDestroy`.
         current?.destroy();
@@ -225,6 +239,7 @@ const SuperDocEditorImplementation = defineComponent({
             if (gen !== generation) return;
             isLoading.value = false;
             isInitializing = false;
+            replaceUiBinding(event.superdoc, props.uiBinding ? raw(props.uiBinding) : null);
             if (pendingMode && pendingMode !== mode) {
               // Assign before calling: the mode-change event fires
               // synchronously and must not echo into v-model.
@@ -239,6 +254,7 @@ const SuperDocEditorImplementation = defineComponent({
           },
           onEditorDestroy: () => {
             if (gen !== generation) return;
+            if (instance) replaceUiBinding(instance, null);
             coreEmittedDestroy = true;
             emit('editor-destroy');
           },
@@ -354,6 +370,14 @@ const SuperDocEditorImplementation = defineComponent({
           // Core rejects `setDocumentMode` until ready.
           pendingMode = mode;
         }
+      },
+    );
+
+    watch(
+      () => props.uiBinding,
+      (binding) => {
+        if (!instance || isInitializing) return;
+        replaceUiBinding(instance, binding ? raw(binding) : null);
       },
     );
 
