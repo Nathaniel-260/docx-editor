@@ -14,7 +14,7 @@ import type {
   InlineBoxSpan,
   CellBorders,
 } from '@superdoc/contracts';
-import { EMPTY_SDT_PLACEHOLDER_TEXT, expandRunsForInlineNewlines } from '@superdoc/contracts';
+import { EMPTY_SDT_PLACEHOLDER_TEXT, expandRunsForInlineNewlines, calculateJustifySpacing } from '@superdoc/contracts';
 import { resolvePhysicalFamily } from '@superdoc/font-system';
 
 const expectParagraphMeasure = (measure: Measure): ParagraphMeasure => {
@@ -381,6 +381,173 @@ describe('measureBlock', () => {
           width: expect.any(Number),
         },
       ]);
+    });
+
+    it('counts a non-breaking space embedded inside a word the same as a literal space', async () => {
+      // NBSP stays embedded inside one `word` token (segment.split(' ') only splits on
+      // U+0020), but CSS word-spacing stretches/compresses U+00A0 identically to
+      // U+0020 (confirmed empirically across Chromium/Firefox/WebKit), so spaceCount
+      // must count it the same way or a justified line under-counts its own
+      // stretch points and bleeds past the right margin.
+      const withNbsp: FlowBlock = {
+        kind: 'paragraph',
+        id: 'embedded-nbsp',
+        runs: [{ text: '10 km travelled', fontFamily: 'Arial', fontSize: 16 }],
+        attrs: { alignment: 'justify' },
+      };
+      const withSpaceControl: FlowBlock = {
+        kind: 'paragraph',
+        id: 'embedded-space-control',
+        runs: [{ text: '10 km travelled', fontFamily: 'Arial', fontSize: 16 }],
+        attrs: { alignment: 'justify' },
+      };
+
+      const nbspMeasure = expectParagraphMeasure(await measureBlock(withNbsp, 1000));
+      const spaceMeasure = expectParagraphMeasure(await measureBlock(withSpaceControl, 1000));
+
+      expect(nbspMeasure.lines).toHaveLength(1);
+      expect(spaceMeasure.lines).toHaveLength(1);
+      expect(nbspMeasure.lines[0].spaceCount).toBe(spaceMeasure.lines[0].spaceCount);
+    });
+
+    it('counts NBSP even when it is the only whitespace-like character on the line', async () => {
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'nbsp-only-whitespace',
+        runs: [{ text: 'alpha bravo charlie', fontFamily: 'Arial', fontSize: 16 }],
+        attrs: { alignment: 'justify' },
+      };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 1000));
+
+      expect(measure.lines).toHaveLength(1);
+      expect(measure.lines[0].spaceCount).toBe(2);
+    });
+
+    it('counts NBSP at a run boundary the same as when embedded inside one run', async () => {
+      const splitAcrossRuns: FlowBlock = {
+        kind: 'paragraph',
+        id: 'nbsp-run-boundary-split',
+        runs: [
+          { text: '10', fontFamily: 'Arial', fontSize: 16 },
+          { text: ' ', fontFamily: 'Arial', fontSize: 16 },
+          { text: 'km', fontFamily: 'Arial', fontSize: 16 },
+        ],
+        attrs: { alignment: 'justify' },
+      };
+      const unsplitRun: FlowBlock = {
+        kind: 'paragraph',
+        id: 'nbsp-run-boundary-unsplit',
+        runs: [{ text: '10 km', fontFamily: 'Arial', fontSize: 16 }],
+        attrs: { alignment: 'justify' },
+      };
+
+      const splitMeasure = expectParagraphMeasure(await measureBlock(splitAcrossRuns, 1000));
+      const unsplitMeasure = expectParagraphMeasure(await measureBlock(unsplitRun, 1000));
+
+      expect(splitMeasure.lines).toHaveLength(1);
+      expect(splitMeasure.lines[0].spaceCount).toBe(1);
+      expect(splitMeasure.lines[0].spaceCount).toBe(unsplitMeasure.lines[0].spaceCount);
+      expect(splitMeasure.lines[0].width).toBeCloseTo(unsplitMeasure.lines[0].width, 3);
+    });
+
+    it('counts NBSP inside a hyphen-break prefix, but not inside the un-committed remainder', async () => {
+      // Deterministic 10px-per-char mock (same technique as the existing
+      // 'wraps after a hyphen-minus without dropping the hyphen' test below),
+      // extended to also cover NBSP so its width is predictable too.
+      const contextPrototype = Object.getPrototypeOf(document.createElement('canvas').getContext('2d'));
+      const originalMeasureText = contextPrototype.measureText;
+      const measureTextSpy = vi.spyOn(contextPrototype, 'measureText').mockImplementation(function (text: string) {
+        if (/^[a-z  -]+$/i.test(text)) {
+          const width = text.length * 10;
+          return {
+            width,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: width,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+          } as TextMetrics;
+        }
+        return originalMeasureText.call(this, text);
+      });
+      // Word is "twenty -one": NBSP sits BEFORE the hyphen, so the committed
+      // prefix "twenty -" (breakableHyphenEnd) includes it; the un-committed
+      // remainder "one" (reprocessed as its own word next iteration) does not.
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'hyphen-break-nbsp',
+        runs: [{ text: 'alpha twenty -one omega', fontFamily: 'Arial', fontSize: 12 }],
+      };
+
+      try {
+        clearMeasurementCache();
+        const measure = expectParagraphMeasure(await measureBlock(block, 140.5));
+
+        expect(extractLineText(block, measure.lines[0])).toBe('alpha twenty -');
+        // 1 delimiter space ("alpha" | "twenty -one") + 1 NBSP inside the
+        // committed prefix "twenty -".
+        expect(measure.lines[0].spaceCount).toBe(2);
+        expect(extractLineText(block, measure.lines[1]).trim()).toBe('one omega');
+      } finally {
+        measureTextSpy.mockRestore();
+        clearMeasurementCache();
+      }
+    });
+
+    it('counts NBSP inside a word committed without its trailing delimiter space', async () => {
+      // Deterministic 10px-per-char mock, extended to cover NBSP.
+      const contextPrototype = Object.getPrototypeOf(document.createElement('canvas').getContext('2d'));
+      const originalMeasureText = contextPrototype.measureText;
+      const measureTextSpy = vi.spyOn(contextPrototype, 'measureText').mockImplementation(function (text: string) {
+        if (/^[a-z  ]+$/i.test(text)) {
+          const width = text.length * 10;
+          return {
+            width,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: width,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+          } as TextMetrics;
+        }
+        return originalMeasureText.call(this, text);
+      });
+      // At width 125: "alpha " (60px) + "bcd ef" (60px) = 120px fits, but adding
+      // the trailing delimiter space (+10px = 130px) does not -- forces the
+      // "word fits, delimiter doesn't" commit-and-close branch (no hyphen involved).
+      const block: FlowBlock = {
+        kind: 'paragraph',
+        id: 'no-delimiter-commit-nbsp',
+        attrs: { alignment: 'justify' },
+        runs: [{ text: 'alpha bcd ef ghi', fontFamily: 'Arial', fontSize: 12 }],
+      };
+
+      try {
+        clearMeasurementCache();
+        const measure = expectParagraphMeasure(await measureBlock(block, 125));
+
+        expect(extractLineText(block, measure.lines[0])).toBe('alpha bcd ef');
+        // 1 delimiter space ("alpha" | "bcd ef") + 1 NBSP inside "bcd ef".
+        expect(measure.lines[0].spaceCount).toBe(2);
+        expect(extractLineText(block, measure.lines[1]).trim()).toBe('ghi');
+
+        // Mechanism-level check, not just a count comparison: the painted width
+        // the browser will actually produce (naturalWidth/width plus every
+        // counted space -- ASCII or NBSP -- stretched by spacingPerSpace) must
+        // land on availableWidth, which is the real bug this fix closes.
+        const line = measure.lines[0];
+        const lineWidth = line.naturalWidth ?? line.width;
+        const availableWidth = line.maxWidth ?? line.width;
+        const spacingPerSpace = calculateJustifySpacing({
+          lineWidth,
+          availableWidth,
+          spaceCount: line.spaceCount ?? 0,
+          shouldJustify: true,
+        });
+        expect(lineWidth + spacingPerSpace * (line.spaceCount ?? 0)).toBeCloseTo(availableWidth, 3);
+      } finally {
+        measureTextSpy.mockRestore();
+        clearMeasurementCache();
+      }
     });
 
     it('keeps empty-only paragraphs measurable without phantom spaces', async () => {

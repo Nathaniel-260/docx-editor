@@ -844,6 +844,25 @@ function fitsWordJustificationCompression(
 }
 
 /**
+ * Counts non-breaking space (U+00A0) characters within a substring committed to a
+ * line, so justify (`Line.spaceCount`) treats NBSP as a stretch/compress point the
+ * same way CSS `word-spacing` does at paint time (confirmed empirically across
+ * Chromium/Firefox/WebKit to affect NBSP identically to a literal space).
+ *
+ * Only NBSP needs counting here: word tokens produced by `segment.split(' ')`
+ * can never contain a literal U+0020 (every one was already extracted as a token
+ * boundary), so U+0020 inside a `word`/`chunk.text` substring is impossible by
+ * construction.
+ */
+function countNbspOccurrences(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '\u00A0') count += 1;
+  }
+  return count;
+}
+
+/**
  * Calculate typography metrics for a given font size.
  *
  * This function computes the ascent, descent, and line height values needed for text layout.
@@ -3770,6 +3789,12 @@ async function measureParagraphBlock(
         }
         const wordStartChar = charPosInRun;
         const wordOnlyWidth = resolveParagraphRunWidth(word, font, ctx, run, wordStartChar);
+        // NBSP embedded inside `word` (e.g. "10\u00A0km" stays one token since
+        // `.split(' ')` only splits on U+0020) is a justify-relevant space just like a
+        // literal space -- see countNbspOccurrences. Sites below that commit the whole
+        // `word` add this; sites that commit only a chunk/prefix of `word` (long-word
+        // chunking, hyphen-break) recompute the count for that exact substring instead.
+        const wordNbspCount = countNbspOccurrences(word);
         // Only include the implicit single delimiter space when there is a later non-empty word
         // in this same segment (i.e., before the next word). Do NOT include one before tabs or
         // at the end of the segment; those spaces are represented explicitly by "" tokens.
@@ -3956,6 +3981,7 @@ async function measureParagraphBlock(
                 toChar: chunkEndChar,
                 width: chunk.width,
               });
+              currentLine.spaceCount += countNbspOccurrences(chunk.text);
 
               if (isLastChunk) {
                 // If this is also the last chunk, keep currentLine open for more content
@@ -3994,7 +4020,7 @@ async function measureParagraphBlock(
                 maxFontInfo: resolveParagraphFontInfo(run),
                 maxWidth: getEffectiveWidth(contentWidth),
                 segments: [{ runIndex, fromChar: chunkStartChar, toChar: chunkEndChar, width: chunk.width }],
-                spaceCount: 0,
+                spaceCount: countNbspOccurrences(chunk.text),
               };
               // If trailing space fits, include it
               const ls = getScaledLetterSpacing(run as TextRun);
@@ -4018,6 +4044,11 @@ async function measureParagraphBlock(
                 resolveParagraphFontInfo(textRun),
                 fontContext,
               );
+              // spaceCount intentionally omitted (left undefined), not forced to 0: both
+              // render-line.ts (`line.spaceCount ?? recount`) and text-measurement.ts
+              // (`line.spaceCount ?? 0` then `=== 0` recount) already recompute a
+              // NBSP-inclusive count from this line's own text when spaceCount is
+              // undefined, so this closed single-chunk line self-heals downstream.
               const chunkLine: Line = {
                 fromRun: runIndex,
                 fromChar: chunkStartChar,
@@ -4048,7 +4079,7 @@ async function measureParagraphBlock(
             maxFontInfo: resolveParagraphFontInfo(run),
             maxWidth: getEffectiveWidth(lines.length === 0 ? initialAvailableWidth : bodyContentWidth),
             segments: [{ runIndex, fromChar: wordStartChar, toChar: wordEndNoSpace, width: wordOnlyWidth }],
-            spaceCount: 0,
+            spaceCount: wordNbspCount,
           };
           // If a trailing space exists and fits safely, include it on this line
           // Safe cast: only TextRuns produce word segments from split(), other run types are handled earlier
@@ -4115,6 +4146,7 @@ async function measureParagraphBlock(
                 wordIndex === 0 ? segmentStartX : undefined,
                 wordIndex === 0 ? consumeSegmentPrecedingTabEndX() : undefined,
               );
+              activeLine.spaceCount += countNbspOccurrences(chunk.text);
             } else {
               activeLine = {
                 fromRun: runIndex,
@@ -4126,7 +4158,7 @@ async function measureParagraphBlock(
                 maxFontInfo: resolveParagraphFontInfo(run),
                 maxWidth: getEffectiveWidth(bodyContentWidth),
                 segments: [{ runIndex, fromChar: chunkStartChar, toChar: chunkEndChar, width: chunk.width }],
-                spaceCount: 0,
+                spaceCount: countNbspOccurrences(chunk.text),
               };
             }
 
@@ -4214,6 +4246,10 @@ async function measureParagraphBlock(
               wordIndex === 0 ? segmentStartX : undefined,
               wordIndex === 0 ? consumeSegmentPrecedingTabEndX() : undefined,
             );
+            // Count only NBSP within the committed prefix -- the remainder (from
+            // breakableHyphenEnd onward) is reprocessed as its own `word` next
+            // iteration and will count its own NBSP then.
+            currentLine.spaceCount += countNbspOccurrences(word.slice(0, breakableHyphenEnd));
             trimTrailingWrapSpaces(currentLine);
             lines.push(closeLineWithMetrics(currentLine));
             tabStopCursor = 0;
@@ -4251,7 +4287,7 @@ async function measureParagraphBlock(
             maxFontInfo: resolveParagraphFontInfo(run),
             maxWidth: getEffectiveWidth(bodyContentWidth),
             segments: [{ runIndex, fromChar: wordStartChar, toChar: wordEndNoSpace, width: wordOnlyWidth }],
-            spaceCount: 0,
+            spaceCount: wordNbspCount,
           };
           // If trailing space would fit on the new line, consume it here; otherwise skip it
           if (shouldIncludeDelimiterSpace && currentLine.width + spaceWidth <= currentLine.maxWidth - WIDTH_FUDGE_PX) {
@@ -4299,6 +4335,9 @@ async function measureParagraphBlock(
               explicitXHere,
               wordIndex === 0 ? consumeSegmentPrecedingTabEndX() : undefined,
             );
+            // The trailing delimiter space doesn't fit (excluded above), but `word`
+            // itself may still contain embedded NBSP that must still be counted.
+            currentLine.spaceCount += wordNbspCount;
             // finish current line and start a new one on next iteration
             trimTrailingWrapSpaces(currentLine);
             const completedLine: Line = closeLineWithMetrics(currentLine);
@@ -4345,9 +4384,7 @@ async function measureParagraphBlock(
             explicitX,
             wordIndex === 0 ? consumeSegmentPrecedingTabEndX() : undefined,
           );
-          if (shouldIncludeDelimiterSpace) {
-            currentLine.spaceCount += 1;
-          }
+          currentLine.spaceCount += wordNbspCount + (shouldIncludeDelimiterSpace ? 1 : 0);
         }
 
         charPosInRun = shouldIncludeDelimiterSpace ? wordEndWithSpace : wordEndNoSpace;
