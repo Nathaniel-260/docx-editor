@@ -4,28 +4,35 @@ navTitle: Configuration
 description: Start with the fields that open the Editor, then add only the options your integration needs.
 ---
 
-Use `Config` for decisions the Editor needs when it mounts. Use runtime methods for changes made after `onReady`.
+Set startup options when the Editor mounts. Use runtime methods for changes made after `onReady`.
 
 ## Start with a working configuration
 
-Use the project setup and `<div id="editor"></div>` mount point from the [Editor quickstart](/editor/quickstart):
+Continue with the project and sample NDA from the [Editor quickstart](/editor/quickstart):
 
-<include>../../../snippets/editor/editor-configuration.ts</include>
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../snippets/editor/editor-configuration.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/Editor.tsx' framework='React'>
+    <include>../../../snippets/editor/react-editor-configuration.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
 
-This reopens `/sample.docx`, assigns document activity to Jordan Lee, and logs when the Editor is ready. `satisfies
-Config` checks field names and value shapes before the object reaches `SuperDoc`.
+Both examples reopen `/sample.docx`, assign document activity to Jordan Lee, and report startup errors. `satisfies`
+checks field names and values before the Editor receives them.
 
 Notice the boundary:
 
-- `selector` is the only required field.
+- Vanilla uses `selector`; the React wrapper creates its own container.
 - `document` and `user` describe what opens and who is acting.
 - `onReady` marks the first safe moment to enable document actions.
 - `onContentError` reports content and import errors. `onException` reports other runtime exceptions.
 
 ## Change one startup decision
 
-Add `documentMode: 'suggesting'` to the configuration object, then reload the application. New edits are now recorded as
-tracked changes instead of changing the document directly.
+Set `documentMode` to `suggesting`, then reload the application. New edits are now recorded as tracked changes instead
+of changing the document directly.
 
 [Document modes](/editor/document-modes) explains the three modes and lets you run the same edit in each one.
 
@@ -38,7 +45,8 @@ you need the full contract.
 
 ## Change a running Editor
 
-After `onReady`, prefer a runtime method when one exists:
+After `onReady`, prefer a runtime method when one exists. In React, access these methods through
+`editorRef.current?.getInstance()`.
 
 | Change           | Runtime method                 |
 | ---------------- | ------------------------------ |
@@ -49,10 +57,11 @@ After `onReady`, prefer a runtime method when one exists:
 | Bookmarks        | `setShowBookmarks()`           |
 | Formatting marks | `setShowFormattingMarks()`     |
 
-To change `extensions` or `workerUrls`, call `destroy()` and create a new `SuperDoc`. Those fields are read only when the
-Editor mounts. Recreating the Editor can reset selection and temporary interface state.
+To change `extensions` or `workerUrls`, create a new Editor. Vanilla must destroy the current `SuperDoc` before creating
+its replacement. In React, remount `SuperDocEditor` by changing its `key`; the wrapper destroys the old instance.
+Recreating the Editor can reset selection and temporary interface state.
 
 ## Choose the next decision
 
-- [Load and save documents](/editor/load-and-save-documents) to choose where documents come from and where exports go.
+- [Load and save documents](/editor/load-and-save-documents) to connect the Editor to your backend storage.
 - [Who renders the UI?](/editor/who-renders-the-ui) to choose between built-in, hybrid, and custom interface ownership.

@@ -44,6 +44,7 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@superdoc/react": "workspace:*",
     "@superdoc/document-api": "workspace:*",
     "@superdoc/sdk": "2.5.0",
     "@tailwindcss/postcss": "^4.3.3",

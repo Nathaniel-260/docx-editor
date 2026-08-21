@@ -1,15 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
-import {
-  codeValue,
-  configClosing,
-  configOpening,
-  configTemplate,
-  type ConfigExplorerData,
-  type ConfigField,
-} from '@/lib/config-explorer';
+import { Check, CircleX, Clipboard } from 'lucide-react';
+import { codeValue, configTemplate, type ConfigExplorerData, type ConfigField } from '@/lib/config-explorer';
 
 type ConfigExplorerProps = {
   data: ConfigExplorerData;
@@ -22,6 +16,8 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
   const [selectedName, setSelectedName] = useState(initialSelection?.name ?? '');
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const resetTimer = useRef<number | null>(null);
+  const groupListRef = useRef<HTMLDivElement>(null);
+  const groupButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const groups = useMemo(
     () =>
       data.groups
@@ -38,6 +34,41 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
     },
     [],
   );
+
+  useEffect(() => {
+    const groupList = groupListRef.current;
+    if (!groupList) return;
+
+    const markOverflow = () => {
+      const atStart = groupList.scrollLeft <= 1;
+      const atEnd = groupList.scrollLeft + groupList.clientWidth >= groupList.scrollWidth - 1;
+      groupList.dataset.overflow = atStart ? (atEnd ? 'none' : 'end') : atEnd ? 'start' : 'both';
+    };
+    const resizeObserver = new ResizeObserver(markOverflow);
+    resizeObserver.observe(groupList);
+    groupList.addEventListener('scroll', markOverflow, { passive: true });
+    markOverflow();
+
+    return () => {
+      resizeObserver.disconnect();
+      groupList.removeEventListener('scroll', markOverflow);
+    };
+  }, [groups.length]);
+
+  useEffect(() => {
+    const groupList = groupListRef.current;
+    const activeButton = groupButtonRefs.current.get(activeGroupId);
+    if (!groupList || !activeButton) return;
+
+    const groupListRect = groupList.getBoundingClientRect();
+    const activeButtonRect = activeButton.getBoundingClientRect();
+    if (activeButtonRect.left < groupListRect.left) {
+      groupList.scrollLeft += activeButtonRect.left - groupListRect.left;
+    }
+    if (activeButtonRect.right > groupListRect.right) {
+      groupList.scrollLeft += activeButtonRect.right - groupListRect.right;
+    }
+  }, [activeGroupId]);
 
   async function copyConfig() {
     if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
@@ -60,37 +91,87 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
     setSelectedName(group.fields[0]?.name ?? '');
   }
 
+  function moveBetweenGroups(event: KeyboardEvent<HTMLButtonElement>, currentGroupId: string) {
+    const currentIndex = groups.findIndex((group) => group.id === currentGroupId);
+    if (currentIndex < 0) return;
+
+    let nextIndex: number | undefined;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % groups.length;
+    if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + groups.length) % groups.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = groups.length - 1;
+    if (nextIndex === undefined) return;
+
+    event.preventDefault();
+    const nextGroup = groups[nextIndex];
+    selectGroup(nextGroup.id);
+    groupButtonRefs.current.get(nextGroup.id)?.focus();
+  }
+
   if (!activeGroup || !selected) return null;
 
   return (
     <div className='sd-config-explorer-wrap'>
       <div className='sd-config-explorer' id={data.id} data-config-explorer>
-        <div className='sd-config-explorer-groups' role='group' aria-label={`${data.name} option groups`}>
-          {groups.map((group) => (
-            <button
-              key={group.id}
-              type='button'
-              aria-pressed={group.id === activeGroup.id}
-              onClick={() => selectGroup(group.id)}
-            >
-              {group.label}
-            </button>
-          ))}
+        <div className='sd-config-explorer-bar'>
+          <div
+            className='sd-config-explorer-groups'
+            role='tablist'
+            aria-label={`${data.name} option groups`}
+            ref={groupListRef}
+          >
+            {groups.map((group) => {
+              const isActive = group.id === activeGroup.id;
+              return (
+                <button
+                  key={group.id}
+                  type='button'
+                  id={`${data.id}-${group.id}-tab`}
+                  role='tab'
+                  aria-controls={`${data.id}-panel`}
+                  aria-selected={isActive}
+                  tabIndex={isActive ? 0 : -1}
+                  ref={(button) => {
+                    if (button) groupButtonRefs.current.set(group.id, button);
+                    else groupButtonRefs.current.delete(group.id);
+                  }}
+                  onClick={() => selectGroup(group.id)}
+                  onKeyDown={(event) => moveBetweenGroups(event, group.id)}
+                >
+                  {group.label}
+                </button>
+              );
+            })}
+          </div>
+          <span className='sd-config-explorer-source'>{data.name}</span>
+          <button
+            className='sd-config-explorer-copy'
+            data-status={copyStatus}
+            type='button'
+            onClick={() => void copyConfig()}
+            aria-label={
+              copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : `Copy ${data.root} setup`
+            }
+            aria-live='polite'
+            title={copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy setup'}
+          >
+            {copyStatus === 'copied' ? (
+              <Check aria-hidden='true' />
+            ) : copyStatus === 'failed' ? (
+              <CircleX aria-hidden='true' />
+            ) : (
+              <Clipboard aria-hidden='true' />
+            )}
+          </button>
         </div>
-        <div className='sd-config-explorer-body'>
+        <div
+          className='sd-config-explorer-body'
+          id={`${data.id}-panel`}
+          role='tabpanel'
+          aria-labelledby={`${data.id}-${activeGroup.id}-tab`}
+        >
           <div className='sd-config-explorer-code'>
-            <button
-              className='sd-config-explorer-copy'
-              type='button'
-              onClick={() => void copyConfig()}
-              aria-label={`Copy ${data.root} setup`}
-              title={copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy setup'}
-            >
-              <span aria-live='polite'>
-                {copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy setup'}
-              </span>
-            </button>
-            <div className='sd-config-explorer-line sd-config-explorer-line-muted'>{configOpening(data)}</div>
+            <ConfigOpeningLine data={data} />
             {activeGroup.fields.map((field) => (
               <button
                 key={field.name}
@@ -103,11 +184,11 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
                 <span>{'  '}</span>
                 <span className='sd-config-explorer-field-name'>{field.name}</span>
                 <span>: </span>
-                <span className='sd-config-explorer-field-value'>{codeValue(field)}</span>
+                <ConfigValue value={codeValue(field)} />
                 <span>,</span>
               </button>
             ))}
-            <div className='sd-config-explorer-line sd-config-explorer-line-muted'>{configClosing(data)}</div>
+            <ConfigClosingLine data={data} />
           </div>
           <ConfigFieldDetail key={selected.name} field={selected} />
         </div>
@@ -117,6 +198,66 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
       </p>
     </div>
   );
+}
+
+function ConfigOpeningLine({ data }: { data: ConfigExplorerData }) {
+  if (data.syntax === 'typed-variable') {
+    return (
+      <div className='sd-config-explorer-line'>
+        <span className='sd-config-explorer-token-keyword'>const</span>{' '}
+        <span className='sd-config-explorer-token-type'>{data.root}</span> = {'{'}
+      </div>
+    );
+  }
+
+  return (
+    <div className='sd-config-explorer-line'>
+      <span className='sd-config-explorer-field-name'>{data.root}</span>: {'{'}
+    </div>
+  );
+}
+
+function ConfigClosingLine({ data }: { data: ConfigExplorerData }) {
+  if (data.syntax === 'typed-variable') {
+    return (
+      <div className='sd-config-explorer-line'>
+        {'}'} <span className='sd-config-explorer-token-keyword'>satisfies</span>{' '}
+        <span className='sd-config-explorer-token-type'>{data.name}</span>;
+      </div>
+    );
+  }
+
+  return <div className='sd-config-explorer-line'>{'}'}</div>;
+}
+
+const configValueToken = /\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|[A-Za-z_$][\w$]*(?=\s*:)|=>/gu;
+
+function ConfigValue({ value }: { value: string }) {
+  const content: ReactNode[] = [];
+  let position = 0;
+
+  for (const match of value.matchAll(configValueToken)) {
+    const start = match.index ?? 0;
+    if (start > position) content.push(value.slice(position, start));
+
+    const token = match[0];
+    const className = token.startsWith('/*')
+      ? 'sd-config-explorer-token-comment'
+      : token.startsWith("'") || token.startsWith('"')
+        ? 'sd-config-explorer-token-string'
+        : token === '=>'
+          ? 'sd-config-explorer-token-keyword'
+          : 'sd-config-explorer-field-name';
+    content.push(
+      <span className={className} key={`${start}-${token}`}>
+        {token}
+      </span>,
+    );
+    position = start + token.length;
+  }
+
+  if (position < value.length) content.push(value.slice(position));
+  return <span className='sd-config-explorer-field-value'>{content}</span>;
 }
 
 function ConfigFieldDetail({ field }: { field: ConfigField }) {

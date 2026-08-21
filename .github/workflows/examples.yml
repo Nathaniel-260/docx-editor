@@ -40,6 +40,7 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'packages/document-api/**'
+              - 'packages/react/**'
               - 'packages/superdoc/**'
               - 'scripts/check-examples.mjs'
               - 'scripts/__tests__/check-examples.test.mjs'
@@ -89,6 +90,10 @@ jobs:
       - name: Build SuperDoc
         if: needs.detect.outputs.examples == 'true'
         run: pnpm --filter superdoc run build:npm
+
+      - name: Build React wrapper
+        if: needs.detect.outputs.examples == 'true'
+        run: pnpm --filter @superdoc/react run build
 
       - name: Install Chromium
         if: needs.detect.outputs.examples == 'true'

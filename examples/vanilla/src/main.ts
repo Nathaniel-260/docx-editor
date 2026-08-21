@@ -11,6 +11,9 @@ const superdoc = new SuperDoc({
   onReady: () => {
     exportButton.disabled = false;
   },
+  onContentError: ({ error }) => {
+    console.error('SuperDoc could not open the document.', error);
+  },
   onException: ({ error }) => {
     console.error('SuperDoc could not open the document.', error);
   },

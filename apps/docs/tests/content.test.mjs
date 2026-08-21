@@ -24,6 +24,15 @@ const generatedProofingConfigUrl = new URL('../generated/proofing-config-referen
 const superdocCoreTypesUrl = new URL('../../../packages/superdoc/src/core/types/index.ts', import.meta.url);
 const reviewHighlightsExampleUrl = new URL('../snippets/editor/review-highlights.ts', import.meta.url);
 const commentThreadExampleUrl = new URL('../snippets/document-api/comment-thread.ts', import.meta.url);
+const documentStorageExampleUrl = new URL('../snippets/editor/document-storage.ts', import.meta.url);
+const reactDocumentStorageExampleUrl = new URL('../snippets/editor/react-document-storage.tsx', import.meta.url);
+const versionHistoryExampleUrl = new URL('../snippets/editor/editor-version-history.ts', import.meta.url);
+const reactRuntimeViewingOptionsExampleUrl = new URL(
+  '../snippets/editor/react-set-viewing-options.tsx',
+  import.meta.url,
+);
+const vanillaQuickstartExampleUrl = new URL('../../../examples/vanilla/src/main.ts', import.meta.url);
+const reactQuickstartExampleUrl = new URL('../../../examples/react/src/App.tsx', import.meta.url);
 const pythonSdkExampleUrl = new URL('../snippets/headless/python-accept-changes.py', import.meta.url);
 const cliExampleUrl = new URL('../snippets/headless/cli-accept-changes.sh', import.meta.url);
 const toolbarCatalogUrl = new URL(
@@ -56,6 +65,9 @@ const registeredComponents = new Set([
   'DocsHome',
   'EditorDemo',
   'FileDownload',
+  'FrameworkExample',
+  'FrameworkExampleTabs',
+  'LifecycleJourney',
   'MigrationAgentPrompt',
   'MigrationExplorer',
   'MigrationExample',
@@ -335,6 +347,74 @@ test('the Editor configuration reference starts with concise essential fields', 
     'ui.ruler.container',
   );
   assert.match(renderConfigReferenceMarkdown(editorConfigExplorer), /Deprecated\. Use `ui\.ruler\.container` instead/u);
+});
+
+test('the lifecycle journey maps the application states to public Editor signals', async () => {
+  const { lifecycleFailure, lifecycleStages, renderLifecycleJourneyMarkdown } =
+    await import('../lib/lifecycle-journey.ts');
+
+  assert.deepEqual(
+    lifecycleStages.map((stage) => stage.id),
+    ['mount', 'ready', 'edit', 'save', 'unmount'],
+  );
+  assert.deepEqual(
+    lifecycleStages.map((stage) => stage.signal),
+    ['new SuperDoc()', 'onReady', 'onEditorUpdate', 'export() + fetch()', 'destroy()'],
+  );
+  assert.match(lifecycleFailure.signal, /onContentError.*onException/u);
+
+  const markdown = renderLifecycleJourneyMarkdown();
+  assert.match(markdown, /Mark the document saved only after your backend accepts them/u);
+  assert.match(markdown, /Show a retry path instead of an empty mount point/u);
+});
+
+test('the document storage example preserves unsaved state and reports failures', async () => {
+  const [storage, reactStorage] = await Promise.all(
+    [documentStorageExampleUrl, reactDocumentStorageExampleUrl].map((url) => readFile(url, 'utf8')),
+  );
+
+  assert.match(storage, /const savedRevision = editRevision/u);
+  assert.match(storage, /editRevision === savedRevision \? 'Saved' : 'Unsaved changes'/u);
+  assert.match(storage, /Could not open the document\. Reload to try again\./u);
+  assert.match(storage, /Save failed\. Try again\./u);
+  assert.match(reactStorage, /if \(savingRef\.current\) return;/u);
+  assert.match(reactStorage, /savingRef\.current = true;[\s\S]*finally \{\s+savingRef\.current = false;/u);
+  assert.match(reactStorage, /const savedRevision = editRevisionRef\.current/u);
+  assert.match(reactStorage, /editRevisionRef\.current === savedRevision \? 'Saved' : 'Unsaved changes'/u);
+  assert.match(reactStorage, /setSaveStatus\('Save failed\. Try again\.'\)/u);
+  assert.match(reactStorage, /<output aria-live='polite'>/u);
+  assert.match(reactStorage, /onContentError/u);
+  assert.match(reactStorage, /onException/u);
+});
+
+test('the version history example rolls back a failed restore', async () => {
+  const example = await readFile(versionHistoryExampleUrl, 'utf8');
+  const capture = example.indexOf('const activeDocx = await exportDocx(superdoc)');
+  const openSnapshot = example.indexOf('await openDocument(superdoc, docx)');
+
+  assert.ok(capture >= 0 && capture < openSnapshot);
+  assert.match(example, /try \{\s+await openDocument\(superdoc, docx\)/u);
+  assert.match(example, /const current = await fetch\(documentEndpoint\)\.catch\(\(\) => null\)/u);
+  assert.match(example, /current\?\.ok[\s\S]*: activeDocx/u);
+  assert.match(example, /await openDocument\(superdoc, rollbackDocx\)/u);
+});
+
+test('Quickstart examples report both document failure paths', async () => {
+  const [vanilla, react] = await Promise.all(
+    [vanillaQuickstartExampleUrl, reactQuickstartExampleUrl].map((url) => readFile(url, 'utf8')),
+  );
+
+  for (const example of [vanilla, react]) {
+    assert.match(example, /onContentError/u);
+    assert.match(example, /onException/u);
+  }
+});
+
+test('the React runtime viewing example uses the ready instance', async () => {
+  const example = await readFile(reactRuntimeViewingOptionsExampleUrl, 'utf8');
+
+  assert.match(example, /onReady=\{\(\{ superdoc \}\) =>/u);
+  assert.match(example, /superdoc\.setViewingOptions/u);
 });
 
 test('mutation and headless examples keep their safety guards', async () => {

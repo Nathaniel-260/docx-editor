@@ -10,43 +10,15 @@ description: Open, edit, and export a DOCX from a React component with SuperDoc 
   `@superdoc-dev/react` is the v1 wrapper. The stable v2 wrapper is `@superdoc/react`.
 </Callout>
 
-SuperDoc v2 has three React-facing imports. Choose the one that matches who should own the editor lifecycle and controls:
-
-| Goal                                   | Use                                            |
-| -------------------------------------- | ---------------------------------------------- |
-| Render the `SuperDocEditor` wrapper    | Install and import `@superdoc/react`           |
-| Create and destroy the editor yourself | Install and import `superdoc`                  |
-| Build React-owned toolbars or panels   | Install `superdoc`; import `superdoc/ui/react` |
-
-If your v1 application already renders `SuperDocEditor`, change the package name and keep the component integration:
-
-```bash
-pnpm remove @superdoc-dev/react
-pnpm add @superdoc/react
-```
-
-```tsx
-import { SuperDocEditor } from '@superdoc/react';
-import '@superdoc/react/style.css';
-
-export function Editor() {
-  return <SuperDocEditor document='/sample.docx' />;
-}
-```
-
-`@superdoc/react` installs its compatible `superdoc` release. Do not match the wrapper version number to the editor
-version manually.
-
-The guide below shows the direct `superdoc` path for applications that own the Editor instance. The component creates
-one Editor after its mount element exists, waits for the document to open, and destroys the Editor when React unmounts
-it.
+Use `SuperDocEditor` for the Editor lifecycle. Pass startup configuration as props, and use its ref when your application
+needs an imperative method such as `export()`.
 
 ## 1. Create a React project
 
 ```bash
 pnpm create vite@latest superdoc-react --template react-ts
 cd superdoc-react
-pnpm add superdoc
+pnpm add @superdoc/react
 ```
 
 ## 2. Prepare a document
@@ -81,8 +53,8 @@ body,
 }
 ```
 
-The mount effect runs once. `onReady` enables export only after the DOCX is open. The cleanup calls `destroy()` to
-release Editor resources when React removes the component.
+`SuperDocEditor` creates the mount container and destroys the Editor when React removes the component. `onReady` enables
+export only after the DOCX opens. `getInstance()` exposes the running Editor for export and other runtime methods.
 
 ## 4. Edit and export
 
@@ -96,7 +68,8 @@ download `sample-edited.docx`.
 
 ## Add React-owned controls
 
-The component above uses SuperDoc's built-in interface. When React should render your toolbar or panels, use the provider
-and hooks from the `superdoc/ui/react` subpath. They bind to the same Editor instance and do not require another package.
+The component above uses SuperDoc's built-in interface. When React should render your toolbar or panels, follow the
+[React custom UI setup](/editor/custom-ui/react-setup). That path installs `superdoc` and uses its `superdoc/ui/react`
+provider and hooks.
 
-Continue with [React custom UI setup](/editor/custom-ui/react-setup), or learn how to [load and save user documents](/editor/load-and-save-documents).
+Or learn how to [load and save user documents](/editor/load-and-save-documents).

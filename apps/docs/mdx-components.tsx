@@ -12,6 +12,8 @@ import { DocsHome } from '@/components/docs-home';
 import { Callout } from '@/components/mdx/callout';
 import { ConfigReference } from '@/components/mdx/ConfigReference';
 import { FileDownload } from '@/components/mdx/file-download';
+import { FrameworkExample, FrameworkExampleTabs } from '@/components/mdx/FrameworkExampleTabs';
+import { LifecycleJourney } from '@/components/embeds/lifecycle-journey';
 import { MigrationAgentPrompt } from '@/components/mdx/MigrationAgentPrompt';
 import { MigrationExplorer } from '@/components/mdx/migration-explorer';
 import { MigrationExample, MigrationExampleTabs } from '@/components/mdx/migration-example-tabs';
@@ -54,6 +56,9 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     DocsHome,
     EditorDemo,
     FileDownload,
+    FrameworkExample,
+    FrameworkExampleTabs,
+    LifecycleJourney,
     MigrationAgentPrompt,
     MigrationExplorer,
     MigrationExample,

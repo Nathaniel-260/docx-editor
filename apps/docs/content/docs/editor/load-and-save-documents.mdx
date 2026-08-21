@@ -1,160 +1,70 @@
 ---
-title: Load and save documents
+title: Load and save a DOCX
 navTitle: Load and save
-description: Open a DOCX in the browser, download the edited file, or send its bytes to your backend.
+description: Fetch a DOCX from your backend, open it in the Editor, and save the edited file back.
 ---
 
-Load a DOCX through the public `SuperDoc` configuration, wait for the editor to be ready, and export the edited document through the same instance.
+Continue with the sample NDA from the [Editor quickstart](/editor/quickstart). In a production application, the DOCX
+usually comes from your storage through an authenticated API.
 
-Complete the [Editor quickstart](/editor/quickstart) first if you do not already have a mounted editor.
+## Connect the Editor to your storage
 
-## Choose a document input
+Fetch the sample NDA, open it as a DOCX, and send the edited file back to the same endpoint.
 
-The `document` option accepts the browser inputs most applications already use:
+For Vanilla, replace the Quickstart controls with a save action and status:
 
-| Input      | Use it when                                                                   |
-| ---------- | ----------------------------------------------------------------------------- |
-| `File`     | A person selected a local DOCX with a file input or drag and drop             |
-| `Blob`     | Your application already downloaded or generated the DOCX bytes               |
-| URL string | The browser can fetch the DOCX from your application or a CORS-enabled origin |
-
-SuperDoc reads local `File` and `Blob` inputs in the browser. It does not upload them to a SuperDoc service.
-
-## Load a selected DOCX
-
-Mount the editor after a person selects a file. Enable document-dependent actions only after `onReady` runs:
-
-```ts
-import { SuperDoc } from 'superdoc';
-import 'superdoc/style.css';
-
-const input = document.querySelector<HTMLInputElement>('#docx-file');
-const saveButton = document.querySelector<HTMLButtonElement>('#save-docx');
-
-if (!input || !saveButton) {
-  throw new Error('Document controls are missing.');
-}
-
-let superdoc: SuperDoc | null = null;
-
-input.addEventListener('change', () => {
-  const file = input.files?.[0];
-  if (!file) return;
-
-  superdoc?.destroy();
-  saveButton.disabled = true;
-
-  superdoc = new SuperDoc({
-    selector: '#editor',
-    document: file,
-    onReady: () => {
-      saveButton.disabled = false;
-    },
-  });
-});
+```html
+<button id="save-docx" type="button" disabled>Save DOCX</button>
+<output id="document-status">Opening…</output>
+<div id="editor"></div>
 ```
 
-Use the same `document` option for a URL or an existing `Blob`:
+Before running the example, expose `/api/documents/sample-nda` from your backend:
 
-```ts
-new SuperDoc({
-  selector: '#editor',
-  document: '/documents/contract.docx',
-  onReady: ({ superdoc }) => {
-    console.log('Ready to edit', superdoc);
-  },
-});
-```
+| Request | Your endpoint must                                                          |
+| ------- | --------------------------------------------------------------------------- |
+| `GET`   | Return the current DOCX bytes                                               |
+| `PUT`   | Store the request body and return a success status after the write finishes |
 
-A URL is fetched by the reader's browser. The server must allow that request and return the DOCX bytes.
+The Quickstart Vite project does not create this endpoint. Point the example at your application API, or add a local
+endpoint that follows this contract.
 
-## Replace the active document
+The React component renders its own controls.
 
-Use `replaceFile()` when the same Editor surface should open another DOCX. Await the replacement before enabling document-dependent controls:
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../snippets/editor/document-storage.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/App.tsx' framework='React'>
+    <include>../../../snippets/editor/react-document-storage.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
 
-```ts
-const file = input.files?.[0];
-if (file) {
-  saveButton.disabled = true;
-  const result = await superdoc.replaceFile(file);
-  const replacementResult = result && typeof result === 'object' ? result : null;
-  const replacementState = replacementResult && 'state' in replacementResult ? replacementResult.state : null;
+The endpoint can read from a database, object store, or bucket. Your application owns its authentication and storage
+rules. SuperDoc opens the `Blob` and exports the edited DOCX; it does not store the file.
 
-  const replacementSucceeded =
-    replacementState === null || replacementState === 'review-ready' || replacementState === 'editing-ready';
-  if (!replacementSucceeded) {
-    throw new Error('SuperDoc could not open the selected DOCX.');
-  }
+`export()` confirms that SuperDoc produced a DOCX. Show a saved state only after the `PUT` request succeeds.
 
-  saveButton.disabled = false;
-}
-```
+## Open or save another way
 
-If replacement throws or returns another state, keep document actions disabled and show the failure. Recreate the Editor when the result also contains `mount: null`, or when the route changes initialization-only configuration. A successful replacement keeps the mounted SuperDoc instance and its host integration in place.
+| Task                           | Use                                                        |
+| ------------------------------ | ---------------------------------------------------------- |
+| Open a public or signed URL    | `document: url`                                            |
+| Open a file selected by a user | `document: file`                                           |
+| Switch the mounted Editor      | `await superdoc.replaceFile(nextDocx)`                     |
+| Download instead of saving     | `await superdoc.export({ exportedName: 'sample-edited' })` |
 
-## Download the edited DOCX
-
-`export()` creates a DOCX download by default. Set `exportedName` without the extension:
-
-```ts
-saveButton.addEventListener('click', async () => {
-  if (!superdoc) return;
-
-  try {
-    saveButton.disabled = true;
-    await superdoc.export({
-      exportType: ['docx'],
-      exportedName: 'contract-reviewed',
-    });
-  } finally {
-    saveButton.disabled = false;
-  }
-});
-```
-
-This downloads `contract-reviewed.docx`. The export keeps comments and tracked changes unless you explicitly choose a different export policy.
-
-## Send the DOCX to your backend
-
-Set `triggerDownload: false` when your application needs the exported bytes instead of an automatic download:
-
-```ts
-const result = await superdoc.export({
-  exportType: ['docx'],
-  triggerDownload: false,
-});
-
-if (!(result instanceof Blob)) {
-  throw new Error('SuperDoc did not return a DOCX blob.');
-}
-
-const response = await fetch('/api/documents/contract', {
-  method: 'PUT',
-  headers: {
-    'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  },
-  body: result,
-});
-
-if (!response.ok) {
-  throw new Error(`Saving the document failed with ${response.status}.`);
-}
-```
-
-Your application decides where the file is stored and how the request is authenticated. SuperDoc produces the DOCX bytes but does not provide document storage.
-
-Treat export and persistence as separate outcomes. An exported `Blob` proves that SuperDoc produced bytes; mark the document as saved only after the trusted storage service confirms the write.
-
-The [version history guide](/editor/version-history) uses the same export and replacement operations to save and restore snapshots.
-
-## Put the file lifecycle together
-
-This complete controller keeps open, replace, and save controls disabled while work is pending. It recreates the Editor after a failed replacement so a later file can recover cleanly:
-
-<include>../../../snippets/editor/document-management.ts</include>
+A URL from another origin must allow the browser request through CORS. Fetch the file yourself and pass a `Blob` when
+the request needs custom headers.
 
 ## Verify the round trip
 
-Open the exported DOCX in Microsoft Word or another DOCX reader. Confirm that the edited content, surrounding formatting, comments, and tracked changes match the state shown in SuperDoc.
+Edit the NDA, save it, and reload the page. Confirm that the edit is still present. Reopen the saved DOCX in Word when
+you also need to check its formatting, comments, or tracked changes.
 
-Next, choose how people can interact with the document in [Document modes](/editor/document-modes), or use the [Document API mental model](/document-api/mental-model) to understand how application code changes it.
+## Continue from here
+
+- [Version history](/editor/version-history) keeps earlier saves so users can restore them.
+- [Export options](/editor/export-options) changes the filename, comment policy, or related files.
+- For HTML or Markdown content inside a DOCX, see [rich content](/document-api/rich-content) and
+  [output projections](/document-api/output-projections). These APIs do not open either format as a DOCX file.

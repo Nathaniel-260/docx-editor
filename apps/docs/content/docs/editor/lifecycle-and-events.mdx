@@ -1,21 +1,43 @@
 ---
 title: Handle lifecycle and events
 navTitle: Lifecycle and events
-description: Connect Editor readiness, updates, errors, and cleanup to application lifecycle.
+description: Show loading and error states, track unsaved edits, save, and clean up the Editor.
 ---
 
-Use configuration callbacks for events known at construction time. Use `on()` and `off()` when a listener belongs to a later application lifecycle, and always remove it before destroying the instance.
+Connect each Editor signal to one application state: loading, ready, unsaved, saved, or unmounted.
+
+## Follow the lifecycle
+
+Select a stage. The preview shows what your application should do and the code that drives it.
+
+<LifecycleJourney />
+
+## Wire the same states
+
+Replace the controls and mount point from the [Editor quickstart](/editor/quickstart):
+
+```html
+<button id="save-docx" type="button" disabled>Save DOCX</button>
+<output id="editor-status">Opening…</output>
+<div id="editor"></div>
+```
+
+Then connect them to `/sample.docx`. Replace `/api/documents/42` with your save endpoint:
 
 <include>../../../snippets/editor/editor-lifecycle.ts</include>
 
-## Choose the narrowest signal
+Call `unmountEditor()` from the route or component that owns the Editor. If a listener belongs to a temporary panel,
+register it with `on()` when the panel opens and remove it with `off()` when the panel closes.
 
-- `onReady` means the SuperDoc instance and active Editor are ready for normal interaction.
-- `onEditorUpdate` reports document updates. Debounce persistence work and export the current DOCX instead of storing internal Editor state.
-- `onContentError` reports document loading or processing failures.
-- `onException` is the general integration error channel. Its payload is a union, so narrow optional fields before using them.
-- `document-mode-change`, `zoomChange`, `viewport-change`, comments, content-control, font, and collaboration events support focused integrations.
+## Check the flow
 
-Do not use a broad update event when a domain handle already exposes a snapshot and `observe()`. Custom UI controls should observe `editor.ui`; application lifecycle and operational logging belong on SuperDoc events.
+With your save endpoint running, reload the page. **Save DOCX** should stay disabled until the document opens. Make an
+edit, then save. The status should change from **Unsaved changes** to **Saved** only after the request succeeds.
 
-Call `destroy()` when the owning route or component unmounts. It releases Editor resources, listeners, surfaces, collaboration connections, and the instance's `ui` controller. Remove application listeners and framework roots as part of the same cleanup.
+Temporarily change `/sample.docx` to a missing URL. The page should show a load error and keep **Save DOCX** disabled.
+
+## Go deeper
+
+- [Load and save documents](/editor/load-and-save-documents) connects the Editor to your backend storage.
+- [Connect to a collaboration room](/editor/collaboration) adds the separate collaboration-ready boundary.
+- [Tune performance for large documents](/editor/performance-and-large-documents) shows how to react to pagination without treating layout as an edit.

@@ -24,7 +24,7 @@ const routes = [
   ['editor/migrate-from-v1/overview/index.html', 'Migrate from v1'],
   ['editor/migrate-from-v1/removed-apis/index.html', 'Removed in v2'],
   ['editor/configuration/index.html', 'Configure the Editor'],
-  ['editor/load-and-save-documents/index.html', 'Load and save documents'],
+  ['editor/load-and-save-documents/index.html', 'Load and save a DOCX'],
   ['editor/export-options/index.html', 'Control DOCX export'],
   ['editor/document-modes/index.html', 'Choose a document mode'],
   ['editor/lifecycle-and-events/index.html', 'Handle lifecycle and events'],
@@ -328,6 +328,23 @@ test('the editor quickstart offers the clean sample and no review markup', async
   assert.doesNotMatch(article, /cdn\.jsdelivr\.net/);
 });
 
+test('exports every framework example as plain Markdown', async () => {
+  const pages = [
+    'quickstart',
+    'configuration',
+    'document-modes',
+    'load-and-save-documents',
+  ];
+
+  for (const page of pages) {
+    const markdown = await readFile(new URL(`../out/md/editor/${page}.md`, import.meta.url), 'utf8');
+
+    assert.match(markdown, /\*\*Vanilla — `/u, page);
+    assert.match(markdown, /\*\*React — `/u, page);
+    assert.doesNotMatch(markdown, /<\/?FrameworkExample(?:Tabs)?\b/u, page);
+  }
+});
+
 test('exports the tracked-review workflow with local-file fallback', async () => {
   const article = await readFile(
     new URL('../out/agents/workflows/review-tracked-changes/index.html', import.meta.url),
@@ -626,7 +643,9 @@ test('exports the redistributed Editor guidance as clean Markdown', async () => 
   const corpus = pages.join('\n');
 
   assert.match(corpus, /satisfies Config/);
-  assert.match(corpus, /superdoc\.off\('document-mode-change'/);
+  assert.match(corpus, /onEditorUpdate:[\s\S]*export function unmountEditor\(\)[\s\S]*superdoc\.destroy\(\)/);
+  assert.match(corpus, /Interactive model: the Editor lifecycle in your application/);
+  assert.match(corpus, /Show a retry path instead of an empty mount point/);
   assert.match(corpus, /triggerDownload: false/);
   assert.match(corpus, /await handle\.result/);
   assert.match(corpus, /fonts\.map\(\{ Calibri: 'Product Sans' \}\)/);
@@ -636,7 +655,7 @@ test('exports the redistributed Editor guidance as clean Markdown', async () => 
   assert.doesNotMatch(corpus, /<include>/);
 });
 
-test('exports safe replacement and configuration guidance for the v2 Editor', async () => {
+test('exports storage, version, and configuration guidance for the v2 Editor', async () => {
   const [loadAndSave, exportOptions, configuration, telemetry, license, versionHistory] = await Promise.all([
     readFile(new URL('../out/md/editor/load-and-save-documents.md', import.meta.url), 'utf8'),
     readFile(new URL('../out/md/editor/export-options.md', import.meta.url), 'utf8'),
@@ -646,8 +665,18 @@ test('exports safe replacement and configuration guidance for the v2 Editor', as
     readFile(new URL('../out/md/editor/version-history.md', import.meta.url), 'utf8'),
   ]);
 
-  assert.match(loadAndSave, /replacementState/);
-  assert.match(versionHistory, /could not be restored/);
+  assert.match(loadAndSave, /const endpoint = '\/api\/documents\/sample-nda'/);
+  assert.match(loadAndSave, /The Quickstart Vite project does not create this endpoint/u);
+  assert.match(loadAndSave, /return a success status after the write finishes/u);
+  assert.match(loadAndSave, /triggerDownload: false[\s\S]*method: 'PUT'/);
+  assert.match(loadAndSave, /Show a saved state only after the `PUT` request succeeds/u);
+  assert.match(loadAndSave, /do not open either format as a DOCX file/u);
+  assert.match(versionHistory, /each save creates a new snapshot instead of overwriting the previous file/u);
+  assert.match(versionHistory, /x-base-version-id/u);
+  assert.match(versionHistory, /Return `409 Conflict` if another tab or user saved first/u);
+  assert.match(versionHistory, /Bytes the Editor cannot\s+open never become current/u);
+  assert.match(versionHistory, /restores the document that was open before the attempt/u);
+  assert.match(versionHistory, /Restoring Version 1 should create Version 3/u);
   assert.match(exportOptions, /set it to `false` to return a `Blob` or ZIP/);
   assert.match(exportOptions, /does not apply `isFinalDoc`/);
   assert.doesNotMatch(exportOptions, /isFinalDoc: true/);

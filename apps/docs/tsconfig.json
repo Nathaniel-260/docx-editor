@@ -19,6 +19,7 @@
     ],
     "paths": {
       "@/*": ["./*"],
+      "@superdoc/react": ["../../packages/react/src/index.ts"],
       "collections/*": ["./.source/*"],
       "superdoc": ["../../packages/superdoc/src/public/index.ts"],
       "superdoc/ui": ["../../packages/superdoc/src/public/ui.ts"],

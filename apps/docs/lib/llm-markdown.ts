@@ -5,6 +5,7 @@ import {
   renderReferenceOperationMarkdown,
 } from './document-api-reference/markdown';
 import { renderConfigReferenceMarkdown } from './config-explorer';
+import { renderLifecycleJourneyMarkdown } from './lifecycle-journey';
 import { editorConfigExplorer } from './editor-config-explorer';
 import { proofingConfigExplorer } from './proofing-config-explorer';
 
@@ -22,6 +23,9 @@ export const llmPlaceholderComponents = [
   'DocumentApiReferenceLanding',
   'EditorDemo',
   'FileDownload',
+  'FrameworkExample',
+  'FrameworkExampleTabs',
+  'LifecycleJourney',
   'MigrationAgentPrompt',
   'MigrationExplorer',
   'ProofingConfigReference',
@@ -163,6 +167,18 @@ export function renderLLMMarkdown(markdown: string) {
       const link = href ? `[${label}](${href})` : label;
       const details = [description, fileType].filter((value): value is string => Boolean(value));
       return `${link}${details.length > 0 ? `: ${details.join(' · ')}` : ''}\n`;
+    },
+    FrameworkExample({ attributes, children }) {
+      const framework = textAttribute(attributes, 'framework') ?? 'Framework';
+      const filename = textAttribute(attributes, 'filename');
+      const label = filename ? `**${framework} — \`${filename}\`**` : `**${framework}**`;
+      return `${label}\n\n${children.trim()}\n\n`;
+    },
+    FrameworkExampleTabs({ children }) {
+      return `${children.trim()}\n`;
+    },
+    LifecycleJourney() {
+      return renderLifecycleJourneyMarkdown();
     },
     MigrationAgentPrompt() {
       // AIDEV-NOTE: The prompt itself, not a description of it. An agent

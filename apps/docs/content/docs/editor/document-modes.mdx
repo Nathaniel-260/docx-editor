@@ -21,33 +21,32 @@ Modes change Editor behavior in the browser. They do not decide who can open or 
 
 ## Set the starting mode
 
-Pass the starting mode when you create the Editor:
+Pass the starting mode when you create the Editor. The example also shows how to switch to viewing later:
 
-```ts
-const superdoc = new SuperDoc({
-  selector: '#editor',
-  document: '/sample.docx',
-  documentMode: 'suggesting',
-});
-```
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../snippets/editor/editor-document-mode.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/Editor.tsx' framework='React'>
+    <include>../../../snippets/editor/react-document-mode.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
 
-After `onReady`, call `superdoc.setDocumentMode('viewing')` to change modes without remounting.
+Vanilla changes the running Editor with `setDocumentMode()`. React changes the `documentMode` prop; the wrapper applies
+the new mode without remounting.
 
 ## Choose what viewers see
 
 Viewing stays read-only. Use `viewing` to choose which review information appears:
 
-```ts
-const superdoc = new SuperDoc({
-  selector: '#editor',
-  document: '/sample.docx',
-  documentMode: 'viewing',
-  viewing: {
-    comments: true,
-    trackedChanges: 'markup',
-  },
-});
-```
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../snippets/editor/editor-viewing-options.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/Editor.tsx' framework='React'>
+    <include>../../../snippets/editor/react-viewing-options.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
 
 | `trackedChanges` | Viewer sees                       |
 | ---------------- | --------------------------------- |
@@ -59,11 +58,18 @@ const superdoc = new SuperDoc({
 
 Change either option after `onReady`. Omitted options keep their current values:
 
-```ts
-superdoc.setViewingOptions({
-  trackedChanges: 'final',
-});
-```
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    ```ts
+    superdoc.setViewingOptions({
+      trackedChanges: 'final',
+    });
+    ```
+  </FrameworkExample>
+  <FrameworkExample filename='src/Editor.tsx' framework='React'>
+    <include>../../../snippets/editor/react-set-viewing-options.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
 
 Hiding comments or tracked changes does not remove them from the DOCX.
 

@@ -1,6 +1,6 @@
 # React quickstart
 
-Mount SuperDoc from a React component, wait for the document to open, and destroy the editor when React removes it.
+Mount SuperDoc with the React wrapper, wait for the document to open, and export through its instance ref.
 
 ## Run it
 
@@ -22,7 +22,7 @@ pnpm browsers
 pnpm test
 ```
 
-The lifecycle tests run the component under React Strict Mode and verify cleanup and readiness ownership. The browser test edits a real DOCX, exports it, and verifies the edit in `word/document.xml`.
+The component tests verify readiness and instance-ref export. The browser test edits a real DOCX, exports it, and verifies the edit in `word/document.xml`.
 
 Inside this monorepo the example is tested against the current workspace build. A standalone copy installs the versions declared in `package.json`.
 

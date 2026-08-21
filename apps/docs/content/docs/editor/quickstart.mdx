@@ -10,11 +10,14 @@ Follow this guide from top to bottom. You will open a sample agreement, change i
 
 Create a Vite project and install SuperDoc:
 
-```bash
-pnpm create vite@latest superdoc-quickstart --template vanilla-ts
-cd superdoc-quickstart
-pnpm add superdoc
-```
+<FrameworkExampleTabs>
+  <FrameworkExample filename='Terminal' framework='Vanilla'>
+    <include>../../../snippets/editor/quickstart-vanilla.sh</include>
+  </FrameworkExample>
+  <FrameworkExample filename='Terminal' framework='React'>
+    <include>../../../snippets/editor/quickstart-react.sh</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
 
 The `latest` tag installs SuperDoc v2. Pin the resolved version before shipping so upgrades stay deliberate.
 
@@ -33,18 +36,29 @@ Vite serves `public/sample.docx` at `/sample.docx`.
 
 ## 3. Add the page
 
-Replace the body of `index.html` with an export button and an Editor mount point. Keep the existing module script:
+Add the application surface. Vanilla mounts SuperDoc into `#editor`; the React wrapper creates that container for you.
 
-```html
-<button id="export-docx" type="button" disabled>Export DOCX</button>
-<div id="editor"></div>
-```
+<FrameworkExampleTabs>
+  <FrameworkExample filename='index.html' framework='Vanilla'>
+    <include>../../../../../examples/vanilla/index.html</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/main.tsx' framework='React'>
+    <include>../../../../../examples/react/src/main.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
 
 ## 4. Open the document
 
-Replace the contents of `src/main.ts`:
+Add the Editor and enable export after the document opens:
 
-<include>../../../../../examples/vanilla/src/main.ts</include>
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../../../examples/vanilla/src/main.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/App.tsx' framework='React'>
+    <include>../../../../../examples/react/src/App.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
 
 Run the project:
 
@@ -66,15 +80,16 @@ Replace a word in the agreement, then select **Export DOCX**. The browser downlo
 
 ## What just happened
 
-- `selector` chose where the Editor mounted.
+- `selector` mounted the Vanilla Editor; the React wrapper owned its container.
 - `document` gave the browser a DOCX URL to open.
 - `onReady` marked the first safe moment to enable document actions.
 - `export()` created the edited DOCX and triggered the download.
 
-If the document does not appear, check the `onException` message in the browser console. It reports startup failures
-instead of leaving an unexplained empty mount point.
+If the document does not appear, check the `onContentError` or `onException` message in the browser console. They
+report import and startup failures instead of leaving an unexplained empty mount point.
 
-The complete project is available at [go.superdoc.dev/examples/vanilla](https://go.superdoc.dev/examples/vanilla).
+The complete projects are available for [Vanilla](https://go.superdoc.dev/examples/vanilla) and
+[React](https://go.superdoc.dev/examples/react).
 
 ## Choose what to build next
 

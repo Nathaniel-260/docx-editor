@@ -1,32 +1,68 @@
 ---
 title: Add version history
 navTitle: Version history
-description: Save DOCX snapshots and restore an earlier version in the mounted Editor.
+description: Keep each saved DOCX as an immutable version and restore one without deleting newer work.
 ---
 
-Build version history by exporting immutable DOCX snapshots to application-owned storage and restoring one with `replaceFile()`.
+Continue from [Load and save](/editor/load-and-save-documents). You already export a DOCX and wait for your backend to
+store it. Version history changes one rule: each save creates a new snapshot instead of overwriting the previous file.
 
-## Save and restore snapshots
+## Keep every saved version
 
-The tested example keeps snapshots in browser memory so the complete lifecycle stays visible:
+Suppose a document has two versions:
 
-<include>../../../../../examples/version-history/src/main.ts</include>
+```text
+Version 1 → Version 2 (current)
+```
 
-The save action sets `triggerDownload: false`, verifies that export returned a `Blob`, and stores that blob as one version. The restore action checks the `replaceFile()` result before announcing success or re-enabling controls.
+Restoring Version 1 should create Version 3 with the same document content. Version 2 remains available:
 
-The complete project is available at [go.superdoc.dev/examples/version-history](https://go.superdoc.dev/examples/version-history).
+```text
+Version 1 → Version 2 → Version 3 (restored from Version 1)
+```
 
-## Persist version metadata
+SuperDoc produces and opens the DOCX files. Your backend owns the version IDs, timestamps, authors, retention rules,
+and current-version pointer.
 
-Store the DOCX bytes together with application metadata such as a version ID, creation time, author ID, and parent version. Keep authorization and retention decisions on the trusted storage service.
+## Add version endpoints
 
-Do not mark a version as saved when export finishes. Export only produces bytes; the version exists durably after storage confirms the write.
+Extend the document endpoint from the Load and save guide. These are application routes, not SuperDoc routes:
 
-When restoring, fetch the selected snapshot as a `Blob`, verify the response, and pass it to `replaceFile()`. Keep the prior version until the replacement succeeds so recovery remains possible.
+| Route                                             | Job                                               |
+| ------------------------------------------------- | ------------------------------------------------- |
+| `GET /api/documents/sample-nda`                   | Return the current DOCX                           |
+| `POST /api/documents/sample-nda/versions`         | Store a new immutable version and make it current |
+| `GET /api/documents/sample-nda/versions`          | List version metadata, newest first               |
+| `GET /api/documents/sample-nda/versions/:version` | Return one immutable DOCX snapshot                |
 
-<Callout variant='success' title='Verification target'>
-  Save a version, edit the document, save another, and restore the first. Export after restoring and confirm that the
-  first version's text is present.
-</Callout>
+Record the creation time and author from the trusted backend. Do not accept either value from browser input.
 
-Use [Export options](/editor/export-options) when snapshots need a clean review policy, or [Load and save documents](/editor/load-and-save-documents) for the underlying storage flow.
+Send the current version ID with each save. The backend must compare it with the current pointer in the same operation
+that makes the new version current. Return `409 Conflict` if another tab or user saved first. Validate every supplied
+version ID against this document.
+
+## Save, list, and restore
+
+The following helper uses the running Editor from the Load and save guide:
+
+<include>../../../snippets/editor/editor-version-history.ts</include>
+
+In Vanilla, pass the `superdoc` instance you created earlier. In React, get that same instance from
+`editorRef.current?.getInstance()`.
+
+To restore a version, the helper opens its snapshot first and then saves it as a new version. Bytes the Editor cannot
+open never become current. If the save is rejected, it reloads the backend's current document. If that request fails,
+it restores the document that was open before the attempt.
+
+Refresh the version list after every save or restore. Disable version actions while a request is running. The backend
+version check handles saves from other tabs and users.
+
+## Verify the history
+
+Save Version 1, edit the NDA, and save Version 2. Restore Version 1. The backend should create Version 3, the Editor
+should show the Version 1 text, and Version 2 should remain in the list. Reload the page to confirm Version 3 is current.
+
+Open a second tab before saving Version 2. A save from that stale tab should return `409` and leave Version 3 current.
+
+Use [Secure integration](/editor/secure-integration) to protect the version routes. Use
+[Export options](/editor/export-options) when saved versions need a specific comments or tracked-changes policy.

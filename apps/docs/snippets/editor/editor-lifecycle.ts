@@ -1,33 +1,75 @@
 import { SuperDoc } from 'superdoc';
 import 'superdoc/style.css';
 
-const status = document.querySelector<HTMLOutputElement>('#editor-status');
-if (!status) throw new Error('The Editor status output is missing.');
+function requireElement<ElementType extends Element>(selector: string) {
+  const element = document.querySelector<ElementType>(selector);
+  if (!element) throw new Error(`${selector} not found.`);
+  return element;
+}
+
+const status = requireElement<HTMLOutputElement>('#editor-status');
+const saveButton = requireElement<HTMLButtonElement>('#save-docx');
+
+let isReady = false;
+let editRevision = 0;
+
+function showLoadError(error: unknown) {
+  console.error('SuperDoc error', error);
+  if (isReady) return;
+
+  status.value = 'Could not open the document';
+  saveButton.disabled = true;
+}
 
 const superdoc = new SuperDoc({
   selector: '#editor',
-  document: '/contract.docx',
+  document: '/sample.docx',
   onReady: () => {
+    isReady = true;
     status.value = 'Ready';
+    saveButton.disabled = false;
   },
   onEditorUpdate: () => {
+    editRevision += 1;
     status.value = 'Unsaved changes';
   },
-  onContentError: ({ error }) => {
-    status.value = error instanceof Error ? error.message : 'The document could not be loaded.';
-  },
-  onException: ({ error }) => {
-    console.error('SuperDoc exception', error);
-  },
+  onContentError: ({ error }) => showLoadError(error),
+  onException: ({ error }) => showLoadError(error),
 });
 
-const handleModeChange = ({ documentMode }: { documentMode: 'editing' | 'suggesting' | 'viewing' }) => {
-  status.value = `Mode: ${documentMode}`;
-};
+async function saveDocument() {
+  if (!isReady) return;
 
-superdoc.on('document-mode-change', handleModeChange);
+  const savedRevision = editRevision;
+  saveButton.disabled = true;
+  status.value = 'Saving…';
+  try {
+    const file = await superdoc.export({
+      exportType: ['docx'],
+      triggerDownload: false,
+    });
+    if (!(file instanceof Blob)) throw new Error('Expected one DOCX file.');
 
-window.addEventListener('beforeunload', () => {
-  superdoc.off('document-mode-change', handleModeChange);
+    const response = await fetch('/api/documents/42', {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      },
+      body: file,
+    });
+    if (!response.ok) throw new Error(`Save failed with ${response.status}.`);
+    status.value = editRevision === savedRevision ? 'Saved' : 'Unsaved changes';
+  } catch (error) {
+    status.value = 'Save failed';
+    console.error('The document was not saved.', error);
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+saveButton.addEventListener('click', saveDocument);
+
+export function unmountEditor() {
+  saveButton.removeEventListener('click', saveDocument);
   superdoc.destroy();
-});
+}
