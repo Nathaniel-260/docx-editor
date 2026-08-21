@@ -246,6 +246,128 @@ describe('CommentHeader.vue', () => {
     });
   });
 
+  describe('tracked-change own vs other permissions (SD-3845)', () => {
+    const mikeLegalResolver = (permission) =>
+      permission === PERMISSIONS.RESOLVE_OTHER || permission === PERMISSIONS.REJECT_OTHER;
+
+    const otherUserTrackedChange = () =>
+      makeComment({
+        trackedChange: true,
+        trackedChangeType: 'trackInsert',
+        creatorId: 'alice-id',
+        creatorEmail: 'alice@mikelegal.test',
+        creatorName: 'Alice',
+        getCommentUser: () => ({ id: 'alice-id', name: 'Alice', email: 'alice@mikelegal.test' }),
+      });
+
+    const ownTrackedChange = () =>
+      makeComment({
+        trackedChange: true,
+        trackedChangeType: 'trackInsert',
+      });
+
+    it('requests OTHER permissions and shows Accept and Reject for another user tracked change', () => {
+      isAllowedMock = vi.fn(mikeLegalResolver);
+      const wrapper = mountHeader({
+        currentUser: { id: 'bob-id', email: 'bob@mikelegal.test', name: 'Bob' },
+        comment: otherUserTrackedChange(),
+      });
+
+      expect(isAllowedMock).toHaveBeenCalledWith(
+        PERMISSIONS.RESOLVE_OTHER,
+        'editor',
+        false,
+        expect.objectContaining({ comment: expect.objectContaining({ trackedChange: true }) }),
+      );
+      expect(isAllowedMock).toHaveBeenCalledWith(
+        PERMISSIONS.REJECT_OTHER,
+        'editor',
+        false,
+        expect.objectContaining({ comment: expect.objectContaining({ trackedChange: true }) }),
+      );
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(true);
+      expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(true);
+    });
+
+    it('hides Accept and Reject for the current user tracked change when OWN is denied', () => {
+      isAllowedMock = vi.fn(mikeLegalResolver);
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: ownTrackedChange(),
+      });
+
+      expect(isAllowedMock).toHaveBeenCalledWith(PERMISSIONS.RESOLVE_OWN, 'editor', false, expect.any(Object));
+      expect(isAllowedMock).toHaveBeenCalledWith(PERMISSIONS.REJECT_OWN, 'editor', false, expect.any(Object));
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(false);
+      expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(false);
+    });
+
+    it('hides Reject for another user tracked change when REJECT_OTHER is denied', () => {
+      isAllowedMock = vi.fn((permission) => permission === PERMISSIONS.RESOLVE_OTHER);
+      const wrapper = mountHeader({
+        currentUser: { id: 'bob-id', email: 'bob@mikelegal.test', name: 'Bob' },
+        comment: otherUserTrackedChange(),
+      });
+
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(true);
+      expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(false);
+      expect(isAllowedMock).toHaveBeenCalledWith(
+        PERMISSIONS.RESOLVE_OTHER,
+        'editor',
+        false,
+        expect.objectContaining({ comment: expect.objectContaining({ trackedChange: true }) }),
+      );
+      expect(isAllowedMock).toHaveBeenCalledWith(
+        PERMISSIONS.REJECT_OTHER,
+        'editor',
+        false,
+        expect.objectContaining({ comment: expect.objectContaining({ trackedChange: true }) }),
+      );
+    });
+
+    it('classifies an unattributed tracked change as OWN when both sides lack id and email', () => {
+      isAllowedMock = vi.fn(mikeLegalResolver);
+      const wrapper = mountHeader({
+        currentUser: { id: null, email: null, name: 'Alice' },
+        comment: makeComment({
+          trackedChange: true,
+          trackedChangeType: 'trackInsert',
+          creatorId: null,
+          creatorEmail: null,
+          creatorName: null,
+          getCommentUser: () => ({ id: null, name: null, email: null }),
+        }),
+      });
+
+      expect(isAllowedMock).toHaveBeenCalledWith(PERMISSIONS.RESOLVE_OWN, 'editor', false, expect.any(Object));
+      expect(isAllowedMock).toHaveBeenCalledWith(PERMISSIONS.REJECT_OWN, 'editor', false, expect.any(Object));
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(false);
+      expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(false);
+    });
+
+    it('classifies a name-only imported tracked change as OWN when names match', () => {
+      isAllowedMock = vi.fn(mikeLegalResolver);
+      const wrapper = mountHeader({
+        currentUser: { id: null, email: null, name: 'Alice Owner' },
+        comment: makeComment({
+          trackedChange: true,
+          trackedChangeType: 'trackInsert',
+          creatorId: null,
+          creatorEmail: null,
+          creatorName: 'Alice Owner',
+          origin: 'word',
+          importedAuthor: { name: 'Alice Owner' },
+          getCommentUser: () => ({ id: null, name: 'Alice Owner', email: null }),
+        }),
+      });
+
+      expect(isAllowedMock).toHaveBeenCalledWith(PERMISSIONS.RESOLVE_OWN, 'editor', false, expect.any(Object));
+      expect(isAllowedMock).toHaveBeenCalledWith(PERMISSIONS.REJECT_OWN, 'editor', false, expect.any(Object));
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(false);
+      expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(false);
+    });
+  });
+
   describe('reopen affordance (row 864)', () => {
     beforeEach(() => {
       // Reopen reuses the resolve permission; allow it for these cases.

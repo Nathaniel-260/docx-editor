@@ -668,6 +668,26 @@ function readEntityId(row: unknown): string | null {
   return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
+function identityText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** Same id/email-first OWN rule as editor-core `classifyOwnership`. */
+function trackedChangeOwnedByCurrentUser(change: LooseRecord, currentUser: LooseRecord | null): boolean {
+  const user = currentUser ?? {};
+  const currentId = identityText(user.id).toLowerCase();
+  const authorId = identityText(change.authorId).toLowerCase();
+  if (currentId && authorId) return currentId === authorId;
+  const currentEmail = identityText(user.email).toLowerCase();
+  const authorEmail = identityText(change.authorEmail).toLowerCase();
+  if (currentEmail && authorEmail) return currentEmail === authorEmail;
+  if (currentId || currentEmail || authorId || authorEmail) return false;
+  const authorName = identityText(change.author).replace(/\s+/g, ' ').toLowerCase();
+  if (!authorName) return true;
+  const currentName = identityText(user.name).replace(/\s+/g, ' ').toLowerCase();
+  return Boolean(currentName && currentName === authorName);
+}
+
 /**
  * Read the tracked-change carrier shared by both ends of a collapsed host
  * selection. Unlike the public sync seed, this painted caret metadata is
@@ -4787,6 +4807,47 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     return undefined;
   };
 
+  const findTrackChangeForPermission = (id: string): LooseRecord | null => {
+    // AIDEV-NOTE: `state` is assigned from the first `computeState()` result, so
+    // this lookup runs during that pass before the slice exists.
+    const fromSlice = state?.trackChanges?.items?.find((item) => readEntityId(item) === id);
+    if (fromSlice) return trackChangesItemPayload(fromSlice);
+    const listed = safeCall<unknown>(() => (getDoc()?.trackChanges as LooseRecord | undefined)?.list?.(), null);
+    if (!listed || typeof listed !== 'object' || typeof (listed as LooseRecord).then === 'function') return null;
+    const items = (listed as LooseRecord).items;
+    if (!Array.isArray(items)) return null;
+    const row = items.find((item) => readEntityId(item) === id);
+    if (!row) return null;
+    const projected = projectTrackChangesItem(row);
+    return projected ? trackChangesItemPayload(projected) : (row as LooseRecord);
+  };
+
+  const trackedChangeDecisionPermissionReason = (
+    kind: 'accept' | 'reject',
+    ids: readonly string[],
+  ): SuperDocUIReason | undefined => {
+    const canPerform = superdoc.canPerformPermission;
+    if (typeof canPerform !== 'function' || ids.length === 0) return undefined;
+    const currentUser =
+      superdoc.config && typeof superdoc.config === 'object'
+        ? ((superdoc.config as LooseRecord).user as LooseRecord | null)
+        : null;
+    for (const id of ids) {
+      const trackedChange = findTrackChangeForPermission(id) ?? { id };
+      const isOwn = trackedChangeOwnedByCurrentUser(trackedChange, currentUser);
+      const permission =
+        kind === 'accept' ? (isOwn ? 'RESOLVE_OWN' : 'RESOLVE_OTHER') : isOwn ? 'REJECT_OWN' : 'REJECT_OTHER';
+      let allowed: unknown;
+      try {
+        allowed = canPerform.call(superdoc, { permission, trackedChange, comment: null });
+      } catch {
+        return undefined;
+      }
+      if (allowed === false) return SUPERDOC_UI_REASONS.permissionDenied;
+    }
+    return undefined;
+  };
+
   const hostCommandSupport = (command: string): LooseRecord | null => {
     const host = getHost();
     const capabilities = safeCall<LooseRecord | null>(
@@ -4870,7 +4931,12 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       const supported = trackCommand.scope === 'all' ? supportsAll : supportsSingle;
       const reason =
         bulkTrackDecisionBlockedReason(trackCommand, tcApi) ??
-        trackDecisionReason(trackCommand, supported, reviewMutationsAreReadOnly(), selection, doc);
+        trackDecisionReason(trackCommand, supported, reviewMutationsAreReadOnly(), selection, doc) ??
+        // SD-3845 option A — Accept All / Reject All stay enabled.
+        // Denied items are skipped at decide, not by greying the bulk command.
+        (trackCommand.scope === 'all'
+          ? undefined
+          : trackedChangeDecisionPermissionReason(trackCommand.kind, selection.activeChangeIds));
       return normalizeCommandState({ enabled: reason == null, active: false, supported, reason }, 'builtin');
     }
     if (id === 'copy-format') {
@@ -6935,7 +7001,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   ): CommandExecutionResult {
     const fallback = () => callTrackDecisionTarget(kind, trackDecisionIdTarget(changeId, story), changeId, story);
     try {
-      const result = callTrackDecisionTarget(kind, rangeTarget, null);
+      const result = callTrackDecisionTarget(kind, rangeTarget, changeId, story);
       if (isPromiseLike(result)) {
         return settleCommandExecution(
           Promise.resolve(result).then((settled) => {
@@ -9868,6 +9934,14 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     const isAllTarget = target.kind === 'all' || target.scope === 'all';
     const isRangeTarget = target.kind === 'range';
     const isMultiIdTarget = target.kind === 'ids';
+    const permissionIds = isAllTarget
+      ? []
+      : isMultiIdTarget && Array.isArray(target.ids)
+        ? target.ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
+        : changeId
+          ? [changeId]
+          : [];
+    if (permissionIds.length > 0 && trackedChangeDecisionPermissionReason(kind, permissionIds)) return false;
     const bulkBlocked = bulkTrackDecisionBlockedReason({ kind, scope: isAllTarget ? 'all' : 'id' }, tcApi);
     if (bulkBlocked) return false;
     const legacyName = isAllTarget ? `${kind}All` : kind;

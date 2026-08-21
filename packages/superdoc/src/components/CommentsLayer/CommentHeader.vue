@@ -91,7 +91,35 @@ const isCommentOwnedByCurrentUser = (comment) => {
   const commentName = normalizeActorName(comment?.creatorName);
   return Boolean(currentName && commentName && currentName === commentName);
 };
-const isOwnComment = computed(() => isCommentOwnedByCurrentUser(props.comment));
+// AIDEV-NOTE: Accept/Reject must use the same id/email-first ownership as
+// `classifyOwnership` in editor-core tracked-change identity. Import origin
+// still marks overflow Edit/Delete as other-user via isCommentOwnedByCurrentUser.
+const isTrackedChangeOwnedByCurrentUser = (comment) => {
+  const currentUser = proxy.$superdoc.config.user;
+  const current = getActorIdentity(currentUser);
+  const author = getActorIdentity({
+    id: comment?.creatorId,
+    email: comment?.creatorEmail,
+    name: comment?.creatorName,
+  });
+  if (current.hasId && author.hasId) {
+    return current.id.toLowerCase() === author.id.toLowerCase();
+  }
+  if (current.hasEmail && author.hasEmail) {
+    return current.email === author.email;
+  }
+  if (current.hasId || current.hasEmail || author.hasId || author.hasEmail) {
+    return false;
+  }
+  const authorName = normalizeActorName(comment?.creatorName);
+  if (!authorName) return true;
+  const currentName = normalizeActorName(currentUser?.name);
+  return Boolean(currentName && currentName === authorName);
+};
+const isOwnComment = computed(() => {
+  if (props.comment?.trackedChange) return isTrackedChangeOwnedByCurrentUser(props.comment);
+  return isCommentOwnedByCurrentUser(props.comment);
+});
 const trackedChangeThreadParentId = computed(() => trackedChangeThreadParentIdForComment(props.comment));
 
 const { uiFontFamily } = useUiFontFamily();
@@ -131,11 +159,10 @@ const allowResolve = computed(() => {
     superdoc: proxy.$superdoc,
   };
 
-  if (isOwnComment.value || props.comment.trackedChange) {
+  if (isOwnComment.value) {
     return isAllowed(PERMISSIONS.RESOLVE_OWN, role, isInternal, context);
-  } else {
-    return isAllowed(PERMISSIONS.RESOLVE_OTHER, role, isInternal, context);
   }
+  return isAllowed(PERMISSIONS.RESOLVE_OTHER, role, isInternal, context);
 });
 
 const allowReject = computed(() => {
@@ -148,11 +175,10 @@ const allowReject = computed(() => {
     superdoc: proxy.$superdoc,
   };
 
-  if (isOwnComment.value || props.comment.trackedChange) {
+  if (isOwnComment.value) {
     return isAllowed(PERMISSIONS.REJECT_OWN, role, isInternal, context);
-  } else {
-    return isAllowed(PERMISSIONS.REJECT_OTHER, role, isInternal, context);
   }
+  return isAllowed(PERMISSIONS.REJECT_OTHER, role, isInternal, context);
 });
 
 // Row 864 reopen: a resolved root comment may be reopened (the inverse of

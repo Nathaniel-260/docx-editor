@@ -3302,6 +3302,138 @@ describe('public ui — command reason taxonomy', () => {
     expect(decide).not.toHaveBeenCalled();
   });
 
+  it('disables toolbar accept/reject when permissionResolver denies the selected tracked change (SD-3845)', async () => {
+    const decide = vi.fn(() => ({ success: true }));
+    const canPerformPermission = vi.fn(({ permission }) => {
+      if (
+        permission === 'RESOLVE_OWN' ||
+        permission === 'RESOLVE_OTHER' ||
+        permission === 'REJECT_OWN' ||
+        permission === 'REJECT_OTHER'
+      ) {
+        return false;
+      }
+      return true;
+    });
+    const superdoc = {
+      ...makeDocSuperdoc({
+        doc: baseDoc({
+          selection: {
+            current: () => ({
+              empty: false,
+              activeMarks: [],
+              activeCommentIds: [],
+              activeChangeIds: ['tc-1'],
+              text: '',
+            }),
+          },
+          trackChanges: { list: () => ({ items: [{ id: 'tc-1', type: 'insert', author: 'Alice' }] }), decide },
+        }),
+        mode: 'editing',
+      }),
+      config: { documentMode: 'editing', user: { name: 'Alice' } },
+      canPerformPermission,
+    };
+    const ui = createSuperDocUI({ superdoc });
+    const state = ui.commands.get('track-changes-accept-selection').getState();
+    expect(state.enabled).toBe(false);
+    expect(state.supported).toBe(true);
+    expect(state.reason).toBe(SUPERDOC_UI_REASONS.permissionDenied);
+    expect(canPerformPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: 'RESOLVE_OWN', trackedChange: expect.objectContaining({ id: 'tc-1' }) }),
+    );
+    expect(await ui.toolbar.execute('track-changes-accept-selection')).toBe(false);
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('keeps toolbar accept enabled for another user tracked change when OTHER is allowed (SD-3845)', async () => {
+    const decide = vi.fn(() => ({ success: true }));
+    const canPerformPermission = vi.fn(
+      ({ permission }) => permission === 'RESOLVE_OTHER' || permission === 'REJECT_OTHER',
+    );
+    const superdoc = {
+      ...makeDocSuperdoc({
+        doc: baseDoc({
+          selection: {
+            current: () => ({
+              empty: false,
+              activeMarks: [],
+              activeCommentIds: [],
+              activeChangeIds: ['tc-1'],
+              text: '',
+            }),
+          },
+          trackChanges: {
+            list: () => ({
+              items: [{ id: 'tc-1', type: 'insert', author: 'Alice', authorEmail: 'alice@mikelegal.test' }],
+            }),
+            decide,
+          },
+        }),
+        mode: 'editing',
+      }),
+      config: {
+        documentMode: 'editing',
+        user: { id: 'bob-id', email: 'bob@mikelegal.test', name: 'Bob' },
+      },
+      canPerformPermission,
+    };
+    const ui = createSuperDocUI({ superdoc });
+    const state = ui.commands.get('track-changes-accept-selection').getState();
+    expect(state.enabled).toBe(true);
+    expect(canPerformPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: 'RESOLVE_OTHER', trackedChange: expect.objectContaining({ id: 'tc-1' }) }),
+    );
+    expect(await ui.toolbar.execute('track-changes-accept-selection')).toEqual({ success: true });
+    expect(decide).toHaveBeenCalled();
+  });
+
+  it('blocks a partial-selection range decide when permissionResolver denies the active tracked change (SD-3845)', async () => {
+    const story = { kind: 'story', storyType: 'body' } as const;
+    const decide = vi.fn(() => ({ success: true }));
+    const canPerformPermission = vi.fn(() => false);
+    const superdoc = {
+      ...makeDocSuperdoc({
+        doc: baseDoc({
+          selection: {
+            current: () => ({
+              empty: false,
+              target: {
+                kind: 'text',
+                story,
+                segments: [{ blockId: 'P1', range: { start: 18, end: 18 } }],
+              },
+              selectionTarget: {
+                kind: 'selection',
+                story,
+                coordinateSpace: 'tracked',
+                start: { kind: 'text', blockId: 'P1', offset: 20, story },
+                end: { kind: 'text', blockId: 'P1', offset: 24, story },
+              },
+              activeMarks: [],
+              activeCommentIds: [],
+              activeChangeIds: ['tc-1'],
+              text: 'move',
+            }),
+          },
+          trackChanges: {
+            list: () => ({ items: [{ id: 'tc-1', type: 'delete', grouping: 'standalone', author: 'Alice' }] }),
+            decide,
+          },
+        }),
+        mode: 'editing',
+      }),
+      config: { documentMode: 'editing', user: { name: 'Alice' } },
+      canPerformPermission,
+    };
+    const ui = createSuperDocUI({ superdoc });
+    const state = ui.commands.get('track-changes-accept-selection').getState();
+    expect(state.enabled).toBe(false);
+    expect(state.reason).toBe(SUPERDOC_UI_REASONS.permissionDenied);
+    expect(await ui.toolbar.execute('track-changes-accept-selection')).toBe(false);
+    expect(decide).not.toHaveBeenCalled();
+  });
+
   it('reports table cell-context commands as a named context-facade gap when no table context resolves', async () => {
     const superdoc = makeDocSuperdoc({ doc: baseDoc() });
     const ui = createSuperDocUI({ superdoc });

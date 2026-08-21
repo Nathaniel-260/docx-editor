@@ -90,6 +90,12 @@ export const SUPERDOC_UI_REASONS = {
    * are never gated by this reason.
    */
   contentControlLocked: 'content-control-locked',
+  /**
+   * The current user is not allowed to run this command under the product
+   * permissionResolver / role matrix (SD-3845). Distinct from document
+   * read-only: the document is writable, this one action is not.
+   */
+  permissionDenied: 'permission-denied',
 } as const;
 
 /**

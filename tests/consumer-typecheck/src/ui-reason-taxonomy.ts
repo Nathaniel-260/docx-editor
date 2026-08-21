@@ -25,9 +25,11 @@ void _reason;
 const _unsupported: SuperDocUIReason = 'command-unsupported';
 const _readonly: SuperDocUIReason = 'document-readonly';
 const _notReady: SuperDocUIReason = 'not-ready';
+const _permissionDenied: SuperDocUIReason = 'permission-denied';
 void _unsupported;
 void _readonly;
 void _notReady;
+void _permissionDenied;
 
 // Canonical runtime entry points still resolve from `superdoc/ui`.
 void createSuperDocUI;
