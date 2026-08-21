@@ -487,6 +487,7 @@ type ActivePersistentPagePainterTransaction = {
   pendingPaintSnapshot: PaintSnapshot | null;
   hasPendingPaintSnapshot: boolean;
   fragmentFailures: PainterFragmentFailure[];
+  changedRoots: Set<HTMLElement>;
 };
 
 type PainterFragmentFailure = {
@@ -498,6 +499,7 @@ type PersistentPagePainterTransaction = {
   commit(): void;
   rollback(): void;
   readFragmentFailures(): readonly PainterFragmentFailure[];
+  readChangedRoots(): readonly HTMLElement[];
 };
 
 function clonePageDomStateMetadata(state: PageDomState): PageDomState {
@@ -1244,6 +1246,7 @@ export class DomPainter {
       pendingPaintSnapshot: null,
       hasPendingPaintSnapshot: false,
       fragmentFailures: [],
+      changedRoots: new Set(),
     };
     // Tooltip staging is ephemeral but mutable during fragment rendering.
     // Isolate candidate keys so a mid-render throw cannot leave any candidate
@@ -1265,6 +1268,14 @@ export class DomPainter {
       readFragmentFailures: () => {
         if (settled || this.activePersistentPageTransaction !== active) return [];
         return active.fragmentFailures.map((failure) => ({ ...failure }));
+      },
+      readChangedRoots: () => {
+        if (settled || this.activePersistentPageTransaction !== active) return [];
+        const mount = this.mount;
+        const retained = mount ? [...active.changedRoots].filter((root) => root === mount || mount.contains(root)) : [];
+        return retained.filter(
+          (candidate) => !retained.some((other) => other !== candidate && other.contains(candidate)),
+        );
       },
       commit: () => {
         if (!claim()) return;
@@ -2133,6 +2144,7 @@ export class DomPainter {
       fragEl.dataset.behindDocSection = kind; // Track for cleanup on re-render
       // Insert at beginning of page so it renders behind body content due to DOM order
       pageEl.insertBefore(fragEl, pageEl.firstChild);
+      this.activePersistentPageTransaction?.changedRoots.add(fragEl);
     });
 
     // Render normal fragments in the header/footer container
@@ -2177,6 +2189,7 @@ export class DomPainter {
       (child) => child.classList.contains(CLASS_NAMES.fragment) && !child.hasAttribute('data-behind-doc-section'),
     );
     pageEl.insertBefore(container, firstBodyFragment ?? null);
+    this.activePersistentPageTransaction?.changedRoots.add(container);
   }
 
   private resetState(): void {
@@ -2414,6 +2427,7 @@ export class DomPainter {
       totalPages: this.totalPages,
       currentMapping: this.currentMapping,
       changedBlocks: this.changedBlocks,
+      recordChangedRoot: (root) => this.activePersistentPageTransaction?.changedRoots.add(root),
       sdtLabelsRendered: this.sdtLabelsRendered,
       getEffectivePageStyles: () => this.getEffectivePageStyles(),
       applySemanticPageOverrides: (el) => this.applySemanticPageOverrides(el),

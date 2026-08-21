@@ -164,7 +164,11 @@ function rootAttributeSignature(page: HTMLElement): string {
     .join('\n');
 }
 
-type PrivatePainterTransaction = { commit(): void; rollback(): void };
+type PrivatePainterTransaction = {
+  readChangedRoots?(): readonly HTMLElement[];
+  commit(): void;
+  rollback(): void;
+};
 
 function beginPrivatePainterTransaction(painter: unknown): PrivatePainterTransaction {
   const begin = (painter as Record<PropertyKey, unknown>)[
@@ -677,6 +681,7 @@ describe('persistent surface stability and rollback', () => {
       handle.paintPersistentPages(persistentInput(scaffold, packets, [0, 1], { captureSnapshot: true }), mount);
       expect(shellsOf(mount)[0]?.dataset.v2PageContent).toBe('filled');
       expect(handle.getHydratedContentPageIndices()).toEqual([0, 1]);
+      expect(painterTransaction.readChangedRoots?.()).toEqual(shellsBefore);
       expect(() => painterTransaction.commit()).toThrow(/injected post-mutation snapshot failure/);
       domJournal.rollback();
       failSnapshotCommit = false;

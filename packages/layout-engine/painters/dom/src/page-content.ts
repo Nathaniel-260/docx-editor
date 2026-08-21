@@ -225,6 +225,8 @@ export interface PageContentContext {
   totalPages: number;
   currentMapping: PositionMapping | null;
   changedBlocks: ReadonlySet<string>;
+  /** Record the smallest newly painted subtree for transaction finalization. */
+  recordChangedRoot?(root: HTMLElement): void;
   sdtLabelsRendered: Set<string>;
   getEffectivePageStyles(): PageStyles | undefined;
   applySemanticPageOverrides(el: HTMLElement): void;
@@ -346,6 +348,7 @@ export function hydratePageContent(
 
   ctx.renderDecorationsForPage(el, page, pageIndex);
   ctx.renderColumnSeparators(el, page, page.width, page.height);
+  ctx.recordChangedRoot?.(el);
   return fragmentStates;
 }
 
@@ -481,6 +484,7 @@ export function patchPage(
       if (needsRebuild) {
         const replacement = ctx.renderFragment(fragment, contextBase, sdtBoundary, betweenInfo, resolvedItem);
         pageEl.replaceChild(replacement, current.element);
+        ctx.recordChangedRoot?.(replacement);
         current.element = replacement;
         current.signature = resolvedSig;
         current.pmInteriorVersion = resolvedPmInteriorVersion(resolvedItem);
@@ -530,6 +534,7 @@ export function patchPage(
 
     const fresh = ctx.renderFragment(fragment, contextBase, sdtBoundary, betweenInfo, resolvedItem);
     pageEl.insertBefore(fresh, getPageContentFragments(pageEl)[index] ?? null);
+    ctx.recordChangedRoot?.(fresh);
     fragmentsRendered += 1;
     nextFragments.push({
       key,
