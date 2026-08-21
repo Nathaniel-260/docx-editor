@@ -1,0 +1,65 @@
+name: CI Vue
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    # `vue + core`, the CI impact this package carries. The wrapper compiles
+    # against the core type surface and runs against the built runtime, so a
+    # regression can originate in any core package, not only in
+    # `packages/superdoc`. Narrowing this to the wrapper's own directory would
+    # let exactly the breakage this lane exists to catch reach a release.
+    paths:
+      - 'packages/vue/**'
+      - 'packages/superdoc/**'
+      - 'packages/layout-engine/**'
+      - 'packages/word-layout/**'
+      - 'packages/preset-geometry/**'
+      - 'shared/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      # The lane validates its own runner, setup, and commands, so a change to
+      # this file has to run it. Mirror generation carries the matching Orbit
+      # paths (the generated mirror and the engine prepare script) across.
+      - '.github/workflows/ci-vue.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-vue-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: CI Vue / validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: pnpm config ownership
+        run: pnpm run check:pnpm-config
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build superdoc (dependency)
+        run: pnpm run build:superdoc
+
+      - name: Lint
+        run: pnpm --filter @superdoc/vue lint
+
+      - name: Type check
+        run: pnpm --filter @superdoc/vue type-check
+
+      - name: Build and type check the Vue consumer
+        run: pnpm --filter @superdoc/vue type-check:consumer
+
+      - name: Test
+        run: pnpm --filter @superdoc/vue test

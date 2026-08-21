@@ -299,7 +299,7 @@ const LANES = [
     id: 'ci-package-wrappers',
     title: 'CI package wrappers',
     workflow: resolveOrbitWorkflow(
-      ['.github/workflows/react.yml', '.github/workflows/vscode.yml'],
+      ['.github/workflows/react.yml', '.github/workflows/ci-vue.yml', '.github/workflows/vscode.yml'],
       'wrapper validation',
     ),
     stages: [
@@ -312,6 +312,23 @@ const LANES = [
       },
       { id: 'react-build', title: 'Build React package', ...sh('pnpm --filter @superdoc/react build') },
       { id: 'react-test', title: 'Test React package', ...sh('pnpm --filter @superdoc/react test') },
+      { id: 'vue-build-superdoc', title: 'Build superdoc for Vue', ...sh('pnpm run build:superdoc') },
+      { id: 'vue-lint', title: 'Lint Vue package', ...sh('pnpm --filter @superdoc/vue lint') },
+      {
+        id: 'vue-typecheck',
+        title: 'Typecheck Vue package',
+        ...sh('pnpm --filter @superdoc/vue type-check'),
+      },
+      {
+        // Builds the package, then type-checks a real SFC against the built
+        // types. This is the stage that catches a public contract that only
+        // breaks once a consumer writes a template.
+        id: 'vue-typecheck-consumer',
+        title: 'Typecheck Vue SFC consumer',
+        ...sh('pnpm --filter @superdoc/vue type-check:consumer'),
+      },
+      { id: 'vue-build', title: 'Build Vue package', ...sh('pnpm --filter @superdoc/vue build') },
+      { id: 'vue-test', title: 'Test Vue package', ...sh('pnpm --filter @superdoc/vue test') },
       { id: 'vscode-lint', title: 'Lint VS Code extension', ...sh('pnpm --filter superdoc-vscode-ext lint') },
       {
         id: 'vscode-typecheck',

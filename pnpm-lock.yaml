@@ -1147,6 +1147,39 @@ importers:
         specifier: ^14.2.0
         version: 14.2.6
 
+  packages/vue:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.2
+      happy-dom:
+        specifier: 20.4.0
+        version: 20.4.0
+      superdoc:
+        specifier: workspace:*
+        version: link:../superdoc
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vite:
+        specifier: ^7.2.7
+        version: 7.3.1(@types/node@22.19.2)(jiti@2.7.0)(less@4.4.2)(lightningcss@1.33.0)(sass@1.97.3)(terser@5.46.1)(tsx@4.21.0)(yaml@2.9.0)
+      vite-plugin-dts:
+        specifier: 'catalog:'
+        version: 4.5.4(@types/node@22.19.2)(rollup@4.60.2)(typescript@5.9.3)(vite@7.3.1(@types/node@22.19.2)(jiti@2.7.0)(less@4.4.2)(lightningcss@1.33.0)(sass@1.97.3)(terser@5.46.1)(tsx@4.21.0)(yaml@2.9.0))
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.2.8(@opentelemetry/api@1.9.1)(@types/node@22.19.2)(@vitest/coverage-v8@4.1.10(@vitest/browser@4.1.10)(vitest@4.1.10))(esbuild@0.28.1)(happy-dom@20.4.0)(jiti@2.7.0)(jsdom@27.3.0(canvas@3.2.3))(less@4.4.2)(sass@1.97.3)(svelte@5.56.9)(terser@5.46.1)(tsx@4.21.0)(typescript@5.9.3)(vite@7.3.1(@types/node@22.19.2)(jiti@2.7.0)(less@4.4.2)(lightningcss@1.33.0)(sass@1.97.3)(terser@5.46.1)(tsx@4.21.0)(yaml@2.9.0))(yaml@2.9.0)
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.19.2)(@vitest/browser-preview@4.1.10)(@vitest/coverage-v8@4.1.10(@vitest/browser@4.1.10)(vitest@4.1.10))(happy-dom@20.4.0)(jsdom@27.3.0(canvas@3.2.3))(vite@7.3.1(@types/node@22.19.2)(jiti@2.7.0)(less@4.4.2)(lightningcss@1.33.0)(sass@1.97.3)(terser@5.46.1)(tsx@4.21.0)(yaml@2.9.0))
+      vue:
+        specifier: 3.5.32
+        version: 3.5.32(typescript@5.9.3)
+      vue-tsc:
+        specifier: 'catalog:'
+        version: 2.2.12(typescript@5.9.3)
+
   packages/word-layout:
     dependencies:
       '@superdoc/common':
@@ -8151,10 +8184,6 @@ packages:
     resolution: {integrity: sha512-PS08Iboia9mts/2ygV3eLpY5ghnUcfLV/EXTOW1E2qYxJKGGBUtNjN76FYHnMs36RmARn41bC0AZmn+rR0OVpQ==}
     engines: {node: ^10 || ^12 || >=14}
 
-  postcss@8.5.10:
-    resolution: {integrity: sha512-pMMHxBOZKFU6HgAZ4eyGnwXF/EvPGGqUr0MnZ5+99485wwW41kW91A4LOGxSHhgugZmSChL5AlElNdwlNgcnLQ==}
-    engines: {node: ^10 || ^12 || >=14}
-
   postcss@8.5.22:
     resolution: {integrity: sha512-KBDEIpLrvpv16pp3K0Fw+UCoZfopFjjgeB+0tA/aaThfEE74kKDLrgg603YvOWJyg3+WYtyq3xYsQWsIyZlPqQ==}
     engines: {node: ^10 || ^12 || >=14}
@@ -12935,7 +12964,7 @@ snapshots:
       '@vue/shared': 3.5.32
       estree-walker: 2.0.2
       magic-string: 0.30.21
-      postcss: 8.5.10
+      postcss: 8.5.22
       source-map-js: 1.2.1
 
   '@vue/compiler-ssr@3.5.32':
@@ -17463,12 +17492,6 @@ snapshots:
       util-deprecate: 1.0.2
 
   postcss@8.4.31:
-    dependencies:
-      nanoid: 3.3.11
-      picocolors: 1.1.1
-      source-map-js: 1.2.1
-
-  postcss@8.5.10:
     dependencies:
       nanoid: 3.3.11
       picocolors: 1.1.1

@@ -1,0 +1,74 @@
+{
+  "name": "@superdoc/vue",
+  "version": "2.0.0-next.0",
+  "description": "Official Vue 3 wrapper for the SuperDoc document editor",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js"
+    },
+    "./style.css": {
+      "import": "./style.css",
+      "require": "./style.css"
+    }
+  },
+  "scripts": {
+    "build": "vp build",
+    "dev": "vp build --watch",
+    "test": "vp test run",
+    "pretype-check": "node ../../apps/cli/scripts/ensure-superdoc-build.js --types",
+    "type-check": "tsc --noEmit",
+    "pretype-check:consumer": "node ../../apps/cli/scripts/ensure-superdoc-build.js --types",
+    "type-check:consumer": "pnpm run build && vue-tsc --noEmit -p test/consumer/tsconfig.json",
+    "lint": "pnpm -w exec vp lint packages/vue/src",
+    "prepublishOnly": "pnpm run build"
+  },
+  "keywords": [
+    "superdoc",
+    "vue",
+    "document",
+    "editor",
+    "docx",
+    "word"
+  ],
+  "license": "AGPL-3.0",
+  "peerDependencies": {
+    "superdoc": ">=2.0.0-0 <3",
+    "vue": "^3.5.11"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "happy-dom": "catalog:",
+    "superdoc": "workspace:*",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-dts": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:",
+    "vue": "catalog:",
+    "vue-tsc": "catalog:"
+  },
+  "files": [
+    "dist",
+    "style.css",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/superdoc/docx-editor.git",
+    "directory": "packages/vue"
+  },
+  "bugs": {
+    "url": "https://github.com/superdoc/docx-editor/issues"
+  },
+  "homepage": "https://github.com/superdoc/docx-editor/tree/main/packages/vue#readme"
+}
