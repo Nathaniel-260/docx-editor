@@ -58,10 +58,10 @@ const PRIVATE_V2_PACKAGE_MANIFESTS = [
 ];
 
 const V1_PACKAGE = '@superdoc/super-editor';
-// NOTE: `./ui` and `./ui/react` are intentionally NOT forbidden. On v2 they
-// are restored as v2-native public exports (routing through
-// `src/public/ui.ts` / `src/public/ui-react.ts`), which import no v1 editor
-// surface and no private v2 packages. The v1-artifact scan below still
+// NOTE: `./ui`, `./ui/react`, and `./ui/vue` are intentionally NOT forbidden.
+// On v2 they are v2-native public exports (routing through
+// `src/public/ui.ts` / `src/public/ui-react.ts` / `src/public/ui-vue.ts`),
+// which import no v1 editor surface and no private v2 packages. The v1-artifact scan below still
 // guarantees the emitted `ui` bundles/declarations contain no
 // `@superdoc/super-editor` reference, so a regression to the v1 controller
 // would fail this guard.

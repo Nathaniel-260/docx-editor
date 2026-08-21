@@ -443,11 +443,11 @@ describe('superdoc.ui — sole owner', () => {
 
     // `core/SuperDoc.ts` builds the instance-owned controller. `public/ui.ts`
     // re-exports the factory for advanced npm consumers and never calls it.
-    // `public/ui/react.ts` calls it only for a structural host whose optional
-    // `ui` is absent, and owns what it builds. Nothing else may construct one:
-    // a controller built elsewhere would diverge from the state the built-in
-    // surfaces read.
-    expect(importers).toEqual(['core/SuperDoc.ts', 'public/ui.ts', 'public/ui/react.ts']);
+    // `public/ui/react.ts` and `public/ui/vue.ts` call it only for a structural
+    // host whose optional `ui` is absent, and own what they build. Nothing else
+    // may construct one: a controller built elsewhere would diverge from the
+    // state the built-in surfaces read.
+    expect(importers).toEqual(['core/SuperDoc.ts', 'public/ui.ts', 'public/ui/react.ts', 'public/ui/vue.ts']);
   });
 
   it('is the only module that destroys a controller', () => {

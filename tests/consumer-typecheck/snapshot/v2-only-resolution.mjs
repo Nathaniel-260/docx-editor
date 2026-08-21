@@ -31,6 +31,7 @@ const SUPPORTED_EXPORTS = [
   // (not the removed v1 editor UI subpaths); see packages/superdoc/src/public/ui.ts.
   { specifier: 'superdoc/ui', key: './ui' },
   { specifier: 'superdoc/ui/react', key: './ui/react' },
+  { specifier: 'superdoc/ui/vue', key: './ui/vue' },
   // Node-only migration engine used by @superdoc/v2-collaboration-upgrade.
   { specifier: 'superdoc/collaboration-upgrade-engine', key: './collaboration-upgrade-engine' },
 ];
@@ -38,7 +39,8 @@ const SUPPORTED_EXPORTS = [
 // Removed v1 subpaths that must stay absent from the v2 package contract. The
 // three `headless-toolbar*` entries encode the migration-only custom-UI posture:
 // v1 headless-toolbar code migrates to the canonical `superdoc/ui` /
-// `superdoc/ui/react` surfaces (above), not to a restored shim. Restoring any
+// `superdoc/ui/react` / `superdoc/ui/vue` surfaces (above), not to a restored
+// shim. Restoring any
 // headless-toolbar subpath is a reviewed package-contract change that must
 // update this gate deliberately.
 const REMOVED_EXPORTS = [

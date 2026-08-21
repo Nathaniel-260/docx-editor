@@ -284,11 +284,13 @@ export default defineConfig(({ mode, command }) => {
       rollupOptions: {
         input: {
           'superdoc': 'src/index.js',
-          // v2-native public UI controller + React bindings. Emitted as their
-          // own bundles so `superdoc/ui` and `superdoc/ui/react` resolve
-          // without dragging in the app-shell/main bundle. `react` is external.
+          // v2-native public UI controller + framework bindings. Emitted as
+          // their own bundles so `superdoc/ui`, `superdoc/ui/react`, and
+          // `superdoc/ui/vue` resolve without dragging in the app-shell/main
+          // bundle. `react` and `vue` are external.
           'public/ui': 'src/public/ui.ts',
           'public/ui-react': 'src/public/ui-react.ts',
+          'public/ui-vue': 'src/public/ui-vue.ts',
         },
         external: [
           ...(v2Resolution.mode === 'package' ? [/^@superdoc\/docx-engine(?:\/.*)?$/] : []),

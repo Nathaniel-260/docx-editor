@@ -185,6 +185,11 @@ const cjsDeclarationShims = [
     target: './ui-react.js',
   },
   {
+    file: path.join(distRoot, 'superdoc/src/public/ui-vue.d.cts'),
+    source: path.join(distRoot, 'superdoc/src/public/ui-vue.d.ts'),
+    target: './ui-vue.js',
+  },
+  {
     file: path.join(distRoot, 'superdoc/src/public/collaboration-upgrade-engine.d.cts'),
     source: path.join(distRoot, 'superdoc/src/public/collaboration-upgrade-engine.d.ts'),
     target: './collaboration-upgrade-engine.js',

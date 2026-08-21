@@ -85,12 +85,12 @@
     {
       "id": "subpath.headless-toolbar-vue",
       "v1": "superdoc/headless-toolbar/vue",
-      "v2": "superdoc.ui",
+      "v2": "superdoc/ui/vue",
       "disposition": "redesign",
       "failureMode": "unresolved-path",
       "surface": "custom-ui",
       "symptom": "Module resolution fails; the subpath is absent from the v2 exports map.",
-      "notes": "v2 ships no Vue-specific bindings. Build on the framework-agnostic controller.",
+      "notes": "Composables moved and now bind to the instance-owned controller. Provide it once with `provideSuperDocUI()`, then read slices with the `useSuperDoc*` composables.",
       "docsPath": "/editor/custom-ui/overview"
     },
     {

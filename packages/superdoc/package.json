@@ -45,6 +45,14 @@
       "import": "./dist/public/ui-react.es.js",
       "require": "./dist/public/ui-react.cjs"
     },
+    "./ui/vue": {
+      "types": {
+        "import": "./dist/superdoc/src/public/ui-vue.d.ts",
+        "require": "./dist/superdoc/src/public/ui-vue.d.cts"
+      },
+      "import": "./dist/public/ui-vue.es.js",
+      "require": "./dist/public/ui-vue.cjs"
+    },
     "./collaboration-upgrade-engine": {
       "types": {
         "import": "./dist/superdoc/src/public/collaboration-upgrade-engine.d.ts",
@@ -66,6 +74,9 @@
       ],
       "ui/react": [
         "./dist/superdoc/src/public/ui-react.d.ts"
+      ],
+      "ui/vue": [
+        "./dist/superdoc/src/public/ui-vue.d.ts"
       ],
       "collaboration-upgrade-engine": [
         "./dist/superdoc/src/public/collaboration-upgrade-engine.d.ts"

@@ -88,7 +88,7 @@ SuperDoc v2 exposes a smaller public package surface:
 | `superdoc/types`                                                        | Not a rename. See [Removed in v2](/editor/migrate-from-v1/removed-apis)              |
 | `superdoc/headless-toolbar`                                             | `superdoc.ui`, the controller the instance owns                                      |
 | `superdoc/headless-toolbar/react`                                       | Hooks and providers from `superdoc/ui/react`                                         |
-| `superdoc/headless-toolbar/vue`                                         | Build on `superdoc.ui`, the framework-agnostic controller                            |
+| `superdoc/headless-toolbar/vue`                                         | Provider and composables from `superdoc/ui/vue`                                      |
 | `superdoc/super-editor`                                                 | Use the `SuperDoc` instance and its public active-editor facade                      |
 | `superdoc/converter`, `superdoc/docx-zipper`, or `superdoc/file-zipper` | Use the supported `SuperDoc` load and export workflow; there is no direct v2 subpath |
 
@@ -98,14 +98,15 @@ Do not replace a removed public path with an internal package. Packages such as 
 
 A v1 custom toolbar is not restored by changing only its import. Bind the application UI to the controller owned by the ready `SuperDoc` instance, then move each control's state and execution to a public command handle.
 
-| V1 integration responsibility                | V2 path                                                                                               |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Import React headless-toolbar bindings       | Import `SuperDocUIProvider`, `useSetSuperDoc`, and hooks from `superdoc/ui/react`                     |
-| Bind controls to an editor or toolbar scope  | Call `useSetSuperDoc()` with the `SuperDoc` instance received by `onReady`                            |
-| Read whether a control is active or disabled | Read `active`, `enabled`, `value`, and `reason` from `useSuperDocCommand(id)`                         |
-| Run a toolbar action                         | Await `superdoc.ui.commands.executeAsync(id, payload)` and inspect `false` or an unsuccessful receipt |
-| Replace the document in the mounted editor   | Call `superdoc.replaceFile(file)` and keep the existing controller binding                            |
-| Replace the entire `SuperDoc` instance       | Bind the new instance from its `onReady` and destroy the instances your application created           |
+| V1 integration responsibility                | V2 path                                                                                                                                                        |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Import React headless-toolbar bindings       | Import `SuperDocUIProvider`, `useSetSuperDoc`, and hooks from `superdoc/ui/react`                                                                              |
+| Publish the controller to your control tree  | Render `SuperDocUIProvider` (React) or call `provideSuperDocUI()` (Vue) in an **ancestor** of the controls; a component cannot consume what it provides itself |
+| Bind controls to an editor or toolbar scope  | Capture `const setSuperDoc = useSetSuperDoc()` in the component, call it from `onReady`                                                                        |
+| Read whether a control is active or disabled | Read `active`, `enabled`, `value`, and `reason` from `useSuperDocCommand(id)`                                                                                  |
+| Run a toolbar action                         | Await `superdoc.ui.commands.executeAsync(id, payload)` and inspect `false` or an unsuccessful receipt                                                          |
+| Replace the document in the mounted editor   | Call `superdoc.replaceFile(file)` and keep the existing controller binding                                                                                     |
+| Replace the entire `SuperDoc` instance       | Bind the new instance from its `onReady` and destroy the instances your application created                                                                    |
 
 Do not create a controller for every render, tab, or document. One `SuperDoc` instance owns one stable controller. Replacing its document resets document-scoped state while existing command hooks stay subscribed. Replacing the entire instance is different: the provider must receive the new ready instance.
 

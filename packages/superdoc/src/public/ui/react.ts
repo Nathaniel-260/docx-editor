@@ -15,6 +15,8 @@ import { createContext, createElement, useCallback, useContext, useEffect, useRe
 import type { MutableRefObject, ReactNode } from 'react';
 
 import { createSuperDocUI } from './create-super-doc-ui.js';
+import { toSliceSource } from './slice-source.js';
+import type { SliceSource } from './slice-source.js';
 
 import type {
   BorrowedSuperDocUI,
@@ -136,41 +138,9 @@ export function useSetSuperDoc(): (superdoc: SuperDocHost) => void {
   return useContextValue().setSuperDoc;
 }
 
-/**
- * Minimal value source the slice hooks consume: a synchronous snapshot read
- * plus a value-direct `observe` (immediate first emit, then on change). Every
- * domain handle satisfies this directly; command/font hooks adapt to it.
- */
-interface SliceSource<T> {
-  getSnapshot(): T;
-  observe(listener: (value: T) => void): () => void;
-}
-
-/**
- * Normalize a `pick` result into a {@link SliceSource}. Domain handles and the
- * command/font hooks already expose the snapshot-shaped contract
- * (`getSnapshot` + `observe`) and pass through unchanged. A raw `ui.select(...)`
- * {@link Subscribable} (`get` + `subscribe`) is adapted: it `subscribe`s FIRST,
- * then emits the current value, so a synchronous recompute triggered by the
- * first listener is not missed (the substrate's `subscribe` does not emit on
- * attach). Exported for unit tests; not re-exported by the `superdoc/ui/react`
- * facade, so it stays off the public surface.
- */
-export function toSliceSource<T>(source: SliceSource<T> | Subscribable<T>): SliceSource<T> {
-  const candidate = source as Partial<SliceSource<T>>;
-  if (typeof candidate.getSnapshot === 'function' && typeof candidate.observe === 'function') {
-    return source as SliceSource<T>;
-  }
-  const raw = source as Subscribable<T>;
-  return {
-    getSnapshot: () => raw.get(),
-    observe: (listener) => {
-      const unsubscribe = raw.subscribe(listener);
-      listener(raw.get());
-      return unsubscribe;
-    },
-  };
-}
+// Shared with `./vue.ts`; see `./slice-source.ts` for the normalization
+// contract. Re-exported here so existing unit tests keep their import path.
+export { toSliceSource };
 
 /**
  * Subscribe to a derived slice of controller state. `pick` selects a value

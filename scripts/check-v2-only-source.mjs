@@ -54,10 +54,10 @@ const FORBIDDEN = [
   { id: 'packages-super-editor', re: /packages\/super-editor/, label: 'packages/super-editor path reference' },
   { id: 'editors-v1', re: /\beditors\/v1\b/, label: 'editors/v1 path reference' },
   // Removed legacy public superdoc/* subpaths (import specifiers only).
-  // NOTE: `superdoc/ui` and `superdoc/ui/react` are intentionally NOT listed —
-  // they are restored as v2-native public custom-UI entries
-  // (packages/superdoc/src/public/ui.ts / ui-react.ts), not the removed v1
-  // editor UI subpaths.
+  // NOTE: `superdoc/ui`, `superdoc/ui/react`, and `superdoc/ui/vue` are
+  // intentionally NOT listed — they are v2-native public custom-UI entries
+  // (packages/superdoc/src/public/ui.ts / ui-react.ts / ui-vue.ts), not the
+  // removed v1 editor UI subpaths.
   {
     id: 'legacy-subpath',
     re: /['"`]superdoc\/(super-editor|types|converter|docx-zipper|file-zipper|headless-toolbar(\/(react|vue))?)['"`]/,

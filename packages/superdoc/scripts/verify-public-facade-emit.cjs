@@ -119,6 +119,14 @@ const FACADE_ENTRIES = [
     ticket: 'SD-3182',
   },
   {
+    name: 'ui-vue (./ui/vue)',
+    esm: path.join(PUBLIC_DIST, 'ui-vue.d.ts'),
+    cjs: path.join(PUBLIC_DIST, 'ui-vue.d.cts'),
+    source: path.join(PUBLIC_SRC, 'ui-vue.ts'),
+    runsCommandSignatureProbe: false,
+    ticket: null,
+  },
+  {
     name: 'collaboration-upgrade-engine (./collaboration-upgrade-engine)',
     esm: path.join(PUBLIC_DIST, 'collaboration-upgrade-engine.d.ts'),
     cjs: path.join(PUBLIC_DIST, 'collaboration-upgrade-engine.d.cts'),

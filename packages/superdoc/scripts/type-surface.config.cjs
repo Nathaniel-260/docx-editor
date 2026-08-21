@@ -51,14 +51,16 @@
 const requiredEntryPoints = [
   'superdoc/src/index.d.ts',
   'superdoc/src/index.d.cts',
-  // v2-native public UI facade entries (`./ui`, `./ui/react`). Both the ESM
-  // `.d.ts` (emitted by vite-plugin-dts) and the CJS `.d.cts` shim (emitted by
-  // ensure-types) must exist after build so the conditional `types` targets
-  // resolve.
+  // v2-native public UI facade entries (`./ui`, `./ui/react`, `./ui/vue`).
+  // Both the ESM `.d.ts` (emitted by vite-plugin-dts) and the CJS `.d.cts`
+  // shim (emitted by ensure-types) must exist after build so the conditional
+  // `types` targets resolve.
   'superdoc/src/public/ui.d.ts',
   'superdoc/src/public/ui.d.cts',
   'superdoc/src/public/ui-react.d.ts',
   'superdoc/src/public/ui-react.d.cts',
+  'superdoc/src/public/ui-vue.d.ts',
+  'superdoc/src/public/ui-vue.d.cts',
   'superdoc/src/public/collaboration-upgrade-engine.d.ts',
   'superdoc/src/public/collaboration-upgrade-engine.d.cts',
 ];
@@ -290,6 +292,11 @@ const publicContract = {
       subpath: './ui/react',
       tier: 'supported',
       note: 'v2-native UI React bindings; routes through src/public/ui-react.ts',
+    },
+    {
+      subpath: './ui/vue',
+      tier: 'supported',
+      note: 'v2-native UI Vue bindings; routes through src/public/ui-vue.ts',
     },
     {
       subpath: './collaboration-upgrade-engine',
