@@ -62,7 +62,7 @@ async function measureBlock(block: FlowBlock): Promise<ParagraphMeasure> {
 
 function buildBlocks(
   edited: boolean,
-  options: { dirtyBlockId?: string; unequalColumnParagraphCount?: number } = {},
+  options: { dirtyBlockId?: string; unequalColumnParagraphCount?: number; centerFirstSection?: boolean } = {},
 ): FlowBlock[] {
   const dirtyBlockId = options.dirtyBlockId ?? 'q40';
   const unequalColumnParagraphCount = options.unequalColumnParagraphCount ?? 6;
@@ -73,8 +73,22 @@ function buildBlocks(
     pm += textLength + 2;
   };
   // Section 0: single column, document margins, small header.
+  if (options.centerFirstSection) {
+    push(
+      {
+        kind: 'sectionBreak',
+        id: 'section-seed-0',
+        type: 'continuous',
+        attrs: { sectionIndex: 0 },
+        vAlign: 'center',
+      } as SectionBreakBlock,
+      0,
+    );
+  }
   for (let index = 0; index < 10; index += 1) {
-    push(paragraph(`p${index}`, `section-zero-${index}`, pm), 20);
+    const id = `p${index}`;
+    const text = edited && dirtyBlockId === id ? `section-zerO-${index}` : `section-zero-${index}`;
+    push(paragraph(id, text, pm), text.length);
   }
   // Section 1: the SD-3772 genuinely-unequal explicit two-column
   // carrier — balancing is a deliberate engine no-op for this class.
@@ -135,12 +149,16 @@ function buildHeaderFooter() {
   };
 }
 
-function layoutOptions() {
+function layoutOptions(options: { centerFirstSection?: boolean } = {}) {
   return {
     pageSize: { ...PAGE_SIZE },
     margins: { ...DOC_MARGINS },
     sectionMetadata: [
-      { sectionIndex: 0, headerRefs: { default: 'hdr-small' } },
+      {
+        sectionIndex: 0,
+        headerRefs: { default: 'hdr-small' },
+        ...(options.centerFirstSection ? { vAlign: 'center' as const } : {}),
+      },
       { sectionIndex: 1, headerRefs: { default: 'hdr-small' } },
       { sectionIndex: 2, headerRefs: { default: 'hdr-tall' }, footerRefs: { default: 'ftr-tall' } },
     ],
@@ -521,5 +539,160 @@ describe('incrementalLayout deep checkpoint geometry (SD-3772 D2)', () => {
     expect(new Map(result.layout.blockResumeCheckpoints ?? [])).toEqual(
       new Map(cold.layout.blockResumeCheckpoints ?? []),
     );
+  });
+
+  it('requires document-start replay for a scoped vertically aligned section boundary', async () => {
+    const previousBlocks = buildBlocks(false);
+    const previous = await incrementalLayout(
+      [],
+      null,
+      previousBlocks,
+      layoutOptions(),
+      measureBlock,
+      buildHeaderFooter(),
+    );
+    previous.layout.layoutEpoch = 1;
+    const nextBlocks = buildBlocks(true);
+    const reuse = buildReuseOptions(previous.layout, nextBlocks) as IncrementalLayoutReuseOptions & {
+      dependencyProof: Record<string, unknown>;
+    };
+    reuse.dependencyProof.vAlignSectionsBoundaryBlockId = 'p9';
+
+    const result = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      layoutOptions(),
+      measureBlock,
+      buildHeaderFooter(),
+      previous.measures,
+      undefined,
+      undefined,
+      reuse,
+    );
+
+    expect(result.layoutReuse).toMatchObject({
+      mode: 'full',
+      reason: 'm5-layout-reuse-disabled-valign-scope-requires-document-start',
+    });
+  });
+
+  it('rejects a scoped vertically aligned section boundary that shares the dirty page', async () => {
+    const previousBlocks = buildBlocks(false);
+    const previous = await incrementalLayout(
+      [],
+      null,
+      previousBlocks,
+      layoutOptions(),
+      measureBlock,
+      buildHeaderFooter(),
+    );
+    previous.layout.layoutEpoch = 1;
+    const nextBlocks = buildBlocks(true);
+    const reuse = buildReuseOptions(previous.layout, nextBlocks) as IncrementalLayoutReuseOptions & {
+      dependencyProof: Record<string, unknown>;
+    };
+    reuse.requireDocumentStartCheckpoint = true;
+    reuse.dependencyProof.vAlignSectionsBoundaryBlockId = 'q40';
+
+    const result = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      layoutOptions(),
+      measureBlock,
+      buildHeaderFooter(),
+      previous.measures,
+      undefined,
+      undefined,
+      reuse,
+    );
+
+    expect(result.layoutReuse).toMatchObject({
+      mode: 'full',
+      reason: 'm5-layout-reuse-disabled-valign-boundary-page-shared',
+    });
+  });
+
+  it('matches cold pagination after a page-separated vertically aligned section boundary', async () => {
+    const previousBlocks = buildBlocks(false);
+    const previous = await incrementalLayout(
+      [],
+      null,
+      previousBlocks,
+      layoutOptions(),
+      measureBlock,
+      buildHeaderFooter(),
+    );
+    previous.layout.layoutEpoch = 1;
+    const nextBlocks = buildBlocks(true);
+    const reuse = buildReuseOptions(previous.layout, nextBlocks) as IncrementalLayoutReuseOptions & {
+      dependencyProof: Record<string, unknown>;
+    };
+    reuse.requireDocumentStartCheckpoint = true;
+    reuse.dependencyProof.vAlignSectionsBoundaryBlockId = 'p9';
+
+    const result = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      layoutOptions(),
+      measureBlock,
+      buildHeaderFooter(),
+      previous.measures,
+      undefined,
+      undefined,
+      reuse,
+    );
+
+    expect(result.layoutReuse.mode).toBe('tail-splice');
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, nextBlocks, layoutOptions(), measureBlock, buildHeaderFooter());
+    expect(pageGeometry(result.layout)).toEqual(pageGeometry(cold.layout));
+  });
+
+  it('replays through one centered section before adopting the unchanged tail', async () => {
+    const fixtureOptions = { dirtyBlockId: 'p4', centerFirstSection: true };
+    const centeredOptions = layoutOptions({ centerFirstSection: true });
+    const previousBlocks = buildBlocks(false, fixtureOptions);
+    const previous = await incrementalLayout(
+      [],
+      null,
+      previousBlocks,
+      centeredOptions,
+      measureBlock,
+      buildHeaderFooter(),
+    );
+    previous.layout.layoutEpoch = 1;
+    const boundaryPages = buildBlockPageIndex(previous.layout).get('p9')!;
+    expect(boundaryPages.lastPage).toBeGreaterThan(0);
+    expect(previous.layout.pages[0]?.vAlign).toBe('center');
+
+    const nextBlocks = buildBlocks(true, fixtureOptions);
+    const reuse = buildReuseOptions(previous.layout, nextBlocks, 'p4') as IncrementalLayoutReuseOptions & {
+      dependencyProof: Record<string, unknown>;
+    };
+    reuse.requireDocumentStartCheckpoint = true;
+    reuse.dependencyProof.vAlignSectionsBoundaryBlockId = 'p9';
+    reuse.dependencyProof.vAlignSectionsReplayThroughBoundary = true;
+
+    const result = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      centeredOptions,
+      measureBlock,
+      buildHeaderFooter(),
+      previous.measures,
+      undefined,
+      undefined,
+      reuse,
+    );
+
+    expect(result.layoutReuse.mode).toBe('tail-splice');
+    expect(result.layoutReuse.convergencePageIndex).toBeGreaterThan(boundaryPages.lastPage);
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, nextBlocks, centeredOptions, measureBlock, buildHeaderFooter());
+    expect(pageGeometry(result.layout)).toEqual(pageGeometry(cold.layout));
   });
 });

@@ -623,6 +623,8 @@ export type IncrementalPaginationProof = IncrementalPaginationProofBase &
         multiColumnSectionsProvedNonBalanceable: boolean;
         /** Last balanceable section end; convergence is fenced after its retained page. */
         balanceableSectionsBoundaryBlockId?: string;
+        vAlignSectionsBoundaryBlockId?: string;
+        vAlignSectionsReplayThroughBoundary?: true;
         pageRelativeAnchorsScopedBoundary?: {
           blockId: string;
           side: 'anchors-before-dirty' | 'anchors-after-dirty';
@@ -655,6 +657,10 @@ export type IncrementalPaginationProof = IncrementalPaginationProofBase &
          */
         multiColumnSectionsProvedNonBalanceable: boolean;
         balanceableSectionsBoundaryBlockId?: string;
+        /** Last vertically aligned section page; validated before reuse. */
+        vAlignSectionsBoundaryBlockId?: string;
+        /** Replay page zero through the aligned boundary before convergence. */
+        vAlignSectionsReplayThroughBoundary?: true;
         /**
          * Page-relative body anchors exist WITHOUT the validated non-flowing
          * inventory proof (`admittedDependencyClasses` must then not contain
@@ -5911,6 +5917,42 @@ async function layoutWithOptionalReuse(input: {
     scopedBalanceableBoundaryPages = boundaryPages;
     scopedBalanceableBoundaryCurrentBlockIndex = currentBoundaryBlockIndex!;
   }
+  const scopedVAlignBoundaryBlockId =
+    dependencyProof.profile !== 'single-section-local-text'
+      ? (dependencyProof.vAlignSectionsBoundaryBlockId ?? null)
+      : null;
+  let scopedVAlignReplayThroughPageIndex: number | null = null;
+  if (scopedVAlignBoundaryBlockId != null) {
+    if (reuse.requireDocumentStartCheckpoint !== true) {
+      return full('m5-layout-reuse-disabled-valign-scope-requires-document-start');
+    }
+    const boundaryPages = reuse.previousBlockPageIndex?.get(scopedVAlignBoundaryBlockId) ?? null;
+    if (!boundaryPages) {
+      return full('m5-layout-reuse-disabled-valign-boundary-unresolved');
+    }
+    const dirtyPreviousBlockIds = [...input.dirty.changedBlockIds, ...input.dirty.deletedBlockIds];
+    if (dirtyPreviousBlockIds.length === 0) {
+      return full('m5-layout-reuse-disabled-valign-boundary-no-dirty-evidence');
+    }
+    const replayThroughBoundary =
+      dependencyProof.profile !== 'single-section-local-text' &&
+      dependencyProof.vAlignSectionsReplayThroughBoundary === true;
+    for (const blockId of dirtyPreviousBlockIds) {
+      const pages = reuse.previousBlockPageIndex?.get(blockId) ?? null;
+      if (!pages) {
+        return full('m5-layout-reuse-disabled-valign-dirty-page-unresolved');
+      }
+      const dirtyCrossesVAlignBoundary = replayThroughBoundary
+        ? pages.lastPage > boundaryPages.lastPage
+        : pages.firstPage <= boundaryPages.lastPage;
+      if (dirtyCrossesVAlignBoundary) {
+        return full('m5-layout-reuse-disabled-valign-boundary-page-shared');
+      }
+    }
+    if (replayThroughBoundary) {
+      scopedVAlignReplayThroughPageIndex = boundaryPages.lastPage;
+    }
+  }
   // Scoped admission for page-relative body anchors WITHOUT the validated
   // non-flowing inventory proof: the host named the page-extremal anchor
   // block and the separation side. The bridge verifies the page separation
@@ -6173,6 +6215,9 @@ async function layoutWithOptionalReuse(input: {
   if (!Number.isFinite(earliestDirtyPage) || sourceAffectedFrontierPageIndex < 0) {
     return full('m4-layout-reuse-unavailable-dirty-page-range-not-found');
   }
+  if (scopedVAlignReplayThroughPageIndex != null) {
+    sourceAffectedFrontierPageIndex = Math.max(sourceAffectedFrontierPageIndex, scopedVAlignReplayThroughPageIndex);
+  }
   let affectedFrontierPageIndex = earliestDirtyPage;
   const dirtyPage = reuse.requireDocumentStartCheckpoint === true ? 0 : earliestDirtyPage;
   if (dirtyPage == null || dirtyPage < 0 || dirtyPage >= previousPages.length) {
@@ -6266,7 +6311,7 @@ async function layoutWithOptionalReuse(input: {
 
   while (true) {
     const maxRelaidPages = convergenceProbePageHorizon;
-    affectedFrontierPageIndex = earliestDirtyPage;
+    affectedFrontierPageIndex = Math.max(earliestDirtyPage, scopedVAlignReplayThroughPageIndex ?? earliestDirtyPage);
     const reachesSourceTail = sourceAffectedFrontierPageIndex + maxRelaidPages + 2 >= previousPages.length - 1;
     const boundedLocalEndBlockIndexExclusive = reachesSourceTail
       ? input.blocks.length
@@ -6468,7 +6513,12 @@ async function layoutWithOptionalReuse(input: {
       const targetPageIndex = checkpointPageIndex + completedPageIndex;
       const completedPage = suffixLayout.pages[completedPageIndex];
       const withinConvergenceBudget = targetPageIndex - affectedFrontierPageIndex <= maxRelaidPages;
-      if (targetPageIndex < affectedFrontierPageIndex || !withinConvergenceBudget) continue;
+      if (
+        targetPageIndex < affectedFrontierPageIndex ||
+        (scopedVAlignReplayThroughPageIndex != null && targetPageIndex <= scopedVAlignReplayThroughPageIndex) ||
+        !withinConvergenceBudget
+      )
+        continue;
       if (
         !pageContainsOnlyStableBlocks(
           completedPage,
@@ -6537,6 +6587,10 @@ async function layoutWithOptionalReuse(input: {
             canRebaseAdoptedPageNumbering(sourcePage, pageIndexDelta));
         if (sourcePageIndex < sourceAffectedFrontierPageIndex) {
           checkpointConvergenceRejection = `target-${targetPageIndex}-source-before-frontier`;
+          return false;
+        }
+        if (scopedVAlignReplayThroughPageIndex != null && sourcePageIndex <= scopedVAlignReplayThroughPageIndex) {
+          checkpointConvergenceRejection = `target-${targetPageIndex}-source-at-or-before-valign-boundary`;
           return false;
         }
         if (previousPageStartKeys[sourcePageIndex] !== candidateKey || buildPageStartKey(sourcePage) !== candidateKey) {
@@ -7829,6 +7883,8 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
     localKeepDependencyClosure?: unknown;
     nonFlowingPageRelativeAnchorDependency?: unknown;
     pageRelativeAnchorsScopedBoundary?: unknown;
+    vAlignSectionsBoundaryBlockId?: unknown;
+    vAlignSectionsReplayThroughBoundary?: unknown;
   };
   // Balanceable multi-column sections fail closed unless the host either
   // proved balancing inert or named the final page-bearing section end. The
@@ -7871,11 +7927,28 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
       runtimeProof.admittedDependencyClasses,
       runtimeProof.nonFlowingPageRelativeAnchorDependency,
     ) ||
-    !hasCoherentPageRelativeAnchorScopedBoundary(runtimeProof)
+    !hasCoherentPageRelativeAnchorScopedBoundary(runtimeProof) ||
+    !hasCoherentVAlignScopedBoundary(runtimeProof)
   ) {
     return 'dependency-proof-invalid';
   }
   return null;
+}
+
+function hasCoherentVAlignScopedBoundary(proof: {
+  profile?: unknown;
+  vAlignSectionsBoundaryBlockId?: unknown;
+  vAlignSectionsReplayThroughBoundary?: unknown;
+}): boolean {
+  const boundary = proof.vAlignSectionsBoundaryBlockId;
+  const replayThroughBoundary = proof.vAlignSectionsReplayThroughBoundary;
+  if (boundary == null) return replayThroughBoundary == null;
+  return (
+    (proof.profile === 'document-start-local-text' || proof.profile === 'page-checkpoint-local-text') &&
+    typeof boundary === 'string' &&
+    boundary.length > 0 &&
+    (replayThroughBoundary == null || replayThroughBoundary === true)
+  );
 }
 
 function hasCoherentNonFlowingPageRelativeAnchorProof(classes: unknown, proof: unknown): boolean {
