@@ -4,8 +4,7 @@ import dts from 'vite-plugin-dts';
 export default defineConfig({
   plugins: [dts({ rollupTypes: true })],
   build: {
-    // Explicit, because the default tracks whatever "widely available" means at
-    // build time and this package ships to consumers who pin their own floor.
+    // Keep the consumer target stable instead of following Vite's moving default.
     target: 'es2020',
     lib: {
       entry: 'src/index.ts',
@@ -14,8 +13,7 @@ export default defineConfig({
     },
     rollupOptions: {
       external: ['vue', 'superdoc'],
-      // `src/index.ts` exports both named values and a default, which Rollup
-      // warns about unless the intent is stated.
+      // The entry exports both named values and a default.
       output: { exports: 'named' },
     },
   },

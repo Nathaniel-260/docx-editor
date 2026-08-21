@@ -1,9 +1,4 @@
-/**
- * Deterministic stand-in for the `superdoc` package, aliased in
- * `vitest.config.ts`. Mirrors the lifecycle surface the wrapper drives:
- * config callbacks fired on a microtask, `setDocumentMode`, `destroy`, and a
- * minimal event emitter for `document-mode-change`.
- */
+/** Minimal `superdoc` lifecycle used by the wrapper tests. */
 type SuperDocConfig = {
   selector?: unknown;
   toolbar?: unknown;
@@ -68,15 +63,11 @@ export class SuperDoc {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    // Deliberately does NOT call `onEditorDestroy`, because core does not.
-    // Core declares the callback and a `broadcastEditorDestroy()` that emits
-    // `editorDestroy`, but nothing calls either, so a mock that invoked it
-    // here would prove the wrapper forwards an event that never arrives. The
-    // wrapper emits `editor-destroy` itself for teardown it owns.
+    // Match core: wrapper-owned teardown must emit `editor-destroy` itself.
   }
 
   setDocumentMode(mode: string) {
-    // Mirrors the core guard: `SuperDoc#setDocumentMode` throws until ready.
+    // Match the core readiness guard.
     if (!this.ready) throw new Error('setDocumentMode requires a ready SuperDoc');
     this.config.documentMode = mode;
     this.emit('document-mode-change', { documentMode: mode });

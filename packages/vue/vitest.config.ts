@@ -4,8 +4,7 @@ import { defineConfig } from 'vite-plus';
 export default defineConfig({
   resolve: {
     alias: {
-      // The lifecycle tests run against a deterministic stand-in, not the real
-      // editor.
+      // Keep lifecycle tests deterministic and independent of the real editor.
       superdoc: fileURLToPath(new URL('./test/superdoc.mock.ts', import.meta.url)),
     },
   },

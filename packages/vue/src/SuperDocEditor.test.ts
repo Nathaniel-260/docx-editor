@@ -4,8 +4,7 @@ import type { App } from 'vue';
 
 import { SuperDocEditor } from './SuperDocEditor';
 import type { SuperDocEditorExpose } from './types';
-// The vitest alias points `superdoc` at the mock, so the class the component
-// dynamically imports and this import are the same object.
+// The Vitest alias makes this the same class the component imports at runtime.
 import { SuperDoc as MockSuperDoc } from 'superdoc';
 
 type MockInstance = InstanceType<typeof MockSuperDoc> & {
@@ -33,7 +32,6 @@ function lastInstance(): MockInstance {
   return all[all.length - 1];
 }
 
-/** Mount the editor with reactive props; mutate `props` then await settle(). */
 function mount(initialProps: Record<string, unknown> = {}, options: { slots?: Record<string, () => unknown> } = {}) {
   const props = reactive({ ...initialProps });
   let exposed: SuperDocEditorExpose | null = null;
@@ -65,7 +63,6 @@ function mount(initialProps: Record<string, unknown> = {}, options: { slots?: Re
   };
 }
 
-/** Let the dynamic import, the mock's ready microtask, and re-renders settle. */
 async function settle(): Promise<void> {
   await nextTick();
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -140,18 +137,15 @@ describe('SuperDocEditor', () => {
     props.documentMode = 'viewing';
     await settle();
     expect(setMode).toHaveBeenCalledWith('viewing');
-    // Applying the prop must not echo back as a v-model update.
     expect(updateMode).not.toHaveBeenCalled();
     expect(instances()).toHaveLength(1);
 
-    // An external change (built-in toolbar, getInstance() call) feeds v-model.
     instance.emit('document-mode-change', { documentMode: 'suggesting' });
     expect(updateMode).toHaveBeenCalledWith('suggesting');
   });
 
   it('queues a documentMode change that lands during initialization', async () => {
     const { props } = mount({ document: 'test.docx' });
-    // Before the dynamic import resolves, change the mode.
     props.documentMode = 'viewing';
     await settle();
 
@@ -160,8 +154,6 @@ describe('SuperDocEditor', () => {
   });
 
   it('queues a mode change that lands after construction but before ready', async () => {
-    // The core throws on pre-ready setDocumentMode (the mock replicates the
-    // guard), so the change must queue and flush from the ready callback.
     const { props } = mount({ document: 'test.docx', config: { manualReady: true } });
     await settle();
     const instance = lastInstance();
@@ -176,10 +168,6 @@ describe('SuperDocEditor', () => {
   });
 
   it('drops a queued mode change that the prop reverts before ready', async () => {
-    // editing -> viewing -> editing while init is in flight. The second update
-    // matches the applied mode and returns early, so a queue that is only
-    // written and never cleared still holds `viewing`, and the ready callback
-    // applies it against a prop that reads `editing`.
     const { props } = mount({ document: 'test.docx', documentMode: 'editing', config: { manualReady: true } });
     await settle();
     const instance = lastInstance();
@@ -232,11 +220,7 @@ describe('SuperDocEditor', () => {
   });
 
   it('still rebuilds when teardown throws', async () => {
-    // Core teardown calls consumer-supplied collaboration cleanup without
-    // containing its exceptions, so a custom provider can throw from
-    // destroy(). If that escapes, the generation is never bumped, stale
-    // callbacks stay authorized, and rebuild() aborts before init() — the
-    // editor wedges permanently instead of degrading.
+    // Consumer-owned collaboration cleanup can throw from destroy().
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const destroyed = vi.fn();
     const { props } = mount({ document: 'first.docx', 'onEditor-destroy': destroyed });
@@ -257,10 +241,6 @@ describe('SuperDocEditor', () => {
   });
 
   it('warns when a reactive config is mutated in place', async () => {
-    // config is initialization-only, and the warning is the only signal a
-    // consumer gets that their edit was ignored. A watch source reading the
-    // reference alone never re-runs for `config.rulers = false`, so the edit
-    // is dropped silently, which is the failure the warning exists to prevent.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const config = reactive({ rulers: true });
     mount({ document: 'test.docx', config });
@@ -276,10 +256,6 @@ describe('SuperDocEditor', () => {
   });
 
   it('rebuilds when ui identity changes, which is why docs must hoist it', async () => {
-    // `ui` is compared by reference on purpose: it can carry a live container.
-    // The cost is that an object literal written inline in a template is a new
-    // reference on every parent render, so an unrelated rerender rebuilds the
-    // editor and discards unsaved edits. Documented examples define it once.
     const { props } = mount({ document: 'test.docx', ui: { toolbar: false } });
     await settle();
     expect(instances()).toHaveLength(1);
@@ -291,9 +267,6 @@ describe('SuperDocEditor', () => {
   });
 
   it('treats a null document as omitted, the documented initial state', async () => {
-    // The quick start starts from `ref<File | null>(null)`, so null reaches
-    // this prop before a file is chosen. It must construct without a document
-    // rather than pass null through to core.
     mount({ document: null });
     await settle();
 
@@ -302,10 +275,6 @@ describe('SuperDocEditor', () => {
   });
 
   it('resolves the parent height on the wrapper in contained mode', async () => {
-    // The editor host grows with `flex: 1 1 0%`, which constrains nothing
-    // unless the wrapper itself resolves the fixed-height parent. Left at
-    // `height: auto`, a multi-page document expands the page instead of
-    // scrolling inside the parent.
     const { el } = mount({ document: 'test.docx', contained: true });
     await settle();
 
@@ -315,8 +284,6 @@ describe('SuperDocEditor', () => {
   });
 
   it('leaves the wrapper height alone when not contained', async () => {
-    // Default mode expands to the document's full height, so imposing a height
-    // here would break the normal page-flow layout.
     const { el } = mount({ document: 'test.docx' });
     await settle();
 
@@ -325,10 +292,6 @@ describe('SuperDocEditor', () => {
   });
 
   it('rebuilds when a reactive user is mutated in place', async () => {
-    // A watch source that reads only the reference never re-runs for
-    // `user.name = ...`, so the editor keeps the old user while the parent
-    // believes it changed. Core normalizes `config.user` into its own object,
-    // so nothing downstream notices either.
     const user = reactive({ name: 'Ada', email: 'ada@example.com' });
     mount({ document: 'test.docx', user });
     await settle();
@@ -342,8 +305,6 @@ describe('SuperDocEditor', () => {
   });
 
   it('exposes getInstance only once the editor is ready', async () => {
-    // `SuperDocEditorExpose` promises null until initialization completes, and
-    // an instance handed back mid-init throws from readiness-guarded methods.
     const { getExposed } = mount({ document: 'test.docx', config: { manualReady: true } });
     await settle();
 

@@ -78,37 +78,13 @@ type SuperDocEditorComponent = DefineComponent<
   'getInstance'
 >;
 
-/**
- * SuperDocEditor - Vue 3 wrapper component for SuperDoc.
- *
- * Owns the mount elements (passed to core as HTMLElements, not selectors),
- * the instance lifecycle, and the rebuild policy. Container divs are always
- * rendered (hidden until initialized) so SuperDoc can mount into them on the
- * first client-side effect, which also keeps server-rendered markup
- * deterministic for hydration.
- *
- * Authored as a plain-`.ts` `defineComponent` (no SFC) so the package builds
- * without the SFC compiler and stays inside the workspace's TypeScript lint
- * surface.
- */
-
-/** Unwrap a possible reactive proxy without cloning; identity is preserved. */
 function raw<T>(value: T): T {
   return value === null || typeof value !== 'object' ? value : toRaw(value);
 }
 
 /**
- * Serialized form of a plain-data prop (`user`, `users`), used as the watch
- * source rather than only as a comparison.
- *
- * Reading it inside the watch getter is the point: serializing touches every
- * nested property, so Vue tracks them and an in-place edit (`user.name = ...`)
- * re-runs the comparison. A source that read the reference alone never re-ran
- * at all, so a mutated user silently kept the old identity in core. Comparing
- * the string still keeps an equal inline literal from forcing a rebuild.
- *
- * Returns null when the value will not serialize, and the caller falls back to
- * reference identity. Live objects must never take this path.
+ * Reads nested fields so Vue tracks in-place changes, while equal plain values
+ * share a key. Callers compare non-serializable values by reference.
  */
 function valueKey(value: unknown): string | null {
   try {
@@ -118,40 +94,37 @@ function valueKey(value: unknown): string | null {
   }
 }
 
+/**
+ * Always renders stable mount elements for SuperDoc and SSR hydration. Uses
+ * `defineComponent` instead of an SFC so the package does not need the SFC
+ * compiler.
+ */
 const SuperDocEditorImplementation = defineComponent({
   name: 'SuperDocEditor',
   props: {
-    /** Document to load: URL string, File, or Blob. Changing it rebuilds the instance. */
-    // `null` is in the type because the runtime already accepts it
-    // (`props.document != null` treats it as omitted) and because the
-    // documented quick start starts from `ref<File | null>(null)`. Without it,
-    // template type checking rejects this package's own README.
+    /** URL, File, or Blob to open. Changing it rebuilds the editor. */
+    // `null` lets a file picker start empty; the wrapper omits it from core.
     document: { type: [String, Object] as PropType<SuperDocConfig['document'] | null>, default: undefined },
-    /** Editing mode; two-way bindable as `v-model:document-mode`. Applied in place, no rebuild. */
+    /** Editing mode. Supports `v-model:document-mode` without rebuilding. */
     documentMode: { type: String as PropType<DocumentMode>, default: 'editing' },
-    /** Permission role. Changing it rebuilds the instance. */
+    /** Permission role. Changing it rebuilds the editor. */
     role: { type: String as PropType<UserRole>, default: 'editor' },
-    /** Current user. Compared by value: an inline literal with the same content does not rebuild. */
+    /** Current user. Compared by value. */
     user: { type: Object as PropType<SuperDocUser>, default: undefined },
-    /** All users. Compared by value, like `user`. */
+    /** All users. Compared by value. */
     users: { type: Array as PropType<SuperDocConfig['users']>, default: undefined },
     /**
-     * Module configuration. Compared by reference: it can carry functions and
-     * live objects (collaboration providers, Yjs documents) that must never
-     * be serialized or cloned. Swap the object to rebuild.
+     * Module config. Compared by reference because it can contain live
+     * collaboration objects. Replace the object to rebuild.
      */
     modules: { type: Object as PropType<SuperDocModules>, default: undefined },
-    /**
-     * Built-in UI configuration (`ui.toolbar: false` hides the toolbar).
-     * Compared by reference; changing it rebuilds the instance.
-     */
+    /** Built-in UI config. Compared by reference; changing it rebuilds. */
     ui: { type: [Object, Boolean] as PropType<SuperDocUIConfig>, default: undefined },
-    /** Fit within a fixed-height parent and scroll internally. */
+    /** Fit and scroll inside a fixed-height parent. */
     contained: { type: Boolean, default: false },
     /**
-     * Everything else from the core config (fonts, zoom, rulers, ...).
-     * Applied at initialization only; later changes are ignored with a dev
-     * warning. Use `getInstance()` or a managed prop for runtime changes.
+     * Other core options. Read at startup; later changes log a warning and are
+     * ignored.
      */
     config: { type: Object as PropType<SuperDocEditorConfig>, default: undefined },
   },
@@ -179,22 +152,17 @@ const SuperDocEditorImplementation = defineComponent({
     const bootError = shallowRef<unknown>(null);
 
     let instance: SuperDocInstance | null = null;
-    /** Invalidates in-flight async init on rebuild and unmount. */
+    /** Invalidates stale async setup after a rebuild or unmount. */
     let generation = 0;
     let isInitializing = false;
-    /** Mode requested while init was still running; flushed on ready. */
+    /** Mode requested during setup; applied on ready. */
     let pendingMode: DocumentMode | null = null;
-    /** Last mode applied or observed, to break the v-model echo loop. */
+    /** Last applied mode, used to stop v-model echo loops. */
     let appliedMode: DocumentMode | null = null;
-    /** Set when core delivers `onEditorDestroy`, so teardown emits it once. */
+    /** Stops wrapper teardown from emitting a second destroy event. */
     let coreEmittedDestroy = false;
 
-    /**
-     * Whether this component renders its own toolbar host. The answer comes
-     * from the core config: `ui: false` and `ui.toolbar: false` both mean no
-     * toolbar, and a consumer who named their own container in
-     * `ui.toolbar.container` gets the toolbar there instead.
-     */
+    // Render a toolbar host unless it is disabled or the consumer supplies one.
     const rendersToolbar = (): boolean => {
       const ui = props.ui;
       const uiToolbar = ui === false ? false : ui?.toolbar;
@@ -208,25 +176,15 @@ const SuperDocEditorImplementation = defineComponent({
       instance = null;
       coreEmittedDestroy = false;
       try {
-        // Destroy before invalidating the generation, so that if core does
-        // fire `onEditorDestroy` the captured `gen` still matches.
+        // Keep the generation valid while core may emit `onEditorDestroy`.
         current?.destroy();
       } catch (error) {
-        // Teardown is best-effort. Core's collaboration cleanup calls
-        // consumer-supplied provider/socket `disconnect()` and `destroy()`
-        // without containing their exceptions, so a custom provider can throw
-        // here. Letting that escape would skip the generation bump below,
-        // leaving stale callbacks authorized and aborting `rebuild()` before
-        // it reaches `init()` — a failed teardown would permanently wedge the
-        // editor rather than degrade it.
+        // Collaboration providers can throw during cleanup. Keep rebuilding so
+        // one failed disconnect cannot leave stale callbacks active.
         console.error('[SuperDocEditor] Failed to destroy SuperDoc:', error);
       } finally {
-        // Core declares `Config.onEditorDestroy` and a `broadcastEditorDestroy()`
-        // that emits `editorDestroy`, but nothing in the package calls either,
-        // so that callback does not fire today. Consumers are promised
-        // `editor-destroy` for wrapper-owned teardown (rebuild and unmount),
-        // so emit it here rather than depending on a core path that is inert.
-        // The flag keeps this from double-emitting once core is wired up.
+        // Core does not currently call `onEditorDestroy`. Emit for wrapper-owned
+        // teardown, but avoid a duplicate if core starts calling it.
         if (current && !coreEmittedDestroy) emit('editor-destroy');
         generation += 1;
         isInitializing = false;
@@ -242,10 +200,8 @@ const SuperDocEditorImplementation = defineComponent({
       isInitializing = true;
 
       try {
-        // Dynamic import for SSR safety: the core touches browser globals at
-        // module scope, so it must not load during server rendering.
+        // Core reads browser globals at module scope, so load it after mount.
         const superdocModule = await import('superdoc');
-        // The mount elements render in the same pass that scheduled this init.
         await nextTick();
         if (gen !== generation) return;
 
@@ -283,8 +239,6 @@ const SuperDocEditorImplementation = defineComponent({
           },
           onEditorDestroy: () => {
             if (gen !== generation) return;
-            // Records that core delivered the event, so wrapper-owned teardown
-            // does not emit a second one.
             coreEmittedDestroy = true;
             emit('editor-destroy');
           },
@@ -316,9 +270,7 @@ const SuperDocEditorImplementation = defineComponent({
         instance = created;
         appliedMode = mode;
 
-        // Externally-driven mode changes (built-in toolbar, getInstance()
-        // calls) feed v-model; self-applied changes are filtered above via
-        // `appliedMode`.
+        // Feed external mode changes into v-model without echoing prop changes.
         created.on?.('document-mode-change', (event: { documentMode?: DocumentMode }) => {
           if (gen !== generation) return;
           const next = event?.documentMode;
@@ -344,15 +296,8 @@ const SuperDocEditorImplementation = defineComponent({
     onMounted(() => void init());
     onBeforeUnmount(destroyInstance);
 
-    // Rebuild policy. `user`/`users` are compared by value so inline literals
-    // do not rebuild; `modules`/`ui` stay on reference identity because they
-    // may carry live objects a consumer intentionally swaps.
-    //
-    // The serialized keys are in the source, not just the comparison. Vue only
-    // re-runs this when something the getter read has changed, so reading the
-    // references alone meant an in-place `user.name = ...` never scheduled the
-    // callback and never rebuilt, while core had already normalized `user`
-    // into its own object. Serializing reads the nested values and tracks them.
+    // Plain user data is compared by value. Modules and UI can contain live
+    // objects, so their identity controls rebuilds.
     watch(
       () =>
         [
@@ -372,8 +317,7 @@ const SuperDocEditorImplementation = defineComponent({
         const byReferenceChanged = next
           .slice(0, 5)
           .some((value, index) => !Object.is(value, (previous as readonly unknown[])[index]));
-        // A null key means the value would not serialize, so fall back to
-        // reference identity rather than treating every read as a change.
+        // Fall back to identity when a value cannot be serialized.
         const changedByValue = (
           nextKey: string | null,
           previousKey: string | null,
@@ -391,17 +335,13 @@ const SuperDocEditorImplementation = defineComponent({
       },
     );
 
-    // documentMode is applied in place; a change during init is queued and
-    // flushed by the ready callback.
+    // Apply mode changes in place, or queue them until ready.
     watch(
       () => props.documentMode,
       (mode) => {
         if (mode === appliedMode) {
-          // Returning to the applied value while init is in flight has to drop
-          // the queued change, not just skip this one. `editing → viewing →
-          // editing` before ready otherwise leaves `pendingMode` on `viewing`,
-          // and the ready callback applies it, so the editor ends in viewing
-          // while the bound prop reads editing.
+          // A pre-ready `editing → viewing → editing` sequence must clear
+          // the queued `viewing` mode.
           pendingMode = null;
           return;
         }
@@ -411,23 +351,13 @@ const SuperDocEditorImplementation = defineComponent({
           appliedMode = mode;
           instance.setDocumentMode(mode);
         } else if (isInitializing) {
-          // The instance exists as soon as the constructor returns, but core
-          // `setDocumentMode` throws until ready; queue and flush on ready.
+          // Core rejects `setDocumentMode` until ready.
           pendingMode = mode;
         }
       },
     );
 
-    // `config` is initialization-only by contract; say so instead of
-    // silently ignoring a changed reference.
-    //
-    // The serialized key is in the source for the same reason as `user`: a
-    // parent that mutates a reactive config in place (`config.rulers = false`)
-    // leaves the reference untouched, so a source reading only the reference
-    // never re-runs and the promised warning never fires. Core copied the
-    // value at construction, so the edit is silently ignored, which is exactly
-    // what this warning exists to prevent. `valueKey` falls back to identity
-    // for a config carrying something unserializable.
+    // Read nested config fields so in-place changes still trigger the warning.
     watch(
       () => [props.config, valueKey(props.config)] as const,
       () => {
@@ -440,11 +370,7 @@ const SuperDocEditorImplementation = defineComponent({
     );
 
     expose({
-      // Gated on readiness, not merely on the constructor having returned.
-      // `SuperDocEditorExpose` promises null until initialization completes,
-      // and handing back an instance mid-init lets a consumer call a
-      // readiness-guarded method such as `setDocumentMode`, which throws.
-      // The internal `instance` stays set throughout so teardown still works.
+      // Keep the internal instance for teardown, but expose it only after ready.
       getInstance: () => (isInitializing ? null : instance),
     });
 
@@ -454,13 +380,8 @@ const SuperDocEditorImplementation = defineComponent({
         'div',
         {
           class: 'superdoc-wrapper',
-          // `height: 100%` is what carries the parent's definite height down to
-          // the editor host. Without it the wrapper is `height: auto`, so the
-          // host's `flex: 1 1 0%` grows against an unconstrained box and a
-          // multi-page document expands the page instead of scrolling inside
-          // the parent, which is the whole point of `contained`. Safe when the
-          // parent is not definite-height: a percentage height against an auto
-          // containing block resolves to auto, the current behaviour.
+          // Resolve the fixed parent height so the flexing editor scrolls
+          // instead of expanding the page in contained mode.
           style: props.contained ? { display: 'flex', flexDirection: 'column', height: '100%' } : undefined,
         },
         [
