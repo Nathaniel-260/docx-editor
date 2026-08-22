@@ -17,7 +17,7 @@ const faviconHashes = {
 const routes = [
   ['index.html', 'SuperDoc'],
   ['resources/how-superdoc-works/index.html', 'How SuperDoc works'],
-  ['editor/index.html', 'Editor overview'],
+  ['editor/index.html', 'SuperDoc Editor'],
   ['editor/quickstart/index.html', 'Open and edit your first DOCX'],
   ['editor/frameworks/react/index.html', 'Mount SuperDoc in React'],
   ['editor/frameworks/sveltekit/index.html', 'Mount SuperDoc in SvelteKit'],
