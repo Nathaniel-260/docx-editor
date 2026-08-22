@@ -14,9 +14,8 @@ type ConfigPresentation = {
 };
 
 const fieldsByGroup = {
-  essentials: ['selector', 'document', 'user', 'onReady', 'onContentError', 'onException'],
+  essentials: ['selector', 'document', 'documentMode', 'user'],
   document: [
-    'documentMode',
     'viewing',
     'role',
     'allowSelectionInViewMode',
@@ -71,6 +70,9 @@ const fieldsByGroup = {
     'workerUrls',
   ],
   lifecycle: [
+    'onReady',
+    'onContentError',
+    'onException',
     'onEditorBeforeCreate',
     'onEditorCreate',
     'onSourceComplete',
@@ -205,12 +207,13 @@ const presentation = {
   },
   document: {
     kind: 'starter',
-    example: { value: "'/contract.docx'", code: "document: '/contract.docx'" },
+    example: { value: "'/sample.docx'", code: "document: '/sample.docx'" },
     guide: { label: 'Load and save documents', href: '/editor/load-and-save-documents' },
   },
   documentMode: {
+    kind: 'starter',
     default: "'editing'",
-    example: { value: "'editing'", code: "documentMode: 'editing'" },
+    example: { value: "'suggesting'", code: "documentMode: 'suggesting'" },
     guide: { label: 'Document modes', href: '/editor/document-modes' },
   },
   viewing: {
@@ -338,6 +341,7 @@ const presentation = {
     guide: lifecycleGuide,
   },
   onException: {
+    kind: 'starter',
     example: { value: '({ error }) => { … }', code: 'onException: ({ error }) => {\n  console.error(error);\n}' },
     guide: lifecycleGuide,
   },

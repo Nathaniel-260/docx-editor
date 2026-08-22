@@ -325,7 +325,8 @@ test('the editor quickstart offers the clean sample and no review markup', async
   assert.match(article, /href="\/fixtures\/getting-started\.docx"/);
   assert.match(quickstartMarkdown, /Change the effective date from `September 1, 2026` to `October 1, 2026`/);
   assert.doesNotMatch(quickstartMarkdown, /complete the Word round trip/i);
-  assert.match(configurationMarkdown, /document: '\/sample\.docx'/);
+  assert.match(configurationMarkdown, /Continue with the `\/sample\.docx` project/);
+  assert.match(configurationMarkdown, /documentMode: 'suggesting'/);
   // The tracked-changes fixture is reserved for review guidance, so the
   // quickstart must not reintroduce it through a download or an embed.
   assert.doesNotMatch(article, /tracked-changes\.docx/);
@@ -646,7 +647,7 @@ test('exports the redistributed Editor guidance as clean Markdown', async () => 
   );
   const corpus = pages.join('\n');
 
-  assert.match(corpus, /satisfies Config/);
+  assert.match(corpus, /satisfies Partial<Config>/);
   assert.match(corpus, /onEditorUpdate:[\s\S]*export function unmountEditor\(\)[\s\S]*superdoc\.destroy\(\)/);
   assert.match(corpus, /Interactive model: the Editor lifecycle in your application/);
   assert.match(corpus, /Show a retry path instead of an empty mount point/);

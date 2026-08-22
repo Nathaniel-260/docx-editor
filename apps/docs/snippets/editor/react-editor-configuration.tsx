@@ -1,23 +1,9 @@
-import { SuperDocEditor, type SuperDocEditorProps } from '@superdoc/react';
-import '@superdoc/react/style.css';
+import type { SuperDocEditorProps } from '@superdoc/react';
 
-const editorProps = {
-  document: '/sample.docx',
+export const startupOptions = {
+  documentMode: 'suggesting',
   user: {
     name: 'Jordan Lee',
     email: 'jordan@example.com',
   },
-  onReady: () => {
-    console.info('SuperDoc is ready.');
-  },
-  onContentError: ({ error }) => {
-    console.error('SuperDoc could not read the document.', error);
-  },
-  onException: ({ error }) => {
-    console.error('SuperDoc could not start.', error);
-  },
-} satisfies SuperDocEditorProps;
-
-export function Editor() {
-  return <SuperDocEditor {...editorProps} />;
-}
+} satisfies Partial<SuperDocEditorProps>;

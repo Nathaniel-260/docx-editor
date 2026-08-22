@@ -329,12 +329,20 @@ test('the generated proofing reference mirrors the exported fields', async () =>
 
 test('the Editor configuration reference starts with concise essential fields', async () => {
   const { editorConfigExplorer } = await import('../lib/editor-config-explorer.ts');
-  const { renderConfigReferenceMarkdown } = await import('../lib/config-explorer.ts');
+  const { configTemplate, renderConfigReferenceMarkdown } = await import('../lib/config-explorer.ts');
   const essentials = editorConfigExplorer.fields
     .filter((field) => field.group === 'essentials')
     .map((field) => field.name);
+  const lifecycle = editorConfigExplorer.fields
+    .filter((field) => field.group === 'lifecycle')
+    .map((field) => field.name);
 
-  assert.deepEqual(essentials, ['selector', 'document', 'user', 'onReady', 'onContentError', 'onException']);
+  assert.deepEqual(essentials, ['selector', 'document', 'documentMode', 'user']);
+  assert.ok(['onReady', 'onContentError', 'onException'].every((field) => lifecycle.includes(field)));
+  const copiedSetup = configTemplate(editorConfigExplorer);
+  assert.match(copiedSetup, /onReady:/u);
+  assert.match(copiedSetup, /onContentError:/u);
+  assert.match(copiedSetup, /onException:/u);
   assert.ok(editorConfigExplorer.fields.every((field) => field.summary?.length));
   assert.ok(editorConfigExplorer.fields.every((field) => !field.summary?.includes('Painter plan')));
   assert.equal(editorConfigExplorer.fields.find((field) => field.name === 'onSidebarToggle')?.type, '(isOpened: boolean) => void');
