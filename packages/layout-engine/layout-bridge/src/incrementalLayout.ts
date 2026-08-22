@@ -5921,22 +5921,31 @@ async function layoutWithOptionalReuse(input: {
     dependencyProof.profile !== 'single-section-local-text'
       ? (dependencyProof.vAlignSectionsBoundaryBlockId ?? null)
       : null;
+  let scopedVAlignBoundaryPages: { firstPage: number; lastPage: number } | null = null;
+  let scopedVAlignReplayThroughBoundary = false;
   let scopedVAlignReplayThroughPageIndex: number | null = null;
   if (scopedVAlignBoundaryBlockId != null) {
-    if (reuse.requireDocumentStartCheckpoint !== true) {
+    const replayThroughBoundary =
+      dependencyProof.profile !== 'single-section-local-text' &&
+      dependencyProof.vAlignSectionsReplayThroughBoundary === true;
+    if (replayThroughBoundary && reuse.requireDocumentStartCheckpoint !== true) {
       return full('m5-layout-reuse-disabled-valign-scope-requires-document-start');
     }
     const boundaryPages = reuse.previousBlockPageIndex?.get(scopedVAlignBoundaryBlockId) ?? null;
-    if (!boundaryPages) {
+    if (
+      !boundaryPages ||
+      !Number.isInteger(boundaryPages.firstPage) ||
+      !Number.isInteger(boundaryPages.lastPage) ||
+      boundaryPages.firstPage < 0 ||
+      boundaryPages.lastPage < boundaryPages.firstPage ||
+      boundaryPages.lastPage >= previousPages.length
+    ) {
       return full('m5-layout-reuse-disabled-valign-boundary-unresolved');
     }
     const dirtyPreviousBlockIds = [...input.dirty.changedBlockIds, ...input.dirty.deletedBlockIds];
     if (dirtyPreviousBlockIds.length === 0) {
       return full('m5-layout-reuse-disabled-valign-boundary-no-dirty-evidence');
     }
-    const replayThroughBoundary =
-      dependencyProof.profile !== 'single-section-local-text' &&
-      dependencyProof.vAlignSectionsReplayThroughBoundary === true;
     for (const blockId of dirtyPreviousBlockIds) {
       const pages = reuse.previousBlockPageIndex?.get(blockId) ?? null;
       if (!pages) {
@@ -5949,6 +5958,8 @@ async function layoutWithOptionalReuse(input: {
         return full('m5-layout-reuse-disabled-valign-boundary-page-shared');
       }
     }
+    scopedVAlignBoundaryPages = boundaryPages;
+    scopedVAlignReplayThroughBoundary = replayThroughBoundary;
     if (replayThroughBoundary) {
       scopedVAlignReplayThroughPageIndex = boundaryPages.lastPage;
     }
@@ -6248,6 +6259,14 @@ async function layoutWithOptionalReuse(input: {
     while (checkpointPageIndex > 0 && !pageStartsAtCleanBlockBoundary(previousPages[checkpointPageIndex])) {
       checkpointPageIndex -= 1;
     }
+  }
+  if (
+    scopedVAlignBoundaryPages != null &&
+    !scopedVAlignReplayThroughBoundary &&
+    reuse.requireDocumentStartCheckpoint !== true &&
+    checkpointPageIndex <= scopedVAlignBoundaryPages.lastPage
+  ) {
+    return full('m5-layout-reuse-disabled-valign-checkpoint-not-after-boundary');
   }
   const checkpointPage = previousPages[checkpointPageIndex];
   if (!checkpointPage || (!partialPageCheckpoint && !pageStartsAtCleanBlockBoundary(checkpointPage))) {

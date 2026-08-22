@@ -541,7 +541,7 @@ describe('incrementalLayout deep checkpoint geometry (SD-3772 D2)', () => {
     );
   });
 
-  it('requires document-start replay for a scoped vertically aligned section boundary', async () => {
+  it('resumes after a scoped vertically aligned section boundary', async () => {
     const previousBlocks = buildBlocks(false);
     const previous = await incrementalLayout(
       [],
@@ -571,10 +571,18 @@ describe('incrementalLayout deep checkpoint geometry (SD-3772 D2)', () => {
       reuse,
     );
 
+    const boundaryPages = reuse.previousBlockPageIndex!.get('p9')!;
     expect(result.layoutReuse).toMatchObject({
-      mode: 'full',
-      reason: 'm5-layout-reuse-disabled-valign-scope-requires-document-start',
+      mode: 'tail-splice',
+      checkpointPageIndex: expect.any(Number),
     });
+    expect(result.layoutReuse.checkpointPageIndex).toBeGreaterThan(boundaryPages.lastPage);
+    expect(result.layoutReuse.pagesSplicedByReuse).toBeGreaterThan(boundaryPages.lastPage);
+    expect(result.layoutReuse.pagesPaginated).toBeLessThanOrEqual(5);
+
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, nextBlocks, layoutOptions(), measureBlock, buildHeaderFooter());
+    expect(pageGeometry(result.layout)).toEqual(pageGeometry(cold.layout));
   });
 
   it('rejects a scoped vertically aligned section boundary that shares the dirty page', async () => {
