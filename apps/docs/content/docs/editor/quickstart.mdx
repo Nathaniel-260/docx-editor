@@ -4,11 +4,11 @@ navTitle: Quickstart
 description: Install the browser Editor, open a sample DOCX, and export your first edit.
 ---
 
-Follow this guide from top to bottom. You will open a sample agreement, change its text, and export a new DOCX.
+Choose Vanilla or React below. Your choice stays active for every code example on this page.
 
 ## 1. Create a project
 
-Create a Vite project and install SuperDoc:
+Create a Vite project, enter it, and install SuperDoc:
 
 <FrameworkExampleTabs>
   <FrameworkExample filename='Terminal' framework='Vanilla'>
@@ -19,16 +19,14 @@ Create a Vite project and install SuperDoc:
   </FrameworkExample>
 </FrameworkExampleTabs>
 
-The `latest` tag installs SuperDoc v2. Pin the resolved version before shipping so upgrades stay deliberate.
-
 ## 2. Add the sample document
 
 Download the sample and save it as `public/sample.docx`:
 
 <FileDownload
-  href='/fixtures/sample-nda.docx'
+  href='/fixtures/getting-started.docx'
   label='Download the sample document'
-  description='Synthetic agreement with headings, paragraphs, and a list'
+  description='One-page statement of work'
   fileType='DOCX'
 />
 
@@ -66,16 +64,17 @@ Run the project:
 pnpm dev
 ```
 
-Open the printed URL. The agreement should appear, and **Export DOCX** should become enabled. That button stays disabled
-until `onReady` confirms that the document is open.
+Open the printed URL. When the statement of work appears, **Export DOCX** becomes enabled. `onReady` keeps the button
+disabled until the document is open.
 
 ## 5. Make an edit and export
 
-Replace a word in the agreement, then select **Export DOCX**. The browser downloads `sample-edited.docx`.
+Change the effective date from `September 1, 2026` to `October 1, 2026`. Then select **Export DOCX**. The browser
+downloads `sample-edited.docx`.
 
 <Callout variant='success' title='Check the exported document'>
-  Reopen `sample-edited.docx` in Word or SuperDoc. Confirm that your edit is present and that the heading, paragraphs,
-  and list still have their original formatting.
+  Open `sample-edited.docx` in Word or SuperDoc. Confirm that the effective date is `October 1, 2026` and that the
+  title, service list, milestone table, and signatures keep their formatting.
 </Callout>
 
 ## What just happened
@@ -91,8 +90,7 @@ report import and startup failures instead of leaving an unexplained empty mount
 The complete projects are available for [Vanilla](https://go.superdoc.dev/examples/vanilla) and
 [React](https://go.superdoc.dev/examples/react).
 
-## Choose what to build next
+## Continue to configuration
 
-- [Load and save documents](/editor/load-and-save-documents) to open user files or save exports to your backend.
-- [Configure the Editor](/editor/configuration) to change startup behavior, layout, UI, and events.
-- [Document modes](/editor/document-modes) to compare direct edits, tracked suggestions, and read-only viewing.
+[Configure the Editor](/editor/configuration) to add user information, choose a document mode, and handle startup
+errors while keeping the same `/sample.docx` project.

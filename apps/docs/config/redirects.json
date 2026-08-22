@@ -84,6 +84,16 @@
       "source": "/editor/telemetry-and-licensing/",
       "destination": "/editor/telemetry/",
       "reason": "Telemetry and Editor license configuration now have separate guides."
+    },
+    {
+      "source": "/editor/frameworks/react/",
+      "destination": "/editor/quickstart/",
+      "reason": "The Quickstart now owns the complete React setup alongside Vanilla."
+    },
+    {
+      "source": "/editor/frameworks/sveltekit/",
+      "destination": "/editor/quickstart/",
+      "reason": "Framework-specific guides are deferred until the documentation supports a broader tested set."
     }
   ],
   "redirects": [

@@ -9,7 +9,7 @@
     "generate:reference": "pnpm generate:config-reference && pnpm exec tsx scripts/generate-document-api-reference.ts",
     "generate:redirects": "node scripts/redirects.mjs generate",
     "generate:routes": "node scripts/redirects.mjs routes",
-    "generate:fixtures": "node scripts/build-quickstart-fixture.mjs && node scripts/build-demo-fixtures.mjs",
+    "generate:fixtures": "node scripts/build-getting-started-fixture.mjs && node scripts/build-quickstart-fixture.mjs && node scripts/build-demo-fixtures.mjs",
     "generate:migration-catalog": "tsx scripts/generate-migration-catalog.ts",
     "sync:runtime": "node scripts/sync-editor-demo-runtime.mjs",
     "check:runtime": "node scripts/sync-editor-demo-runtime.mjs --check",

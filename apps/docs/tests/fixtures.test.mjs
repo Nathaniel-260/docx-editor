@@ -30,7 +30,7 @@ async function openFixture(name) {
  */
 const FORBIDDEN_IDENTIFIERS = ['Andrii', 'Orlov', 'python-docx'];
 
-test('the quickstart fixture carries no upstream author metadata', async () => {
+test('the sample NDA carries no upstream author metadata', async () => {
   const { core, app } = await openFixture('sample-nda.docx');
 
   for (const identifier of FORBIDDEN_IDENTIFIERS) {
@@ -68,7 +68,7 @@ const REVISION_ELEMENTS = [
   'w:commentReference',
 ];
 
-test('the quickstart fixture has no tracked changes or comments in any part', async () => {
+test('the sample NDA has no tracked changes or comments in any part', async () => {
   const { zip } = await openFixture('sample-nda.docx');
 
   // Scan every Word XML part, not just the body: a header, footer, or note
@@ -112,7 +112,7 @@ function firstArchiveEntry(bytes) {
   return bytes.subarray(offset + 30, offset + 30 + nameLength).toString('utf8');
 }
 
-test('the quickstart fixture is a valid DOCX package with real content', async () => {
+test('the sample NDA is a valid DOCX package with real content', async () => {
   const { zip, document, bytes } = await openFixture('sample-nda.docx');
 
   // OPC requires the content-type map, and Word expects it first in the archive.
@@ -125,6 +125,31 @@ test('the quickstart fixture is a valid DOCX package with real content', async (
   assert.ok(/w:val="Heading1"/.test(document), 'must use a Heading 1 style');
   assert.ok(/w:val="Heading2"/.test(document), 'must use a Heading 2 style');
   assert.ok(/w:val="ListBullet"/.test(document), 'must contain a bulleted list');
+});
+
+test('the getting-started fixture is clean and uses real document structure', async () => {
+  const { zip, document, core, app, bytes } = await openFixture('getting-started.docx');
+
+  assert.equal(firstArchiveEntry(bytes), '[Content_Types].xml');
+  assert.ok(zip.file('word/styles.xml'), 'must contain Word styles');
+  assert.ok(zip.file('word/numbering.xml'), 'must contain real list numbering');
+  assert.match(document, /Statement of Work/);
+  assert.match(document, /September 1, 2026/);
+  assert.match(document, /Meridian Consulting LLC/);
+  assert.match(document, /Aurora Systems, Inc\./);
+  assert.ok(/w:val="Title"/.test(document), 'must use a Title style');
+  assert.ok(/w:val="Heading1"/.test(document), 'must use a Heading 1 style');
+  assert.ok(/w:val="ListBullet"/.test(document), 'must use a bulleted list style');
+  assert.equal(document.match(/<w:tbl>/g)?.length, 2, 'must contain milestone and signature tables');
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+
+  for (const element of REVISION_ELEMENTS) {
+    assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
+  }
+  assert.equal(zip.file('word/comments.xml'), null, 'must not ship comments');
 });
 
 test('the tracked-changes fixture keeps its tracked change', async () => {

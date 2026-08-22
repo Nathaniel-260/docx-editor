@@ -19,8 +19,6 @@ const routes = [
   ['resources/how-superdoc-works/index.html', 'How SuperDoc works'],
   ['editor/index.html', 'SuperDoc Editor'],
   ['editor/quickstart/index.html', 'Open and edit your first DOCX'],
-  ['editor/frameworks/react/index.html', 'Mount SuperDoc in React'],
-  ['editor/frameworks/sveltekit/index.html', 'Mount SuperDoc in SvelteKit'],
   ['editor/migrate-from-v1/overview/index.html', 'Migrate from v1'],
   ['editor/migrate-from-v1/removed-apis/index.html', 'Removed in v2'],
   ['editor/configuration/index.html', 'Configure the Editor'],
@@ -138,8 +136,8 @@ test('exports the condensed primary sections and keeps migration last', async ()
     editorLinks.slice(0, expectedPrimaryLabels.length).map(({ text }) => text),
     expectedPrimaryLabels,
   );
-  assert.ok(editorLinks.some(({ text }) => text === 'Use with React'));
-  assert.ok(editorLinks.some(({ text }) => text === 'Use with SvelteKit'));
+  assert.ok(!editorLinks.some(({ text }) => text === 'Use with React'));
+  assert.ok(!editorLinks.some(({ text }) => text === 'Use with SvelteKit'));
   assert.deepEqual(
     editorLinks.slice(-2).map(({ text }) => text),
     ['Telemetry', 'License'],
@@ -308,8 +306,13 @@ test('exports the tracked-changes fixture', async () => {
   assert.ok(fixture.size > 0);
 });
 
-test('exports the editor quickstart sample document', async () => {
+test('exports the sample NDA document', async () => {
   const fixture = await stat(new URL('../out/fixtures/sample-nda.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
+test('exports the editor quickstart sample document', async () => {
+  const fixture = await stat(new URL('../out/fixtures/getting-started.docx', import.meta.url));
   assert.ok(fixture.size > 0);
 });
 
@@ -319,7 +322,8 @@ test('the editor quickstart offers the clean sample and no review markup', async
   const configurationMarkdown = await readFile(new URL('../out/md/editor/configuration.md', import.meta.url), 'utf8');
 
   assert.match(article, /Download the sample document/);
-  assert.match(article, /href="\/fixtures\/sample-nda\.docx"/);
+  assert.match(article, /href="\/fixtures\/getting-started\.docx"/);
+  assert.match(quickstartMarkdown, /Change the effective date from `September 1, 2026` to `October 1, 2026`/);
   assert.doesNotMatch(quickstartMarkdown, /complete the Word round trip/i);
   assert.match(configurationMarkdown, /document: '\/sample\.docx'/);
   // The tracked-changes fixture is reserved for review guidance, so the
@@ -843,7 +847,7 @@ test('exports the machine-readable documentation files', async () => {
   assert.match(llmsIndex, /Prefer focused reference pages/);
   assert.match(fullCorpus, /^# Open and edit your first DOCX/m);
   assert.match(editorMarkdown, /^# Open and edit your first DOCX/m);
-  assert.match(editorMarkdown, /\[Download the sample document\]\(\/fixtures\/sample-nda\.docx\)/);
+  assert.match(editorMarkdown, /\[Download the sample document\]\(\/fixtures\/getting-started\.docx\)/);
   assert.match(editorMarkdown, /`onReady` marked the first safe moment to enable document actions/);
   assert.match(surfacesMarkdown, /^# How SuperDoc works/m);
   assert.match(surfacesMarkdown, /> \*\*Diagram:\*\* People, services, CI, and agents use different SuperDoc surfaces/);
