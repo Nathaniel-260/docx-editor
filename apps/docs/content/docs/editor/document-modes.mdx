@@ -1,27 +1,31 @@
 ---
 title: Choose a document mode
 navTitle: Document modes
-description: Compare editing, suggesting, and viewing, then configure what viewers see.
+description: Choose how the Editor handles edits and what appears in viewing mode.
 ---
 
-Switch modes, then replace `30 days` with `60 days`. The same edit changes the text, creates a tracked change, or is
-blocked.
+The [Configuration](/editor/configuration) guide starts `/sample.docx` in `suggesting` mode. Compare it with `editing`
+and `viewing`, then choose the behavior your application needs.
 
-## Compare the three modes
+## Try each mode
+
+Expand the Editor. In each mode, replace `30 days` with `60 days`. Use the reset button before trying the next mode.
 
 <EditorDemo fixture='/fixtures/document-modes.docx' preset='document-modes' title='Try document modes' />
 
-| Mode         | Result                             | Use it when                                       |
+| Mode         | What happens                       | Use it when                                       |
 | ------------ | ---------------------------------- | ------------------------------------------------- |
 | `editing`    | The text changes directly.         | Changes should become part of the document.       |
 | `suggesting` | The edit becomes a tracked change. | Another person should review the proposed change. |
-| `viewing`    | The edit is blocked.               | A person should read without changing the DOCX.   |
+| `viewing`    | Editing is disabled.               | A person should read without changing the DOCX.   |
 
-Modes change Editor behavior in the browser. They do not decide who can open or save the document.
+`editing` is the default. Modes change Editor behavior in the browser. They do not decide who can open or save the
+document.
 
-## Set the starting mode
+## Apply the mode to your project
 
-Pass the starting mode when you create the Editor. The example also shows how to switch to viewing later:
+Set `documentMode` when the Editor starts. These examples start in `suggesting`, configure the later viewing state, and
+show how your application can switch to `viewing`.
 
 <FrameworkExampleTabs>
   <FrameworkExample filename='src/main.ts' framework='Vanilla'>
@@ -32,48 +36,31 @@ Pass the starting mode when you create the Editor. The example also shows how to
   </FrameworkExample>
 </FrameworkExampleTabs>
 
-Vanilla changes the running Editor with `setDocumentMode()`. React changes the `documentMode` prop; the wrapper applies
-the new mode without remounting.
+Vanilla calls `setDocumentMode()` on the ready Editor. React updates the `documentMode` prop. Neither change remounts the
+Editor.
 
-## Choose what viewers see
+## Choose how tracked changes appear
 
-Viewing stays read-only. Use `viewing` to choose which review information appears:
+Viewing stays read-only. Its `trackedChanges` option changes how proposals appear without accepting or rejecting them.
 
-<FrameworkExampleTabs>
-  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
-    <include>../../../snippets/editor/editor-viewing-options.ts</include>
-  </FrameworkExample>
-  <FrameworkExample filename='src/Editor.tsx' framework='React'>
-    <include>../../../snippets/editor/react-viewing-options.tsx</include>
-  </FrameworkExample>
-</FrameworkExampleTabs>
+For the `30 days` to `60 days` proposal in the demo:
 
-| `trackedChanges` | Viewer sees                       |
-| ---------------- | --------------------------------- |
-| `original`       | The document before proposals.    |
-| `markup`         | Proposals with change marks.      |
-| `final`          | Proposals applied without markup. |
+| `trackedChanges` | What appears in viewing mode                           | Use it to                                    |
+| ---------------- | ------------------------------------------------------ | -------------------------------------------- |
+| `original`       | `30 days`, without change marks.                       | Show the document before the proposal.       |
+| `markup`         | `30 days` deleted and `60 days` inserted, both marked. | Show exactly what the proposal changes.      |
+| `final`          | `60 days`, without change marks.                       | Preview the document as if it were accepted. |
 
-`original` is the default. Comments are hidden by default.
+`original` is the default. These options only change the display. The proposal remains in the DOCX.
 
-Change either option after `onReady`. Omitted options keep their current values:
+Set `viewing.comments` to `true` to show comment anchors and threads. Comments are hidden by default.
 
-<FrameworkExampleTabs>
-  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
-    ```ts
-    superdoc.setViewingOptions({
-      trackedChanges: 'final',
-    });
-    ```
-  </FrameworkExample>
-  <FrameworkExample filename='src/Editor.tsx' framework='React'>
-    <include>../../../snippets/editor/react-set-viewing-options.tsx</include>
-  </FrameworkExample>
-</FrameworkExampleTabs>
+To change a mounted viewer, call `superdoc.setViewingOptions({ trackedChanges: 'final' })` after `onReady`. Omitted
+options keep their current values.
 
-Hiding comments or tracked changes does not remove them from the DOCX.
+For review controls, see [Track changes](/editor/track-changes). For comment threads, see
+[Comments](/editor/built-in-ui/comments).
 
-## Choose what to build next
+## Continue to load and save
 
-- [Build a tracked-change review flow](/editor/track-changes) to accept or reject suggestions.
-- [Configure comments](/editor/built-in-ui/comments) to create, reply to, resolve, and reopen threads.
+[Load and save a DOCX](/editor/load-and-save-documents) to connect the same project to your storage.

@@ -27,10 +27,6 @@ const commentThreadExampleUrl = new URL('../snippets/document-api/comment-thread
 const documentStorageExampleUrl = new URL('../snippets/editor/document-storage.ts', import.meta.url);
 const reactDocumentStorageExampleUrl = new URL('../snippets/editor/react-document-storage.tsx', import.meta.url);
 const versionHistoryExampleUrl = new URL('../snippets/editor/editor-version-history.ts', import.meta.url);
-const reactRuntimeViewingOptionsExampleUrl = new URL(
-  '../snippets/editor/react-set-viewing-options.tsx',
-  import.meta.url,
-);
 const vanillaQuickstartExampleUrl = new URL('../../../examples/vanilla/src/main.ts', import.meta.url);
 const reactQuickstartExampleUrl = new URL('../../../examples/react/src/App.tsx', import.meta.url);
 const pythonSdkExampleUrl = new URL('../snippets/headless/python-accept-changes.py', import.meta.url);
@@ -416,13 +412,6 @@ test('Quickstart examples report both document failure paths', async () => {
     assert.match(example, /onContentError/u);
     assert.match(example, /onException/u);
   }
-});
-
-test('the React runtime viewing example uses the ready instance', async () => {
-  const example = await readFile(reactRuntimeViewingOptionsExampleUrl, 'utf8');
-
-  assert.match(example, /onReady=\{\(\{ superdoc \}\) =>/u);
-  assert.match(example, /superdoc\.setViewingOptions/u);
 });
 
 test('mutation and headless examples keep their safety guards', async () => {

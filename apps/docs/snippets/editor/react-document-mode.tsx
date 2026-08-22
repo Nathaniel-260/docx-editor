@@ -10,7 +10,14 @@ export function Editor() {
       <button onClick={() => setDocumentMode('viewing')} type='button'>
         Switch to viewing
       </button>
-      <SuperDocEditor document='/sample.docx' documentMode={documentMode} />
+      <SuperDocEditor
+        document='/sample.docx'
+        documentMode={documentMode}
+        viewing={{
+          comments: true,
+          trackedChanges: 'markup',
+        }}
+      />
     </>
   );
 }

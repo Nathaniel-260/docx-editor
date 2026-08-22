@@ -379,8 +379,10 @@ test('exports the document modes guide with an interactive mode switcher', async
   assert.match(markdown, /original, markup, or final document/);
   assert.match(markdown, /trackedChanges: 'markup'/);
   assert.match(markdown, /superdoc\.setViewingOptions/);
-  assert.match(markdown, /Proposals applied without markup/);
-  assert.match(markdown, /Hiding comments or tracked changes does not remove them from the DOCX/);
+  assert.match(markdown, /`original`[^\n]*`30 days`, without change marks/u);
+  assert.match(markdown, /`markup`[^\n]*`30 days` deleted and `60 days` inserted/u);
+  assert.match(markdown, /`final`[^\n]*`60 days`, without change marks/u);
+  assert.match(markdown, /These options only change the display\. The proposal remains in the DOCX/u);
   assert.doesNotMatch(markdown, /<EditorDemo\b/);
 });
 
