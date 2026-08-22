@@ -15,9 +15,14 @@ const examplesRootPrefix = examplesRoot.endsWith('/') ? examplesRoot : `${exampl
 const runtimeConfigUrl = new URL('../config/editor-demo-runtime.json', import.meta.url);
 const layoutUrl = new URL('../lib/layout.tsx', import.meta.url);
 const docsHomeUrl = new URL('../components/docs-home.tsx', import.meta.url);
+const builtInUiMetaUrl = new URL('../content/docs/editor/built-in-ui/meta.json', import.meta.url);
+const builtInUiMapUrl = new URL('../components/embeds/built-in-ui-map.tsx', import.meta.url);
+const docsComponentsCssUrl = new URL('../components/docs-components.css', import.meta.url);
 const pinnedV2MajorPackageInstall =
   /\b(?:pnpm add(?:\s+--global)?|npm (?:install|i|add)|yarn add|bun add)[^\n]*\s(?:superdoc|@superdoc\/[a-z0-9-]+)@(?:\^|~)?2(?:[.\w-]*)?(?=\s|$)/mu;
 const focusedToolbarExampleUrl = new URL('../snippets/editor/focused-built-in-toolbar.ts', import.meta.url);
+const focusedReactToolbarExampleUrl = new URL('../snippets/editor/react-focused-built-in-toolbar.tsx', import.meta.url);
+const toolbarStrategyDataUrl = new URL('../lib/toolbar-config-strategies.ts', import.meta.url);
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
 const documentApiReferenceModelUrl = new URL('../generated/document-api-reference.json', import.meta.url);
 const generatedProofingConfigUrl = new URL('../generated/proofing-config-reference.json', import.meta.url);
@@ -50,6 +55,7 @@ const registeredComponents = new Set([
   'Card',
   'Cards',
   'Callout',
+  'BuiltInUiMap',
   'CommandStateDemo',
   'ConfigReference',
   'CustomBoldDemo',
@@ -63,6 +69,7 @@ const registeredComponents = new Set([
   'FileDownload',
   'FrameworkExample',
   'FrameworkExampleTabs',
+  'InterfaceOwnership',
   'LifecycleJourney',
   'MigrationAgentPrompt',
   'MigrationExplorer',
@@ -72,6 +79,7 @@ const registeredComponents = new Set([
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
+  'ToolbarConfigStrategies',
 ]);
 const editorDemoPresets = new Set(['document-modes', 'proofing', 'tracked-review']);
 
@@ -223,17 +231,40 @@ test('the editor demo runtime uses exact stable packages', async () => {
 });
 
 test('the built-in toolbar example uses item names from the v2 toolbar catalog', async () => {
-  const example = await readFile(focusedToolbarExampleUrl, 'utf8');
+  const examples = await Promise.all(
+    [focusedToolbarExampleUrl, focusedReactToolbarExampleUrl].map((url) => readFile(url, 'utf8')),
+  );
   const catalog = await readFile(toolbarCatalogUrl, 'utf8');
-  const groups = example.match(/groups:\s*\{([\s\S]*?)\n\s*\},/u)?.[1];
-
-  assert.ok(groups, 'The focused toolbar example must define an explicit groups allowlist.');
-
-  const configuredItems = [...groups.matchAll(/'([^']+)'/gu)].map((match) => match[1]);
+  const strategyData = await readFile(toolbarStrategyDataUrl, 'utf8');
   const catalogItems = new Set([...catalog.matchAll(/\bname:\s*'([^']+)'/gu)].map((match) => match[1]));
-  const unknownItems = configuredItems.filter((item) => !catalogItems.has(item));
+  const internalToolbarItems = new Set(['overflow']);
 
-  assert.deepEqual(unknownItems, []);
+  for (const example of examples) {
+    const groups = example.match(/groups:\s*\{([\s\S]*?)\n\s*\},/u)?.[1];
+
+    assert.ok(groups, 'The focused toolbar example must define an explicit groups allowlist.');
+
+    const configuredItems = [...groups.matchAll(/'([^']+)'/gu)].map((match) => match[1]);
+    const unknownItems = configuredItems.filter((item) => !catalogItems.has(item) && !internalToolbarItems.has(item));
+
+    assert.deepEqual(unknownItems, []);
+    assert.ok(configuredItems.includes('overflow'), 'A grouped responsive toolbar must keep its overflow trigger.');
+  }
+
+  const displayedItems = new Set([...strategyData.matchAll(/\bitem\('([^']+)'\)/gu)].map((match) => match[1]));
+  const unknownDisplayedItems = [...displayedItems].filter(
+    (item) => !catalogItems.has(item) && !internalToolbarItems.has(item),
+  );
+
+  assert.deepEqual(unknownDisplayedItems, []);
+  assert.equal(displayedItems.has('comment'), false);
+  assert.match(strategyData, /const excludedItems = \['image', 'table'\] as const/u);
+  assert.match(
+    strategyData,
+    /\{ id: 'right', items: \[item\('zoom'\), item\('overflow'\), item\('documentMode'\)\] \}/u,
+  );
+  assert.match(strategyData, /Custom buttons still render/u);
+  assert.match(strategyData, /does not apply exclusions after matching controls move into overflow/u);
 });
 
 test('the React toolbar example uses command ids from the public v2 command catalog', async () => {
@@ -535,6 +566,32 @@ test('MDX components and demo presets use the supported authoring vocabulary', a
   }
 
   assert.deepEqual(unsupported, []);
+});
+
+test('the built-in UI map follows its section navigation', async () => {
+  const meta = JSON.parse(await readFile(builtInUiMetaUrl, 'utf8'));
+  const { builtInUiSurfaces } = await import('../lib/built-in-ui-map.ts');
+  const guideSlugs = builtInUiSurfaces.map((surface) => surface.slug);
+
+  assert.deepEqual(guideSlugs, meta.pages.slice(1));
+  assert.deepEqual(
+    builtInUiSurfaces.map((surface) => surface.href),
+    guideSlugs.map((slug) => `/editor/built-in-ui/${slug}`),
+  );
+});
+
+test('the built-in UI map keeps its vertical tab semantics at responsive widths', async () => {
+  const source = await readFile(builtInUiMapUrl, 'utf8');
+  const css = await readFile(docsComponentsCssUrl, 'utf8');
+  const tabRules = [...css.matchAll(/\.sd-builtin-map-tabs\s*\{([^}]*)\}/g)];
+
+  assert.match(source, /orientation='vertical'/);
+  assert.ok(tabRules.length > 0, 'the built-in UI map must define its tab layout');
+  assert.match(tabRules[0][1], /display:\s*flex/);
+  assert.match(tabRules[0][1], /flex-direction:\s*column/);
+  for (const rule of tabRules.slice(1)) {
+    assert.doesNotMatch(rule[1], /display:\s*grid|grid-template-columns/);
+  }
 });
 
 test('Document API calls in code examples match the generated contract', async () => {

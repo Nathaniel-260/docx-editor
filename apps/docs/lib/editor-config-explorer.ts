@@ -240,11 +240,11 @@ const presentation = {
       value: '{ toolbar: … }',
       code: "ui: { toolbar: { container: '#toolbar' } }",
     },
-    guide: { label: 'Who renders the UI?', href: '/editor/who-renders-the-ui' },
+    guide: { label: 'Choose your interface', href: '/editor/who-renders-the-ui' },
   },
   interaction: {
     example: { value: '{ comments: … }', code: 'interaction: { comments: { readOnly: true } }' },
-    guide: { label: 'Who renders the UI?', href: '/editor/who-renders-the-ui' },
+    guide: { label: 'Choose your interface', href: '/editor/who-renders-the-ui' },
   },
   surfaces: {
     example: { value: '{ dialog: … }', code: 'surfaces: { dialog: { closeOnEscape: true } }' },

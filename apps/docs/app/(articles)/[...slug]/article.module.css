@@ -49,6 +49,18 @@
   max-width: 62rem;
 }
 
+.page:has(:global(.sd-builtin-map)) {
+  --fd-page-width: 51.5rem;
+}
+
+.body:has(:global(.sd-builtin-map)) {
+  max-width: 48.75rem;
+}
+
+.body:has(:global(.sd-builtin-map)) > :not(:global(.sd-builtin-map)) {
+  max-width: 41.25rem;
+}
+
 .body :global(h2) {
   margin-top: 2.75rem;
   font-size: 1.375rem;

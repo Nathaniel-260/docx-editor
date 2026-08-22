@@ -5,12 +5,15 @@ import {
   renderReferenceOperationMarkdown,
 } from './document-api-reference/markdown';
 import { renderConfigReferenceMarkdown } from './config-explorer';
+import { renderBuiltInUiMapMarkdown } from './built-in-ui-map';
 import { renderLifecycleJourneyMarkdown } from './lifecycle-journey';
+import { renderToolbarConfigStrategiesMarkdown } from './toolbar-config-strategies';
 import { editorConfigExplorer } from './editor-config-explorer';
 import { proofingConfigExplorer } from './proofing-config-explorer';
 
 export const llmPlaceholderComponents = [
   'Callout',
+  'BuiltInUiMap',
   'Card',
   'Cards',
   'CommandStateDemo',
@@ -25,6 +28,7 @@ export const llmPlaceholderComponents = [
   'FileDownload',
   'FrameworkExample',
   'FrameworkExampleTabs',
+  'InterfaceOwnership',
   'LifecycleJourney',
   'MigrationAgentPrompt',
   'MigrationExplorer',
@@ -32,6 +36,7 @@ export const llmPlaceholderComponents = [
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
+  'ToolbarConfigStrategies',
   'MigrationExample',
   'MigrationExampleTabs',
   'img',
@@ -79,6 +84,9 @@ export function renderLLMMarkdown(markdown: string) {
       const heading = title ? `**${title} (${variant})**` : `**${variant}**`;
       return `${quoteMarkdown(`${heading}\n\n${children}`)}\n`;
     },
+    BuiltInUiMap() {
+      return renderBuiltInUiMapMarkdown();
+    },
     Card({ attributes }) {
       const title = textAttribute(attributes, 'title') ?? 'Related guide';
       const description = textAttribute(attributes, 'description');
@@ -113,6 +121,20 @@ export function renderLLMMarkdown(markdown: string) {
         '> **Diagram: the custom UI ownership boundary**',
         '>',
         '> SuperDoc renders the document, layout, selection, and editing behavior. The application renders the controls around it — a toolbar above, panels beside. Reactive state (selection, command state, comments) flows out of the editor to those controls, and commands and document operations flow back in.',
+        '',
+      ].join('\n');
+    },
+    InterfaceOwnership() {
+      return [
+        '> **Interactive comparison: who renders the interface**',
+        '>',
+        '> SuperDoc renders the DOCX canvas in every approach. The configuration changes who renders the controls around it.',
+        '',
+        '| Approach | Configuration | Who renders the controls |',
+        '| --- | --- | --- |',
+        "| Built-in | `ui: { toolbar: { container: '#toolbar' } }` | SuperDoc |",
+        "| Hybrid | `ui: { toolbar: { container: '#toolbar' }, comments: false }` | SuperDoc renders the toolbar; your application renders comments through `superdoc.ui.comments` |",
+        '| Fully custom | `ui: false` | Your application, through `superdoc.ui` |',
         '',
       ].join('\n');
     },
@@ -238,6 +260,9 @@ export function renderLLMMarkdown(markdown: string) {
     },
     RuntimeExampleTabs({ children }) {
       return `${children.trim()}\n`;
+    },
+    ToolbarConfigStrategies() {
+      return renderToolbarConfigStrategiesMarkdown();
     },
     MigrationExample({ attributes, children }) {
       // AIDEV-NOTE: A bold label, not a heading. Every migration operation is a

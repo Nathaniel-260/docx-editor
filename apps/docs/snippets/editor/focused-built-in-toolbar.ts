@@ -8,13 +8,13 @@ const toolbar: ToolbarConfig = {
   groups: {
     left: ['undo', 'redo'],
     center: ['bold', 'italic', 'underline', 'link'],
-    right: ['documentMode', 'zoom'],
+    right: ['documentMode', 'zoom', 'overflow'],
   },
   responsiveToContainer: true,
 };
 
 const superdoc = new SuperDoc({
   selector: '#editor',
-  document: '/contract.docx',
+  document: '/sample.docx',
   ui: { toolbar },
 });

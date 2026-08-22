@@ -4,10 +4,12 @@ import type { StaticImageData } from 'next/image';
 import { ImageZoom } from 'fumadocs-ui/components/image-zoom';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { CommandStateDemo } from '@/components/embeds/command-state-demo';
+import { BuiltInUiMap } from '@/components/embeds/built-in-ui-map';
 import { CustomBoldDemo } from '@/components/embeds/custom-bold-demo';
 import { CustomUiArchitecture } from '@/components/embeds/custom-ui-architecture';
 import { DocumentPreview } from '@/components/embeds/document-preview';
 import { EditorDemo } from '@/components/embeds/editor-demo';
+import { InterfaceOwnership } from '@/components/embeds/interface-ownership';
 import { DocsHome } from '@/components/docs-home';
 import { Callout } from '@/components/mdx/callout';
 import { ConfigReference } from '@/components/mdx/ConfigReference';
@@ -20,6 +22,7 @@ import { MigrationExample, MigrationExampleTabs } from '@/components/mdx/migrati
 import { ProofingConfigReference } from '@/components/mdx/proofing-config-reference';
 import { ReceiptBar } from '@/components/mdx/receipt-bar';
 import { RuntimeExample, RuntimeExampleTabs } from '@/components/mdx/runtime-example-tabs';
+import { ToolbarConfigStrategies } from '@/components/embeds/toolbar-config-strategies';
 import {
   DocumentApiNamespace,
   DocumentApiOperation,
@@ -45,6 +48,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
   return {
     ...defaultMdxComponents,
     Callout,
+    BuiltInUiMap,
     ConfigReference,
     CommandStateDemo,
     CustomBoldDemo,
@@ -58,6 +62,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     FileDownload,
     FrameworkExample,
     FrameworkExampleTabs,
+    InterfaceOwnership,
     LifecycleJourney,
     MigrationAgentPrompt,
     MigrationExplorer,
@@ -67,6 +72,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     ReceiptBar,
     RuntimeExample,
     RuntimeExampleTabs,
+    ToolbarConfigStrategies,
     img: DocsImage,
     ...components,
   };

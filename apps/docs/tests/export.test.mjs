@@ -26,8 +26,8 @@ const routes = [
   ['editor/export-options/index.html', 'Control DOCX export'],
   ['editor/document-modes/index.html', 'Choose a document mode'],
   ['editor/lifecycle-and-events/index.html', 'Handle lifecycle and events'],
-  ['editor/who-renders-the-ui/index.html', 'Choose your editor interface'],
-  ['editor/built-in-ui/overview/index.html', 'Built-in UI overview'],
+  ['editor/who-renders-the-ui/index.html', 'Choose your interface'],
+  ['editor/built-in-ui/overview/index.html', 'Use the built-in UI'],
   ['editor/built-in-ui/configure-the-toolbar/index.html', 'Configure the built-in toolbar'],
   ['editor/built-in-ui/comments/index.html', 'Comments in the built-in UI'],
   ['editor/built-in-ui/search-and-replace/index.html', 'Find and replace in the built-in UI'],
@@ -438,9 +438,19 @@ test('exports the focused built-in toolbar example as clean Markdown', async () 
 
   assert.match(article, /responsiveToContainer/);
   assert.match(article, /documentMode/);
+  assert.match(article, /data-toolbar-config-strategies="true"/);
+  assert.match(article, /data-state="inactive"[^>]*>groups<\/button>/);
   assert.match(markdown, /const toolbar: ToolbarConfig/);
+  assert.match(markdown, /<SuperDocEditor[\s\S]*?document='\/sample\.docx'/);
+  assert.match(markdown, /export default function App/);
   assert.match(markdown, /groups: \{/);
-  assert.match(markdown, /The toolbar is configuration, not authorization/);
+  assert.match(markdown, /Choose the controls/);
+  assert.match(markdown, /### Default/);
+  assert.match(markdown, /### Grouped allowlist/);
+  assert.match(markdown, /excludeItems: \['image', 'table'\]/);
+  assert.match(markdown, /Custom buttons still render/);
+  assert.match(markdown, /does not apply exclusions after matching controls move into overflow/);
+  assert.doesNotMatch(markdown, /<ToolbarConfigStrategies\b/);
   assert.doesNotMatch(markdown, /<include>/);
 });
 
@@ -862,9 +872,11 @@ test('exports the machine-readable documentation files', async () => {
   assert.match(modesMarkdown, /^# Choose a document mode/m);
   assert.match(modesMarkdown, /Modes change Editor behavior in the browser/);
   assert.doesNotMatch(modesMarkdown, /<Callout\b/);
-  assert.match(interfaceMarkdown, /^# Choose your editor interface/m);
-  assert.match(interfaceMarkdown, /> \*\*Diagram:\*\* The built-in UI and a custom application UI/);
-  assert.match(interfaceMarkdown, /A custom UI means you build the controls and workflow around SuperDoc/);
+  assert.match(interfaceMarkdown, /^# Choose your interface/m);
+  assert.match(interfaceMarkdown, /SuperDoc always renders the DOCX canvas/);
+  assert.match(interfaceMarkdown, /Interactive comparison: who renders the interface/);
+  assert.match(interfaceMarkdown, /your application renders comments through `superdoc\.ui\.comments`/);
+  assert.match(interfaceMarkdown, /A partial `ui` object changes only the surfaces it names/);
   assert.doesNotMatch(interfaceMarkdown, /<Callout\b/);
   assert.match(customUISetupMarkdown, /^# Custom UI controller setup/m);
   assert.match(customUISetupMarkdown, /createSuperDocUI/);
