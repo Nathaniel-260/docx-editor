@@ -28,12 +28,12 @@ and current-version pointer.
 
 Extend the document endpoint from the Load and save guide. These are application routes, not SuperDoc routes:
 
-| Route                                             | Job                                               |
-| ------------------------------------------------- | ------------------------------------------------- |
-| `GET /api/documents/sample-nda`                   | Return the current DOCX                           |
-| `POST /api/documents/sample-nda/versions`         | Store a new immutable version and make it current |
-| `GET /api/documents/sample-nda/versions`          | List version metadata, newest first               |
-| `GET /api/documents/sample-nda/versions/:version` | Return one immutable DOCX snapshot                |
+| Route                                         | Job                                               |
+| --------------------------------------------- | ------------------------------------------------- |
+| `GET /api/documents/sample`                   | Return the current DOCX                           |
+| `POST /api/documents/sample/versions`         | Store a new immutable version and make it current |
+| `GET /api/documents/sample/versions`          | List version metadata, newest first               |
+| `GET /api/documents/sample/versions/:version` | Return one immutable DOCX snapshot                |
 
 Record the creation time and author from the trusted backend. Do not accept either value from browser input.
 
@@ -59,8 +59,9 @@ version check handles saves from other tabs and users.
 
 ## Verify the history
 
-Save Version 1, edit the NDA, and save Version 2. Restore Version 1. The backend should create Version 3, the Editor
-should show the Version 1 text, and Version 2 should remain in the list. Reload the page to confirm Version 3 is current.
+Save Version 1, edit the statement of work, and save Version 2. Restore Version 1. The backend should create Version 3,
+the Editor should show the Version 1 text, and Version 2 should remain in the list. Reload the page to confirm Version 3
+is current.
 
 Open a second tab before saving Version 2. A save from that stale tab should return `409` and leave Version 3 current.
 

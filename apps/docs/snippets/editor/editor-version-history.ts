@@ -1,6 +1,6 @@
 import { DOCX, type SuperDoc } from 'superdoc';
 
-const documentEndpoint = '/api/documents/sample-nda';
+const documentEndpoint = '/api/documents/sample';
 const versionsEndpoint = `${documentEndpoint}/versions`;
 
 export type DocumentVersion = {

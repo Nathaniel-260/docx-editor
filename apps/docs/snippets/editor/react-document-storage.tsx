@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { SuperDocEditor, type SuperDocRef } from '@superdoc/react';
 import '@superdoc/react/style.css';
 
-const endpoint = '/api/documents/sample-nda';
+const endpoint = '/api/documents/sample';
 const docxType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 export default function App() {

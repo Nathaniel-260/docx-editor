@@ -672,11 +672,11 @@ test('exports storage, version, and configuration guidance for the v2 Editor', a
     readFile(new URL('../out/md/editor/version-history.md', import.meta.url), 'utf8'),
   ]);
 
-  assert.match(loadAndSave, /const endpoint = '\/api\/documents\/sample-nda'/);
+  assert.match(loadAndSave, /const endpoint = '\/api\/documents\/sample'/);
   assert.match(loadAndSave, /The Quickstart Vite project does not create this endpoint/u);
   assert.match(loadAndSave, /return a success status after the write finishes/u);
   assert.match(loadAndSave, /triggerDownload: false[\s\S]*method: 'PUT'/);
-  assert.match(loadAndSave, /Show a saved state only after the `PUT` request succeeds/u);
+  assert.match(loadAndSave, /show \*\*Saved\*\* only after the `PUT` succeeds/u);
   assert.match(loadAndSave, /do not open either format as a DOCX file/u);
   assert.match(versionHistory, /each save creates a new snapshot instead of overwriting the previous file/u);
   assert.match(versionHistory, /x-base-version-id/u);

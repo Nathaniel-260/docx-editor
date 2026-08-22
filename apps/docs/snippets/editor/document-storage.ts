@@ -10,7 +10,7 @@ function requireElement<ElementType extends Element>(selector: string) {
 const saveButton = requireElement<HTMLButtonElement>('#save-docx');
 const status = requireElement<HTMLOutputElement>('#document-status');
 
-const endpoint = '/api/documents/sample-nda';
+const endpoint = '/api/documents/sample';
 let isReady = false;
 let editRevision = 0;
 let superdoc: SuperDoc | undefined;

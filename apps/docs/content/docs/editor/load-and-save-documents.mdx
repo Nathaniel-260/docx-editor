@@ -1,15 +1,33 @@
 ---
 title: Load and save a DOCX
 navTitle: Load and save
-description: Fetch a DOCX from your backend, open it in the Editor, and save the edited file back.
+description: Load a DOCX from your application and save the edited file back to your backend.
 ---
 
-Continue with the sample NDA from the [Editor quickstart](/editor/quickstart). In a production application, the DOCX
-usually comes from your storage through an authenticated API.
+Continue with `/sample.docx` from the [Quickstart](/editor/quickstart). Replace the local file with a backend round trip:
 
-## Connect the Editor to your storage
+1. Fetch the DOCX from your API as a `Blob`.
+2. Open and edit the `Blob` in SuperDoc.
+3. Export the edited DOCX as a new `Blob` and send it back to your API.
 
-Fetch the sample NDA, open it as a DOCX, and send the edited file back to the same endpoint.
+SuperDoc handles the DOCX in the browser. Your application owns the API and storage.
+
+## 1. Add a document endpoint
+
+The examples use `/api/documents/sample`. This is an application route, not a SuperDoc route.
+
+| Request | Your endpoint must                                                          |
+| ------- | --------------------------------------------------------------------------- |
+| `GET`   | Return the current DOCX bytes                                               |
+| `PUT`   | Store the request body and return a success status after the write finishes |
+
+The Quickstart Vite project does not create this endpoint. Connect the example to your application API, or add a local
+endpoint with this contract.
+
+The endpoint can read from a database or an object store such as Amazon S3. The browser code stays the same. Keep
+storage credentials and access checks in your backend.
+
+## 2. Add a save action
 
 For Vanilla, replace the Quickstart controls with a save action and status:
 
@@ -19,17 +37,12 @@ For Vanilla, replace the Quickstart controls with a save action and status:
 <div id="editor"></div>
 ```
 
-Before running the example, expose `/api/documents/sample-nda` from your backend:
+The React example below renders its own controls.
 
-| Request | Your endpoint must                                                          |
-| ------- | --------------------------------------------------------------------------- |
-| `GET`   | Return the current DOCX bytes                                               |
-| `PUT`   | Store the request body and return a success status after the write finishes |
+## 3. Load and save the document
 
-The Quickstart Vite project does not create this endpoint. Point the example at your application API, or add a local
-endpoint that follows this contract.
-
-The React component renders its own controls.
+The examples show the complete storage flow. Add any user, mode, or viewing options you chose on the previous pages to
+the Editor configuration.
 
 <FrameworkExampleTabs>
   <FrameworkExample filename='src/main.ts' framework='Vanilla'>
@@ -40,12 +53,14 @@ The React component renders its own controls.
   </FrameworkExample>
 </FrameworkExampleTabs>
 
-The endpoint can read from a database, object store, or bucket. Your application owns its authentication and storage
-rules. SuperDoc opens the `Blob` and exports the edited DOCX; it does not store the file.
+Both examples:
 
-`export()` confirms that SuperDoc produced a DOCX. Show a saved state only after the `PUT` request succeeds.
+- fetch the DOCX before mounting the Editor;
+- enable saving after `onReady`;
+- call `export({ triggerDownload: false })` to receive the edited `Blob`;
+- show **Saved** only after the `PUT` succeeds. Edits made during that request remain unsaved.
 
-## Open or save another way
+## Use another source or destination
 
 | Task                           | Use                                                        |
 | ------------------------------ | ---------------------------------------------------------- |
@@ -59,12 +74,13 @@ the request needs custom headers.
 
 ## Verify the round trip
 
-Edit the NDA, save it, and reload the page. Confirm that the edit is still present. Reopen the saved DOCX in Word when
-you also need to check its formatting, comments, or tracked changes.
+Change the effective date from `September 1, 2026` to `October 1, 2026`. Select **Save DOCX**, then reload the page. The
+new date should still be present. If the `PUT` fails, the status should show **Save failed** and the stored file should
+remain unchanged.
 
 ## Continue from here
 
 - [Version history](/editor/version-history) keeps earlier saves so users can restore them.
 - [Export options](/editor/export-options) changes the filename, comment policy, or related files.
-- For HTML or Markdown content inside a DOCX, see [rich content](/document-api/rich-content) and
+- If your content starts as HTML or Markdown, see [rich content](/document-api/rich-content) and
   [output projections](/document-api/output-projections). These APIs do not open either format as a DOCX file.
