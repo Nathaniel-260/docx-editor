@@ -3717,6 +3717,10 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       fieldsHighlightColor = null,
     }: ExportParams = {} as ExportParams,
   ) {
+    if (!Array.isArray(exportType) || exportType.length !== 1 || exportType[0] !== 'docx') {
+      throw new TypeError('SuperDoc.export() only supports exportType: ["docx"].');
+    }
+
     // Get the docx files first
     const baseFileName = exportedName ? cleanName(exportedName) : cleanName(this.config.title as string);
     const docxFiles = await this.exportEditorsToDOCX({ commentsType, isFinalDoc, fieldsHighlightColor });
