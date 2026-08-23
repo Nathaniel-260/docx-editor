@@ -2644,7 +2644,7 @@ export interface TrackChangesModuleConfig {
 
 export type DocumentMode = 'editing' | 'viewing' | 'suggesting';
 
-export type ExportType = 'docx' | 'pdf' | 'html';
+export type ExportType = 'docx';
 
 /**
  * - 'external': Include only external comments (default)
@@ -2673,8 +2673,8 @@ export interface ViewOptions {
 }
 
 export interface ExportParams {
-  /** File formats to export. */
-  exportType?: ExportType[];
+  /** Browser export format. DOCX is the only supported output. */
+  exportType?: readonly [ExportType];
   /** How to handle comments. */
   commentsType?: CommentsType;
   /** Custom filename (without extension). */
