@@ -353,6 +353,8 @@ export interface ListsSetLevelNumberingInput {
   numFmt: string;
   lvlText: string;
   start?: number;
+  /** Format numeric placeholders as decimal. False removes legal numbering; omit to preserve it. */
+  isLgl?: boolean;
 }
 export interface ListsSetLevelBulletInput {
   target: ListItemAddress;

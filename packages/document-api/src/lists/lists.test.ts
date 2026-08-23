@@ -723,6 +723,18 @@ describe('lists.setLevelNumbering validates optional start', () => {
       } as any),
     ).toThrow(/start must be an integer/);
   });
+
+  it('rejects non-boolean isLgl', () => {
+    expect(() =>
+      executeListsSetLevelNumbering(stubAdapter(), {
+        target: validTarget,
+        level: 0,
+        numFmt: 'decimal',
+        lvlText: '%1.',
+        isLgl: 'true',
+      } as any),
+    ).toThrow(/isLgl must be a boolean/);
+  });
 });
 
 describe('lists.setLevelLayout validates numeric fields', () => {

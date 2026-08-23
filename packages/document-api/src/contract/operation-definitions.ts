@@ -2435,7 +2435,7 @@ export const OPERATION_DEFINITIONS = {
   'lists.setLevelNumbering': {
     memberPath: 'lists.setLevelNumbering',
     description:
-      'Advanced alias for lists.setLevelNumberStyle/setLevelText/setLevelStart. Set format, pattern, and start in one call (abstract-scoped, no clone-on-write).',
+      'Advanced alias for lists.setLevelNumberStyle/setLevelText/setLevelStart. Set format, pattern, start, and legal numbering in one call (abstract-scoped, no clone-on-write).',
     expectedResult: 'Returns a ListsMutateItemResult receipt; reports NO_OP if the level already matches.',
     requiresDocumentContext: true,
     metadata: mutationOperation({

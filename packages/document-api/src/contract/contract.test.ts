@@ -121,6 +121,13 @@ describe('document-api contract catalog', () => {
     }
   });
 
+  it('exposes legal numbering on lists.setLevelNumbering', () => {
+    const schemas = buildInternalContractSchemas();
+    const input = schemas.operations['lists.setLevelNumbering'].input as ContractTestSchemaShape;
+    expect(input.properties?.isLgl).toEqual({ type: 'boolean' });
+    expect(input.required).not.toContain('isLgl');
+  });
+
   it('keeps catalog key coverage in lockstep with operation ids', () => {
     const catalogKeys = Object.keys(COMMAND_CATALOG).sort();
     const operationIds = [...OPERATION_IDS].sort();

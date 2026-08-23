@@ -838,6 +838,7 @@ export function executeListsSetLevelNumbering(
     });
   }
   optionalInteger(input.start, 'start', 'lists.setLevelNumbering');
+  optionalBoolean(input.isLgl, 'isLgl', 'lists.setLevelNumbering');
   return adapter.setLevelNumbering(input, normalizeMutationOptions(options));
 }
 export function executeListsSetLevelBullet(

@@ -6274,6 +6274,7 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
         numFmt: { type: 'string' },
         lvlText: { type: 'string' },
         start: { type: 'integer' },
+        isLgl: { type: 'boolean' },
       },
       ['target', 'level', 'numFmt', 'lvlText'],
     ),
