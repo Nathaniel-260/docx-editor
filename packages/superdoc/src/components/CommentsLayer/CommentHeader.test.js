@@ -70,7 +70,7 @@ const makeComment = (overrides = {}) => ({
   ...overrides,
 });
 
-const mountHeader = ({ currentUser, comment, config = { readOnly: false }, extraProps = {} }) =>
+const mountHeader = ({ currentUser, comment, config = { readOnly: false }, interactionConfig, extraProps = {} }) =>
   mount(CommentHeader, {
     props: {
       config,
@@ -82,6 +82,7 @@ const mountHeader = ({ currentUser, comment, config = { readOnly: false }, extra
       config: {
         globalProperties: {
           $superdoc: {
+            interactionConfig,
             config: {
               role: 'editor',
               isInternal: false,
@@ -227,6 +228,36 @@ describe('CommentHeader.vue', () => {
 
       expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(true);
       expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(true);
+    });
+
+    it('keeps tracked-change decisions visible when comment capability is read-only', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ trackedChange: true }),
+        config: { readOnly: true, allowResolve: false },
+        interactionConfig: {
+          comments: { level: 'read', readOnly: true, allowResolve: false },
+          trackedChanges: { allowDecisions: true },
+        },
+      });
+
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(true);
+      expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(true);
+    });
+
+    it('hides tracked-change decisions without hiding writable comment actions', () => {
+      const wrapper = mountHeader({
+        currentUser: { id: 'alice-id', email: 'shared@example.com', name: 'Alice' },
+        comment: makeComment({ trackedChange: true }),
+        config: { readOnly: false, allowResolve: true },
+        interactionConfig: {
+          comments: { level: 'resolve', readOnly: false, allowResolve: true },
+          trackedChanges: { allowDecisions: false },
+        },
+      });
+
+      expect(wrapper.find('[data-comment-action="resolve"]').exists()).toBe(false);
+      expect(wrapper.find('[data-comment-action="reject"]').exists()).toBe(false);
     });
 
     it('removes an already-rendered action surface when config flips to read-only', async () => {

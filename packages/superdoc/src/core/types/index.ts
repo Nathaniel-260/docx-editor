@@ -1241,13 +1241,9 @@ export type LinkPopoverResolver = (ctx: LinkPopoverContext) => LinkPopoverResolu
 /**
  * Canonical presentation settings for the built-in comments UI.
  *
- * Presentation only, and deliberately not the whole of `modules.comments`.
- * That block also carries `readOnly` and `allowResolve`, which resolve through
- * `interaction.comments`, and `permissionResolver`, which is read off
- * `modules.comments` or the top-level `Config`. All three are stripped from
- * this bag: policy outlives the built-in UI, so an application drawing its own
- * comment surface still has to honor it. See the fields themselves, which are
- * rejected by name with the spelling that applies to each.
+ * This type excludes interaction fields and `permissionResolver`. Those
+ * settings stay active when the built-in comments UI is disabled, so
+ * `normalizeUiConfig` removes them from the presentation bag.
  *
  * Open on purpose, for the same reason `modules.comments` is: the runtime
  * merges this bag over that block and spreads the result through the comments
@@ -1287,13 +1283,12 @@ export type CommentsConfig = {
   /** Active tracked-change highlight colors (defaults to the above). */
   trackChangeActiveHighlightColors?: TrackChangeHighlightColors;
   /**
-   * Policy, not presentation. `normalizeUiConfig` strips all three from this
-   * bag before anything reads it, so accepting them here would advertise a
-   * setting that is silently discarded.
+   * These fields are not presentation settings. `normalizeUiConfig` removes
+   * them from this bag before anything reads it, so accepting them here would
+   * advertise settings that are silently discarded.
    *
-   * `readOnly` and `allowResolve` belong on `interaction.comments`, where they
-   * resolve and keep applying to an application drawing its own comment
-   * surface.
+   * Comment capability belongs on `interaction.comments.level`, where it
+   * keeps applying to an application drawing its own comment surface.
    *
    * `permissionResolver` is collaboration wiring rather than policy, and has
    * no `ui` spelling at all. `pickResolver` takes the first of
@@ -1303,6 +1298,7 @@ export type CommentsConfig = {
    */
   readOnly?: never;
   allowResolve?: never;
+  level?: never;
   permissionResolver?: never;
 } & Record<string, unknown>;
 
@@ -2284,9 +2280,16 @@ export interface Modules {
     | ({
         /** Custom permission resolver for comment actions. */
         permissionResolver?: (params: PermissionResolverParams) => boolean | undefined;
-        /** Hide and reject every comment and tracked-change mutation affordance. */
+        /**
+         * Block comment mutations. Also block tracked-change accept/reject
+         * unless `interaction.trackedChanges.allowDecisions` is set.
+         * @deprecated replaceWith=`interaction.comments.level` and `interaction.trackedChanges.allowDecisions` compat-indefinitely=v2 configuration compatibility
+         */
         readOnly?: boolean;
-        /** Show ordinary comment resolve/reopen actions when writable (default: true). */
+        /**
+         * Allow comment resolve and reopen actions when comment writes are enabled (default: true).
+         * @deprecated replaceWith=`interaction.comments.level` compat-indefinitely=v2 configuration compatibility
+         */
         allowResolve?: boolean;
         /** Comment highlight colors (internal/external and active overrides). */
         highlightColors?: {
@@ -3315,21 +3318,45 @@ export interface UIConfig {
   contentControls?: boolean | ContentControlsConfig;
 }
 
+/** Allowed values for `interaction.comments.level`. */
+export type CommentInteractionLevel = 'read' | 'write' | 'resolve';
+
 /**
- * What the user is permitted to do, as distinct from what SuperDoc draws.
+ * Controls which interactions this Editor allows, independent of what
+ * SuperDoc renders.
  *
- * Policy outlives presentation: `ui: false` removes the built-in comment
- * dialog, but an application rendering its own still needs `readOnly`
- * enforced. Keeping the two apart means a custom UI does not have to hold a
- * `modules.comments` object alive purely to carry policy.
+ * This is client-side behavior, not an authorization boundary. Enforce
+ * document access and collaboration permissions in a trusted backend.
  */
 export interface InteractionConfig {
-  /** Comment and tracked-change interaction policy. */
+  /** Comment interaction policy. */
   comments?: {
-    /** Reject every comment and tracked-change mutation (default: false). */
+    /**
+     * The highest comment interaction level this Editor allows (default: `resolve`).
+     *
+     * `read` allows reading threads only. `write` also allows create, reply,
+     * edit, and delete. `resolve` also allows resolve and reopen.
+     */
+    level?: CommentInteractionLevel;
+    /**
+     * Block comment mutations. Also block tracked-change accept/reject unless
+     * `interaction.trackedChanges.allowDecisions` is set (default: false).
+     * @deprecated replaceWith=`interaction.comments.level` and `interaction.trackedChanges.allowDecisions` compat-indefinitely=v2 configuration compatibility
+     */
     readOnly?: boolean;
-    /** Offer resolve/reopen actions when writable (default: true). */
+    /**
+     * Allow comment resolve and reopen actions when comment writes are enabled (default: true).
+     * @deprecated replaceWith=`interaction.comments.level` compat-indefinitely=v2 configuration compatibility
+     */
     allowResolve?: boolean;
+  };
+  /** Tracked-change interaction policy. */
+  trackedChanges?: {
+    /**
+     * Allow this Editor to accept or reject tracked changes (default: true).
+     * Document mode and command availability can still block these actions.
+     */
+    allowDecisions?: boolean;
   };
 }
 
@@ -3476,9 +3503,9 @@ export interface Config {
    */
   ui?: false | UIConfig;
   /**
-   * What the user is permitted to do. Independent of {@link Config.ui}: a
-   * `readOnly` policy still applies when the application renders its own
-   * comment UI.
+   * Client-side interaction policy. Independent of `ui`, so it
+   * still applies when the application renders its own UI. This is not an
+   * authorization boundary.
    */
   interaction?: InteractionConfig;
   /**

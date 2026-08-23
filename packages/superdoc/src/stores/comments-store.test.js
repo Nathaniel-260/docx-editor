@@ -159,6 +159,76 @@ describe('comments-store read-only mutation policy (SD-3164)', () => {
     expect(superdoc.emit).not.toHaveBeenCalled();
   });
 
+  it('allows tracked-change decisions independently from read-only comments', async () => {
+    const trackedComment = makeTrackedChangeRow();
+    store.commentsList = [trackedComment];
+    superdoc.interactionConfig = {
+      comments: { level: 'read', readOnly: true, allowResolve: false },
+      trackedChanges: { allowDecisions: true },
+    };
+
+    await store.decideTrackedChangeFromSidebar({ superdoc, comment: trackedComment, decision: 'accept' });
+
+    expect(trackedChangesAdapter.accept).toHaveBeenCalledWith(trackedComment);
+  });
+
+  it('resolves linked comments after an allowed decision removes their tracked text', async () => {
+    const trackedComment = makeTrackedChangeRow({
+      commentId: 'tc-deletion',
+      trackedChangeType: 'delete',
+      trackedChangeDisplayType: 'delete',
+    });
+    const linkedComment = useComment({
+      commentId: 'linked-comment',
+      fileId: 'doc-1',
+      commentText: 'Linked to deleted text',
+      trackedChangeParentId: trackedComment.commentId,
+      trackedChangeThreadParentId: trackedComment.commentId,
+    });
+    store.commentsList = [linkedComment, trackedComment];
+    superdoc.commentsStore = store;
+    superdoc.interactionConfig = {
+      comments: { level: 'read', readOnly: true, allowResolve: false },
+      trackedChanges: { allowDecisions: true },
+    };
+    superdoc.activeEditor.documentId = 'doc-1';
+    trackedChangesAdapter.documentId = 'doc-1';
+    trackedChangesAdapter.accept.mockResolvedValue({
+      ok: true,
+      receipt: { success: true },
+      decidedId: trackedComment.commentId,
+      documentId: 'doc-1',
+    });
+
+    const outcome = await store.decideTrackedChangeFromSidebar({
+      superdoc,
+      comment: trackedComment,
+      decision: 'accept',
+    });
+
+    expect(outcome).toMatchObject({ ok: true, success: true });
+    expect(linkedComment.resolvedTime).toEqual(expect.any(Number));
+  });
+
+  it('blocks tracked-change decisions independently from writable comments', async () => {
+    store.init({ readOnly: false, allowResolve: true });
+    const trackedComment = makeTrackedChangeRow();
+    store.commentsList = [trackedComment];
+    superdoc.interactionConfig = {
+      comments: { level: 'resolve', readOnly: false, allowResolve: true },
+      trackedChanges: { allowDecisions: false },
+    };
+
+    const outcome = await store.decideTrackedChangeFromSidebar({
+      superdoc,
+      comment: trackedComment,
+      decision: 'accept',
+    });
+
+    expect(outcome).toEqual({ ok: false, reason: 'tracked-change-decisions-disabled' });
+    expect(trackedChangesAdapter.accept).not.toHaveBeenCalled();
+  });
+
   it('applies canonical tracked-change resolution received while read-only', () => {
     const trackedComment = makeTrackedChangeRow();
     store.commentsList = [trackedComment];

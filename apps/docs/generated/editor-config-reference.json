@@ -132,10 +132,10 @@
     },
     {
       "name": "interaction",
-      "type": "{\n  comments?: { readOnly?: boolean; allowResolve?: boolean; };\n}",
+      "type": "{\n  comments?: { level?: CommentInteractionLevel; readOnly?: boolean; allowResolve?: boolean; };\n  trackedChanges?: { allowDecisions?: boolean; };\n}",
       "typeName": "InteractionConfig",
       "required": false,
-      "description": "What the user is permitted to do. Independent of {@link Config.ui}: a `readOnly` policy still applies when the application renders its own comment UI.",
+      "description": "Client-side interaction policy. Independent of `ui`, so it still applies when the application renders its own UI. This is not an authorization boundary.",
       "group": "other"
     },
     {

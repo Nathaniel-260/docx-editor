@@ -3535,7 +3535,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     return fromRuntime ?? fromConfig ?? fromOptions;
   };
 
-  const commentsReadOnlyForReview = (): boolean => {
+  const commentsAreReadOnly = (): boolean => {
     const superdocRecord = superdoc && typeof superdoc === 'object' ? (superdoc as LooseRecord) : null;
     // Interaction policy outlives the built-in comment UI. With `ui: false` or
     // `ui: { comments: false }` there is no `modules.comments` block left to
@@ -3550,10 +3550,26 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     return !!comments && typeof comments === 'object' && (comments as LooseRecord).readOnly === true;
   };
 
+  const trackedChangeDecisionDisabledReason = (): SuperDocUIReason | undefined => {
+    if (readDocumentMode() === 'viewing') return SUPERDOC_UI_REASONS.documentReadonly;
+
+    const superdocRecord = superdoc && typeof superdoc === 'object' ? (superdoc as LooseRecord) : null;
+    const trackedChanges = (superdocRecord?.interactionConfig as LooseRecord | undefined)?.trackedChanges as
+      | LooseRecord
+      | undefined;
+    if (trackedChanges && typeof trackedChanges.allowDecisions === 'boolean') {
+      return trackedChanges.allowDecisions ? undefined : SUPERDOC_UI_REASONS.trackedChangeDecisionsDisabled;
+    }
+
+    // Older SuperDoc hosts exposed only the dual-purpose comments.readOnly
+    // field. Keep that fallback for callers constructing the UI controller
+    // around an existing v2 host.
+    return commentsAreReadOnly() ? SUPERDOC_UI_REASONS.documentReadonly : undefined;
+  };
+
   /**
-   * Whether `interaction.comments.allowResolve` forbids changing a thread's
-   * resolved state. Same precedence as `readOnly`: the resolved policy first,
-   * the legacy block only when it is absent.
+   * Whether the resolved comment policy forbids resolve and reopen actions.
+   * Read the resolved policy first, then fall back to the legacy block.
    */
   const resolveIsForbidden = (): boolean => {
     const superdocRecord = superdoc && typeof superdoc === 'object' ? (superdoc as LooseRecord) : null;
@@ -3566,7 +3582,8 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     return !!comments && typeof comments === 'object' && (comments as LooseRecord).allowResolve === false;
   };
 
-  const reviewMutationsAreReadOnly = (): boolean => readDocumentMode() === 'viewing' || commentsReadOnlyForReview();
+  const commentMutationsAreReadOnly = (): boolean => readDocumentMode() === 'viewing' || commentsAreReadOnly();
+  const trackedChangeDecisionsAreDisabled = (): boolean => trackedChangeDecisionDisabledReason() != null;
 
   const normalizeSelectionInfo = (raw: unknown): SelectionInfo | null =>
     raw && typeof raw === 'object' ? (raw as SelectionInfo) : null;
@@ -4792,7 +4809,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   const trackDecisionReason = (
     command: { kind: 'accept' | 'reject'; scope: 'id' | 'all' },
     supported: boolean,
-    readonly: boolean,
+    disabledReason: SuperDocUIReason | undefined,
     selection: SelectionSlice,
     doc: LooseRecord | null,
   ): SuperDocUIReason | undefined => {
@@ -4800,7 +4817,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       // Bulk accept/reject is opt-in on the v2 host; single decisions need a real route.
       return command.scope === 'all' ? SUPERDOC_UI_REASONS.bulkDecisionsDisabled : unavailableRouteReason(doc);
     }
-    if (readonly) return SUPERDOC_UI_REASONS.documentReadonly;
+    if (disabledReason) return disabledReason;
     if (command.scope !== 'all' && selection.activeChangeIds.length === 0) {
       return SUPERDOC_UI_REASONS.selectionRequired;
     }
@@ -4931,7 +4948,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       const supported = trackCommand.scope === 'all' ? supportsAll : supportsSingle;
       const reason =
         bulkTrackDecisionBlockedReason(trackCommand, tcApi) ??
-        trackDecisionReason(trackCommand, supported, reviewMutationsAreReadOnly(), selection, doc) ??
+        trackDecisionReason(trackCommand, supported, trackedChangeDecisionDisabledReason(), selection, doc) ??
         // SD-3845 option A — Accept All / Reject All stay enabled.
         // Denied items are skipped at decide, not by greying the bulk command.
         (trackCommand.scope === 'all'
@@ -9328,7 +9345,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   function patchCommentStatus(commentId: string, status: string): WorkflowReceipt {
     // Both `resolve` and `reopen` route through here, so the policy checks
     // belong on the helper rather than on each caller.
-    if (reviewMutationsAreReadOnly()) return failedReceipt('Comments are read-only.', 'DOCUMENT_READONLY');
+    if (commentMutationsAreReadOnly()) return failedReceipt('Comments are read-only.', 'DOCUMENT_READONLY');
     if (resolveIsForbidden()) {
       return failedReceipt('Resolving comments is disabled.', 'DOCUMENT_READONLY');
     }
@@ -9346,8 +9363,8 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   /**
    * The refusal every comment write shares, or `null` when the policy permits.
    *
-   * `readOnly` is policy rather than presentation, so it cannot be left to the
-   * built-in dialog hiding its affordances: a custom comment UI calls
+   * The resolved read-only flag is policy rather than presentation, so the
+   * built-in dialog cannot enforce it alone. A custom comment UI calls
    * `createFromCapture`, `createFromSelection`, `reply`, and `delete` directly,
    * and the Document API underneath carries no policy of its own. Missing one
    * route fails open on exactly the surface the policy exists for.
@@ -9356,7 +9373,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
    * resolve/reopen transition, which `patchCommentStatus` owns.
    */
   const commentWriteRefusal = (): WorkflowReceipt | null =>
-    reviewMutationsAreReadOnly() ? failedReceipt('Comments are read-only.', 'DOCUMENT_READONLY') : null;
+    commentMutationsAreReadOnly() ? failedReceipt('Comments are read-only.', 'DOCUMENT_READONLY') : null;
 
   const filterCommentsSnapshot = (items: readonly CommentInfo[], query?: unknown): readonly CommentInfo[] => {
     const record = query && typeof query === 'object' ? (query as LooseRecord) : null;
@@ -9928,7 +9945,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     changeId: string | null,
     story?: unknown,
   ): unknown => {
-    if (reviewMutationsAreReadOnly()) return false;
+    if (trackedChangeDecisionsAreDisabled()) return false;
     const doc = getDoc();
     const tcApi = doc?.trackChanges as LooseRecord | undefined;
     const isAllTarget = target.kind === 'all' || target.scope === 'all';

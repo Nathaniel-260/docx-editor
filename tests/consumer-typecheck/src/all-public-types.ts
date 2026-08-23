@@ -34,6 +34,7 @@ import type {
   CollaborationConfig,
   V2CollaborationConfig,
   CommentAddress,
+  CommentInteractionLevel,
   CommentsType,
   Config,
   ContentControlActiveChangePayload,
@@ -234,6 +235,7 @@ const _real_CanPerformPermissionParams: AssertNotAny<CanPerformPermissionParams>
 const _real_CollaborationConfig: AssertNotAny<CollaborationConfig> = true;
 const _real_V2CollaborationConfig: AssertNotAny<V2CollaborationConfig> = true;
 const _real_CommentAddress: AssertNotAny<CommentAddress> = true;
+const _real_CommentInteractionLevel: AssertNotAny<CommentInteractionLevel> = true;
 const _real_CommentsType: AssertNotAny<CommentsType> = true;
 const _real_Config: AssertNotAny<Config> = true;
 const _real_ContentControlActiveChangePayload: AssertNotAny<ContentControlActiveChangePayload> = true;

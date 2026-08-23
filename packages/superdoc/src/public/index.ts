@@ -154,6 +154,7 @@ export type { TrackChangesSemanticColorsConfig } from '../core/types/index.js';
 export type { TrackedChangeSemanticColorKey } from '../core/types/index.js';
 export type { TrackedChangeSemanticColorResolverInput } from '../core/types/index.js';
 export type { TrackedChangeAddress } from '../core/types/index.js';
+export type { CommentInteractionLevel } from '../core/types/index.js';
 export type { InteractionConfig } from '../core/types/index.js';
 export type { SurfacesConfig } from '../core/types/index.js';
 export type { UIConfig } from '../core/types/index.js';

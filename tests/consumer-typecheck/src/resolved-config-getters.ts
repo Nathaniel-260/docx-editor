@@ -2,10 +2,11 @@
  * Consumer typecheck: the resolved-config getters on `SuperDoc`.
  *
  * `uiConfig`, `interactionConfig`, and `surfacesConfig` are how an application
- * asks what SuperDoc decided: which built-in surfaces render, what the user is
- * permitted to do, and which resolver serves surface requests. A custom UI
- * reads them instead of re-deriving precedence from the raw config, so their
- * shape is part of the public contract rather than an implementation detail.
+ * asks what SuperDoc decided: which built-in surfaces render, which
+ * interactions the Editor allows, and which resolver serves surface requests.
+ * A custom UI reads them instead of re-deriving precedence from the raw config,
+ * so their shape is part of the public contract rather than an implementation
+ * detail.
  *
  * These assertions pin the fields a consumer actually branches on. The getters
  * are typed `ReturnType<typeof normalize*Config>`, so widening or renaming a
@@ -40,8 +41,10 @@ const _uiLinkPopoverSuppressedOk: AssertEqual<typeof sd.uiConfig.linkPopover.sup
 // `interactionConfig` — policy, which outlives the built-in comment UI. A
 // custom comment surface still has to honor these.
 const _interactionConfigOk: SuperDoc['interactionConfig'] = sd.interactionConfig;
+const _commentLevelOk: AssertEqual<typeof sd.interactionConfig.comments.level, 'read' | 'write' | 'resolve'> = true;
 const _readOnlyOk: AssertEqual<typeof sd.interactionConfig.comments.readOnly, boolean> = true;
 const _allowResolveOk: AssertEqual<typeof sd.interactionConfig.comments.allowResolve, boolean> = true;
+const _allowDecisionsOk: AssertEqual<typeof sd.interactionConfig.trackedChanges.allowDecisions, boolean> = true;
 
 // `surfacesConfig` — dialog and floating infrastructure, which stays live even
 // under `ui: false`. Assert the fields a consumer reads, not just the whole
@@ -64,8 +67,10 @@ void [
   _uiRulerSuppressedOk,
   _uiLinkPopoverSuppressedOk,
   _interactionConfigOk,
+  _commentLevelOk,
   _readOnlyOk,
   _allowResolveOk,
+  _allowDecisionsOk,
   _surfacesConfigOk,
   _resolverOk,
   _dialogCloseOnEscapeOk,

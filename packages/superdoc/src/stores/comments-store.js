@@ -233,6 +233,14 @@ export const useCommentsStore = defineStore('comments', () => {
   const resolveDisabledOutcome = () => ({ ok: false, reason: 'resolve-disabled' });
   const resolveIsDisabled = () => commentsConfig.allowResolve === false;
   const commentsAreReadOnly = () => commentsConfig.readOnly === true;
+  const trackedChangeDecisionDisabledReason = (superdoc) => {
+    const allowDecisions = superdoc?.interactionConfig?.trackedChanges?.allowDecisions;
+    if (allowDecisions === true) return null;
+    if (allowDecisions === false) {
+      return commentsAreReadOnly() ? 'read-only-document' : 'tracked-change-decisions-disabled';
+    }
+    return commentsAreReadOnly() ? 'read-only-document' : null;
+  };
   const viewingVisibility = reactive({
     documentMode: 'editing',
     commentsVisible: false,
@@ -3999,6 +4007,7 @@ export const useCommentsStore = defineStore('comments', () => {
       email: superdoc?.user?.email ?? null,
       name: superdoc?.user?.name ?? null,
       superdoc,
+      reconciliationToken: COMMENT_RECONCILIATION_TOKEN,
     };
     let resolvedCount = 0;
 
@@ -4365,7 +4374,8 @@ export const useCommentsStore = defineStore('comments', () => {
    * @returns {void}
    */
   const decideTrackedChangeFromSidebar = ({ superdoc, comment, decision }) => {
-    if (commentsAreReadOnly()) return { ok: false, reason: 'read-only-document' };
+    const disabledReason = trackedChangeDecisionDisabledReason(superdoc);
+    if (disabledReason) return { ok: false, reason: disabledReason };
     if (!comment?.trackedChange) return { ok: false };
 
     // ui-phase3-003: v2 mode keeps this compatibility adapter for row identity,

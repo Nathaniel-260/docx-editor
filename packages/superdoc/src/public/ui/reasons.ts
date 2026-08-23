@@ -33,6 +33,8 @@ export const SUPERDOC_UI_REASONS = {
   documentApiUnavailable: 'document-api-unavailable',
   /** The document is in viewing / read-only mode, so mutating commands are blocked. */
   documentReadonly: 'document-readonly',
+  /** Tracked-change accept/reject is disabled by the Editor interaction policy. */
+  trackedChangeDecisionsDisabled: 'tracked-change-decisions-disabled',
   /** A selection is required and none is active. */
   selectionRequired: 'selection-required',
   /** A non-empty (range) selection is required and the current selection is collapsed/empty. */

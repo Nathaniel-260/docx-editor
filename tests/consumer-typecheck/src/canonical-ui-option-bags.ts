@@ -133,6 +133,12 @@ const _policyAllowResolve: Config = {
   ui: { comments: { allowResolve: false } },
 };
 
+const _policyLevel: Config = {
+  selector: '#editor',
+  // @ts-expect-error `level` is policy; set it on `interaction.comments`.
+  ui: { comments: { level: 'read' } },
+};
+
 const _policyResolver: Config = {
   selector: '#editor',
   // @ts-expect-error `permissionResolver` is collaboration wiring; it has no
@@ -140,17 +146,15 @@ const _policyResolver: Config = {
   ui: { comments: { permissionResolver: () => true } },
 };
 
-// And the legacy block still takes all three, because that is where they have
-// always lived. For `permissionResolver` it is not merely still accepted: it
-// is one of only two spellings, since `pickResolver` takes the first of
-// `modules.comments.permissionResolver` and top-level `Config` and
-// `interaction.comments` carries only `readOnly` and `allowResolve`.
+// The legacy block still accepts these fields for v2 compatibility.
+// `permissionResolver` has no `interaction` spelling: `pickResolver` checks
+// `modules.comments.permissionResolver`, then the top-level `Config` field.
 const _legacyPolicy: Config = {
   selector: '#editor',
   modules: { comments: { readOnly: true, allowResolve: false, permissionResolver: () => true } },
 };
 
-// The canonical home for the two fields that have one.
+// The deprecated interaction spelling remains type-compatible.
 const _interactionPolicy: Config = {
   selector: '#editor',
   interaction: { comments: { readOnly: true, allowResolve: false } },
@@ -188,6 +192,7 @@ export {
   _badChrome,
   _policyReadOnly,
   _policyAllowResolve,
+  _policyLevel,
   _policyResolver,
   _legacyPolicy,
   _interactionPolicy,

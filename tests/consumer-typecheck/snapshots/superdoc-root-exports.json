@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-19T18:52:42.346Z",
+  "generatedAt": "2026-08-22T15:49:07.111Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -25,6 +25,7 @@
         "CanPerformPermissionParams",
         "CollaborationConfig",
         "CommentAddress",
+        "CommentInteractionLevel",
         "CommentsConfig",
         "CommentsType",
         "Config",
@@ -236,6 +237,7 @@
         "CanPerformPermissionParams",
         "CollaborationConfig",
         "CommentAddress",
+        "CommentInteractionLevel",
         "CommentsConfig",
         "CommentsType",
         "Config",
@@ -467,11 +469,11 @@
     }
   },
   "counts": {
-    "types.import": 205,
-    "types.require": 205,
+    "types.import": 206,
+    "types.require": 206,
     "import": 10,
     "require": 10,
-    "union": 205
+    "union": 206
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -494,6 +496,7 @@
         "CanPerformPermissionParams",
         "CollaborationConfig",
         "CommentAddress",
+        "CommentInteractionLevel",
         "CommentsConfig",
         "CommentsType",
         "Config",

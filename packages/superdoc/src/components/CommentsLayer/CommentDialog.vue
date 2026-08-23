@@ -13,6 +13,7 @@ import {
 import InternalDropdown from './InternalDropdown.vue';
 import CommentHeader from './CommentHeader.vue';
 import CommentInput from './CommentInput.vue';
+import { COMMENT_RECONCILIATION_TOKEN } from './use-comment.js';
 import Avatar from '@superdoc/components/general/Avatar.vue';
 
 const emit = defineEmits(['click-outside', 'ready', 'dialog-exit', 'resize']);
@@ -341,6 +342,15 @@ const showInputSection = computed(() => {
 
 const readOnlyMutationOutcome = () => ({ ok: false, reason: 'read-only-document' });
 const commentsAreReadOnly = () => getConfig.value?.readOnly === true;
+const trackedChangeDecisionsAreDisabled = () => {
+  const allowDecisions = proxy.$superdoc?.interactionConfig?.trackedChanges?.allowDecisions;
+  if (typeof allowDecisions === 'boolean') return !allowDecisions;
+  return commentsAreReadOnly();
+};
+const trackedChangeDecisionDisabledOutcome = () => ({
+  ok: false,
+  reason: commentsAreReadOnly() ? 'read-only-document' : 'tracked-change-decisions-disabled',
+});
 
 // Reply pill → expanded editor toggle
 const isReplying = ref(false);
@@ -937,7 +947,11 @@ const retryTrackedChangeDecision = () => {
 };
 
 const handleReject = async () => {
-  if (commentsAreReadOnly()) return readOnlyMutationOutcome();
+  if (props.comment.trackedChange) {
+    if (trackedChangeDecisionsAreDisabled()) return trackedChangeDecisionDisabledOutcome();
+  } else if (commentsAreReadOnly()) {
+    return readOnlyMutationOutcome();
+  }
 
   const customHandler = proxy.$superdoc.config.onTrackedChangeBubbleReject;
 
@@ -980,7 +994,7 @@ const handleReject = async () => {
     if (typeof customHandler === 'function') {
       customHandler(props.comment, proxy.$superdoc.activeEditor);
     } else {
-      const outcome = commentsStore.decideTrackedChangeFromSidebar({
+      const outcome = await commentsStore.decideTrackedChangeFromSidebar({
         superdoc: proxy.$superdoc,
         comment: props.comment,
         decision: 'reject',
@@ -995,6 +1009,7 @@ const handleReject = async () => {
         name: superdocStore.user.name,
         superdoc: proxy.$superdoc,
         decision: 'reject',
+        reconciliationToken: COMMENT_RECONCILIATION_TOKEN,
       });
     }
   } else if (isV2Mode.value && v2CommentsAdapter.value) {
@@ -1019,9 +1034,11 @@ const handleReject = async () => {
 };
 
 const handleResolve = async () => {
-  if (commentsAreReadOnly()) return readOnlyMutationOutcome();
-  if (!props.comment.trackedChange && getConfig.value?.allowResolve === false) {
-    return { ok: false, reason: 'resolve-disabled' };
+  if (props.comment.trackedChange) {
+    if (trackedChangeDecisionsAreDisabled()) return trackedChangeDecisionDisabledOutcome();
+  } else {
+    if (commentsAreReadOnly()) return readOnlyMutationOutcome();
+    if (getConfig.value?.allowResolve === false) return { ok: false, reason: 'resolve-disabled' };
   }
 
   const customHandler = proxy.$superdoc.config.onTrackedChangeBubbleAccept;
@@ -1060,7 +1077,7 @@ const handleResolve = async () => {
     // getFloatingComments (SD-2049).
     customHandler(props.comment, proxy.$superdoc.activeEditor);
   } else if (props.comment.trackedChange) {
-    const outcome = commentsStore.decideTrackedChangeFromSidebar({
+    const outcome = await commentsStore.decideTrackedChangeFromSidebar({
       superdoc: proxy.$superdoc,
       comment: props.comment,
       decision: 'accept',
@@ -1095,6 +1112,7 @@ const handleResolve = async () => {
       name: superdocStore.user.name,
       superdoc: proxy.$superdoc,
       decision: 'accept',
+      reconciliationToken: COMMENT_RECONCILIATION_TOKEN,
     });
   }
 

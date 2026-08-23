@@ -1,13 +1,13 @@
 {
   "generatedAt": "2026-06-23T01:53:02.997Z",
   "summary": {
-    "total": 198,
+    "total": 199,
     "byBucket": {
       "legacy-root": 6,
-      "supported-root": 192
+      "supported-root": 193
     },
     "byConfidence": {
-      "high": 146,
+      "high": 147,
       "medium": 52
     }
   },
@@ -117,6 +117,17 @@
       "rationale": "Document API navigation/address/selection type. Promoted into the root facade by SD-3185.",
       "confidence": "high",
       "source": "doc-api",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "CommentInteractionLevel",
+      "bucket": "supported-root",
+      "rationale": "Canonical comment-interaction policy level used by InteractionConfig.comments and exported for consumers configuring custom comment UI.",
+      "confidence": "high",
+      "source": "config-supported",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,

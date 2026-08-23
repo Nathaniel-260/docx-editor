@@ -105,7 +105,7 @@ function resolveOptions(ui, key) {
  * `permissionResolver` is collaboration wiring rather than presentation and is
  * read straight off `modules.comments`; it is excluded for the same reason.
  */
-const COMMENT_POLICY_FIELDS = Object.freeze(['readOnly', 'allowResolve', 'permissionResolver']);
+const COMMENT_POLICY_FIELDS = Object.freeze(['level', 'readOnly', 'allowResolve', 'permissionResolver']);
 
 /**
  * Drop policy fields from a presentation options bag.

@@ -4,40 +4,84 @@ import { normalizeSurfacesConfig } from './normalize-surfaces-config.js';
 
 describe('normalizeInteractionConfig', () => {
   it('permits mutations and shows resolve by default', () => {
-    expect(normalizeInteractionConfig({}).comments).toEqual({ readOnly: false, allowResolve: true });
+    expect(normalizeInteractionConfig({})).toEqual({
+      comments: { level: 'resolve', readOnly: false, allowResolve: true },
+      trackedChanges: { allowDecisions: true },
+    });
   });
 
-  it('reads the canonical interaction block', () => {
+  it.each([
+    ['read', true, false],
+    ['write', false, false],
+    ['resolve', false, true],
+  ])('resolves the %s comment level', (level, readOnly, allowResolve) => {
+    expect(normalizeInteractionConfig({ interaction: { comments: { level } } }).comments).toEqual({
+      level,
+      readOnly,
+      allowResolve,
+    });
+  });
+
+  it('resolves tracked-change decisions independently from comment capability', () => {
     const policy = normalizeInteractionConfig({
-      interaction: { comments: { readOnly: true, allowResolve: false } },
+      interaction: { comments: { level: 'read' }, trackedChanges: { allowDecisions: true } },
     });
 
-    expect(policy.comments).toEqual({ readOnly: true, allowResolve: false });
+    expect(policy.comments).toEqual({ level: 'read', readOnly: true, allowResolve: false });
+    expect(policy.trackedChanges).toEqual({ allowDecisions: true });
   });
 
-  it('still reads the legacy fields on modules.comments', () => {
+  it('still reads the deprecated fields on modules.comments', () => {
     const policy = normalizeInteractionConfig({
       modules: { comments: { readOnly: true, allowResolve: false } },
     });
 
-    expect(policy.comments).toEqual({ readOnly: true, allowResolve: false });
+    expect(policy).toEqual({
+      comments: { level: 'read', readOnly: true, allowResolve: false },
+      trackedChanges: { allowDecisions: false },
+    });
   });
 
-  it('prefers the canonical block over the legacy one', () => {
+  it('keeps the deprecated interaction booleans backward compatible', () => {
     const policy = normalizeInteractionConfig({
-      interaction: { comments: { readOnly: false } },
-      modules: { comments: { readOnly: true } },
+      interaction: { comments: { readOnly: true, allowResolve: true } },
     });
 
-    expect(policy.comments.readOnly).toBe(false);
+    expect(policy).toEqual({
+      comments: { level: 'read', readOnly: true, allowResolve: true },
+      trackedChanges: { allowDecisions: false },
+    });
+  });
+
+  it('prefers canonical fields on their own interaction axis', () => {
+    const policy = normalizeInteractionConfig({
+      interaction: {
+        comments: { level: 'write', readOnly: true },
+        trackedChanges: { allowDecisions: true },
+      },
+      modules: { comments: { readOnly: true, allowResolve: true } },
+    });
+
+    expect(policy).toEqual({
+      comments: { level: 'write', readOnly: false, allowResolve: false },
+      trackedChanges: { allowDecisions: true },
+    });
+  });
+
+  it('ignores an invalid level and falls back to the supported configuration', () => {
+    const policy = normalizeInteractionConfig({
+      interaction: { comments: { level: 'comment', allowResolve: false } },
+    });
+
+    expect(policy.comments).toEqual({ level: 'write', readOnly: false, allowResolve: false });
   });
 
   it('survives modules.comments: false without reading it as permissive', () => {
     // Disabling the built-in UI says nothing about policy. The defaults apply,
     // and an explicit interaction block still wins.
-    expect(normalizeInteractionConfig({ modules: { comments: false } }).comments).toEqual({
-      readOnly: false,
-      allowResolve: true,
+    expect(normalizeInteractionConfig({ modules: { comments: false } })).toEqual({
+      comments: { level: 'resolve', readOnly: false, allowResolve: true },
+      trackedChanges: { allowDecisions: true },
     });
 
     const policy = normalizeInteractionConfig({
@@ -47,6 +91,7 @@ describe('normalizeInteractionConfig', () => {
     });
 
     expect(policy.comments.readOnly).toBe(true);
+    expect(policy.trackedChanges.allowDecisions).toBe(false);
   });
 
   it('keeps policy independent of whether SuperDoc renders comments', () => {

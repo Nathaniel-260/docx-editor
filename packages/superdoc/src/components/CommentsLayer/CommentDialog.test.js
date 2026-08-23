@@ -51,6 +51,7 @@ describe('CommentDialog', () => {
         commands: {
           setCursorById: vi.fn(),
           setActiveComment: vi.fn(),
+          resolveComment: vi.fn(),
         },
       },
       users: [],
@@ -90,6 +91,82 @@ describe('CommentDialog', () => {
 
         expect(decide).not.toHaveBeenCalled();
         expect(superdocStub.focus).not.toHaveBeenCalled();
+      } finally {
+        wrapper.unmount();
+      }
+    });
+
+    it('keeps tracked-change decisions independent from read-only comments', async () => {
+      commentsStore.init({ readOnly: true, allowResolve: false });
+      superdocStub.interactionConfig = {
+        comments: { level: 'read', readOnly: true, allowResolve: false },
+        trackedChanges: { allowDecisions: true },
+      };
+      superdocStub.activeEditor.editorVersion = 2;
+      superdocStub.activeEditor.v2TrackedChanges = {
+        getCapabilityState: vi.fn(() => ({ canDecide: true })),
+      };
+      const comment = useComment({
+        commentId: 'tc-comments-read-only',
+        fileId: 'doc-1',
+        commentText: '',
+        trackedChange: true,
+      });
+      commentsStore.commentsList = [comment];
+      const decide = vi.spyOn(commentsStore, 'decideTrackedChangeFromSidebar').mockResolvedValue({ ok: true });
+
+      const wrapper = mountDialog(comment);
+      try {
+        const header = wrapper.findComponent({ name: 'CommentHeader' });
+        header.vm.$emit('resolve');
+        header.vm.$emit('reject');
+        await flushPromises();
+
+        expect(decide).toHaveBeenCalledTimes(2);
+      } finally {
+        wrapper.unmount();
+      }
+    });
+
+    it.each([
+      ['resolve', 'accept'],
+      ['reject', 'reject'],
+    ])('awaits a v1 tracked-change %s before reconciling its row', async (eventName, decision) => {
+      commentsStore.init({ readOnly: true, allowResolve: false });
+      superdocStub.commentsStore = commentsStore;
+      superdocStub.interactionConfig = {
+        comments: { level: 'read', readOnly: true, allowResolve: false },
+        trackedChanges: { allowDecisions: true },
+      };
+      const comment = useComment({
+        commentId: `tc-v1-${decision}`,
+        fileId: 'doc-1',
+        commentText: '',
+        trackedChange: true,
+      });
+      commentsStore.commentsList = [comment];
+      const decide = vi
+        .spyOn(commentsStore, 'decideTrackedChangeFromSidebar')
+        .mockResolvedValue({ ok: true, success: true });
+      const resolve = vi.spyOn(comment, 'resolveComment');
+
+      const wrapper = mountDialog(comment);
+      try {
+        wrapper.findComponent({ name: 'CommentHeader' }).vm.$emit(eventName);
+        await flushPromises();
+
+        expect(decide).toHaveBeenCalledWith({
+          superdoc: superdocStub,
+          comment,
+          decision,
+        });
+        expect(resolve).toHaveBeenCalledWith(
+          expect.objectContaining({
+            decision,
+            reconciliationToken: expect.any(Symbol),
+          }),
+        );
+        expect(comment.resolvedTime).toEqual(expect.any(Number));
       } finally {
         wrapper.unmount();
       }

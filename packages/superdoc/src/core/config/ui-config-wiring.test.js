@@ -6,6 +6,7 @@
  * decision lives in `SuperDoc.ts` rather than the Vue shell — follows it.
  */
 import { describe, expect, it, vi } from 'vite-plus/test';
+import SuperDocSource from '../../SuperDoc.vue?raw';
 import { normalizeUiConfig } from './normalize-ui-config.js';
 import { mergeDefined } from './merge-defined.js';
 
@@ -195,8 +196,25 @@ describe('uiConfig reaches the runtime', () => {
     it('exposes the resolved interaction policy', async () => {
       const superdoc = await mount({ interaction: { comments: { readOnly: true, allowResolve: false } } });
 
+      expect(superdoc.interactionConfig.comments.level).toBe('read');
       expect(superdoc.interactionConfig.comments.readOnly).toBe(true);
       expect(superdoc.interactionConfig.comments.allowResolve).toBe(false);
+      expect(superdoc.interactionConfig.trackedChanges.allowDecisions).toBe(false);
+      superdoc.destroy?.();
+      document.body.innerHTML = '';
+    });
+
+    it('exposes independent canonical comment and tracked-change capabilities', async () => {
+      const superdoc = await mount({
+        interaction: { comments: { level: 'read' }, trackedChanges: { allowDecisions: true } },
+      });
+
+      expect(superdoc.interactionConfig.comments).toEqual({
+        level: 'read',
+        readOnly: true,
+        allowResolve: false,
+      });
+      expect(superdoc.interactionConfig.trackedChanges).toEqual({ allowDecisions: true });
       superdoc.destroy?.();
       document.body.innerHTML = '';
     });
@@ -361,6 +379,10 @@ describe('uiConfig reaches the runtime', () => {
         // which passes it to `resolveSections`.
         expect(superdoc.uiConfig.contextMenu.options.customItems).toEqual([section('app')]);
         cleanup(superdoc);
+      });
+
+      it('forwards resolved interaction policy to the v2 shell', () => {
+        expect(SuperDocSource).toContain('interaction: proxy.$superdoc.interactionConfig');
       });
 
       it('still forwards both legacy spellings', () => {

@@ -129,13 +129,14 @@ const OVERFLOW_OPTIONS = Object.freeze({
   delete: { label: 'Delete', key: 'delete' },
 });
 
-// `readOnly` is a presentation policy, not a transient capability failure.
-// Mutation affordances disappear entirely when it is enabled; writable
-// surfaces still use the disabled-reason props for recoverable host failures.
-const reviewMutationsVisible = computed(() => props.config.readOnly !== true);
+const commentMutationsVisible = computed(() => props.config.readOnly !== true);
+const trackedChangeDecisionsVisible = computed(() => {
+  const allowDecisions = proxy.$superdoc?.interactionConfig?.trackedChanges?.allowDecisions;
+  if (typeof allowDecisions === 'boolean') return allowDecisions;
+  return commentMutationsVisible.value;
+});
 
 const generallyAllowed = computed(() => {
-  if (!reviewMutationsVisible.value) return false;
   if (!props.comment) return false;
   if (props.comment.resolvedTime) return false;
   if (commentsStore.pendingComment) return false;
@@ -145,7 +146,11 @@ const generallyAllowed = computed(() => {
 
 const allowResolve = computed(() => {
   if (!generallyAllowed.value) return false;
-  if (!props.comment.trackedChange && props.config.allowResolve === false) return false;
+  if (props.comment.trackedChange) {
+    if (!trackedChangeDecisionsVisible.value) return false;
+  } else if (!commentMutationsVisible.value || props.config.allowResolve === false) {
+    return false;
+  }
 
   // Do not allow child comments to resolve. An explicit tracked-change
   // conversation member has no native Word parentCommentId, but remains a
@@ -168,6 +173,7 @@ const allowResolve = computed(() => {
 const allowReject = computed(() => {
   if (!generallyAllowed.value) return false;
   if (!props.comment.trackedChange) return false;
+  if (!trackedChangeDecisionsVisible.value) return false;
 
   const context = {
     comment: props.comment,
@@ -187,7 +193,7 @@ const allowReject = computed(() => {
 // input never expose reopen. Reopen reuses the resolve permission because it
 // is the symmetric lifecycle inverse of resolve.
 const allowReopen = computed(() => {
-  if (!reviewMutationsVisible.value) return false;
+  if (!commentMutationsVisible.value) return false;
   if (props.config.allowResolve === false) return false;
   if (!props.reopenSupported) return false;
   if (!props.comment) return false;
@@ -220,7 +226,7 @@ const allowOverflow = computed(() => {
 });
 
 const getOverflowOptions = computed(() => {
-  if (!reviewMutationsVisible.value) return [];
+  if (!commentMutationsVisible.value) return [];
   if (!generallyAllowed.value) return [];
 
   // TCS Phase 0 / 004 §5: when the v2 host blocks write (e.g. author-required,
@@ -255,23 +261,26 @@ const getOverflowOptions = computed(() => {
 });
 
 const handleResolve = () => {
-  if (!reviewMutationsVisible.value) return;
-  if (!props.comment?.trackedChange && props.config.allowResolve === false) return;
+  if (props.comment?.trackedChange) {
+    if (!trackedChangeDecisionsVisible.value) return;
+  } else if (!commentMutationsVisible.value || props.config.allowResolve === false) {
+    return;
+  }
   if (props.resolveDisabledReason) return;
   emit('resolve');
 };
 const handleReject = () => {
-  if (!reviewMutationsVisible.value) return;
+  if (!trackedChangeDecisionsVisible.value) return;
   if (props.rejectDisabledReason) return;
   emit('reject');
 };
 const handleReopen = () => {
-  if (!reviewMutationsVisible.value || props.config.allowResolve === false) return;
+  if (!commentMutationsVisible.value || props.config.allowResolve === false) return;
   if (props.reopenDisabledReason) return;
   emit('reopen');
 };
 const handleSelect = (value) => {
-  if (!reviewMutationsVisible.value) return;
+  if (!commentMutationsVisible.value) return;
   emit('overflow-select', value);
 };
 

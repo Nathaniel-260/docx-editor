@@ -2100,6 +2100,7 @@ const editorOptions = (doc) => {
     users: proxy.$superdoc.users,
     colors: proxy.$superdoc.colors,
     role: proxy.$superdoc.config.role,
+    interaction: proxy.$superdoc.interactionConfig,
     html: doc.html,
     markdown: doc.markdown,
     documentMode: proxy.$superdoc.config.documentMode,

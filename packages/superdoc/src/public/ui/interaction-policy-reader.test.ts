@@ -1,11 +1,9 @@
 /**
- * The review guard has to read the resolved interaction policy.
+ * Tracked-change decisions have their own resolved interaction policy.
  *
- * `interaction.comments.readOnly` exists so an application rendering its own
- * comment interface still honors read-only. But `ui: false` and
- * `ui: { comments: false }` set `modules.comments` to `false`, so a guard that
- * consults only the legacy block finds nothing and permits the mutation —
- * failing open for exactly the consumer the policy was added for.
+ * Comment capability must not accidentally control accept/reject. Older hosts
+ * exposed only `comments.readOnly`, so that field remains the fallback when
+ * the dedicated tracked-change answer is absent.
  */
 import { describe, expect, it, vi } from 'vite-plus/test';
 
@@ -27,20 +25,46 @@ function attemptTrackedChangeDecision(superdoc: unknown): boolean {
   return acceptTrackedChange.mock.calls.length > 0;
 }
 
-const hostWithPolicy = (readOnly: boolean) => ({
-  interactionConfig: { comments: { readOnly, allowResolve: true } },
+function readAcceptChangeReason(superdoc: unknown): string | undefined {
+  const host = superdoc as Record<string, Record<string, unknown>>;
+  (host.activeEditor as Record<string, unknown>).doc = {
+    trackChanges: { accept: vi.fn(() => true) },
+  };
+  const ui = createSuperDocUI({ superdoc } as never);
+  return ui.commands.get('acceptChange').getState().reason;
+}
+
+const hostWithPolicy = (readOnly: boolean, allowDecisions?: boolean, documentMode = 'editing') => ({
+  interactionConfig: {
+    comments: { readOnly, allowResolve: true },
+    ...(allowDecisions === undefined ? {} : { trackedChanges: { allowDecisions } }),
+  },
   // `ui: false` leaves `modules.comments === false`, so the legacy block
   // carries no policy at all.
-  config: { modules: { comments: false } },
+  config: { documentMode, modules: { comments: false } },
   activeEditor: { editorVersion: 2, doc: {} },
 });
 
-describe('review guard with the built-in comments UI disabled', () => {
-  it('does not reach the document operation when readOnly is set', () => {
+describe('tracked-change decision policy with the built-in comments UI disabled', () => {
+  it('allows decisions independently while comments are read-only', () => {
+    expect(attemptTrackedChangeDecision(hostWithPolicy(true, true))).toBe(true);
+  });
+
+  it('blocks decisions independently while comments are writable', () => {
+    const host = hostWithPolicy(false, false);
+    expect(attemptTrackedChangeDecision(host)).toBe(false);
+    expect(readAcceptChangeReason(host)).toBe('tracked-change-decisions-disabled');
+  });
+
+  it('keeps document viewing distinct from interaction policy', () => {
+    expect(readAcceptChangeReason(hostWithPolicy(false, true, 'viewing'))).toBe('document-readonly');
+  });
+
+  it('keeps comments.readOnly as the fallback for an older resolved host', () => {
     expect(attemptTrackedChangeDecision(hostWithPolicy(true))).toBe(false);
   });
 
-  it('reaches it when the policy permits writes', () => {
+  it('keeps older writable hosts permissive', () => {
     expect(attemptTrackedChangeDecision(hostWithPolicy(false))).toBe(true);
   });
 });

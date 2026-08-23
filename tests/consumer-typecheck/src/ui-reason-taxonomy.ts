@@ -24,10 +24,12 @@ void _reason;
 // Representative stable members are assignable.
 const _unsupported: SuperDocUIReason = 'command-unsupported';
 const _readonly: SuperDocUIReason = 'document-readonly';
+const _trackedChangeDecisionsDisabled: SuperDocUIReason = 'tracked-change-decisions-disabled';
 const _notReady: SuperDocUIReason = 'not-ready';
 const _permissionDenied: SuperDocUIReason = 'permission-denied';
 void _unsupported;
 void _readonly;
+void _trackedChangeDecisionsDisabled;
 void _notReady;
 void _permissionDenied;
 

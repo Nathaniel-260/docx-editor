@@ -702,7 +702,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   #interactionConfig: ReturnType<typeof normalizeInteractionConfig> = normalizeInteractionConfig({});
 
   /**
-   * What the user is permitted to do, as distinct from what SuperDoc draws.
+   * Which interactions this Editor allows, separate from what SuperDoc draws.
    *
    * Resolved from {@link Config.interaction}. Stays meaningful when the
    * application renders its own UI: `ui: false` removes the built-in comment
@@ -1159,9 +1159,9 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       this.config.modules.comments = {};
     }
 
-    // Interaction policy outlives the built-in comment UI: a custom comment
-    // surface still has to honor readOnly. Push the resolved values onto the
-    // legacy block, which is what the comments store and dialog read.
+    // Interaction policy outlives the built-in comments UI. Copy the resolved
+    // comment booleans to the legacy block read by the comments store and
+    // dialog.
     // `modules.comments` is `true | false | object | undefined`. `Object.assign`
     // onto the `true` sentinel silently discards the policy, so coerce it to a
     // block first — the sentinel only ever meant "enabled with no options".
@@ -1172,7 +1172,10 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       // through `unknown` so the runtime guard survives the narrower type.
       if ((this.config.modules.comments as unknown) === true) this.config.modules.comments = {};
       const commentsBlock = this.config.modules.comments;
-      if (commentsBlock) Object.assign(commentsBlock, this.#interactionConfig.comments);
+      if (commentsBlock) {
+        commentsBlock.readOnly = this.#interactionConfig.comments.readOnly;
+        commentsBlock.allowResolve = this.#interactionConfig.comments.allowResolve;
+      }
     }
 
     this.config.colors = shuffleArray(this.config.colors as `#${string}`[]);
