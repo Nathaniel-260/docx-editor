@@ -88,6 +88,25 @@ describe('executeBlocksDelete', () => {
       expect(() => executeBlocksDelete(makeAdapter(), {} as any)).toThrow(DocumentApiValidationError);
     });
 
+    it.each([
+      ['changeMode', 'bogus'],
+      ['dryRun', true],
+      ['totallyBogusKey', 1],
+    ])('rejects unknown input field %s before mutation', (field, value) => {
+      const adapter = makeAdapter();
+      const input = { ...makeInput('paragraph', 'p1'), [field]: value };
+
+      try {
+        executeBlocksDelete(adapter, input as BlocksDeleteInput);
+        expect.unreachable('should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DocumentApiValidationError);
+        expect((error as DocumentApiValidationError).code).toBe('INVALID_INPUT');
+        expect((error as DocumentApiValidationError).message).toContain(`Unknown field "${field}"`);
+      }
+      expect(adapter.delete).not.toHaveBeenCalled();
+    });
+
     it('rejects target with wrong kind', () => {
       expect(() =>
         executeBlocksDelete(makeAdapter(), {

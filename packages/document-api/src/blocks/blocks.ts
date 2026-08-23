@@ -17,6 +17,7 @@ import type {
 import { BLOCK_NODE_TYPES, DELETABLE_BLOCK_NODE_TYPES } from '../types/base.js';
 import { storyLocatorToKey, type StoryLocator } from '../types/story.types.js';
 import { DocumentApiValidationError } from '../errors.js';
+import { assertNoUnknownFields } from '../validation-primitives.js';
 import { validateStoryLocator } from '../validation/story-validator.js';
 // ---------------------------------------------------------------------------
 // Public API surface
@@ -48,6 +49,7 @@ export interface BlocksAdapter {
 const SUPPORTED_DELETE_NODE_TYPES = new Set<string>(DELETABLE_BLOCK_NODE_TYPES);
 const REJECTED_DELETE_NODE_TYPES = new Set(['tableRow', 'tableCell']);
 const VALID_BLOCK_NODE_TYPES = new Set<string>(BLOCK_NODE_TYPES);
+const BLOCKS_DELETE_INPUT_ALLOWED_KEYS = new Set(['target']);
 const BODY_STORY_LOCATOR: StoryLocator = { kind: 'story', storyType: 'body' };
 // ---------------------------------------------------------------------------
 // blocks.list validation
@@ -112,6 +114,7 @@ function validateBlocksDeleteInput(input: BlocksDeleteInput): void {
       fields: ['input'],
     });
   }
+  assertNoUnknownFields(input as unknown as Record<string, unknown>, BLOCKS_DELETE_INPUT_ALLOWED_KEYS, 'blocks.delete');
   if (!input.target) {
     throw new DocumentApiValidationError('INVALID_INPUT', 'blocks.delete requires a target.', {
       fields: ['target'],
