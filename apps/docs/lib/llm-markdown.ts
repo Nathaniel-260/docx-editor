@@ -175,6 +175,9 @@ export function renderLLMMarkdown(markdown: string) {
         preset === 'proofing'
           ? 'Proofing: type `mispelled`, `workng`, or `teh`, then right-click the underline.'
           : undefined,
+        preset === 'comments'
+          ? 'Comments: open the existing thread, reply, resolve or reopen it, or select text to start another thread.'
+          : undefined,
         preset === 'tracked-review' ? 'Tracked-change review: accept or reject the sample change.' : undefined,
         localFile ? 'Local DOCX selection: enabled. Files remain in the browser.' : 'Local DOCX selection: disabled.',
       ].filter((value): value is string => Boolean(value));

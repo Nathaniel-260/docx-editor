@@ -10,7 +10,7 @@ import { loadRuntime, loadUIModule, type SuperDocInstance } from './superdoc-run
 const zoomStep = 10;
 const initialZoom = { max: 200, min: 10, mode: 'manual', value: 100 } satisfies ZoomSlice;
 
-type EditorDemoPreset = 'document-modes' | 'proofing' | 'tracked-review';
+type EditorDemoPreset = 'comments' | 'document-modes' | 'proofing' | 'tracked-review';
 
 type EditorDemoProps = {
   allowLocalFile?: boolean;
@@ -235,9 +235,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
         document: file ?? SuperDoc.BlankDOCX,
         documentMode: initialDocumentMode,
         proofing: preset === 'proofing' ? { enabled: true, provider: proofingProvider } : undefined,
-        ui: { loading: false },
-        modules: {
-          comments: { displayMode: 'inline' },
+        ui: {
+          comments: { displayMode: preset === 'comments' ? 'auto' : 'inline' },
+          loading: false,
         },
         zoom: {
           mode: 'manual',
@@ -417,7 +417,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                 ? 'Loads the sample automatically. Files stay in this browser.'
                 : preset === 'proofing'
                   ? 'Type “mispelled”, “workng”, or “teh”, then right-click its underline.'
-                  : 'Loads the sample DOCX in suggesting mode.'}
+                  : preset === 'comments'
+                    ? 'Open the existing thread, or select text to start another.'
+                    : 'Loads the sample DOCX in suggesting mode.'}
             </span>
           ) : null}
         </div>
@@ -500,7 +502,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               ? 'The editor could not load. Try the sample again or choose a local DOCX to continue.'
               : preset === 'proofing'
                 ? 'The proofing editor could not load. Try again.'
-                : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
+                : preset === 'comments'
+                  ? 'The comments editor could not load. Try again.'
+                  : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
           </p>
         ) : null}
         <div className='sd-editor-demo-toolbar' hidden={state === 'idle'} aria-label='Editor controls'>
@@ -624,7 +628,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                 ? 'The sample editor loads as this demo enters view. You can also open your own DOCX.'
                 : preset === 'proofing'
                   ? 'The proofing editor is loading.'
-                  : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
+                  : preset === 'comments'
+                    ? 'The comments editor is loading.'
+                    : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
             </p>
           </div>
         ) : null}

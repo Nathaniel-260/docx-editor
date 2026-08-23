@@ -53,7 +53,7 @@ Call `stop()` when the control unmounts. The rest of this page describes the con
 
 `superdoc/ui/react` provides the same controller through a provider and hooks, and `superdoc/ui/vue` through `provideSuperDocUI()` and the `useSuperDoc*` composables. Use the framework-neutral controller when your application uses neither framework, or when UI state belongs outside a component tree.
 
-`Config.ui` and `interaction` look similar and are not. `ui: { comments: false }` hides the built-in comments interface while your own panel keeps creating comments; `interaction: { comments: { readOnly: true } }` is what refuses the write.
+`Config.ui` and `interaction` look similar and are not. `ui: { comments: false }` hides the built-in comments interface while your own panel keeps creating comments; `interaction: { comments: { level: 'read' } }` is what refuses the write.
 
 ## Use the controller SuperDoc already owns
 

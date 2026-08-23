@@ -39,6 +39,23 @@ Accepting a change keeps the proposed result and removes the review mark. Reject
 
 Viewing mode is read-only. Showing tracked changes in that mode does not grant permission to accept, reject, or create them.
 
+## Control review decisions
+
+Turn off accept and reject when someone may inspect or discuss proposals but should not decide them:
+
+```ts
+const config = {
+  interaction: {
+    trackedChanges: {
+      allowDecisions: false,
+    },
+  },
+};
+```
+
+This does not stop someone from proposing changes. Use `documentMode: 'suggesting'` to record their edits as proposals,
+or `documentMode: 'viewing'` to prevent document edits entirely.
+
 ## Keep review decisions explicit
 
 The built-in controls and `superdoc/ui` use the same tracked-change state. A control can be disabled because there is no active change, the document is read-only, or the current client interaction policy does not allow the decision.

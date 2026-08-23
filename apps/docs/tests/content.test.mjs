@@ -24,6 +24,7 @@ const focusedToolbarExampleUrl = new URL('../snippets/editor/focused-built-in-to
 const focusedReactToolbarExampleUrl = new URL('../snippets/editor/react-focused-built-in-toolbar.tsx', import.meta.url);
 const toolbarStrategyDataUrl = new URL('../lib/toolbar-config-strategies.ts', import.meta.url);
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
+const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
 const documentApiReferenceModelUrl = new URL('../generated/document-api-reference.json', import.meta.url);
 const generatedProofingConfigUrl = new URL('../generated/proofing-config-reference.json', import.meta.url);
 const superdocCoreTypesUrl = new URL('../../../packages/superdoc/src/core/types/index.ts', import.meta.url);
@@ -81,7 +82,7 @@ const registeredComponents = new Set([
   'RuntimeExampleTabs',
   'ToolbarConfigStrategies',
 ]);
-const editorDemoPresets = new Set(['document-modes', 'proofing', 'tracked-review']);
+const editorDemoPresets = new Set(['comments', 'document-modes', 'proofing', 'tracked-review']);
 
 async function collectMdxFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -278,6 +279,15 @@ test('the React toolbar example uses command ids from the public v2 command cata
   const unknownIds = [...configuredIds].filter((id) => !catalogIds.has(id));
 
   assert.deepEqual(unknownIds, []);
+});
+
+test('the React comments example keeps restart-sensitive config identities stable', async () => {
+  const example = await readFile(reactBuiltInCommentsExampleUrl, 'utf8');
+
+  assert.match(example, /const editorConfig = \{/u);
+  assert.match(example, /user=\{editorConfig\.user\}/u);
+  assert.match(example, /ui=\{editorConfig\.ui\}/u);
+  assert.doesNotMatch(example, /\b(?:user|ui)=\{\{/u);
 });
 
 test('the generated reference model mirrors the canonical operation inventory', async () => {

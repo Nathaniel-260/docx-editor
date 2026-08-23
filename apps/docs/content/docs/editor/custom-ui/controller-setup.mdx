@@ -44,7 +44,7 @@ Take only the switches whose surface you actually replace. They are independent,
 
 When your application owns the entire interface, `ui: false` turns off every built-in surface at once. It does not reduce what the editor can do: editing, the Document API, `interaction`, `surfaces`, and `superdoc.ui` all stay exactly as they were.
 
-These are rendering switches, not permissions. `ui: { comments: false }` hides the built-in comments interface but does not stop your own panel from creating comments; `interaction: { comments: { readOnly: true } }` is what refuses the write.
+These are rendering switches, not permissions. `ui: { comments: false }` hides the built-in comments interface but does not stop your own panel from creating comments; `interaction: { comments: { level: 'read' } }` is what refuses the write.
 
 The underlying capabilities stay available through `superdoc.ui`. Comment threads in the DOCX are still parsed and readable through `superdoc.ui.comments` with the surface off, and `resolve` and `reopen` still commit. See [built-in comments](/editor/built-in-ui/comments) for the full distinction.
 

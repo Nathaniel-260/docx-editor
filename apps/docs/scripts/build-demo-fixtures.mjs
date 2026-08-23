@@ -3,6 +3,7 @@
  *
  * - `public/fixtures/formatting-sample.docx`
  * - `public/fixtures/document-modes.docx`
+ * - `public/fixtures/comments-sample.docx`
  *
  * The other two fixtures are full synthetic NDAs, sized for guides that need a
  * realistic contract. These demos need the opposite: each reader has one job,
@@ -10,8 +11,9 @@
  * are authored here rather than trimmed from `nda.docx` so only the relevant
  * content remains.
  *
- * It is deliberately plain: no tracked changes, no comments, no headings that
- * would make an edit's effect ambiguous.
+ * The formatting and document-mode fixtures are deliberately plain. The
+ * comments fixture has one short thread because that thread is the behavior the
+ * page asks the reader to inspect.
  *
  * Written as a minimal OOXML package rather than through a library so the bytes
  * are stable: no timestamps, no generated ids, no zip metadata that changes
@@ -27,7 +29,7 @@ import JSZip from 'jszip';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.resolve(HERE, '../public/fixtures');
 
-const FIXTURES = [
+const PLAIN_FIXTURES = [
   {
     fileName: 'formatting-sample.docx',
     paragraphs: [
@@ -45,11 +47,21 @@ const FIXTURES = [
 const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
 
+const COMMENT_CONTENT_TYPES = CONTENT_TYPES.replace(
+  '</Types>',
+  '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>',
+);
+
 const ROOT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`;
 
 const DOCUMENT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+
+const COMMENT_DOCUMENT_RELS = DOCUMENT_RELS.replace(
+  '</Relationships>',
+  '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>',
+);
 
 /**
  * Word's defaults only, at 16pt rather than the usual 11pt.
@@ -79,6 +91,12 @@ const documentXml = (paragraphs) => `<?xml version="1.0" encoding="UTF-8" standa
   .map(paragraph)
   .join('')}<w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
 
+const COMMENTS_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Project schedule</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">The final delivery date is </w:t></w:r><w:commentRangeStart w:id="0"/><w:r><w:t>September 30, 2026</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="0"/></w:r><w:r><w:t>.</w:t></w:r></w:p><w:p><w:r><w:t>Select another phrase to start a new thread.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+
+const COMMENTS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:comment w:id="0" w:author="SuperDoc Test User" w:initials="ST" w:date="2025-01-15T00:00:00Z"><w:p><w:r><w:t>Does this match the signed schedule?</w:t></w:r></w:p></w:comment></w:comments>`;
+
 /**
  * Every core property stays empty, including title and description.
  *
@@ -94,17 +112,7 @@ const CORE_PROPERTIES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const appProperties = (paragraphCount) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>SuperDoc</Application><Company></Company><Manager></Manager><Template></Template><Paragraphs>${paragraphCount}</Paragraphs></Properties>`;
 
-for (const fixture of FIXTURES) {
-  const parts = [
-    ['[Content_Types].xml', CONTENT_TYPES],
-    ['_rels/.rels', ROOT_RELS],
-    ['word/document.xml', documentXml(fixture.paragraphs)],
-    ['word/_rels/document.xml.rels', DOCUMENT_RELS],
-    ['word/styles.xml', STYLES],
-    ['docProps/core.xml', CORE_PROPERTIES],
-    ['docProps/app.xml', appProperties(fixture.paragraphs.length)],
-  ];
-
+async function writeDocx(fileName, parts) {
   const zip = new JSZip();
   for (const [name, content] of parts) {
     // A fixed date keeps the archive byte-stable across runs.
@@ -117,7 +125,30 @@ for (const fixture of FIXTURES) {
     compressionOptions: { level: 9 },
   });
 
-  const out = path.join(FIXTURES_DIR, fixture.fileName);
+  const out = path.join(FIXTURES_DIR, fileName);
   await writeFile(out, buffer);
   console.log(`Wrote ${path.relative(process.cwd(), out)} (${buffer.length} bytes).`);
 }
+
+for (const fixture of PLAIN_FIXTURES) {
+  await writeDocx(fixture.fileName, [
+    ['[Content_Types].xml', CONTENT_TYPES],
+    ['_rels/.rels', ROOT_RELS],
+    ['word/document.xml', documentXml(fixture.paragraphs)],
+    ['word/_rels/document.xml.rels', DOCUMENT_RELS],
+    ['word/styles.xml', STYLES],
+    ['docProps/core.xml', CORE_PROPERTIES],
+    ['docProps/app.xml', appProperties(fixture.paragraphs.length)],
+  ]);
+}
+
+await writeDocx('comments-sample.docx', [
+  ['[Content_Types].xml', COMMENT_CONTENT_TYPES],
+  ['_rels/.rels', ROOT_RELS],
+  ['word/document.xml', COMMENTS_DOCUMENT],
+  ['word/_rels/document.xml.rels', COMMENT_DOCUMENT_RELS],
+  ['word/styles.xml', STYLES],
+  ['word/comments.xml', COMMENTS_XML],
+  ['docProps/core.xml', CORE_PROPERTIES],
+  ['docProps/app.xml', appProperties(3)],
+]);

@@ -3,7 +3,7 @@ import 'superdoc/style.css';
 
 const superdoc = new SuperDoc({
   selector: '#editor',
-  document: '/contract.docx',
+  document: '/sample.docx',
   user: {
     name: 'Alex Rivera',
     email: 'alex@example.com',
@@ -13,8 +13,5 @@ const superdoc = new SuperDoc({
     comments: {
       displayMode: 'auto',
     },
-  },
-  onCommentsUpdate: ({ type, comment }) => {
-    console.log('Comment update:', type, comment?.commentId);
   },
 });

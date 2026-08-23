@@ -16,7 +16,10 @@ async function openFixture(name) {
   return {
     bytes,
     zip,
+    contentTypes: await read('[Content_Types].xml'),
     document: await read('word/document.xml'),
+    documentRels: await read('word/_rels/document.xml.rels'),
+    comments: await read('word/comments.xml'),
     core: await read('docProps/core.xml'),
     app: await read('docProps/app.xml'),
   };
@@ -195,6 +198,35 @@ test('the document modes fixture keeps its comparison target visible and clean',
   assert.match(document, /Either party may end this agreement by giving 30 days’ written notice\./);
 
   for (const element of ['w:ins', 'w:del', 'w:commentReference']) {
+    assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
+  }
+});
+
+test('the comments fixture keeps one focused review thread', async () => {
+  const { bytes, contentTypes, document, documentRels, comments, core } =
+    await openFixture('comments-sample.docx');
+  const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');
+
+  assert.ok(visibleText.length < 200, `comments-sample.docx must stay short, got ${visibleText.length} characters`);
+  assert.ok(bytes.length < 8_000, `must stay a small package, got ${bytes.length} bytes`);
+  assert.match(document, /<w:commentRangeStart w:id="0"\/>/);
+  assert.match(document, /<w:commentRangeEnd w:id="0"\/>/);
+  assert.match(document, /<w:commentReference w:id="0"\/>/);
+  assert.match(document, /September 30, 2026/);
+  assert.match(comments, /<w:comment w:id="0"/);
+  assert.match(comments, /Does this match the signed schedule\?/);
+  assert.match(comments, /w:author="SuperDoc Test User" w:initials="ST"/);
+  assert.match(
+    contentTypes,
+    /PartName="\/word\/comments\.xml" ContentType="application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.comments\+xml"/,
+  );
+  assert.match(
+    documentRels,
+    /Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/comments" Target="comments\.xml"/,
+  );
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+
+  for (const element of ['w:ins', 'w:del']) {
     assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
   }
 });

@@ -67,7 +67,8 @@ const receipt = await ui.comments.edit(commentId, {
 if (!receipt.success) console.error(receipt.failure.message);
 ```
 
-Editing is a separate permission from resolving. A document configured with `allowResolve: false` still permits body edits, because that setting governs the resolve and reopen transition rather than authorship. A read-only comments configuration refuses both.
+Editing is available at the `write` and `resolve` comment levels. Only `resolve` adds the resolve and reopen actions. The
+`read` level refuses both kinds of mutation.
 
 ## Build the panel in React
 
@@ -93,9 +94,9 @@ Three parts of it are worth reading closely.
 
 ## What the panel can and cannot anticipate
 
-The panel disables its write controls in viewing mode, which it reads from the public document slice.
-
-It does not pre-emptively hide controls for the `readOnly` and `allowResolve` comment interaction policies, because those are not publicly observable from the controller. Actions they forbid stay visible and surface their refusal through the receipt. That is a presentation limit rather than a safety one: the controller refuses those mutations either way, and client-side controls were never the authorization boundary.
+The panel disables its write controls in viewing mode, which it reads from the public document slice. When your
+application configures `interaction.comments.level`, use that same application-owned value to decide which controls to
+render. The controller still refuses forbidden mutations, so always inspect its receipt.
 
 [React custom UI setup](/editor/custom-ui/react-setup) covers the provider and binding lifecycle this example assumes.
 

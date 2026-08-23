@@ -29,7 +29,7 @@ const routes = [
   ['editor/who-renders-the-ui/index.html', 'Choose your interface'],
   ['editor/built-in-ui/overview/index.html', 'Use the built-in UI'],
   ['editor/built-in-ui/configure-the-toolbar/index.html', 'Configure the built-in toolbar'],
-  ['editor/built-in-ui/comments/index.html', 'Comments in the built-in UI'],
+  ['editor/built-in-ui/comments/index.html', 'Add comments to the Editor'],
   ['editor/built-in-ui/search-and-replace/index.html', 'Find and replace in the built-in UI'],
   ['editor/built-in-ui/links-and-context-menus/index.html', 'Links and context menus'],
   ['editor/built-in-ui/structured-content/index.html', 'Work with structured content'],
@@ -570,12 +570,22 @@ test('exports command failure guidance from the command-state owner page', async
 });
 
 test('exports the comments workflow through each canonical surface', async () => {
+  const builtInArticle = await readFile(new URL('../out/editor/built-in-ui/comments/index.html', import.meta.url), 'utf8');
   const builtIn = await readFile(new URL('../out/md/editor/built-in-ui/comments.md', import.meta.url), 'utf8');
   const customUI = await readFile(new URL('../out/md/editor/custom-ui/comments.md', import.meta.url), 'utf8');
   const documentApi = await readFile(new URL('../out/md/document-api/comments.md', import.meta.url), 'utf8');
+  const trackedChanges = await readFile(new URL('../out/md/editor/track-changes.md', import.meta.url), 'utf8');
 
+  assert.match(builtInArticle, /data-preset="comments"/);
+  assert.match(builtInArticle, /comments-sample\.docx/);
+  assert.match(builtIn, /\*\*Vanilla — `src\/main\.ts`\*\*/);
+  assert.match(builtIn, /\*\*React — `src\/App\.tsx`\*\*/);
+  assert.match(builtIn, /Comments: open the existing thread/);
   assert.match(builtIn, /displayMode: 'auto'/);
-  assert.match(builtIn, /browser behavior[\s\S]*do not authorize access/);
+  assert.match(builtIn, /level: 'write'/);
+  assert.match(builtIn, /not an authorization boundary/);
+  assert.match(builtIn, /comment\s+permissions in a trusted backend/);
+  assert.match(trackedChanges, /allowDecisions: false/);
   assert.match(customUI, /ui\.comments\.createFromCapture/);
   assert.match(customUI, /ui\.comments\.createFromSelection/);
   assert.match(customUI, /ui\.comments\.scrollTo/);

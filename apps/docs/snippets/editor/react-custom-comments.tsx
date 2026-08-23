@@ -75,12 +75,10 @@ function CommentsPanel() {
   const [status, setStatus] = useState('');
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
-  // Viewing mode is the one refusal this panel can anticipate: it is on the
-  // public document slice. The comments `readOnly` and `allowResolve`
-  // interaction policies are NOT publicly observable, so controls they forbid
-  // stay visible and surface their refusal through the receipt instead. That is
-  // a presentation limit, not a safety one — the controller refuses those
-  // mutations either way.
+  // This example uses the default `resolve` comment capability, so viewing
+  // mode is the only configured reason to hide its write controls. A product
+  // that sets `interaction.comments.level` should use that same application
+  // value here as well. The controller still checks every mutation.
   const readOnly = mode === 'viewing';
 
   // Announce through a live region rather than an alert, so a failure reaches a
