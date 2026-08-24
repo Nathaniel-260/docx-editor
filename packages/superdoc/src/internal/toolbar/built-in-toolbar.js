@@ -439,9 +439,14 @@ export class BuiltInToolbar extends EventEmitter {
       allConfigItems = [...new Set([...groupedItems, ...groupedCustomItems])];
     }
 
+    const excludedItemNames = new Set(this.config.excludeItems);
+    const configuredOverflowItems = overflowItems.filter(
+      (item) => allConfigItems.includes(item.name.value) && !excludedItemNames.has(item.name.value),
+    );
+    const visibleItemNames = configuredOverflowItems.length ? [...allConfigItems, 'overflow'] : allConfigItems;
     const filteredItems = defaultItems
-      .filter((item) => allConfigItems.includes(item.name.value))
-      .filter((item) => !this.config.excludeItems.includes(item.name.value));
+      .filter((item) => visibleItemNames.includes(item.name.value))
+      .filter((item) => !excludedItemNames.has(item.name.value));
 
     // Apply explicit per-group placement only for the composition-map shape.
     if (hasExplicitGroupComposition) {
@@ -453,7 +458,7 @@ export class BuiltInToolbar extends EventEmitter {
     }
 
     this.toolbarItems = filteredItems;
-    this.overflowItems = overflowItems.filter((item) => allConfigItems.includes(item.name.value));
+    this.overflowItems = configuredOverflowItems;
   }
 
   /**

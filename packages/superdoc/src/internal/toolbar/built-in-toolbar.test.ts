@@ -146,6 +146,65 @@ describe('BuiltInToolbar', () => {
     toolbar.destroy();
   });
 
+  it('keeps overflowed configured controls reachable without naming overflow in groups', () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 300 });
+    document.body.append(toolbarContainer);
+
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: toolbarContainer,
+      groups: {
+        center: ['bold'],
+        right: ['zoom', 'documentMode'],
+      },
+      responsiveToContainer: true,
+    });
+
+    expect(toolbar.overflowItems.map((item) => item.name.value)).toContain('zoom');
+    expect(toolbarContainer.querySelector('[aria-label="Overflow items"]')).not.toBeNull();
+    toolbar.destroy();
+  });
+
+  it('renders the overflow trigger when a composition map contains only a side group', () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 300 });
+    document.body.append(toolbarContainer);
+
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: toolbarContainer,
+      groups: {
+        left: ['zoom'],
+      },
+      responsiveToContainer: true,
+    });
+
+    expect(toolbar.overflowItems.map((item) => item.name.value)).toContain('zoom');
+    expect(toolbarContainer.querySelector('[aria-label="Overflow items"]')).not.toBeNull();
+    toolbar.destroy();
+  });
+
+  it('keeps excluded controls out of the responsive overflow menu', () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 300 });
+    document.body.append(toolbarContainer);
+
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: toolbarContainer,
+      groups: {
+        left: ['zoom'],
+      },
+      excludeItems: ['zoom'],
+      responsiveToContainer: true,
+    });
+
+    expect(toolbar.overflowItems.map((item) => item.name.value)).not.toContain('zoom');
+    expect(toolbarContainer.querySelector('[aria-label="Overflow items"]')).toBeNull();
+    toolbar.destroy();
+  });
+
   it('routes string-valued custom commands through the async shared command controller', () => {
     const toolbar = new BuiltInToolbar({
       superdoc: makeHost(),

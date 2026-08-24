@@ -1,5 +1,5 @@
 <script setup>
-import { computed, defineComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, useSlots, watch } from 'vue';
 
 const props = defineProps({
   options: {
@@ -30,9 +30,18 @@ const props = defineProps({
     type: Function,
     default: null,
   },
+  closeOnEscape: {
+    type: Boolean,
+    default: true,
+  },
+  hasOpenChild: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits(['update:show', 'select']);
+const slots = useSlots();
 
 const triggerRef = ref(null);
 const menuRef = ref(null);
@@ -41,7 +50,10 @@ const optionRefs = ref([]);
 const keyboardIndex = ref(-1);
 
 const isOpen = computed(() => Boolean(props.show));
+const fullscreenRoot = ref(document.fullscreenElement);
+const teleportTarget = computed(() => (isOpen.value && fullscreenRoot.value ? fullscreenRoot.value : document.body));
 const hasRenderOptions = computed(() => props.options.some((option) => option?.type === 'render'));
+const hasCustomMenu = computed(() => Boolean(slots.menu));
 
 const computedMenuProps = computed(() => {
   if (typeof props.menuProps !== 'function') return {};
@@ -56,7 +68,8 @@ const computedMenuAttrs = computed(() => {
 const mergedMenuClass = computed(() => {
   const fromProps = computedMenuProps.value.class;
   const onlyRenderOptions =
-    props.options.length > 0 && props.options.every((option) => option && option.type === 'render');
+    hasCustomMenu.value ||
+    (props.options.length > 0 && props.options.every((option) => option && option.type === 'render'));
   return ['toolbar-dropdown-menu', fromProps, { 'toolbar-dropdown-menu--render-only': onlyRenderOptions }];
 });
 
@@ -118,6 +131,13 @@ const updateMenuPosition = () => {
     left: `${left}px`,
     maxHeight: `${maxHeight}px`,
   };
+};
+
+const handleFullscreenChange = async () => {
+  fullscreenRoot.value = document.fullscreenElement;
+  if (!isOpen.value) return;
+  await nextTick();
+  updateMenuPosition();
 };
 
 const onTriggerClick = () => {
@@ -260,6 +280,11 @@ const handlePointerDown = (event) => {
   const insideMenu = menuRef.value?.contains(target);
   if (insideTrigger || insideMenu) return;
 
+  // A nested dropdown is teleported beside its parent menu rather than inside
+  // it. While a child is open, treat toolbar dropdown menus as one overlay tree
+  // so selecting a nested option does not close its parent first.
+  if (props.hasOpenChild && target.closest('[data-sd-part="dropdown-menu"]')) return;
+
   close();
 };
 
@@ -311,6 +336,7 @@ const handleKeyDown = (event) => {
   if (!supportedKeys.includes(key)) return;
 
   if (key === 'Escape') {
+    if (!props.closeOnEscape) return;
     event.preventDefault();
     close();
     nextTick(() => {
@@ -320,7 +346,7 @@ const handleKeyDown = (event) => {
     return;
   }
 
-  if (hasRenderOptions.value) return;
+  if (hasRenderOptions.value || hasCustomMenu.value) return;
 
   event.preventDefault();
 
@@ -354,7 +380,7 @@ watch(
     await nextTick();
     updateMenuPosition();
 
-    if (hasRenderOptions.value) return;
+    if (hasRenderOptions.value || hasCustomMenu.value) return;
 
     keyboardIndex.value = getInitialKeyboardIndex();
     await nextTick();
@@ -381,7 +407,12 @@ watch(
   { immediate: true },
 );
 
+onMounted(() => {
+  document.addEventListener('fullscreenchange', handleFullscreenChange);
+});
+
 onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', handleFullscreenChange);
   document.removeEventListener('pointerdown', handlePointerDown, true);
   document.removeEventListener('keydown', handleKeyDown, true);
   window.removeEventListener('resize', updateMenuPosition);
@@ -395,7 +426,7 @@ onBeforeUnmount(() => {
       <slot name="trigger" />
     </div>
 
-    <Teleport to="body">
+    <Teleport :to="teleportTarget">
       <Transition name="fade-in-scale-up-transition">
         <div
           v-if="isOpen"
@@ -405,8 +436,9 @@ onBeforeUnmount(() => {
           :style="menuStyle"
           v-bind="computedMenuAttrs"
         >
+          <slot v-if="hasCustomMenu" name="menu" />
           <div
-            v-for="(option, index) in options"
+            v-for="(option, index) in hasCustomMenu ? [] : options"
             :key="option.key"
             :ref="(el) => setOptionRef(el, index)"
             class="toolbar-dropdown-option"

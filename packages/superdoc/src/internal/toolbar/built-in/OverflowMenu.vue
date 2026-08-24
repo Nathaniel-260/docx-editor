@@ -1,7 +1,8 @@
 <script setup>
-import { getCurrentInstance, ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { getCurrentInstance, ref, computed } from 'vue';
 import ToolbarButton from './ToolbarButton.vue';
 import ButtonGroup from './ButtonGroup.vue';
+import ToolbarDropdown from './ToolbarDropdown.vue';
 
 const { proxy } = getCurrentInstance();
 
@@ -16,6 +17,10 @@ const props = defineProps({
     type: Array,
     required: true,
   },
+  uiFontFamily: {
+    type: String,
+    default: 'Arial, Helvetica, sans-serif',
+  },
 });
 
 const isOverflowMenuOpened = computed(() => props.toolbarItem.expand.value);
@@ -26,78 +31,52 @@ const overflowToolbarItem = computed(() => ({
   active: isOverflowMenuOpened.value,
 }));
 
-const toggleOverflowMenu = () => {
-  emit('buttonClick', props.toolbarItem);
+const setOverflowMenuOpen = (open) => {
+  if (open === isOverflowMenuOpened.value) return;
+  if (open) {
+    emit('buttonClick', props.toolbarItem);
+    return;
+  }
+  emit('close');
 };
 
 const handleCommand = ({ item, argument }) => {
   proxy.$toolbar.emitCommand({ item, argument });
 };
-
-const handleKeyDown = (e) => {
-  if (e.key === 'Escape') {
-    if (isOverflowMenuOpened.value && !hasOpenDropdown.value) {
-      e.preventDefault();
-      emit('close');
-    }
-  }
-};
-
-onMounted(() => {
-  document.addEventListener('keydown', handleKeyDown, true);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('keydown', handleKeyDown, true);
-});
 </script>
 
 <template>
-  <div class="overflow-menu">
-    <div class="overflow-menu-trigger">
-      <ToolbarButton :toolbar-item="overflowToolbarItem" @buttonClick="toggleOverflowMenu" />
-    </div>
-    <div v-if="isOverflowMenuOpened" class="overflow-menu_items" role="group">
+  <ToolbarDropdown
+    class="overflow-menu"
+    :close-on-escape="!hasOpenDropdown"
+    :has-open-child="hasOpenDropdown"
+    :content-style="{ width: '200px', padding: '4px 8px', fontFamily: props.uiFontFamily }"
+    :options="[]"
+    placement="bottom-end"
+    :show="isOverflowMenuOpened"
+    @update:show="setOverflowMenuOpen"
+    :menu-props="() => ({ role: 'group', class: ['overflow-menu_items', 'sd-toolbar-overflow-menu'] })"
+  >
+    <template #trigger>
+      <ToolbarButton :toolbar-item="overflowToolbarItem" />
+    </template>
+    <template #menu>
       <ButtonGroup
         class="superdoc-toolbar-overflow"
         :toolbar-items="overflowItems"
+        :ui-font-family="props.uiFontFamily"
         from-overflow
         @command="handleCommand"
         @dropdown-update-show="hasOpenDropdown = $event"
       />
-    </div>
-  </div>
+    </template>
+  </ToolbarDropdown>
 </template>
 
 <style lang="postcss" scoped>
-.overflow-menu {
-  position: relative;
-
-  &_items {
-    position: absolute;
-    width: 200px;
-    top: calc(100% + 3px);
-    right: 0;
-    padding: 4px 8px;
-    background-color: var(--sd-ui-dropdown-bg, #fff);
-    border-radius: var(--sd-ui-radius, 6px);
-    z-index: 100;
-    box-shadow: var(--sd-ui-dropdown-shadow, 0 8px 24px rgba(0, 0, 0, 0.16));
-    box-sizing: border-box;
-  }
-}
-
 .superdoc-toolbar-overflow {
   min-width: auto !important;
   max-width: 200px;
   flex-wrap: wrap;
-}
-
-@media (max-width: 300px) {
-  .overflow-menu_items {
-    right: auto;
-    left: 0;
-    transform: translateX(-50%);
-  }
 }
 </style>

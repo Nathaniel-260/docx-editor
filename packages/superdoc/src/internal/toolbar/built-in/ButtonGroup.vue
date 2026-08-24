@@ -417,7 +417,7 @@ const handleDocumentPointerDown = (event) => {
 
   // Dropdown content is teleported outside the toolbar group.
   // Treat menu clicks as "inside" so option clicks do not close before selection.
-  if (target.closest('.sd-toolbar-dropdown-menu')) return;
+  if (target.closest('[data-sd-part="dropdown-menu"]')) return;
   if (buttonGroupRef.value?.contains(target)) return;
 
   closeDropdowns();
@@ -579,6 +579,7 @@ onBeforeUnmount(() => {
       <OverflowMenu
         v-if="isOverflow(item) && overflowItems.length"
         :toolbar-item="item"
+        :ui-font-family="props.uiFontFamily"
         @buttonClick="handleToolbarButtonClick(item)"
         :overflow-items="overflowItems"
         @close="closeDropdowns"
