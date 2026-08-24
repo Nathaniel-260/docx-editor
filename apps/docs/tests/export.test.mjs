@@ -30,7 +30,7 @@ const routes = [
   ['editor/built-in-ui/overview/index.html', 'Use the built-in UI'],
   ['editor/built-in-ui/configure-the-toolbar/index.html', 'Configure the built-in toolbar'],
   ['editor/built-in-ui/comments/index.html', 'Add comments to the Editor'],
-  ['editor/built-in-ui/search-and-replace/index.html', 'Find and replace in the built-in UI'],
+  ['editor/built-in-ui/search-and-replace/index.html', 'Search and replace document text'],
   ['editor/built-in-ui/links-and-context-menus/index.html', 'Links and context menus'],
   ['editor/built-in-ui/structured-content/index.html', 'Work with structured content'],
   ['editor/built-in-ui/responsive-layout/index.html', 'Build a responsive Editor layout'],
@@ -313,6 +313,11 @@ test('exports the sample NDA document', async () => {
 
 test('exports the editor quickstart sample document', async () => {
   const fixture = await stat(new URL('../out/fixtures/getting-started.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
+test('exports the ten-page search sample document', async () => {
+  const fixture = await stat(new URL('../out/fixtures/search-sample.docx', import.meta.url));
   assert.ok(fixture.size > 0);
 });
 
@@ -620,6 +625,11 @@ test('exports built-in and custom search without duplicating Document API querie
 
   assert.match(builtIn, /search: true/);
   assert.match(builtIn, /browser keeps its native page search shortcut/);
+  assert.match(builtIn, /\*\*React — `src\/App\.tsx`\*\*/);
+  assert.match(builtIn, /Search remains available in Viewing, but replace controls are hidden/);
+  assert.match(builtIn, /41 case-insensitive `Client` matches/);
+  assert.match(builtIn, /changing it reloads the current DOCX and resets the active search/);
+  assert.match(builtIn, /replaceEnabled: false/);
   assert.match(customUI, /ui\.search\.observe\(render\)/);
   assert.match(customUI, /await ui\.search\.replaceAll\(replacement\.value\)/);
   assert.match(customUI, /\[Document API queries\]\(\/document-api\/query-content\)/);

@@ -1117,6 +1117,25 @@
   background: var(--sd-canvas);
 }
 
+.sd-editor-demo-built-in-toolbar {
+  min-height: 3rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--sd-border-soft);
+  background: var(--sd-surface);
+}
+
+.sd-editor-demo[data-preset='search'] {
+  --sd-ui-text: #202124;
+  --sd-ui-text-muted: #5f6368;
+  --sd-ui-text-disabled: #9aa0a6;
+  --sd-ui-bg: #ffffff;
+  --sd-ui-border: #dadce0;
+  --sd-ui-action: #1355ff;
+  --sd-ui-action-hover: #0f44cc;
+  --sd-ui-toolbar-bg: #ffffff;
+  --sd-ui-toolbar-button-text: #47484a;
+}
+
 .sd-editor-demo-toolbar-group {
   display: flex;
   gap: 0.2rem;
@@ -1224,16 +1243,21 @@
   font-size: 0.6875rem;
 }
 
-.sd-editor-demo:fullscreen {
+.sd-editor-demo[data-fullscreen='true'] {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
   display: flex;
+  width: 100vw;
+  height: 100vh;
   flex-direction: column;
   border: 0;
   border-radius: 0;
   background: var(--sd-canvas);
 }
 
-.sd-editor-demo:fullscreen .sd-editor-demo-preview,
-.sd-editor-demo:fullscreen .sd-editor-preview-content,
+.sd-editor-demo[data-fullscreen='true'] .sd-editor-demo-preview,
+.sd-editor-demo[data-fullscreen='true'] .sd-editor-preview-content,
 .sd-custom-bold-demo:fullscreen .sd-custom-bold-demo-preview,
 .sd-custom-bold-demo:fullscreen .sd-editor-preview-content {
   display: flex;
@@ -1243,14 +1267,14 @@
   max-height: none;
 }
 
-.sd-editor-demo:fullscreen .sd-editor-preview-toggle,
-.sd-editor-demo:fullscreen .sd-editor-preview-fade,
+.sd-editor-demo[data-fullscreen='true'] .sd-editor-preview-toggle,
+.sd-editor-demo[data-fullscreen='true'] .sd-editor-preview-fade,
 .sd-custom-bold-demo:fullscreen .sd-editor-preview-toggle,
 .sd-custom-bold-demo:fullscreen .sd-editor-preview-fade {
   display: none;
 }
 
-.sd-editor-demo:fullscreen .sd-editor-demo-surface {
+.sd-editor-demo[data-fullscreen='true'] .sd-editor-demo-surface {
   height: auto;
   min-height: 0;
   flex: 1;
@@ -3729,6 +3753,33 @@ figure.shiki span[style*='--shiki-dark'] {
   color: var(--sd-text-primary);
 }
 
+.sd-editor-demo-header .sd-editor-demo-search-toggle {
+  min-height: 2.375rem;
+  padding-inline: 0.75rem;
+  border-color: var(--sd-border);
+  background: var(--sd-surface);
+  color: var(--sd-text-secondary);
+  white-space: nowrap;
+}
+
+.sd-editor-demo-header .sd-editor-demo-search-toggle:hover:not(:disabled) {
+  border-color: var(--sd-blue-300);
+  background: var(--sd-blue-50);
+  color: var(--sd-text-primary);
+}
+
+.sd-editor-demo-header .sd-editor-demo-search-toggle[aria-pressed='true'] {
+  border-color: var(--sd-blue-300);
+  background: var(--sd-blue-50);
+  color: var(--sd-blue-600);
+}
+
+.dark .sd-editor-demo-header .sd-editor-demo-search-toggle:hover:not(:disabled),
+.dark .sd-editor-demo-header .sd-editor-demo-search-toggle[aria-pressed='true'] {
+  background: var(--color-fd-accent);
+  color: var(--sd-blue-300);
+}
+
 .sd-editor-demo-mode-reset svg {
   width: 0.875rem;
   height: 0.875rem;
@@ -3819,6 +3870,11 @@ figure.shiki span[style*='--shiki-dark'] {
 
   .sd-editor-demo-header .sd-editor-demo-mode-reset {
     width: 2rem;
+  }
+
+  .sd-editor-demo-header .sd-editor-demo-search-toggle {
+    width: auto;
+    padding-inline: 0.6rem;
   }
 
   .sd-editor-demo-mode-footer {

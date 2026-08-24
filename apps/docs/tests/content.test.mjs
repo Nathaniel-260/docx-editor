@@ -17,6 +17,7 @@ const layoutUrl = new URL('../lib/layout.tsx', import.meta.url);
 const docsHomeUrl = new URL('../components/docs-home.tsx', import.meta.url);
 const builtInUiMetaUrl = new URL('../content/docs/editor/built-in-ui/meta.json', import.meta.url);
 const builtInUiMapUrl = new URL('../components/embeds/built-in-ui-map.tsx', import.meta.url);
+const editorDemoUrl = new URL('../components/embeds/editor-demo.tsx', import.meta.url);
 const docsComponentsCssUrl = new URL('../components/docs-components.css', import.meta.url);
 const pinnedV2MajorPackageInstall =
   /\b(?:pnpm add(?:\s+--global)?|npm (?:install|i|add)|yarn add|bun add)[^\n]*\s(?:superdoc|@superdoc\/[a-z0-9-]+)@(?:\^|~)?2(?:[.\w-]*)?(?=\s|$)/mu;
@@ -25,6 +26,7 @@ const focusedReactToolbarExampleUrl = new URL('../snippets/editor/react-focused-
 const toolbarStrategyDataUrl = new URL('../lib/toolbar-config-strategies.ts', import.meta.url);
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
+const reactBuiltInSearchExampleUrl = new URL('../snippets/editor/react-built-in-find-replace.tsx', import.meta.url);
 const documentApiReferenceModelUrl = new URL('../generated/document-api-reference.json', import.meta.url);
 const generatedProofingConfigUrl = new URL('../generated/proofing-config-reference.json', import.meta.url);
 const superdocCoreTypesUrl = new URL('../../../packages/superdoc/src/core/types/index.ts', import.meta.url);
@@ -82,7 +84,7 @@ const registeredComponents = new Set([
   'RuntimeExampleTabs',
   'ToolbarConfigStrategies',
 ]);
-const editorDemoPresets = new Set(['comments', 'document-modes', 'proofing', 'tracked-review']);
+const editorDemoPresets = new Set(['comments', 'document-modes', 'proofing', 'search', 'tracked-review']);
 
 async function collectMdxFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -288,6 +290,35 @@ test('the React comments example keeps restart-sensitive config identities stabl
   assert.match(example, /user=\{editorConfig\.user\}/u);
   assert.match(example, /ui=\{editorConfig\.ui\}/u);
   assert.doesNotMatch(example, /\b(?:user|ui)=\{\{/u);
+});
+
+test('the React search example enables the built-in search surface with stable config', async () => {
+  const example = await readFile(reactBuiltInSearchExampleUrl, 'utf8');
+
+  assert.match(example, /const editorConfig = \{/u);
+  assert.match(example, /search: true/u);
+  assert.match(example, /ui=\{editorConfig\.ui\}/u);
+  assert.doesNotMatch(example, /\bui=\{\{/u);
+});
+
+test('the Search editor demo keeps its focused toolbar and restart-safe replacement control', async () => {
+  const demo = await readFile(editorDemoUrl, 'utf8');
+
+  assert.match(demo, /groups: \{ left: \['search'\] \}/u);
+  assert.match(demo, /search: \{ replaceEnabled: initialReplaceEnabled \}/u);
+  assert.match(demo, /export\(\{ exportType: \['docx'\], triggerDownload: false \}\)/u);
+  assert.match(demo, /const currentDocumentMode = instance\.config\.documentMode/u);
+  assert.match(demo, /const hadMountedEditor = instanceRef\.current !== null/u);
+  assert.match(demo, /setState\(replacedEditor \|\| !hadMountedEditor \? 'error' : 'ready'\)/u);
+  assert.match(demo, /documentMode: currentDocumentMode,\s+replaceEnabled: !replaceEnabled,/u);
+  assert.match(
+    demo,
+    /setDemoInteractionBlocked\(true\)[\s\S]*Promise\.all\([\s\S]*finally \{\s+if \(mountedRef\.current && loadId === loadIdRef\.current\) setDemoInteractionBlocked\(false\);/u,
+  );
+  assert.match(demo, /setDemoInteractionBlocked\(true\)[\s\S]*instance\.export/u);
+  assert.match(demo, /retryMountRef\.current = retry/u);
+  assert.match(demo, /document\.documentElement\.requestFullscreen\(\)/u);
+  assert.match(demo, /`Replacement: \$\{replaceEnabled \? 'On' : 'Off'\}`/u);
 });
 
 test('the generated reference model mirrors the canonical operation inventory', async () => {

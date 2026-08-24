@@ -10,7 +10,7 @@ import { loadRuntime, loadUIModule, type SuperDocInstance } from './superdoc-run
 const zoomStep = 10;
 const initialZoom = { max: 200, min: 10, mode: 'manual', value: 100 } satisfies ZoomSlice;
 
-type EditorDemoPreset = 'comments' | 'document-modes' | 'proofing' | 'tracked-review';
+type EditorDemoPreset = 'comments' | 'document-modes' | 'proofing' | 'search' | 'tracked-review';
 
 type EditorDemoProps = {
   allowLocalFile?: boolean;
@@ -20,6 +20,16 @@ type EditorDemoProps = {
 };
 
 type DemoState = 'idle' | 'loading' | 'ready' | 'error';
+
+type MountDocumentOptions = {
+  documentMode?: DocumentMode;
+  replaceEnabled?: boolean;
+};
+
+type RetryMount = {
+  getFile: () => Promise<File>;
+  options: MountDocumentOptions;
+};
 
 const documentModes = [
   { id: 'editing', label: 'Editing', note: 'Typing changes the document directly.' },
@@ -94,8 +104,10 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loadIdRef = useRef(0);
   const mountRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<SuperDocInstance | null>(null);
   const mountedRef = useRef(true);
+  const retryMountRef = useRef<RetryMount | null>(null);
   const fitActiveRef = useRef(true);
   const fitCleanupRef = useRef<(() => void) | null>(null);
   const fitToWidthRef = useRef<(() => void) | null>(null);
@@ -110,7 +122,10 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const [fitActive, setFitActive] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [modeResetBusy, setModeResetBusy] = useState(false);
+  const [replaceEnabled, setReplaceEnabled] = useState(true);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [searchConfigBusy, setSearchConfigBusy] = useState(false);
+  const [searchConfigError, setSearchConfigError] = useState<string | null>(null);
   const [state, setState] = useState<DemoState>('idle');
   const [trackedChangeCount, setTrackedChangeCount] = useState(0);
   const [zoom, setZoom] = useState<ZoomSlice>(initialZoom);
@@ -125,6 +140,18 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     uiRef.current = null;
     instanceRef.current?.destroy();
     instanceRef.current = null;
+  }
+
+  function setDemoInteractionBlocked(blocked: boolean) {
+    const surfaces = [toolbarRef.current, mountRef.current].filter(
+      (surface): surface is HTMLDivElement => surface !== null,
+    );
+    if (blocked && surfaces.some((surface) => surface.contains(document.activeElement))) {
+      (document.activeElement as HTMLElement | null)?.blur();
+    }
+    surfaces.forEach((surface) => {
+      surface.inert = blocked;
+    });
   }
 
   function connectFitToWidth(instance: SuperDocInstance) {
@@ -161,7 +188,12 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   useEffect(() => {
     mountedRef.current = true;
 
-    const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === demoRef.current);
+    const handleFullscreenChange = () => {
+      const active =
+        document.fullscreenElement === document.documentElement && demoRef.current?.dataset.fullscreen === 'true';
+      if (!active && demoRef.current) delete demoRef.current.dataset.fullscreen;
+      setIsFullscreen(active);
+    };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
 
     return () => {
@@ -198,23 +230,17 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     uiCleanupRef.current = () => cleanup.forEach((unsubscribe) => unsubscribe());
   }
 
-  async function mountDocument(getFile?: () => Promise<File>) {
-    if (!mountRef.current || state === 'loading') return;
+  async function mountDocument(getFile?: () => Promise<File>, options: MountDocumentOptions = {}) {
+    if (!mountRef.current || state === 'loading') return false;
 
     const loadId = ++loadIdRef.current;
-    destroyEditor();
-    setActiveChangeId(null);
-    setCommandStates(initialCommandStates());
-    const initialDocumentMode = preset === 'tracked-review' ? 'suggesting' : 'editing';
-    setDocumentMode(initialDocumentMode);
-    fitActiveRef.current = true;
-    setFitActive(true);
-    setModeResetBusy(false);
-    setReviewBusy(false);
-    setTrackedChangeCount(0);
-    zoomRef.current = initialZoom;
-    setZoom(initialZoom);
+    const hadMountedEditor = instanceRef.current !== null;
+    const initialDocumentMode = options.documentMode ?? (preset === 'tracked-review' ? 'suggesting' : 'editing');
+    const initialReplaceEnabled = options.replaceEnabled ?? true;
+    setDemoInteractionBlocked(true);
+    setSearchConfigError(null);
     setState('loading');
+    let replacedEditor = false;
 
     const markError = () => {
       if (!mountedRef.current || loadId !== loadIdRef.current) return;
@@ -227,7 +253,23 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
 
     try {
       const [file, SuperDoc, uiModule] = await Promise.all([getFile?.(), loadRuntime(), loadUIModule()]);
-      if (!mountedRef.current || !mountRef.current || loadId !== loadIdRef.current) return;
+      if (!mountedRef.current || !mountRef.current || loadId !== loadIdRef.current) return false;
+      const searchToolbar = toolbarRef.current;
+      if (preset === 'search' && !searchToolbar) throw new Error('The search toolbar mount is unavailable.');
+
+      destroyEditor();
+      replacedEditor = true;
+      setActiveChangeId(null);
+      setCommandStates(initialCommandStates());
+      setDocumentMode(initialDocumentMode);
+      fitActiveRef.current = true;
+      setFitActive(true);
+      setModeResetBusy(false);
+      setReplaceEnabled(initialReplaceEnabled);
+      setReviewBusy(false);
+      setTrackedChangeCount(0);
+      zoomRef.current = initialZoom;
+      setZoom(initialZoom);
 
       let instance: SuperDocInstance | null = null;
       instance = new SuperDoc({
@@ -238,6 +280,16 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
         ui: {
           comments: { displayMode: preset === 'comments' ? 'auto' : 'inline' },
           loading: false,
+          ...(preset === 'search'
+            ? {
+                search: { replaceEnabled: initialReplaceEnabled },
+                toolbar: {
+                  container: searchToolbar!,
+                  groups: { left: ['search'] },
+                  responsiveToContainer: true,
+                },
+              }
+            : {}),
         },
         zoom: {
           mode: 'manual',
@@ -252,6 +304,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           if (preset === 'proofing') {
             void readySuperDoc.activeEditor?.doc?.insert({ value: 'Proofing finds mispelled words as you type.' });
           }
+          retryMountRef.current = null;
           setState('ready');
           if (instance) connectFitToWidth(instance);
         },
@@ -264,10 +317,14 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       const ui = uiModule.createSuperDocUI({ superdoc: instance });
       uiRef.current = ui;
       connectToolbar(ui);
+      return true;
     } catch {
-      if (loadId !== loadIdRef.current) return;
-      destroyEditor();
-      if (mountedRef.current) setState('error');
+      if (loadId !== loadIdRef.current) return false;
+      if (replacedEditor) destroyEditor();
+      if (mountedRef.current) setState(replacedEditor || !hadMountedEditor ? 'error' : 'ready');
+      return false;
+    } finally {
+      if (mountedRef.current && loadId === loadIdRef.current) setDemoInteractionBlocked(false);
     }
   }
 
@@ -284,7 +341,8 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   }
 
   function loadDemo() {
-    void mountDocument(fixture ? getFixtureFile : undefined);
+    const retry = retryMountRef.current;
+    void mountDocument(retry?.getFile ?? (fixture ? getFixtureFile : undefined), retry?.options);
   }
 
   useEffect(() => {
@@ -327,6 +385,42 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     const instance = instanceRef.current;
     instance?.setDocumentMode(mode);
     setDocumentMode(mode);
+  }
+
+  async function toggleSearchReplacement() {
+    const instance = instanceRef.current;
+    if (!instance || preset !== 'search' || state !== 'ready' || searchConfigBusy) return;
+
+    setDemoInteractionBlocked(true);
+    setSearchConfigBusy(true);
+    setSearchConfigError(null);
+    try {
+      const currentDocumentMode = instance.config.documentMode;
+      const exported = await instance.export({ exportType: ['docx'], triggerDownload: false });
+      if (!(exported instanceof Blob)) throw new Error('SuperDoc did not return the current DOCX.');
+
+      const fileName = fixture?.split('/').at(-1) ?? 'document.docx';
+      const currentFile = new File([exported], fileName, {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+      const retry = {
+        getFile: async () => currentFile,
+        options: {
+          documentMode: currentDocumentMode,
+          replaceEnabled: !replaceEnabled,
+        },
+      } satisfies RetryMount;
+      retryMountRef.current = retry;
+      const mounted = await mountDocument(retry.getFile, retry.options);
+      if (!mounted) throw new Error('SuperDoc could not update the search configuration.');
+    } catch {
+      if (mountedRef.current) {
+        setSearchConfigError('Replacement could not be updated. Try again.');
+      }
+    } finally {
+      setDemoInteractionBlocked(false);
+      if (mountedRef.current) setSearchConfigBusy(false);
+    }
   }
 
   async function resetModesDemo() {
@@ -390,9 +484,19 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   }
 
   async function toggleFullscreen() {
-    if (!demoRef.current) return;
-    if (document.fullscreenElement === demoRef.current) await document.exitFullscreen();
-    else await demoRef.current.requestFullscreen();
+    const demo = demoRef.current;
+    if (!demo) return;
+    if (document.fullscreenElement === document.documentElement && demo.dataset.fullscreen === 'true') {
+      await document.exitFullscreen();
+      return;
+    }
+
+    demo.dataset.fullscreen = 'true';
+    try {
+      await document.documentElement.requestFullscreen();
+    } catch {
+      delete demo.dataset.fullscreen;
+    }
   }
 
   const hasActiveChange = Boolean(activeChangeId) && !reviewBusy;
@@ -404,7 +508,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       ref={demoRef}
       className='sd-editor-demo'
       aria-label={title}
-      data-document-mode={preset === 'document-modes' ? documentMode : undefined}
+      data-document-mode={preset === 'document-modes' || preset === 'search' ? documentMode : undefined}
       data-preset={preset}
       data-state={state}
     >
@@ -419,11 +523,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                   ? 'Type “mispelled”, “workng”, or “teh”, then right-click its underline.'
                   : preset === 'comments'
                     ? 'Open the existing thread, or select text to start another.'
-                    : 'Loads the sample DOCX in suggesting mode.'}
+                    : preset === 'search'
+                      ? 'Search for “Client”, then replace one result with “Customer”.'
+                      : 'Loads the sample DOCX in suggesting mode.'}
             </span>
           ) : null}
         </div>
-        {preset === 'document-modes' ? (
+        {preset === 'document-modes' || preset === 'search' ? (
           <div className='sd-editor-demo-mode-header-actions'>
             {state === 'error' ? (
               <button type='button' onClick={loadDemo}>
@@ -432,28 +538,43 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
             ) : (
               <>
                 <div className='sd-editor-demo-mode-switcher' role='group' aria-label='Document mode'>
-                  {documentModes.map((mode) => (
-                    <button
-                      key={mode.id}
-                      type='button'
-                      aria-pressed={documentMode === mode.id}
-                      disabled={state !== 'ready' || modeResetBusy}
-                      onClick={() => changeDocumentMode(mode.id)}
-                    >
-                      {mode.label}
-                    </button>
-                  ))}
+                  {documentModes
+                    .filter((mode) => preset === 'document-modes' || mode.id !== 'suggesting')
+                    .map((mode) => (
+                      <button
+                        key={mode.id}
+                        type='button'
+                        aria-pressed={documentMode === mode.id}
+                        disabled={state !== 'ready' || modeResetBusy || searchConfigBusy}
+                        onClick={() => changeDocumentMode(mode.id)}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
                 </div>
-                <button
-                  className='sd-editor-demo-mode-reset'
-                  type='button'
-                  aria-label='Reset the sample document'
-                  title='Reset the sample document'
-                  disabled={state !== 'ready' || modeResetBusy}
-                  onClick={() => void resetModesDemo()}
-                >
-                  <RotateCcw aria-hidden='true' />
-                </button>
+                {preset === 'search' ? (
+                  <button
+                    className='sd-editor-demo-search-toggle'
+                    type='button'
+                    aria-label={`${replaceEnabled ? 'Disable' : 'Enable'} replacement`}
+                    aria-pressed={replaceEnabled}
+                    disabled={state !== 'ready' || searchConfigBusy}
+                    onClick={() => void toggleSearchReplacement()}
+                  >
+                    {searchConfigBusy ? 'Updating…' : `Replacement: ${replaceEnabled ? 'On' : 'Off'}`}
+                  </button>
+                ) : (
+                  <button
+                    className='sd-editor-demo-mode-reset'
+                    type='button'
+                    aria-label='Reset the sample document'
+                    title='Reset the sample document'
+                    disabled={state !== 'ready' || modeResetBusy}
+                    onClick={() => void resetModesDemo()}
+                  >
+                    <RotateCcw aria-hidden='true' />
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -504,10 +625,31 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                 ? 'The proofing editor could not load. Try again.'
                 : preset === 'comments'
                   ? 'The comments editor could not load. Try again.'
-                  : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
+                  : preset === 'search'
+                    ? 'The search editor could not load. Try again.'
+                    : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
           </p>
         ) : null}
-        <div className='sd-editor-demo-toolbar' hidden={state === 'idle'} aria-label='Editor controls'>
+        {searchConfigError ? (
+          <p className='sd-editor-demo-error' role='alert'>
+            {searchConfigError}
+          </p>
+        ) : null}
+        {preset === 'search' ? (
+          <div
+            ref={toolbarRef}
+            className='sd-editor-demo-built-in-toolbar'
+            hidden={state === 'idle'}
+            aria-label='Built-in Editor toolbar'
+            aria-busy={searchConfigBusy}
+            inert={searchConfigBusy}
+          />
+        ) : null}
+        <div
+          className='sd-editor-demo-toolbar'
+          hidden={state === 'idle' || preset === 'search'}
+          aria-label='Editor controls'
+        >
           <div className='sd-editor-demo-toolbar-group sd-editor-demo-edit-controls' role='group' aria-label='Edit'>
             <button
               type='button'
@@ -611,6 +753,8 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           ref={mountRef}
           className='sd-editor-demo-surface'
           hidden={state === 'idle'}
+          aria-busy={searchConfigBusy}
+          inert={searchConfigBusy}
           tabIndex={preset === 'document-modes' && documentMode === 'viewing' ? -1 : undefined}
           onPointerDownCapture={() => {
             if (preset === 'document-modes' && documentMode === 'viewing') {
@@ -630,7 +774,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                   ? 'The proofing editor is loading.'
                   : preset === 'comments'
                     ? 'The comments editor is loading.'
-                    : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
+                    : preset === 'search'
+                      ? 'The search editor is loading.'
+                      : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
             </p>
           </div>
         ) : null}

@@ -230,3 +230,27 @@ test('the comments fixture keeps one focused review thread', async () => {
     assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
   }
 });
+
+test('the search fixture provides ten clean pages with deliberate query results', async () => {
+  const { bytes, zip, document, core, app } = await openFixture('search-sample.docx');
+  const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');
+
+  assert.equal(firstArchiveEntry(bytes), '[Content_Types].xml');
+  assert.ok(zip.file('word/document.xml'), 'must contain a main document part');
+  assert.ok(zip.file('word/styles.xml'), 'must contain Word styles');
+  assert.equal(document.match(/<w:br w:type="page"\/>/g)?.length, 9, 'must contain ten explicit pages');
+  assert.equal(visibleText.match(/Phase \d{2}/g)?.length, 10, 'must contain ten phase headings');
+  assert.equal(visibleText.match(/\bClient\b/g)?.length, 31, 'must contain 31 case-sensitive Client matches');
+  assert.equal(visibleText.match(/\bclient\b/g)?.length, 10, 'must contain 10 lowercase client matches');
+  assert.equal(visibleText.match(/\bclient\b/gi)?.length, 41, 'must contain 41 case-insensitive client matches');
+  assert.doesNotMatch(visibleText, /Customer/);
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+  assert.equal(zip.file('word/comments.xml'), null, 'must not ship comments');
+
+  for (const element of REVISION_ELEMENTS) {
+    assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
+  }
+});

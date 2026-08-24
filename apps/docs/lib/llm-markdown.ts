@@ -178,6 +178,9 @@ export function renderLLMMarkdown(markdown: string) {
         preset === 'comments'
           ? 'Comments: open the existing thread, reply, resolve or reopen it, or select text to start another thread.'
           : undefined,
+        preset === 'search'
+          ? 'Search: the ten-page fixture has 41 case-insensitive `Client` matches, 31 case-sensitive matches, and 10 matches for `Phase \\d{2}`. Replacement can be enabled or disabled; changing it reloads the current DOCX and resets the active search. Search remains available in Viewing, but replace controls are hidden.'
+          : undefined,
         preset === 'tracked-review' ? 'Tracked-change review: accept or reject the sample change.' : undefined,
         localFile ? 'Local DOCX selection: enabled. Files remain in the browser.' : 'Local DOCX selection: disabled.',
       ].filter((value): value is string => Boolean(value));

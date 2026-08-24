@@ -1,45 +1,71 @@
 ---
-title: Find and replace in the built-in UI
+title: Search and replace document text
 navTitle: Search
-description: Enable SuperDoc's find surface, navigate visible matches, and replace document text.
+description: Enable built-in search, move through matches, and replace text when editing is allowed.
 ---
 
-The built-in find surface searches the open document, highlights visible matches, and moves the Editor to the active result. In editable modes it can also replace the current match or every match in the session.
+Use the built-in search surface to find text across the open document without leaving the Editor.
 
-## Enable the find surface
+## Try search and replace
 
-Add toolbar and Editor containers:
+Expand the Editor and open Search from the toolbar. The sample has ten pages built for these checks:
+
+1. Search for `Client` and confirm that there are 41 matches.
+2. Turn on Match case and confirm that the count changes to 31.
+3. Turn on regular expressions, then search for `Phase \d{2}` and confirm that there are 10 matches.
+4. Search for `Client` again, then replace one result with `Customer`.
+
+<EditorDemo fixture='/fixtures/search-sample.docx' preset='search' title='Search across ten pages' />
+
+Turn Replacement off above. Search remains available, but the replacement row disappears. The demo reloads the current
+document because `replaceEnabled` is a startup option; document edits remain, while the active search resets.
+
+Switch to Viewing after the search. The matches and navigation controls remain available, while the replace controls
+disappear because Viewing cannot change the document.
+
+## Enable built-in search
+
+Continue with `/sample.docx` from the [Quickstart](/editor/quickstart), then enable the search surface:
+
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../../snippets/editor/built-in-find-replace.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/App.tsx' framework='React'>
+    <include>../../../../snippets/editor/react-built-in-find-replace.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
+
+Vanilla also needs separate toolbar and Editor mounts:
 
 <include>../../../../snippets/editor/built-in-find-replace.html</include>
 
-Copy the [tracked-changes fixture](/fixtures/tracked-changes.docx) to your app's public directory as `contract.docx`, or use another DOCX.
+`ui: { search: true }` connects the toolbar Search button and `Ctrl+F` or `Command+F` to the same document search.
+Without it, the browser keeps its native page search shortcut.
 
-Enable the surface explicitly:
+Open Search with both methods. Search for `Client` and confirm that each method shows the same match count and active
+result.
 
-<include>../../../../snippets/editor/built-in-find-replace.ts</include>
+## Choose whether people can replace text
 
-`ui: { search: true }` connects the toolbar Search button and `Ctrl+F` or `Command+F` to SuperDoc's document-aware find surface. Without that setting, the browser keeps its native page search shortcut.
+Replacement is enabled when the document can be edited. To provide search without replacement in every document mode,
+set `replaceEnabled: false`:
 
-The [search example](https://go.superdoc.dev/examples/search) is a complete project with this configuration and a real DOCX behavior test.
+```ts
+const config = {
+  ui: {
+    search: {
+      replaceEnabled: false,
+    },
+  },
+};
+```
 
-## Find and navigate matches
+Search also supports match case and regular expressions. Invalid regular expressions show an error instead of running a
+partial search.
 
-Enter a query, then use the previous and next controls to move through the document. The surface keeps the active result visible across paginated and virtualized pages.
+Search highlights and the active match are temporary Editor state. Replacements change the document, so use the save
+flow from [Load and save](/editor/load-and-save-documents) to persist them.
 
-Match-case and regular-expression controls appear when the active v2 search host supports them. An invalid regular expression produces an inline error instead of running a partial search.
-
-## Replace only when editing is allowed
-
-Replace controls are available in editing and suggesting modes when the current search session can enumerate and change its matches. They are hidden in viewing or read-only sessions.
-
-Replacing text changes the DOCX. Export or save the document after the workflow. Search highlights and the active match are temporary Editor state and are not written into the file.
-
-## Verify the workflow
-
-1. Open the find surface from the toolbar and from the keyboard shortcut.
-2. Search for text that appears more than once.
-3. Navigate across matches and pages.
-4. Replace one match, then search again.
-5. Switch to viewing mode and confirm that find is still available but replace is not.
-
-Use [custom search controls](/editor/custom-ui/search) when the product needs to own the search layout. Use [Document API queries](/document-api/query-content) when code needs mutation-ready document targets instead of a visual search session.
+Use [custom search controls](/editor/custom-ui/search) when your application should render the search surface. Use
+[Document API queries](/document-api/query-content) when code needs document targets instead of a visual search session.
