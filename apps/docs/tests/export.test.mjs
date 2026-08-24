@@ -383,7 +383,7 @@ test('exports the document modes guide with the shared Editor demo frame', async
   assert.doesNotMatch(article, /sd-editor-demo-mode-footer/);
   assert.doesNotMatch(article, /Run the test edit/);
   assert.match(markdown, /Editing changes the document directly/);
-  assert.match(markdown, /original, markup, or final document/);
+  assert.match(markdown, /use Changes to choose Original, Markup, or Final for the same proposal/);
   assert.match(markdown, /trackedChanges: 'markup'/);
   assert.match(markdown, /superdoc\.setViewingOptions/);
   assert.match(markdown, /`original`[^\n]*`30 days`, without change marks/u);

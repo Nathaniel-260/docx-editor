@@ -1690,8 +1690,12 @@
   }
 
   .sd-editor-demo-mode-controls {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sd-editor-demo-mode-controls .sd-editor-demo-config-reset {
+    align-self: flex-end;
   }
 
   .sd-editor-demo-config-bar > .sd-editor-demo-view-controls {

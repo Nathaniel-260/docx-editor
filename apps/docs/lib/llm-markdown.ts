@@ -170,7 +170,7 @@ export function renderLLMMarkdown(markdown: string) {
         fixture ? `Sample: [open the fixture](${fixture}).` : undefined,
         preset ? `Preset: \`${preset}\`.` : undefined,
         preset === 'document-modes'
-          ? 'Try the same edit in each mode. Editing changes the document directly and is the default. Suggesting records a tracked change. Viewing blocks the edit and can show the original, markup, or final document.'
+          ? 'Try the same edit in each mode. Editing changes the document directly and is the default. Suggesting records a tracked change. After making a suggestion, switch to Viewing and use Changes to choose Original, Markup, or Final for the same proposal.'
           : undefined,
         preset === 'proofing'
           ? 'Proofing: type `mispelled`, `workng`, or `teh`, then right-click the underline.'

@@ -2,7 +2,7 @@
 
 import { Bold, Check, Expand, Italic, Minus, Plus, RotateCcw, Shrink, Underline, Undo2, X } from 'lucide-react';
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
-import type { Config, DocumentMode } from 'superdoc';
+import type { Config, DocumentMode, ViewingTrackedChangesMode } from 'superdoc';
 import type { CommandState, SuperDocUI, ZoomSlice } from 'superdoc/ui';
 import {
   commentsDemoLayouts,
@@ -191,8 +191,14 @@ function DemoViewControls({
 const documentModes = [
   { id: 'editing', label: 'Editing', note: 'Typing changes the document directly.' },
   { id: 'suggesting', label: 'Suggesting', note: 'Typing is recorded as a tracked change.' },
-  { id: 'viewing', label: 'Viewing', note: 'Read-only — typing is blocked.' },
+  { id: 'viewing', label: 'Viewing', note: 'Read-only — compare the original, markup, or final result.' },
 ] as const satisfies ReadonlyArray<{ id: DocumentMode; label: string; note: string }>;
+
+const viewingTrackedChangesModes = [
+  { id: 'original', label: 'Original' },
+  { id: 'markup', label: 'Markup' },
+  { id: 'final', label: 'Final' },
+] as const satisfies readonly BuiltInDemoChoice<ViewingTrackedChangesMode>[];
 
 const searchDocumentModes = [
   { id: 'editing', label: 'Editing' },
@@ -294,6 +300,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const [state, setState] = useState<DemoState>('idle');
   const [toolbarStrategy, setToolbarStrategy] = useState<ToolbarDemoStrategy>('groups');
   const [trackedChangeCount, setTrackedChangeCount] = useState(0);
+  const [viewingTrackedChanges, setViewingTrackedChanges] = useState<ViewingTrackedChangesMode>('original');
   const [zoom, setZoom] = useState<ZoomSlice>(initialZoom);
 
   function destroyEditor() {
@@ -444,6 +451,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       setReviewBusy(false);
       setToolbarStrategy(initialToolbarStrategy);
       setTrackedChangeCount(0);
+      setViewingTrackedChanges('original');
       zoomRef.current = initialZoom;
       setZoom(initialZoom);
 
@@ -470,6 +478,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
         },
         interaction:
           preset === 'comments' ? { comments: getCommentsInteractionOptions(initialCommentsLevel) } : undefined,
+        viewing: preset === 'document-modes' ? { trackedChanges: 'original' } : undefined,
         zoom: {
           mode: 'manual',
           fitWidth: { min: initialZoom.min, max: initialZoom.max },
@@ -573,6 +582,14 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     const instance = instanceRef.current;
     instance?.setDocumentMode(mode);
     setDocumentMode(mode);
+  }
+
+  function changeViewingTrackedChanges(mode: ViewingTrackedChangesMode) {
+    const instance = instanceRef.current;
+    if (!instance || preset !== 'document-modes' || documentMode !== 'viewing' || state !== 'ready') return;
+
+    instance.setViewingOptions({ trackedChanges: mode });
+    setViewingTrackedChanges(mode);
   }
 
   async function reconfigureDemo(options: Partial<MountDocumentOptions>) {
@@ -788,6 +805,15 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                 options={documentModes}
                 value={documentMode}
               />
+              {documentMode === 'viewing' ? (
+                <DemoConfigGroup
+                  disabled={state !== 'ready' || modeResetBusy}
+                  label='Changes'
+                  onChange={changeViewingTrackedChanges}
+                  options={viewingTrackedChangesModes}
+                  value={viewingTrackedChanges}
+                />
+              ) : null}
               <button
                 className='sd-editor-demo-config-reset'
                 type='button'

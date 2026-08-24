@@ -323,6 +323,8 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /finally \{\s+setDemoInteractionBlocked\(false\)/u);
   assert.match(demo, /onZoomChange: \(\{ zoom: nextZoom \}\)/u);
   assert.match(demo, /label='Mode'[\s\S]*options=\{documentModes\}/u);
+  assert.match(demo, /documentMode === 'viewing'[\s\S]*label='Changes'[\s\S]*options=\{viewingTrackedChangesModes\}/u);
+  assert.match(demo, /instance\.setViewingOptions\(\{ trackedChanges: mode \}\)/u);
   assert.match(demo, /className='sd-editor-demo-config-reset'/u);
   assert.doesNotMatch(demo, /sd-editor-demo-mode-(?:header|footer|switcher)/u);
   assert.match(demo, /label='Toolbar'[\s\S]*options=\{toolbarDemoStrategies\}/u);
