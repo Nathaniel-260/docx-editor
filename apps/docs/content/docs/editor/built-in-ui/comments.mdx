@@ -9,13 +9,17 @@ comments UI adapts to the Editor width.
 
 ## Try the comment workflow
 
-Expand the Editor and open the comment on `September 30, 2026`. Reply to it, resolve or reopen it, then select another
-phrase to start a new thread.
+Expand the Editor and find the existing comment anchored to `September 30, 2026`. Use the controls above the document to
+compare both configuration axes:
+
+1. Change **Layout** between Auto, Sidebar, and Inline to compare how the comment surface uses the Editor width.
+2. Change **Actions** between Read, Write, and Resolve to compare the maximum comment action the Editor allows.
 
 <EditorDemo fixture='/fixtures/comments-sample.docx' preset='comments' title='Try comments' />
 
-The demo changes only the document in this browser. Your application saves those changes by exporting the DOCX through
-the same flow you built in [Load and save](/editor/load-and-save-documents).
+Changing either configuration reloads the current DOCX because these are startup options. Thread changes remain; the
+open comment and selection reset. The demo changes only the document in this browser. Your application saves those
+changes by exporting the DOCX through the same flow you built in [Load and save](/editor/load-and-save-documents).
 
 ## Add the built-in comments UI
 

@@ -4,8 +4,22 @@ navTitle: Toolbar
 description: Show only the controls your workflow needs and keep them reachable as the Editor narrows.
 ---
 
-Continue with the `/sample.docx` project from the [Quickstart](/editor/quickstart). Build a focused toolbar with history,
-basic formatting, links, document mode, and zoom.
+Compare three ways to shape the built-in toolbar, then add the focused version to the `/sample.docx` project from the
+[Quickstart](/editor/quickstart).
+
+## Try the toolbar configurations
+
+Expand the Editor and switch between the three configurations:
+
+1. **Group** shows only the controls named in `groups`, placed in the left, center, and right regions.
+2. **Remove** starts with the default toolbar and removes Bold and Italic with `excludeItems`.
+3. **Add** keeps the grouped toolbar and appends an **Add note** action with `customButtons`. Place the caret in the
+   document, then run it to insert `Review note: `.
+
+<EditorDemo fixture='/fixtures/formatting-sample.docx' preset='toolbar' title='Shape the built-in toolbar' />
+
+Switching configurations reloads the current DOCX because toolbar composition is a startup option. Edits and document
+mode remain; the current selection resets.
 
 ## Build the focused toolbar
 
@@ -24,24 +38,22 @@ React's `SuperDocEditor` creates the toolbar mount for you. Add the focused conf
   </FrameworkExample>
 </FrameworkExampleTabs>
 
-Reload the application. The toolbar should contain nine controls across left, center, and right regions. Select text and
+Reload the application. The toolbar should contain eight configured controls across left, center, and right regions. Select text and
 choose **Bold** to confirm that the control follows the current selection.
 
-## Choose the controls
+## Choose a strategy
 
-Choose a tab to compare the three strategies. Each toolbar is a schematic preview. The code shows only the shared
-`ui.toolbar` options, so keep the framework-specific mount from the example above.
+Use `groups` when your workflow needs a focused allowlist. Use `excludeItems` when the default toolbar already fits and
+only a few controls should be removed. Use `customButtons` to add application actions that run through SuperDoc's command
+context.
 
-<ToolbarConfigStrategies />
-
-Use one strategy. Combining a long `groups` allowlist with a long `excludeItems` list makes the visible result harder to
-predict.
+Keep the result predictable. Avoid combining a long `groups` allowlist with a long `excludeItems` list.
 
 ## Check the narrow layout
 
 `responsiveToContainer: true` measures the toolbar mount instead of the browser window. When space runs out, controls
-move into the overflow menu. Keep `overflow` in a grouped configuration so the menu remains available when another
-configured control moves into it.
+move into the overflow menu. SuperDoc adds the overflow trigger when a configured control moves there; `groups` only
+needs to list the controls your application uses.
 
 `excludeItems` applies to the full-width row, but the current runtime does not apply the exclusion after a control moves
 into overflow. Use `groups` when a control must stay hidden at every supported width.

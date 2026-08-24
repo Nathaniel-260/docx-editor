@@ -22,7 +22,6 @@ import { MigrationExample, MigrationExampleTabs } from '@/components/mdx/migrati
 import { ProofingConfigReference } from '@/components/mdx/proofing-config-reference';
 import { ReceiptBar } from '@/components/mdx/receipt-bar';
 import { RuntimeExample, RuntimeExampleTabs } from '@/components/mdx/runtime-example-tabs';
-import { ToolbarConfigStrategies } from '@/components/embeds/toolbar-config-strategies';
 import {
   DocumentApiNamespace,
   DocumentApiOperation,
@@ -72,7 +71,6 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     ReceiptBar,
     RuntimeExample,
     RuntimeExampleTabs,
-    ToolbarConfigStrategies,
     img: DocsImage,
     ...components,
   };

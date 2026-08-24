@@ -316,7 +316,7 @@ test('exports the editor quickstart sample document', async () => {
   assert.ok(fixture.size > 0);
 });
 
-test('exports the ten-page search sample document', async () => {
+test('exports the focused search sample document', async () => {
   const fixture = await stat(new URL('../out/fixtures/search-sample.docx', import.meta.url));
   assert.ok(fixture.size > 0);
 });
@@ -369,16 +369,18 @@ test('exports the tracked-review workflow with local-file fallback', async () =>
   assert.doesNotMatch(article, /cdn\.jsdelivr\.net/);
 });
 
-test('exports the document modes guide with an interactive mode switcher', async () => {
+test('exports the document modes guide with the shared Editor demo frame', async () => {
   const article = await readFile(new URL('../out/editor/document-modes/index.html', import.meta.url), 'utf8');
   const markdown = await readFile(new URL('../out/md/editor/document-modes.md', import.meta.url), 'utf8');
 
   assert.match(article, /Try document modes/);
   assert.match(article, /data-preset="document-modes"/);
-  assert.match(article, /aria-label="Document mode"/);
+  assert.match(article, /aria-label="Try document modes configuration"/);
+  assert.match(article, /aria-label="Mode"/);
   assert.match(article, /Reset the sample document/);
+  assert.match(article, /Enter fullscreen/);
   assert.match(article, /Typing changes the document directly/);
-  assert.match(article, /documentMode: &#x27;editing&#x27;/);
+  assert.doesNotMatch(article, /sd-editor-demo-mode-footer/);
   assert.doesNotMatch(article, /Run the test edit/);
   assert.match(markdown, /Editing changes the document directly/);
   assert.match(markdown, /original, markup, or final document/);
@@ -443,19 +445,19 @@ test('exports the focused built-in toolbar example as clean Markdown', async () 
 
   assert.match(article, /responsiveToContainer/);
   assert.match(article, /documentMode/);
-  assert.match(article, /data-toolbar-config-strategies="true"/);
-  assert.match(article, /data-state="inactive"[^>]*>groups<\/button>/);
+  assert.match(article, /data-preset="toolbar"/);
+  assert.match(article, /formatting-sample\.docx/);
   assert.match(markdown, /const toolbar: ToolbarConfig/);
   assert.match(markdown, /<SuperDocEditor[\s\S]*?document='\/sample\.docx'/);
   assert.match(markdown, /export default function App/);
   assert.match(markdown, /groups: \{/);
-  assert.match(markdown, /Choose the controls/);
-  assert.match(markdown, /### Default/);
-  assert.match(markdown, /### Grouped allowlist/);
-  assert.match(markdown, /excludeItems: \['image', 'table'\]/);
-  assert.match(markdown, /Custom buttons still render/);
-  assert.match(markdown, /does not apply exclusions after matching controls move into overflow/);
-  assert.doesNotMatch(markdown, /<ToolbarConfigStrategies\b/);
+  assert.match(markdown, /Toolbar configurations available in the interactive Editor/);
+  assert.match(markdown, /Group — `ui\.toolbar\.groups`/);
+  assert.match(markdown, /Remove — `ui\.toolbar\.excludeItems`/);
+  assert.match(markdown, /Add — `ui\.toolbar\.customButtons`/);
+  assert.match(markdown, /Review note:/);
+  assert.match(markdown, /does not apply the exclusion after a control moves\s+into overflow/);
+  assert.doesNotMatch(markdown, /<EditorDemo\b/);
   assert.doesNotMatch(markdown, /<include>/);
 });
 
@@ -585,7 +587,9 @@ test('exports the comments workflow through each canonical surface', async () =>
   assert.match(builtInArticle, /comments-sample\.docx/);
   assert.match(builtIn, /\*\*Vanilla — `src\/main\.ts`\*\*/);
   assert.match(builtIn, /\*\*React — `src\/App\.tsx`\*\*/);
-  assert.match(builtIn, /Comments: open the existing thread/);
+  assert.match(builtIn, /Comment configurations available in the interactive Editor/);
+  assert.match(builtIn, /Layout — `ui\.comments\.displayMode`/);
+  assert.match(builtIn, /Actions — `interaction\.comments\.level`/);
   assert.match(builtIn, /displayMode: 'auto'/);
   assert.match(builtIn, /level: 'write'/);
   assert.match(builtIn, /not an authorization boundary/);
@@ -627,8 +631,11 @@ test('exports built-in and custom search without duplicating Document API querie
   assert.match(builtIn, /browser keeps its native page search shortcut/);
   assert.match(builtIn, /\*\*React — `src\/App\.tsx`\*\*/);
   assert.match(builtIn, /Search remains available in Viewing, but replace controls are hidden/);
-  assert.match(builtIn, /41 case-insensitive `Client` matches/);
-  assert.match(builtIn, /changing it reloads the current DOCX and resets the active search/);
+  assert.match(builtIn, /Mode — `documentMode`/);
+  assert.match(builtIn, /Replacement — `ui\.search\.replaceEnabled`/);
+  assert.match(builtIn, /eight case-insensitive `Client` matches/);
+  assert.match(builtIn, /seven case-sensitive matches/);
+  assert.match(builtIn, /Changing replacement recreates the Editor from its current DOCX/);
   assert.match(builtIn, /replaceEnabled: false/);
   assert.match(customUI, /ui\.search\.observe\(render\)/);
   assert.match(customUI, /await ui\.search\.replaceAll\(replacement\.value\)/);

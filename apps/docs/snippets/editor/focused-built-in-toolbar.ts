@@ -8,7 +8,7 @@ const toolbar: ToolbarConfig = {
   groups: {
     left: ['undo', 'redo'],
     center: ['bold', 'italic', 'underline', 'link'],
-    right: ['documentMode', 'zoom', 'overflow'],
+    right: ['documentMode', 'zoom'],
   },
   responsiveToContainer: true,
 };

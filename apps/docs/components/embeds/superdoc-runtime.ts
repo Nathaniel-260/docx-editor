@@ -1,19 +1,19 @@
 'use client';
 
 import runtime from '@/config/editor-demo-runtime.json';
+import type { Config } from 'superdoc';
 
 /**
  * Loading the pinned SuperDoc runtime for documentation embeds.
  *
  * Extracted from `editor-demo.tsx` when a second embed needed the same thing.
  * The scope is deliberately narrow: fetch the CDN runtime, its stylesheet, the
- * engine worker, and the UI module, and hand back the constructor. Presentation,
+ * engine workers, and the UI module, and hand back the constructor. Presentation,
  * fixtures, reset, and fullscreen stay with each embed, because those are where
  * the embeds actually differ.
  *
  * The module-level promises are the reason this is shared rather than copied:
- * two embeds on one page must not race to append the same script tag or build a
- * second worker object URL.
+ * two embeds on one page must not race to load the same assets.
  */
 
 const runtimePackageUrl = `${runtime.cdnOrigin}/${runtime.runtimePackage}@${runtime.runtimeVersion}`;
@@ -34,15 +34,21 @@ declare global {
 
 let runtimePromise: Promise<SuperDocConstructor> | null = null;
 let uiModulePromise: Promise<SuperDocUIModule> | null = null;
-let workerObjectUrl: string | null = null;
+let runtimeWorkerUrls: NonNullable<Config['workerUrls']> | null = null;
+let workerConfigurationPromise: Promise<void> | null = null;
+let workerObjectUrls: string[] = [];
+
+const workerAssetPrefixes = {
+  document: 'assets/browser-worker-entry-',
+  collaboration: 'assets/collaboration-worker-entry-',
+  reviewIndex: 'assets/review-index-worker-entry-',
+} as const satisfies Record<keyof NonNullable<Config['workerUrls']>, string>;
 
 function hasPath(value: unknown): value is { path: string } {
   return typeof value === 'object' && value !== null && 'path' in value && typeof value.path === 'string';
 }
 
-async function configureWorker() {
-  if (window.__SUPERDOC_V2_BROWSER_WORKER_URL__) return;
-
+async function configureWorkersOnce() {
   const response = await fetch(`${engineBaseUrl}/manifest.json`);
   if (!response.ok) throw new Error(`Engine manifest request failed with ${response.status}.`);
 
@@ -50,27 +56,46 @@ async function configureWorker() {
   if (typeof manifest !== 'object' || manifest === null || !('files' in manifest) || !Array.isArray(manifest.files)) {
     throw new Error('The engine manifest has an unsupported shape.');
   }
+  const files: unknown[] = manifest.files;
 
-  const worker = manifest.files.find(
-    (file: unknown) => hasPath(file) && file.path.startsWith('assets/browser-worker-entry-'),
-  );
-  if (!hasPath(worker)) throw new Error('The engine manifest does not include a browser worker.');
+  runtimeWorkerUrls = Object.fromEntries(
+    Object.entries(workerAssetPrefixes).map(([kind, prefix]) => {
+      const worker = files.find((file) => hasPath(file) && file.path.startsWith(prefix));
+      if (!hasPath(worker)) throw new Error(`The engine manifest does not include its ${kind} worker.`);
 
-  const workerModuleUrl = new URL(worker.path, `${engineBaseUrl}/`).href;
-  workerObjectUrl = URL.createObjectURL(
-    new Blob([`import ${JSON.stringify(workerModuleUrl)};`], { type: 'application/javascript' }),
-  );
-  window.__SUPERDOC_V2_BROWSER_WORKER_URL__ = workerObjectUrl;
+      const workerModuleUrl = new URL(worker.path, `${engineBaseUrl}/`).href;
+      const objectUrl = URL.createObjectURL(
+        new Blob([`import ${JSON.stringify(workerModuleUrl)};`], { type: 'application/javascript' }),
+      );
+      workerObjectUrls.push(objectUrl);
+      return [kind, objectUrl];
+    }),
+  ) as NonNullable<Config['workerUrls']>;
+  window.__SUPERDOC_V2_BROWSER_WORKER_URL__ = runtimeWorkerUrls.document?.toString();
 }
 
-function resetConfiguredWorker() {
-  if (!workerObjectUrl) return;
+function configureWorkers() {
+  if (runtimeWorkerUrls) return Promise.resolve();
+  if (workerConfigurationPromise) return workerConfigurationPromise;
 
-  URL.revokeObjectURL(workerObjectUrl);
-  if (window.__SUPERDOC_V2_BROWSER_WORKER_URL__ === workerObjectUrl) {
+  workerConfigurationPromise = configureWorkersOnce()
+    .catch((error: unknown) => {
+      resetConfiguredWorkers();
+      throw error;
+    })
+    .finally(() => {
+      workerConfigurationPromise = null;
+    });
+  return workerConfigurationPromise;
+}
+
+function resetConfiguredWorkers() {
+  for (const objectUrl of workerObjectUrls) URL.revokeObjectURL(objectUrl);
+  if (window.__SUPERDOC_V2_BROWSER_WORKER_URL__ === runtimeWorkerUrls?.document) {
     window.__SUPERDOC_V2_BROWSER_WORKER_URL__ = undefined;
   }
-  workerObjectUrl = null;
+  workerObjectUrls = [];
+  runtimeWorkerUrls = null;
 }
 
 function loadRuntimeAsset(element: HTMLLinkElement | HTMLScriptElement) {
@@ -85,8 +110,8 @@ function loadRuntimeAsset(element: HTMLLinkElement | HTMLScriptElement) {
 
 /** Load the pinned runtime once per page and resolve with the constructor. */
 export function loadRuntime() {
-  if (window.SuperDoc) return Promise.resolve(window.SuperDoc);
   if (runtimePromise) return runtimePromise;
+  if (window.SuperDoc) return configureWorkers().then(() => window.SuperDoc!);
 
   const stylesheet = document.createElement('link');
   stylesheet.rel = 'stylesheet';
@@ -96,7 +121,8 @@ export function loadRuntime() {
   script.src = `${runtimeBaseUrl}/superdoc.min.js`;
   script.async = true;
 
-  runtimePromise = Promise.all([loadRuntimeAsset(stylesheet), loadRuntimeAsset(script), configureWorker()])
+  runtimePromise = Promise.all([loadRuntimeAsset(stylesheet), loadRuntimeAsset(script)])
+    .then(() => configureWorkers())
     .then(() => {
       if (!window.SuperDoc) throw new Error('The SuperDoc runtime did not initialize.');
       return window.SuperDoc;
@@ -108,11 +134,22 @@ export function loadRuntime() {
       stylesheet.remove();
       script.remove();
       window.SuperDoc = undefined;
-      resetConfiguredWorker();
+      resetConfiguredWorkers();
       throw error;
     });
 
   return runtimePromise;
+}
+
+/** Same-origin-safe worker URLs prepared for the pinned cross-origin engine. */
+export function getRuntimeWorkerUrls(): NonNullable<Config['workerUrls']> {
+  if (!runtimeWorkerUrls) throw new Error('The SuperDoc runtime workers are not ready.');
+  return runtimeWorkerUrls;
+}
+
+/** Construct an embed with the worker URLs prepared by {@link loadRuntime}. */
+export function createRuntimeEditor(SuperDoc: SuperDocConstructor, config: Config): SuperDocInstance {
+  return new SuperDoc({ ...config, workerUrls: getRuntimeWorkerUrls() });
 }
 
 /** Load the public `superdoc/ui` module from the same pinned package. */

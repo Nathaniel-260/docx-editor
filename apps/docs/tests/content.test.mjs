@@ -23,7 +23,7 @@ const pinnedV2MajorPackageInstall =
   /\b(?:pnpm add(?:\s+--global)?|npm (?:install|i|add)|yarn add|bun add)[^\n]*\s(?:superdoc|@superdoc\/[a-z0-9-]+)@(?:\^|~)?2(?:[.\w-]*)?(?=\s|$)/mu;
 const focusedToolbarExampleUrl = new URL('../snippets/editor/focused-built-in-toolbar.ts', import.meta.url);
 const focusedReactToolbarExampleUrl = new URL('../snippets/editor/react-focused-built-in-toolbar.tsx', import.meta.url);
-const toolbarStrategyDataUrl = new URL('../lib/toolbar-config-strategies.ts', import.meta.url);
+const builtInEditorDemoDataUrl = new URL('../lib/built-in-editor-demos.ts', import.meta.url);
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
 const reactBuiltInSearchExampleUrl = new URL('../snippets/editor/react-built-in-find-replace.tsx', import.meta.url);
@@ -82,9 +82,8 @@ const registeredComponents = new Set([
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
-  'ToolbarConfigStrategies',
 ]);
-const editorDemoPresets = new Set(['comments', 'document-modes', 'proofing', 'search', 'tracked-review']);
+const editorDemoPresets = new Set(['comments', 'document-modes', 'proofing', 'search', 'toolbar', 'tracked-review']);
 
 async function collectMdxFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -238,9 +237,8 @@ test('the built-in toolbar example uses item names from the v2 toolbar catalog',
     [focusedToolbarExampleUrl, focusedReactToolbarExampleUrl].map((url) => readFile(url, 'utf8')),
   );
   const catalog = await readFile(toolbarCatalogUrl, 'utf8');
-  const strategyData = await readFile(toolbarStrategyDataUrl, 'utf8');
+  const demoData = await readFile(builtInEditorDemoDataUrl, 'utf8');
   const catalogItems = new Set([...catalog.matchAll(/\bname:\s*'([^']+)'/gu)].map((match) => match[1]));
-  const internalToolbarItems = new Set(['overflow']);
 
   for (const example of examples) {
     const groups = example.match(/groups:\s*\{([\s\S]*?)\n\s*\},/u)?.[1];
@@ -248,26 +246,20 @@ test('the built-in toolbar example uses item names from the v2 toolbar catalog',
     assert.ok(groups, 'The focused toolbar example must define an explicit groups allowlist.');
 
     const configuredItems = [...groups.matchAll(/'([^']+)'/gu)].map((match) => match[1]);
-    const unknownItems = configuredItems.filter((item) => !catalogItems.has(item) && !internalToolbarItems.has(item));
+    const unknownItems = configuredItems.filter((item) => !catalogItems.has(item));
 
     assert.deepEqual(unknownItems, []);
-    assert.ok(configuredItems.includes('overflow'), 'A grouped responsive toolbar must keep its overflow trigger.');
+    assert.ok(!configuredItems.includes('overflow'), 'Grouped toolbars should list controls, not overflow chrome.');
   }
 
-  const displayedItems = new Set([...strategyData.matchAll(/\bitem\('([^']+)'\)/gu)].map((match) => match[1]));
-  const unknownDisplayedItems = [...displayedItems].filter(
-    (item) => !catalogItems.has(item) && !internalToolbarItems.has(item),
-  );
+  const demoGroups = demoData.match(/toolbarDemoGroups = \{([\s\S]*?)\n\} as const/u)?.[1];
+  assert.ok(demoGroups, 'The toolbar demo must define the grouped toolbar it renders.');
+  const demoItems = new Set([...demoGroups.matchAll(/'([^']+)'/gu)].map((match) => match[1]));
+  const unknownDemoItems = [...demoItems].filter((item) => !catalogItems.has(item));
 
-  assert.deepEqual(unknownDisplayedItems, []);
-  assert.equal(displayedItems.has('comment'), false);
-  assert.match(strategyData, /const excludedItems = \['image', 'table'\] as const/u);
-  assert.match(
-    strategyData,
-    /\{ id: 'right', items: \[item\('zoom'\), item\('overflow'\), item\('documentMode'\)\] \}/u,
-  );
-  assert.match(strategyData, /Custom buttons still render/u);
-  assert.match(strategyData, /does not apply exclusions after matching controls move into overflow/u);
+  assert.deepEqual(unknownDemoItems, []);
+  assert.ok(!demoItems.has('overflow'), 'The toolbar demo data should not expose overflow chrome.');
+  assert.match(demoData, /toolbarDemoExcludedItems = \['bold', 'italic'\] as const/u);
 });
 
 test('the React toolbar example uses command ids from the public v2 command catalog', async () => {
@@ -301,16 +293,26 @@ test('the React search example enables the built-in search surface with stable c
   assert.doesNotMatch(example, /\bui=\{\{/u);
 });
 
-test('the Search editor demo keeps its focused toolbar and restart-safe replacement control', async () => {
+test('the built-in Editor demos keep focused controls and restart-safe configuration changes', async () => {
   const demo = await readFile(editorDemoUrl, 'utf8');
 
   assert.match(demo, /groups: \{ left: \['search'\] \}/u);
   assert.match(demo, /search: \{ replaceEnabled: initialReplaceEnabled \}/u);
+  assert.match(demo, /toolbar: getToolbarOptions\(initialToolbarStrategy, builtInToolbar!\)/u);
+  assert.match(
+    demo,
+    /interaction:\s+preset === 'comments' \? \{ comments: getCommentsInteractionOptions\(initialCommentsLevel\) \} : undefined/u,
+  );
+  assert.match(demo, /readOnly: level === 'read'/u);
+  assert.match(demo, /allowResolve: level === 'resolve'/u);
   assert.match(demo, /export\(\{ exportType: \['docx'\], triggerDownload: false \}\)/u);
   assert.match(demo, /const currentDocumentMode = instance\.config\.documentMode/u);
   assert.match(demo, /const hadMountedEditor = instanceRef\.current !== null/u);
   assert.match(demo, /setState\(replacedEditor \|\| !hadMountedEditor \? 'error' : 'ready'\)/u);
-  assert.match(demo, /documentMode: currentDocumentMode,\s+replaceEnabled: !replaceEnabled,/u);
+  assert.match(
+    demo,
+    /commentsLayout,\s+commentsLevel,\s+documentMode: currentDocumentMode,\s+replaceEnabled,\s+toolbarStrategy,/u,
+  );
   assert.match(
     demo,
     /setDemoInteractionBlocked\(true\)[\s\S]*Promise\.all\([\s\S]*finally \{\s+if \(mountedRef\.current && loadId === loadIdRef\.current\) setDemoInteractionBlocked\(false\);/u,
@@ -318,7 +320,16 @@ test('the Search editor demo keeps its focused toolbar and restart-safe replacem
   assert.match(demo, /setDemoInteractionBlocked\(true\)[\s\S]*instance\.export/u);
   assert.match(demo, /retryMountRef\.current = retry/u);
   assert.match(demo, /document\.documentElement\.requestFullscreen\(\)/u);
-  assert.match(demo, /`Replacement: \$\{replaceEnabled \? 'On' : 'Off'\}`/u);
+  assert.match(demo, /finally \{\s+setDemoInteractionBlocked\(false\)/u);
+  assert.match(demo, /onZoomChange: \(\{ zoom: nextZoom \}\)/u);
+  assert.match(demo, /label='Mode'[\s\S]*options=\{documentModes\}/u);
+  assert.match(demo, /className='sd-editor-demo-config-reset'/u);
+  assert.doesNotMatch(demo, /sd-editor-demo-mode-(?:header|footer|switcher)/u);
+  assert.match(demo, /label='Toolbar'[\s\S]*options=\{toolbarDemoStrategies\}/u);
+  assert.match(demo, /label='Layout'[\s\S]*options=\{commentsDemoLayouts\}/u);
+  assert.match(demo, /label='Actions'[\s\S]*options=\{commentsDemoLevels\}/u);
+  assert.match(demo, /label='Replacement'/u);
+  assert.equal([...demo.matchAll(/<DemoViewControls\b/gu)].length, 2);
 });
 
 test('the generated reference model mirrors the canonical operation inventory', async () => {

@@ -4,7 +4,7 @@ import { Bold, Expand, Shrink } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CommandState, SuperDocUI } from 'superdoc/ui';
 import { CollapsibleEditorPreview } from './collapsible-editor-preview';
-import { loadRuntime, loadUIModule, type SuperDocInstance } from './superdoc-runtime';
+import { createRuntimeEditor, loadRuntime, loadUIModule, type SuperDocInstance } from './superdoc-runtime';
 
 /**
  * The smallest complete custom control, running against a real Editor.
@@ -131,7 +131,7 @@ export function CustomBoldDemo() {
         setError(cause instanceof Error ? cause.message : 'The sample document could not be loaded.');
       };
 
-      const instance = new SuperDocCtor({
+      const instance = createRuntimeEditor(SuperDocCtor, {
         selector: mountRef.current,
         document: DEMO_DOCUMENT,
         documentMode: 'editing',

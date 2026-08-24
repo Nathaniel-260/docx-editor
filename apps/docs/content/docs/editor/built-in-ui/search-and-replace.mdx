@@ -8,14 +8,14 @@ Use the built-in search surface to find text across the open document without le
 
 ## Try search and replace
 
-Expand the Editor and open Search from the toolbar. The sample has ten pages built for these checks:
+Expand the Editor and open Search from the toolbar. The sample has three short pages built for these checks:
 
-1. Search for `Client` and confirm that there are 41 matches.
-2. Turn on Match case and confirm that the count changes to 31.
-3. Turn on regular expressions, then search for `Phase \d{2}` and confirm that there are 10 matches.
-4. Search for `Client` again, then replace one result with `Customer`.
+1. Search for `Client` and confirm that there are eight matches.
+2. Move through the results with Previous and Next, and watch the Editor scroll between pages.
+3. Turn on Match case and confirm that the count changes to seven.
+4. Turn Match case off, then replace one result with `Customer`.
 
-<EditorDemo fixture='/fixtures/search-sample.docx' preset='search' title='Search across ten pages' />
+<EditorDemo fixture='/fixtures/search-sample.docx' preset='search' title='Try search and replace' />
 
 Turn Replacement off above. Search remains available, but the replacement row disappears. The demo reloads the current
 document because `replaceEnabled` is a startup option; document edits remain, while the active search resets.

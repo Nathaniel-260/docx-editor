@@ -6,8 +6,8 @@ import {
 } from './document-api-reference/markdown';
 import { renderConfigReferenceMarkdown } from './config-explorer';
 import { renderBuiltInUiMapMarkdown } from './built-in-ui-map';
+import { renderBuiltInEditorDemoMarkdown } from './built-in-editor-demos';
 import { renderLifecycleJourneyMarkdown } from './lifecycle-journey';
-import { renderToolbarConfigStrategiesMarkdown } from './toolbar-config-strategies';
 import { editorConfigExplorer } from './editor-config-explorer';
 import { proofingConfigExplorer } from './proofing-config-explorer';
 
@@ -36,7 +36,6 @@ export const llmPlaceholderComponents = [
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
-  'ToolbarConfigStrategies',
   'MigrationExample',
   'MigrationExampleTabs',
   'img',
@@ -166,6 +165,7 @@ export function renderLLMMarkdown(markdown: string) {
       const fixture = textAttribute(attributes, 'fixture');
       const preset = textAttribute(attributes, 'preset');
       const localFile = booleanAttribute(attributes, 'allowLocalFile');
+      const builtInDemo = preset === 'comments' || preset === 'search' || preset === 'toolbar' ? preset : null;
       const details = [
         fixture ? `Sample: [open the fixture](${fixture}).` : undefined,
         preset ? `Preset: \`${preset}\`.` : undefined,
@@ -175,17 +175,12 @@ export function renderLLMMarkdown(markdown: string) {
         preset === 'proofing'
           ? 'Proofing: type `mispelled`, `workng`, or `teh`, then right-click the underline.'
           : undefined,
-        preset === 'comments'
-          ? 'Comments: open the existing thread, reply, resolve or reopen it, or select text to start another thread.'
-          : undefined,
-        preset === 'search'
-          ? 'Search: the ten-page fixture has 41 case-insensitive `Client` matches, 31 case-sensitive matches, and 10 matches for `Phase \\d{2}`. Replacement can be enabled or disabled; changing it reloads the current DOCX and resets the active search. Search remains available in Viewing, but replace controls are hidden.'
-          : undefined,
+        builtInDemo ? renderBuiltInEditorDemoMarkdown(builtInDemo) : undefined,
         preset === 'tracked-review' ? 'Tracked-change review: accept or reject the sample change.' : undefined,
         localFile ? 'Local DOCX selection: enabled. Files remain in the browser.' : 'Local DOCX selection: disabled.',
       ].filter((value): value is string => Boolean(value));
 
-      return `> **Interactive editor: ${title}**\n>\n${details.map((detail) => `> ${detail}`).join('\n')}\n`;
+      return `${quoteMarkdown(`**Interactive editor: ${title}**\n\n${details.join('\n\n')}`)}\n`;
     },
     FileDownload({ attributes }) {
       const label = textAttribute(attributes, 'label') ?? 'Download file';
@@ -266,9 +261,6 @@ export function renderLLMMarkdown(markdown: string) {
     },
     RuntimeExampleTabs({ children }) {
       return `${children.trim()}\n`;
-    },
-    ToolbarConfigStrategies() {
-      return renderToolbarConfigStrategiesMarkdown();
     },
     MigrationExample({ attributes, children }) {
       // AIDEV-NOTE: A bold label, not a heading. Every migration operation is a
