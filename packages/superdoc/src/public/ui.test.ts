@@ -9926,6 +9926,222 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
     expect(current).toHaveBeenCalledTimes(1);
   });
 
+  it('does not publish unresolved font values before an Enter-created paragraph paints (SD-4464)', async () => {
+    let selection = caretSelectionInfo('P1', 1);
+    let mountedBlocks = [
+      {
+        kind: 'paragraph',
+        id: 'P1',
+        runs: [{ kind: 'text', text: 'a', fontFamily: 'Tahoma, sans-serif', fontSize: 16 }],
+      },
+    ];
+    let foreground = { active: 0, pending: 0 };
+    let publishSelection: (() => void) | null = null;
+    let resolvePaint: () => void = () => undefined;
+    const painted = new Promise<void>((resolve) => {
+      resolvePaint = resolve;
+    });
+    const whenPainted = vi.fn(() => painted);
+    const host = storeCapableHost({
+      getForegroundMutationState: () => foreground,
+      readLiveSelectionSyncSnapshot: () => selection,
+      readMountedProjectionBlocksByIds: () => mountedBlocks,
+      getHandles: () => ({
+        editing: {
+          selection: {
+            subscribe: (listener: () => void) => {
+              publishSelection = listener;
+              return () => {};
+            },
+          },
+        },
+      }),
+    });
+    const superdoc = makeBlockSuperdoc(
+      {
+        selection: { current: () => selection },
+        format: { fontFamily: vi.fn(), fontSize: vi.fn() },
+      },
+      {
+        selectionInfo: null,
+        editorExtra: {
+          host,
+          documentMutationReadiness: { getRenderEpoch: () => 17, whenPainted },
+        },
+      },
+    );
+    const ui = createSuperDocUI({ superdoc });
+    publishSelection?.();
+    expect(ui.commands.get('font-family').getState().value).toBe('Tahoma');
+    expect(ui.commands.get('font-size').getState().value).toBe('12');
+
+    const publishedFamilies: unknown[] = [];
+    const publishedSizes: unknown[] = [];
+    const stopFamily = ui.commands.get('font-family').observe((state) => publishedFamilies.push(state.value));
+    const stopSize = ui.commands.get('font-size').observe((state) => publishedSizes.push(state.value));
+
+    foreground = { active: 1, pending: 0 };
+    selection = caretSelectionInfo('P2', 0);
+    publishSelection?.();
+
+    expect(ui.commands.get('font-family').getState().value).toBe('Tahoma');
+    expect(ui.commands.get('font-size').getState().value).toBe('12');
+    expect(publishedFamilies.every((value) => typeof value === 'string' && value.length > 0)).toBe(true);
+    expect(
+      publishedSizes.every(
+        (value) =>
+          (typeof value === 'string' && value.length > 0) || (typeof value === 'number' && Number.isFinite(value)),
+      ),
+    ).toBe(true);
+
+    foreground = { active: 0, pending: 0 };
+    mountedBlocks = [
+      {
+        kind: 'paragraph',
+        id: 'P2',
+        runs: [{ kind: 'text', text: '', fontFamily: 'Cambria, serif', fontSize: 20 }],
+      },
+    ];
+    resolvePaint();
+
+    await vi.waitFor(() => expect(ui.commands.get('font-family').getState().value).toBe('Cambria'));
+    expect(ui.commands.get('font-size').getState().value).toBe('15');
+    expect(whenPainted).toHaveBeenCalledWith({ afterEpoch: 17 });
+    expect(publishedFamilies.every((value) => typeof value === 'string' && value.length > 0)).toBe(true);
+    expect(
+      publishedSizes.every(
+        (value) =>
+          (typeof value === 'string' && value.length > 0) || (typeof value === 'number' && Number.isFinite(value)),
+      ),
+    ).toBe(true);
+    stopFamily();
+    stopSize();
+    ui.destroy();
+  });
+
+  it('does not preflight the mounted projection when foreground typing keeps the caret in the same block', () => {
+    let selection = caretSelectionInfo('P1', 1);
+    let foreground = { active: 0, pending: 0 };
+    let publishSelection: (() => void) | null = null;
+    const readMountedProjectionBlocksByIds = vi.fn(() => [
+      {
+        kind: 'paragraph',
+        id: 'P1',
+        runs: [{ kind: 'text', text: 'ab', fontFamily: 'Tahoma, sans-serif', fontSize: 16 }],
+      },
+    ]);
+    const whenPainted = vi.fn(() => Promise.resolve());
+    const host = storeCapableHost({
+      getForegroundMutationState: () => foreground,
+      readLiveSelectionSyncSnapshot: () => selection,
+      readMountedProjectionBlocksByIds,
+      getHandles: () => ({
+        editing: {
+          selection: {
+            subscribe: (listener: () => void) => {
+              publishSelection = listener;
+              return () => {};
+            },
+          },
+        },
+      }),
+    });
+    const superdoc = makeBlockSuperdoc(
+      {
+        selection: { current: () => selection },
+        format: { fontFamily: vi.fn(), fontSize: vi.fn() },
+      },
+      {
+        selectionInfo: selection,
+        editorExtra: {
+          host,
+          documentMutationReadiness: { getRenderEpoch: () => 17, whenPainted },
+        },
+      },
+    );
+    const ui = createSuperDocUI({ superdoc });
+    readMountedProjectionBlocksByIds.mockClear();
+
+    selection = caretSelectionInfo('P1', 2);
+    publishSelection?.();
+    const ordinaryCaretRefreshReads = readMountedProjectionBlocksByIds.mock.calls.length;
+    expect(ordinaryCaretRefreshReads).toBeGreaterThan(0);
+
+    readMountedProjectionBlocksByIds.mockClear();
+    foreground = { active: 1, pending: 0 };
+    selection = caretSelectionInfo('P1', 3);
+    publishSelection?.();
+
+    expect(whenPainted).not.toHaveBeenCalled();
+    expect(readMountedProjectionBlocksByIds).toHaveBeenCalledTimes(ordinaryCaretRefreshReads);
+    expect(ui.selection.getSnapshot().selectionTarget).toMatchObject({
+      start: { blockId: 'P1', offset: 3 },
+      end: { blockId: 'P1', offset: 3 },
+    });
+    ui.destroy();
+  });
+
+  it('publishes the latest caret immediately when post-paint readiness rejects', async () => {
+    let selection = caretSelectionInfo('P1', 1);
+    let foreground = { active: 0, pending: 0 };
+    let publishSelection: (() => void) | null = null;
+    const whenPainted = vi.fn(() => Promise.reject(new Error('paint unavailable')));
+    const host = storeCapableHost({
+      getForegroundMutationState: () => foreground,
+      readLiveSelectionSyncSnapshot: () => selection,
+      readMountedProjectionBlocksByIds: (blockIds: string[]) =>
+        blockIds.includes('P1')
+          ? [
+              {
+                kind: 'paragraph',
+                id: 'P1',
+                runs: [{ kind: 'text', text: 'a', fontFamily: 'Tahoma, sans-serif', fontSize: 16 }],
+              },
+            ]
+          : [],
+      getHandles: () => ({
+        editing: {
+          selection: {
+            subscribe: (listener: () => void) => {
+              publishSelection = listener;
+              return () => {};
+            },
+          },
+        },
+      }),
+    });
+    const superdoc = makeBlockSuperdoc(
+      {
+        selection: { current: () => selection },
+        format: { fontFamily: vi.fn(), fontSize: vi.fn() },
+      },
+      {
+        selectionInfo: selection,
+        editorExtra: {
+          host,
+          documentMutationReadiness: { getRenderEpoch: () => 17, whenPainted },
+        },
+      },
+    );
+    const ui = createSuperDocUI({ superdoc });
+    publishSelection?.();
+    expect(ui.commands.get('font-family').getState().value).toBe('Tahoma');
+
+    foreground = { active: 1, pending: 0 };
+    selection = caretSelectionInfo('P2', 0);
+    publishSelection?.();
+
+    await vi.waitFor(() =>
+      expect(ui.selection.getSnapshot().selectionTarget).toMatchObject({
+        start: { blockId: 'P2', offset: 0 },
+        end: { blockId: 'P2', offset: 0 },
+      }),
+    );
+    expect(whenPainted).toHaveBeenCalledWith({ afterEpoch: 17 });
+    expect(ui.commands.get('font-family').getState().value).toBeUndefined();
+    ui.destroy();
+  });
+
   it('keeps tracked-change overlap active while a foreground caret seed remains on its painted carrier (SD-3799)', () => {
     const settledSelection = {
       ...caretSelectionInfo('P1', 1),

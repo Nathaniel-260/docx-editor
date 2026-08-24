@@ -3130,13 +3130,26 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     readiness: LooseRecord;
     afterEpoch: number | null;
   } | null = null;
+  let pendingPostPaintSelectionRefresh: {
+    editor: LooseRecord;
+    readiness: LooseRecord;
+    afterEpoch: number | null;
+  } | null = null;
   let postPaintContentRefreshRunning = false;
   let postPaintContentRefreshDrainToken = 0;
+  let postPaintSelectionRefreshRunning = false;
+  let postPaintSelectionRefreshDrainToken = 0;
 
   const resetPostPaintContentRefresh = (): void => {
     pendingPostPaintContentRefresh = null;
     postPaintContentRefreshRunning = false;
     postPaintContentRefreshDrainToken += 1;
+  };
+
+  const resetPostPaintSelectionRefresh = (): void => {
+    pendingPostPaintSelectionRefresh = null;
+    postPaintSelectionRefreshRunning = false;
+    postPaintSelectionRefreshDrainToken += 1;
   };
 
   const schedulePostPaintContentRefresh = (): void => {
@@ -3181,6 +3194,53 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     };
 
     void drain();
+  };
+
+  const schedulePostPaintSelectionRefresh = (): boolean => {
+    const editor = getEditor();
+    const readiness = editor?.documentMutationReadiness as LooseRecord | undefined;
+    if (!editor || typeof readiness?.whenPainted !== 'function') return false;
+    const afterEpoch =
+      typeof readiness.getRenderEpoch === 'function'
+        ? safeCall<number | null>(() => readiness.getRenderEpoch.call(readiness), null)
+        : null;
+    pendingPostPaintSelectionRefresh = { editor, readiness, afterEpoch };
+    if (postPaintSelectionRefreshRunning) return true;
+    postPaintSelectionRefreshRunning = true;
+    const drainToken = postPaintSelectionRefreshDrainToken;
+
+    const drain = async (): Promise<void> => {
+      while (!disposed && drainToken === postPaintSelectionRefreshDrainToken) {
+        const request = pendingPostPaintSelectionRefresh;
+        pendingPostPaintSelectionRefresh = null;
+        if (!request) {
+          postPaintSelectionRefreshRunning = false;
+          return;
+        }
+        let paintCompleted = false;
+        try {
+          await request.readiness.whenPainted.call(
+            request.readiness,
+            typeof request.afterEpoch === 'number' ? { afterEpoch: request.afterEpoch } : undefined,
+          );
+          paintCompleted = true;
+        } catch {
+          // Fall through to the ordinary immediate selection refresh.
+        }
+        if (disposed || drainToken !== postPaintSelectionRefreshDrainToken) return;
+        if (getEditor() !== request.editor) {
+          resetPostPaintSelectionRefresh();
+          return;
+        }
+        if (pendingPostPaintSelectionRefresh) continue;
+        selectionEpoch += 1;
+        seedCaretSelectionFromHost();
+        recompute(paintCompleted ? 'post-paint-selection' : 'post-paint-selection-failed');
+      }
+    };
+
+    void drain();
+    return true;
   };
 
   const scheduleTypingDocumentContentInvalidation = (): void => {
@@ -3394,6 +3454,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     const editor = getEditor();
     if (editor === lastCoordinatorEditor) return;
     resetPostPaintContentRefresh();
+    resetPostPaintSelectionRefresh();
     lastCoordinatorEditor = editor;
     asyncReads.clear();
     if (asyncReadFailureRetryTimer) clearTimeout(asyncReadFailureRetryTimer);
@@ -6333,6 +6394,33 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     return selection && typeof selection.subscribe === 'function' ? (selection as LooseRecord) : null;
   };
 
+  const caretSelectionNeedsProjectionPaint = (): boolean => {
+    const host = getHost();
+    const read = host?.readLiveSelectionSyncSnapshot;
+    if (typeof read !== 'function') return false;
+    const info = normalizeSelectionInfo(safeCall(() => (read as AnyFn).call(host), null));
+    if (!info || !isCollapsedCaretSnapshot(info)) return false;
+    const nextSelection = selectionSliceFromInfo(info, 'ready');
+    const previousCaret = collapsedTextAddressFromSelection(state.selection);
+    const nextCaret = collapsedTextAddressFromSelection(nextSelection);
+    if (
+      previousCaret &&
+      nextCaret &&
+      previousCaret.blockId === nextCaret.blockId &&
+      storyLocatorSignature(previousCaret.story) === storyLocatorSignature(nextCaret.story)
+    ) {
+      return false;
+    }
+    const projected = resolveEffectiveInlineValuesFromLayout(nextSelection);
+    const familyValue = state.toolbar.commands['font-family']?.value;
+    const sizeValue = state.toolbar.commands['font-size']?.value;
+    const hadFamily = typeof familyValue === 'string' && familyValue.length > 0;
+    const hadSize =
+      (typeof sizeValue === 'string' && sizeValue.length > 0) ||
+      (typeof sizeValue === 'number' && Number.isFinite(sizeValue));
+    return (hadFamily && projected.fontFamily === undefined) || (hadSize && projected.fontSize === undefined);
+  };
+
   const syncHostSelectionSubscription = (): void => {
     const next = readHostSelectionSource();
     if (next === currentHostSelectionSource) return;
@@ -6344,6 +6432,12 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     if (!next) return;
     try {
       const unsubscribe = next.subscribe((snapshot: unknown) => {
+        // A foreground text mutation can move the caret before its new block is
+        // in the mounted projection. Publish that selection after the exact
+        // paint boundary so command state never describes unpainted content.
+        if (foregroundMutationActive() && caretSelectionNeedsProjectionPaint() && schedulePostPaintSelectionRefresh()) {
+          return;
+        }
         // A caret/selection move invalidates the live selection read (and the
         // selection-scoped reads keyed off its signature) without changing the
         // document-content revision.
