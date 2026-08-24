@@ -39,6 +39,7 @@ import { useCommentSmallScreen } from './composables/use-comment-small-screen.js
 import { useCompactCommentPopover } from './composables/use-compact-comment-popover.js';
 import { getVisibleThreadAnchorClientY } from './helpers/comment-focus.js';
 import { mergeDefined } from './core/config/merge-defined.js';
+import { normalizeHyperlinksConfig } from './core/config/normalize-hyperlinks-config.js';
 import { getV2TrackedChangeMutationImpact } from './helpers/v2-review-mutation-impact.js';
 import { resolveV2ReviewTargetCommentId } from './helpers/v2-review-target.js';
 import {
@@ -352,25 +353,19 @@ const getLinkPopoverSurfaceManager = () => {
     open: (request) => proxy.$superdoc.openSurface(request),
   };
 };
+const getLinkPopoverResolver = () => {
+  const config = normalizeHyperlinksConfig(proxy.$superdoc?.config);
+  return config.suppressed ? () => ({ type: 'none' }) : config.onActivate;
+};
+const getBuiltInLinkPopoverSuppressed = () => normalizeHyperlinksConfig(proxy.$superdoc?.config).defaultUiSuppressed;
+const shouldHandleNonEditableHyperlinks = () => normalizeHyperlinksConfig(proxy.$superdoc?.config).handleNonEditable;
 const linkPopover = useLinkPopover({
   getSurfaceManager: getLinkPopoverSurfaceManager,
   getActiveEditor: () => proxy.$superdoc?.activeEditor,
   getUi: getSuperDocUI,
-  getResolver: () =>
-    // Only a suppressed surface returns a resolver that closes. `enabled` is
-    // false for the default config too — it means "a custom resolver is
-    // configured" — so vetoing on it would suppress the built-in link editor
-    // for every consumer who never set one. When the surface is merely
-    // unconfigured, this resolves to `undefined`, which the composable answers
-    // with `{ type: 'default' }`.
-    //
-    // Already resolved across both spellings by `normalizeUiConfig`. Do not
-    // read `config.modules.links.popoverResolver` here: that would ignore the
-    // canonical `ui.linkPopover.popoverResolver` entirely, which is the bug
-    // this surface shipped with (#1099).
-    proxy.$superdoc?.uiConfig?.linkPopover?.suppressed
-      ? () => ({ type: 'none' })
-      : proxy.$superdoc?.uiConfig?.linkPopover?.options?.popoverResolver,
+  getResolver: getLinkPopoverResolver,
+  getBuiltInPopoverSuppressed: getBuiltInLinkPopoverSuppressed,
+  shouldHandleNonEditableHyperlinks,
   getLayerElement: () => layers.value,
   emitException: (payload) => {
     proxy.$superdoc?.emit('exception', {
@@ -2174,10 +2169,8 @@ const editorOptions = (doc) => {
     // reads as "draw nothing", so pass the flag straight through rather than
     // omitting it, which resolves back to on.
     documentLoading: proxy.$superdoc.uiConfig.loading.enabled,
-    // Resolved across both spellings, and already `undefined` for a surface
-    // that is unconfigured or suppressed, so the `enabled` gate that used to
-    // stand here is now carried by the value itself.
-    linkPopoverResolver: proxy.$superdoc.uiConfig.linkPopover.options.popoverResolver,
+    // The editor host receives the same resolved activation handler as the shell.
+    linkPopoverResolver: getLinkPopoverResolver(),
     layoutEngineOptions: useLayoutEngine
       ? {
           ...(proxy.$superdoc.config.layoutEngineOptions || {}),

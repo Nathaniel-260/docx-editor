@@ -422,9 +422,9 @@
     {
       "name": "ExternalPopoverRenderContext",
       "bucket": "supported-root",
-      "rationale": "Headless Surface API type. Public extension surface for custom UI integrations.",
-      "confidence": "medium",
-      "source": "surface",
+      "rationale": "Deprecated alias retained for v2 source compatibility; use HyperlinkRenderContext.",
+      "confidence": "high",
+      "source": "hyperlinks",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,
@@ -530,6 +530,61 @@
       "inCjs": true
     },
     {
+      "name": "HyperlinkActivationContext",
+      "bucket": "supported-root",
+      "rationale": "Context for the canonical top-level hyperlink activation handler.",
+      "confidence": "high",
+      "source": "hyperlinks",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "HyperlinkActivationHandler",
+      "bucket": "supported-root",
+      "rationale": "Canonical callback for controlling hyperlink activation behavior.",
+      "confidence": "high",
+      "source": "hyperlinks",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "HyperlinkActivationResult",
+      "bucket": "supported-root",
+      "rationale": "Canonical result union for default, suppressed, and application-owned hyperlink behavior.",
+      "confidence": "high",
+      "source": "hyperlinks",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "HyperlinkRenderContext",
+      "bucket": "supported-root",
+      "rationale": "Framework-agnostic render context for application-owned hyperlink UI.",
+      "confidence": "high",
+      "source": "hyperlinks",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "HyperlinksConfig",
+      "bucket": "supported-root",
+      "rationale": "Canonical top-level configuration for hyperlink activation behavior.",
+      "confidence": "high",
+      "source": "hyperlinks",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "IntentSurfaceRequest",
       "bucket": "supported-root",
       "rationale": "Headless Surface API type. Public extension surface for custom UI integrations.",
@@ -620,7 +675,7 @@
     {
       "name": "LinkPopoverConfig",
       "bucket": "supported-root",
-      "rationale": "Canonical link popover configuration type. Public extension surface for ui.linkPopover, which supersedes modules.links.popoverResolver.",
+      "rationale": "Deprecated alias retained for v2 source compatibility; use HyperlinksConfig.",
       "confidence": "high",
       "source": "link-popover",
       "inDts": true,
@@ -631,7 +686,7 @@
     {
       "name": "LinkPopoverContext",
       "bucket": "supported-root",
-      "rationale": "Custom link popover resolver context type. Public extension surface for modules.links.popoverResolver integrations.",
+      "rationale": "Deprecated alias retained for v2 source compatibility; use HyperlinkActivationContext.",
       "confidence": "high",
       "source": "link-popover",
       "inDts": true,
@@ -642,7 +697,7 @@
     {
       "name": "LinkPopoverResolution",
       "bucket": "supported-root",
-      "rationale": "Custom link popover resolver return type. Public extension surface for modules.links.popoverResolver integrations.",
+      "rationale": "Deprecated alias retained for v2 source compatibility; use HyperlinkActivationResult.",
       "confidence": "high",
       "source": "link-popover",
       "inDts": true,
@@ -653,7 +708,7 @@
     {
       "name": "LinkPopoverResolver",
       "bucket": "supported-root",
-      "rationale": "Custom link popover resolver callback type. Public extension surface for modules.links.popoverResolver integrations.",
+      "rationale": "Deprecated alias retained for v2 source compatibility; use HyperlinkActivationHandler.",
       "confidence": "high",
       "source": "link-popover",
       "inDts": true,

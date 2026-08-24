@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T15:49:07.111Z",
+  "generatedAt": "2026-08-24T18:53:38.655Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -65,6 +65,11 @@
         "FlowBlock",
         "FlowMode",
         "HTML",
+        "HyperlinkActivationContext",
+        "HyperlinkActivationHandler",
+        "HyperlinkActivationResult",
+        "HyperlinkRenderContext",
+        "HyperlinksConfig",
         "IntentSurfaceRequest",
         "InteractionConfig",
         "Layout",
@@ -277,6 +282,11 @@
         "FlowBlock",
         "FlowMode",
         "HTML",
+        "HyperlinkActivationContext",
+        "HyperlinkActivationHandler",
+        "HyperlinkActivationResult",
+        "HyperlinkRenderContext",
+        "HyperlinksConfig",
         "IntentSurfaceRequest",
         "InteractionConfig",
         "Layout",
@@ -469,11 +479,11 @@
     }
   },
   "counts": {
-    "types.import": 206,
-    "types.require": 206,
+    "types.import": 211,
+    "types.require": 211,
     "import": 10,
     "require": 10,
-    "union": 206
+    "union": 211
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -534,6 +544,11 @@
         "FindReplaceResolution",
         "FlowBlock",
         "FlowMode",
+        "HyperlinkActivationContext",
+        "HyperlinkActivationHandler",
+        "HyperlinkActivationResult",
+        "HyperlinkRenderContext",
+        "HyperlinksConfig",
         "IntentSurfaceRequest",
         "InteractionConfig",
         "Layout",

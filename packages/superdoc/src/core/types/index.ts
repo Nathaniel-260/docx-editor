@@ -1181,8 +1181,8 @@ export interface UpgradeToCollaborationOptions {
   provider?: CollaborationProvider;
 }
 
-/** Context passed to a link popover resolver when a link is clicked. */
-export interface LinkPopoverContext {
+/** Context passed to a hyperlink activation handler. */
+export interface HyperlinkActivationContext {
   /** The editor instance. */
   editor: Editor;
   /** The href attribute of the clicked link. */
@@ -1203,13 +1203,62 @@ export interface LinkPopoverContext {
   isAnchorLink: boolean;
   /** Current document mode ('editing', 'viewing', 'suggesting'). */
   documentMode: DocumentMode;
-  /** Computed popover position relative to editor surface. */
+  /** What SuperDoc would do if the handler chooses the default behavior. */
+  defaultAction: 'edit' | 'navigate';
+  /** Suggested position for application-owned UI, relative to the editor surface. */
   position: { left: string; top: string };
+}
+
+/** Context passed to an application-owned hyperlink renderer. */
+export interface HyperlinkRenderContext {
+  /** Empty DOM container positioned beside the activated hyperlink. */
+  container: HTMLElement;
+  /** Close the rendered UI and run its cleanup callback. */
+  close: () => void;
+  /** The editor instance. */
+  editor: Editor;
+  /** The activated hyperlink target. */
+  href: string;
+}
+
+/** Result returned by a hyperlink activation handler. */
+export type HyperlinkActivationResult =
+  | { type: 'default' }
+  | { type: 'none' }
+  | {
+      type: 'render';
+      render: (context: HyperlinkRenderContext) => { destroy?: () => void } | void;
+    };
+
+/**
+ * Handles hyperlink activation. Must be synchronous; do not return a Promise.
+ * Return null or undefined to use SuperDoc's mode-aware default behavior.
+ */
+export type HyperlinkActivationHandler = (
+  context: HyperlinkActivationContext,
+) => HyperlinkActivationResult | null | undefined;
+
+/**
+ * Controls what happens when a user activates a hyperlink.
+ *
+ * This behavior is separate from `ui` because a hyperlink can navigate or be
+ * handled by application-owned UI without SuperDoc rendering a surface.
+ */
+export interface HyperlinksConfig {
+  /**
+   * Choose SuperDoc's default behavior, suppress activation, or render an
+   * application-owned hyperlink editor.
+   */
+  onActivate?: HyperlinkActivationHandler;
+}
+
+/** @deprecated replaceWith=`HyperlinkActivationContext` removeIn=v3.0 */
+export interface LinkPopoverContext extends HyperlinkActivationContext {
   /** Close the popover programmatically. */
   closePopover: () => void;
 }
 
-/** Context passed to an external (framework-agnostic) popover renderer. */
+/** @deprecated replaceWith=`HyperlinkRenderContext` removeIn=v3.0 */
 export interface ExternalPopoverRenderContext {
   /** Empty DOM container positioned where the popover should appear. */
   container: HTMLElement;
@@ -1221,22 +1270,18 @@ export interface ExternalPopoverRenderContext {
   href: string;
 }
 
-/** Resolution returned by a link popover resolver. */
+/** @deprecated replaceWith=`HyperlinkActivationResult` removeIn=v3.0 */
 export type LinkPopoverResolution =
   | { type: 'default' }
   | { type: 'none' }
   | { type: 'custom'; component: unknown; props?: Record<string, unknown> }
   | {
       type: 'external';
-      render: (ctx: ExternalPopoverRenderContext) => { destroy?: () => void } | void;
+      render: (context: ExternalPopoverRenderContext) => { destroy?: () => void } | void;
     };
 
-/**
- * Resolver function for customizing the link click popover. Must be
- * synchronous; do not return a Promise. Return null/undefined to use the
- * default popover.
- */
-export type LinkPopoverResolver = (ctx: LinkPopoverContext) => LinkPopoverResolution | null | undefined;
+/** @deprecated replaceWith=`HyperlinkActivationHandler` removeIn=v3.0 */
+export type LinkPopoverResolver = (context: LinkPopoverContext) => LinkPopoverResolution | null | undefined;
 
 /**
  * Canonical presentation settings for the built-in comments UI.
@@ -1329,16 +1374,14 @@ export interface ContentControlsConfig {
 }
 
 /**
- * Canonical configuration for the built-in link popover.
- *
- * `popoverResolver` supersedes `modules.links.popoverResolver`, which stays
- * supported for all of v2. Setting both keeps the canonical one; the legacy
- * spelling only applies when the canonical one is absent.
+ * Configuration for the deprecated built-in link popover API.
+ * @deprecated replaceWith=`HyperlinksConfig` removeIn=v3.0
  */
 export interface LinkPopoverConfig {
   /**
    * Called when a user clicks a link, to decide which popover to show.
    * Returning `null` or `undefined` falls back to the built-in popover.
+   * @deprecated replaceWith=`hyperlinks.onActivate` removeIn=v3.0
    */
   popoverResolver?: LinkPopoverResolver;
 }
@@ -2449,9 +2492,15 @@ export interface Modules {
          */
         showTableOfContentsButton?: boolean;
       } & Record<string, unknown>);
-  /** Link click popover configuration. */
+  /**
+   * Link activation configuration.
+   * @deprecated replaceWith=`hyperlinks.onActivate` removeIn=v3.0
+   */
   links?: {
-    /** Custom resolver for the link click popover. */
+    /**
+     * Custom resolver for the link click popover.
+     * @deprecated replaceWith=`hyperlinks.onActivate` removeIn=v3.0
+     */
     popoverResolver?: LinkPopoverResolver;
   } & Record<string, unknown>;
   /** Context menu module configuration. */
@@ -3302,9 +3351,8 @@ export interface UIConfig {
    */
   search?: boolean | FindReplaceConfig;
   /**
-   * Built-in popover shown when a link is clicked. It renders by default;
-   * pass `false` (or `ui: false`) to suppress it. Supplying a
-   * {@link LinkPopoverConfig.popoverResolver} replaces it with your own UI.
+   * Built-in popover shown when a link is clicked.
+   * @deprecated replaceWith=`hyperlinks` removeIn=v3.0
    */
   linkPopover?: boolean | LinkPopoverConfig;
   /** Built-in ruler. Disabled by default. */
@@ -3470,10 +3518,10 @@ export interface Config {
    * Which built-in interface SuperDoc renders.
    *
    * Omit it to keep SuperDoc's historical rendering: comments, the context
-   * menu, and content-control chrome are on; search, the link popover, and
-   * the ruler are opt-in; and the toolbar renders once it has somewhere to
-   * mount. That profile is not symmetrical, and omitting this field
-   * reproduces it exactly.
+   * menu, content-control chrome, and mode-aware hyperlink activation are on;
+   * search and the ruler are opt-in; and the toolbar renders once it has
+   * somewhere to mount. That profile is not symmetrical, and omitting this
+   * field reproduces it exactly.
    *
    * Pass `false` when the application owns the interface. SuperDoc then
    * renders no controls, chrome, dialogs, or popovers, while the document,
@@ -3502,6 +3550,15 @@ export interface Config {
    * });
    */
   ui?: false | UIConfig;
+  /**
+   * Hyperlink activation behavior. Omit it for SuperDoc's mode-aware default:
+   * edit the hyperlink in Editing or Suggesting mode, and navigate in Viewing
+   * mode. Pass `false` to suppress activation entirely.
+   *
+   * A configured `onActivate` handler stays active with `ui: false`, so an
+   * application that renders its own interface can still handle hyperlinks.
+   */
+  hyperlinks?: false | HyperlinksConfig;
   /**
    * Client-side interaction policy. Independent of `ui`, so it
    * still applies when the application renders its own UI. This is not an

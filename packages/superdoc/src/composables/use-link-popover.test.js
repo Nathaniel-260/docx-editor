@@ -40,11 +40,19 @@ function createPayload(overrides = {}) {
     clientX: 42,
     clientY: 64,
     documentMode: 'editing',
+    editableText: true,
     ...overrides,
   };
 }
 
-function createSubject({ resolver, manager = createManagerStub(), editor = { id: 'editor' }, ui } = {}) {
+function createSubject({
+  resolver,
+  manager = createManagerStub(),
+  editor = { id: 'editor' },
+  ui,
+  defaultUiSuppressed = false,
+  handleNonEditable = false,
+} = {}) {
   const layer = document.createElement('div');
   vi.spyOn(layer, 'getBoundingClientRect').mockReturnValue({
     left: 10,
@@ -64,6 +72,8 @@ function createSubject({ resolver, manager = createManagerStub(), editor = { id:
     getActiveEditor: () => editor,
     getUi: () => uiController,
     getResolver: () => resolver,
+    getBuiltInPopoverSuppressed: () => defaultUiSuppressed,
+    shouldHandleNonEditableHyperlinks: () => handleNonEditable,
     getLayerElement: () => layer,
     emitException,
   });
@@ -784,6 +794,7 @@ describe('useLinkPopover', () => {
         clientY: 64,
         isAnchorLink: true,
         documentMode: 'suggesting',
+        defaultAction: 'edit',
         position: { left: '32px', top: '44px' },
       }),
     );
@@ -797,6 +808,53 @@ describe('useLinkPopover', () => {
     await tick();
 
     expect(manager.open).not.toHaveBeenCalled();
+  });
+
+  it('does not open the built-in editor when custom UI falls back to default', async () => {
+    const resolver = vi.fn(() => undefined);
+    const { popover, manager } = createSubject({ resolver, defaultUiSuppressed: true });
+
+    popover.handleLinkClick(createPayload());
+    await tick();
+
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(manager.open).not.toHaveBeenCalled();
+  });
+
+  it('routes non-text hyperlinks through canonical activation', async () => {
+    const resolver = vi.fn(() => ({ type: 'render', render: vi.fn() }));
+    const { popover, manager } = createSubject({ resolver, handleNonEditable: true });
+
+    popover.handleLinkClick(createPayload({ editableText: false }));
+    await tick();
+
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ defaultAction: 'navigate' }));
+    expect(manager.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses non-text hyperlinks when canonical activation returns none', async () => {
+    const resolver = vi.fn(() => ({ type: 'none' }));
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const { popover, manager } = createSubject({ resolver, handleNonEditable: true });
+
+    popover.handleLinkClick(createPayload({ editableText: false }));
+    await tick();
+
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ defaultAction: 'navigate' }));
+    expect(manager.open).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('keeps deprecated resolvers away from non-text hyperlinks', async () => {
+    const resolver = vi.fn(() => ({ type: 'none' }));
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const { popover } = createSubject({ resolver });
+
+    popover.handleLinkClick(createPayload({ editableText: false }));
+    await tick();
+
+    expect(resolver).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener');
   });
 
   it('opens a custom component with injected props', async () => {
@@ -844,7 +902,7 @@ describe('useLinkPopover', () => {
 
     expect(emitException).toHaveBeenCalledWith({
       error: expect.objectContaining({
-        message: 'modules.links.popoverResolver returned an invalid resolution.',
+        message: 'The hyperlink activation handler returned an invalid result.',
       }),
       source: 'linkPopoverResolver',
     });
@@ -875,6 +933,33 @@ describe('useLinkPopover', () => {
       editor,
       href: 'https://example.com',
     });
+    expect(result).toEqual({ destroy });
+  });
+
+  it('bridges the canonical render context without deprecated popover fields', async () => {
+    const destroy = vi.fn();
+    const render = vi.fn(() => ({ destroy }));
+    const { popover, manager, editor } = createSubject({
+      resolver: () => ({ type: 'render', render }),
+    });
+
+    popover.handleLinkClick(createPayload());
+    await tick();
+
+    const request = manager.open.mock.calls[0][0];
+    const container = document.createElement('div');
+    const close = vi.fn();
+    const result = request.render({ container, close });
+
+    expect(render).toHaveBeenCalledWith({
+      container,
+      close: expect.any(Function),
+      editor,
+      href: 'https://example.com',
+    });
+    expect(render.mock.calls[0][0]).not.toHaveProperty('closePopover');
+    render.mock.calls[0][0].close();
+    expect(close).toHaveBeenCalledWith('closed');
     expect(result).toEqual({ destroy });
   });
 

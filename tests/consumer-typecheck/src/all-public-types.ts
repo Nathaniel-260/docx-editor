@@ -67,6 +67,11 @@ import type {
   FindReplaceResolution,
   FlowBlock,
   FlowMode,
+  HyperlinkActivationContext,
+  HyperlinkActivationHandler,
+  HyperlinkActivationResult,
+  HyperlinkRenderContext,
+  HyperlinksConfig,
   IntentSurfaceRequest,
   Layout,
   LayoutEngineOptions,
@@ -268,6 +273,11 @@ const _real_FindReplaceRenderContext: AssertNotAny<FindReplaceRenderContext> = t
 const _real_FindReplaceResolution: AssertNotAny<FindReplaceResolution> = true;
 const _real_FlowBlock: AssertNotAny<FlowBlock> = true;
 const _real_FlowMode: AssertNotAny<FlowMode> = true;
+const _real_HyperlinkActivationContext: AssertNotAny<HyperlinkActivationContext> = true;
+const _real_HyperlinkActivationHandler: AssertNotAny<HyperlinkActivationHandler> = true;
+const _real_HyperlinkActivationResult: AssertNotAny<HyperlinkActivationResult> = true;
+const _real_HyperlinkRenderContext: AssertNotAny<HyperlinkRenderContext> = true;
+const _real_HyperlinksConfig: AssertNotAny<HyperlinksConfig> = true;
 const _real_IntentSurfaceRequest: AssertNotAny<IntentSurfaceRequest> = true;
 const _real_Layout: AssertNotAny<Layout> = true;
 const _real_LayoutEngineOptions: AssertNotAny<LayoutEngineOptions> = true;

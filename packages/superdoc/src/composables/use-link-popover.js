@@ -3,9 +3,12 @@ import { markRaw } from 'vue';
 import LinkInput from '../internal/toolbar/built-in/LinkInput.vue';
 import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js';
 
-/** @typedef {import('../core/types/index.js').LinkPopoverContext} LinkPopoverContext */
+/** @typedef {import('../core/types/index.js').HyperlinkActivationContext} HyperlinkActivationContext */
+/** @typedef {import('../core/types/index.js').HyperlinkActivationResult} HyperlinkActivationResult */
+/** @typedef {import('../core/types/index.js').HyperlinkActivationHandler} HyperlinkActivationHandler */
 /** @typedef {import('../core/types/index.js').LinkPopoverResolution} LinkPopoverResolution */
 /** @typedef {import('../core/types/index.js').LinkPopoverResolver} LinkPopoverResolver */
+/** @typedef {HyperlinkActivationResult | LinkPopoverResolution} HyperlinkActivationResolution */
 /** @typedef {import('../core/surface-manager.js').SurfaceManager} SurfaceManager */
 /** @typedef {import('../core/types/index.js').SurfaceHandle} SurfaceHandle */
 /** @typedef {import('../core/types/index.js').SurfaceOutcome} SurfaceOutcome */
@@ -126,6 +129,7 @@ import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js'
  * @property {number} clientX
  * @property {number} clientY
  * @property {DocumentMode} documentMode
+ * @property {boolean} [editableText]
  */
 
 /**
@@ -161,13 +165,14 @@ const isObject = (value) => Boolean(value && typeof value === 'object' && !Array
 
 /**
  * @param {unknown} value
- * @returns {value is LinkPopoverResolution}
+ * @returns {value is HyperlinkActivationResolution}
  */
 function isValidResolution(value) {
   if (!isObject(value)) return false;
   if (value.type === 'default' || value.type === 'none') return true;
   if (value.type === 'custom') return value.component != null;
   if (value.type === 'external') return typeof value.render === 'function';
+  if (value.type === 'render') return typeof value.render === 'function';
   return false;
 }
 
@@ -406,7 +411,9 @@ function isTocEntryLinkElement(element) {
  * @param {() => SurfaceManager | null | undefined} options.getSurfaceManager
  * @param {() => Editor | null | undefined} options.getActiveEditor
  * @param {() => SuperDocUI | null | undefined} options.getUi
- * @param {() => LinkPopoverResolver | null | undefined} options.getResolver
+ * @param {() => HyperlinkActivationHandler | LinkPopoverResolver | null | undefined} options.getResolver
+ * @param {() => boolean} [options.getBuiltInPopoverSuppressed]
+ * @param {() => boolean} [options.shouldHandleNonEditableHyperlinks]
  * @param {() => HTMLElement | null | undefined} options.getLayerElement
  * @param {(payload: { error: Error, source: string }) => void} options.emitException
  */
@@ -415,6 +422,8 @@ export function useLinkPopover({
   getActiveEditor,
   getUi,
   getResolver,
+  getBuiltInPopoverSuppressed = () => false,
+  shouldHandleNonEditableHyperlinks = () => false,
   getLayerElement,
   emitException,
 }) {
@@ -461,7 +470,7 @@ export function useLinkPopover({
   }
 
   /**
-   * @param {LinkPopoverContext} ctx
+   * @param {HyperlinkActivationContext} ctx
    * @returns {DirectSurfaceRequest}
    */
   function sharedFloatingConfig(ctx) {
@@ -480,7 +489,7 @@ export function useLinkPopover({
   }
 
   /**
-   * @param {LinkPopoverContext} ctx
+   * @param {HyperlinkActivationContext} ctx
    * @param {SurfaceHandle} handle
    */
   function rememberHandle(ctx, handle) {
@@ -603,7 +612,7 @@ export function useLinkPopover({
   }
 
   /**
-   * @param {LinkPopoverContext} ctx
+   * @param {HyperlinkActivationContext} ctx
    * @returns {Promise<ResolvedHyperlinkTarget | null>}
    */
   async function resolveClickedHyperlink(ctx) {
@@ -707,7 +716,7 @@ export function useLinkPopover({
   }
 
   /**
-   * @param {LinkPopoverContext} ctx
+   * @param {HyperlinkActivationContext} ctx
    * @param {SurfaceRequest} request
    */
   function openSurfaceDeferred(ctx, request) {
@@ -721,7 +730,7 @@ export function useLinkPopover({
     });
   }
 
-  /** @param {LinkPopoverContext} ctx */
+  /** @param {HyperlinkActivationContext} ctx */
   function openDefaultPopover(ctx) {
     closeCurrentPopover('replace');
 
@@ -735,7 +744,7 @@ export function useLinkPopover({
       return;
     }
 
-    if (ctx.documentMode === 'viewing') {
+    if (ctx.defaultAction === 'navigate') {
       if (ctx.isAnchorLink) {
         void navigateToAnchor(ctx.href);
       } else if (ctx.href) {
@@ -749,6 +758,8 @@ export function useLinkPopover({
       }
       return;
     }
+
+    if (getBuiltInPopoverSuppressed()) return;
 
     const closePopover = () => closeCurrentPopover('closed');
     /** @param {string | null | undefined} anchorUrl */
@@ -786,7 +797,7 @@ export function useLinkPopover({
   }
 
   /**
-   * @param {LinkPopoverContext} ctx
+   * @param {HyperlinkActivationContext} ctx
    * @param {Extract<LinkPopoverResolution, { type: 'custom' }>} resolution
    */
   function openCustomPopover(ctx, resolution) {
@@ -808,10 +819,10 @@ export function useLinkPopover({
   }
 
   /**
-   * @param {LinkPopoverContext} ctx
-   * @param {Extract<LinkPopoverResolution, { type: 'external' }>} resolution
+   * @param {HyperlinkActivationContext} ctx
+   * @param {Extract<LinkPopoverResolution, { type: 'external' }> | Extract<HyperlinkActivationResult, { type: 'render' }>} resolution
    */
-  function openExternalPopover(ctx, resolution) {
+  function openApplicationHyperlinkUi(ctx, resolution) {
     closeCurrentPopover('replace');
     const userRender = resolution.render;
     openSurfaceDeferred(ctx, {
@@ -819,12 +830,10 @@ export function useLinkPopover({
       /** @param {ExternalSurfaceRenderContext} surfaceCtx */
       render: (surfaceCtx) => {
         try {
-          return userRender({
-            container: surfaceCtx.container,
-            closePopover: () => surfaceCtx.close('closed'),
-            editor: ctx.editor,
-            href: ctx.href,
-          });
+          const shared = { container: surfaceCtx.container, editor: ctx.editor, href: ctx.href };
+          return resolution.type === 'render'
+            ? userRender({ ...shared, close: () => surfaceCtx.close('closed') })
+            : userRender({ ...shared, closePopover: () => surfaceCtx.close('closed') });
         } catch (error) {
           emitException({ error: toError(error), source: 'linkPopoverExternalRender' });
           surfaceCtx.close('external-error');
@@ -837,10 +846,9 @@ export function useLinkPopover({
       },
     });
   }
-
   /**
    * @param {LinkClickPayload} payload
-   * @returns {LinkPopoverContext}
+   * @returns {import('../core/types/index.js').LinkPopoverContext}
    */
   function buildContext(payload) {
     const layerRect = getLayerElement()?.getBoundingClientRect?.();
@@ -860,6 +868,12 @@ export function useLinkPopover({
       clientY: payload.clientY,
       isAnchorLink: payload.href.startsWith('#'),
       documentMode: payload.documentMode,
+      defaultAction:
+        payload.documentMode === 'viewing' ||
+        payload.editableText === false ||
+        (payload.href.startsWith('#') && isTocEntryLinkElement(payload.element))
+          ? 'navigate'
+          : 'edit',
       position: {
         left: `${Math.max(0, payload.clientX - layerLeft)}px`,
         top: `${Math.max(0, payload.clientY - layerTop)}px`,
@@ -869,8 +883,8 @@ export function useLinkPopover({
   }
 
   /**
-   * @param {LinkPopoverContext} ctx
-   * @returns {LinkPopoverResolution}
+   * @param {HyperlinkActivationContext} ctx
+   * @returns {HyperlinkActivationResolution}
    */
   function resolvePopover(ctx) {
     const resolver = getResolver();
@@ -880,7 +894,7 @@ export function useLinkPopover({
       const resolution = resolver(ctx);
       if (isThenable(resolution)) {
         emitException({
-          error: new Error('modules.links.popoverResolver must return synchronously.'),
+          error: new Error('The hyperlink activation handler must return synchronously.'),
           source: 'linkPopoverResolver',
         });
         return { type: 'default' };
@@ -888,7 +902,7 @@ export function useLinkPopover({
       if (resolution == null) return { type: 'default' };
       if (!isValidResolution(resolution)) {
         emitException({
-          error: new Error('modules.links.popoverResolver returned an invalid resolution.'),
+          error: new Error('The hyperlink activation handler returned an invalid result.'),
           source: 'linkPopoverResolver',
         });
         return { type: 'default' };
@@ -911,6 +925,10 @@ export function useLinkPopover({
     if (matchesRecentOutsideClose(payload)) return;
 
     const ctx = buildContext(payload);
+    if (payload.editableText === false && !shouldHandleNonEditableHyperlinks()) {
+      openDefaultPopover(ctx);
+      return;
+    }
     const resolution = resolvePopover(ctx);
 
     if (resolution.type === 'none') {
@@ -922,7 +940,11 @@ export function useLinkPopover({
       return;
     }
     if (resolution.type === 'external') {
-      openExternalPopover(ctx, resolution);
+      openApplicationHyperlinkUi(ctx, resolution);
+      return;
+    }
+    if (resolution.type === 'render') {
+      openApplicationHyperlinkUi(ctx, resolution);
       return;
     }
     openDefaultPopover(ctx);

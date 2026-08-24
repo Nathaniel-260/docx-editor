@@ -46,6 +46,7 @@ const fieldsByGroup = {
     'disableContextMenu',
   ],
   behavior: [
+    'hyperlinks',
     'trackChanges',
     'isLocked',
     'lockedBy',
@@ -167,6 +168,7 @@ const summaries = {
   title: 'Set the Editor title.',
   conversations: 'Load conversation data.',
   comments: 'Legacy comment visibility setting.',
+  hyperlinks: 'Choose what happens when a person activates a hyperlink.',
   trackChanges: 'Legacy tracked-change visibility setting.',
   isLocked: 'Start the Editor in a locked state.',
   handleImageUpload: 'Store images inserted into the document.',
@@ -249,6 +251,10 @@ const presentation = {
   surfaces: {
     example: { value: '{ dialog: … }', code: 'surfaces: { dialog: { closeOnEscape: true } }' },
     guide: { label: 'Dialogs and surfaces', href: '/editor/dialogs-and-surfaces' },
+  },
+  hyperlinks: {
+    example: { value: '{ onActivate: … }', code: 'hyperlinks: { onActivate: handleHyperlinkActivation }' },
+    guide: { label: 'Links and menus', href: '/editor/built-in-ui/links-and-context-menus' },
   },
   toolbar: {
     example: { value: "'#toolbar'", code: "toolbar: '#toolbar'" },

@@ -219,6 +219,19 @@ describe('uiConfig reaches the runtime', () => {
       document.body.innerHTML = '';
     });
 
+    it('wires canonical hyperlink behavior under ui: false without exposing an internal profile', async () => {
+      const onActivate = vi.fn();
+      const superdoc = await mount({ ui: false, hyperlinks: { onActivate } });
+
+      expect(superdoc.config.hyperlinks).toEqual({ onActivate });
+      expect(SuperDocSource).toContain('normalizeHyperlinksConfig(proxy.$superdoc?.config)');
+      expect(SuperDocSource).toContain('getResolver: getLinkPopoverResolver');
+      expect(SuperDocSource).toContain('linkPopoverResolver: getLinkPopoverResolver()');
+      expect(superdoc).not.toHaveProperty('hyperlinksConfig');
+      superdoc.destroy?.();
+      document.body.innerHTML = '';
+    });
+
     it('exposes the resolved surfaces config', async () => {
       const resolver = () => ({ type: 'none' });
       const superdoc = await mount({ surfaces: { resolver, dialog: { maxWidth: 480 } } });
