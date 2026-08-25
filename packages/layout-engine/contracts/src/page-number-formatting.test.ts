@@ -43,6 +43,49 @@ describe('page number formatting', () => {
     expect(formatPageNumber(4000, 'upperRoman')).toBe('4000');
   });
 
+  // Pinned to Word 16, read from a PAGE field in a document whose sectPr
+  // carries <w:pgNumType w:fmt="hebrew1"/> (and hebrew2). 15 and 16 are טו and
+  // טז at every hundreds level so they do not spell the divine names יה and יו.
+  it('formats hebrew1 page numbers as gematria', () => {
+    expect(formatPageNumber(1, 'hebrew1')).toBe('א');
+    expect(formatPageNumber(10, 'hebrew1')).toBe('י');
+    expect(formatPageNumber(15, 'hebrew1')).toBe('טו');
+    expect(formatPageNumber(16, 'hebrew1')).toBe('טז');
+    expect(formatPageNumber(115, 'hebrew1')).toBe('קטו');
+    expect(formatPageNumber(388, 'hebrew1')).toBe('שפח');
+    expect(formatPageNumber(390, 'hebrew1')).toBe('שצ');
+    expect(formatPageNumber(392, 'hebrew1')).toBe('שצב');
+  });
+
+  // hebrew2 counts the 22-letter alphabet and carries a leading U+200F that
+  // hebrew1 does not.
+  it('formats hebrew2 page numbers as alphabet counting', () => {
+    expect(formatPageNumber(1, 'hebrew2')).toBe('\u200fא');
+    expect(formatPageNumber(11, 'hebrew2')).toBe('\u200fכ');
+    expect(formatPageNumber(22, 'hebrew2')).toBe('\u200fת');
+    expect(formatPageNumber(23, 'hebrew2')).toBe('\u200fתא');
+    expect(formatPageNumber(392, 'hebrew2')).toBe('\u200fתתתתתתתתתתתתתתתתתצ');
+  });
+
+  // Word stops representing Hebrew numerals above 392. On a PAGE field it
+  // substitutes a localized error string rather than wrapping the way a list
+  // marker does, and that string cannot be reproduced outside Word's own UI
+  // language, so the page keeps a readable decimal instead.
+  it('falls back to decimal for Hebrew page numbers beyond 392', () => {
+    expect(formatPageNumber(393, 'hebrew1')).toBe('393');
+    expect(formatPageNumber(393, 'hebrew2')).toBe('393');
+    expect(formatPageNumber(1000, 'hebrew1')).toBe('1000');
+  });
+
+  it('normalizes non-positive page numbers before Hebrew formatting', () => {
+    expect(formatPageNumber(0, 'hebrew1')).toBe('א');
+    expect(formatPageNumber(Number.NaN, 'hebrew2')).toBe('\u200fא');
+  });
+
+  it('leaves Hebrew field values unpadded', () => {
+    expect(formatPageNumberFieldValue(7, { format: 'hebrew1', zeroPadding: 3 })).toBe('ז');
+  });
+
   it('applies decimal zero padding for field values', () => {
     expect(formatPageNumberFieldValue(7, { format: 'decimal', zeroPadding: 3 })).toBe('007');
     expect(formatPageNumberFieldValue(7, { format: 'lowerRoman', zeroPadding: 3 })).toBe('vii');
