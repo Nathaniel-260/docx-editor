@@ -268,6 +268,7 @@ import type {
   SuperDocMeasurementUnitChangePayload,
   SuperDocReadyPayload,
   SuperDocState,
+  SuperDocTrackedChangesBulkDecisionPayload,
   SuperDocViewportChangePayload,
   SuperDocViewportMetrics,
   SuperDocZoomMode,
@@ -595,6 +596,7 @@ interface SuperDocEventMap {
    */
   'document-replaced': [SuperDocDocumentReplacedPayload];
   'editor-update': [EditorUpdateEvent];
+  'tracked-changes:bulk-decision': [SuperDocTrackedChangesBulkDecisionPayload];
   'content-error': [SuperDocContentErrorPayload];
   'fonts-resolved': [FontsResolvedPayload];
   'fonts-changed': [FontsChangedPayload];
@@ -1542,6 +1544,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     this.#onConfig('collaboration-ready', this.config.onCollaborationReady);
     this.on('collaboration-ready', (payload) => this.#startV2CollaborationEventBridge(payload?.editor ?? null));
     this.#onConfig('editor-update', this.config.onEditorUpdate);
+    this.#onConfig('tracked-changes:bulk-decision', this.config.onTrackedChangesBulkDecision);
     this.on('content-error', this.onContentError);
     this.#onConfig('exception', this.config.onException);
     this.#onConfig('list-definitions-change', this.config.onListDefinitionsChange);

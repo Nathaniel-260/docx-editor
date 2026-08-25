@@ -47,6 +47,7 @@ import {
   V2_AUTHOR_REQUIRED_CODE,
   V2_AUTHOR_REQUIRED_MESSAGE,
 } from './helpers/v2-author-required-rejection.js';
+import { toV2BulkDecisionEvent } from './helpers/v2-bulk-decision-event.js';
 import { DOCUMENT_EDITOR_SELECTION_SOURCE } from './helpers/selection-source.js';
 import { hasOutsideV2DomRangeSelection, shouldPreserveHostV2Selection } from './helpers/v2-selection-sync.js';
 import { useUiFontFamily } from './composables/useUiFontFamily.js';
@@ -1793,6 +1794,10 @@ const onV2HostEvent = (document, event) => {
   if (event.type === 'mutation:committed') {
     // A successful mutation clears any prior non-terminal author-required notice.
     clearV2AuthorRequired(documentId);
+    const bulkDecisionEvent = toV2BulkDecisionEvent(documentId, event.trackedChangeBulkDecision);
+    if (bulkDecisionEvent) {
+      proxy.$superdoc.emit('tracked-changes:bulk-decision', bulkDecisionEvent);
+    }
     emitV2EditorUpdate();
   }
   if (event.type !== 'mutation:committed') return;

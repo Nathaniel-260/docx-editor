@@ -2801,6 +2801,20 @@ export interface SuperDocEditorPayload {
   editor: Editor;
 }
 
+/** Result counts from an Accept All or Reject All tracked-change decision. */
+export interface SuperDocTrackedChangesBulkDecisionPayload {
+  /** Document that received the bulk decision. */
+  documentId: string | null;
+  /** Operation requested by the user. */
+  decision: 'accept' | 'reject';
+  /** Unique tracked changes considered by the operation. */
+  requestedCount: number;
+  /** Changes successfully decided by this operation. */
+  successfulCount: number;
+  /** Changes left open because the permission resolver denied them. */
+  permissionDeniedCount: number;
+}
+
 /**
  * Payload emitted with `document-replaced`.
  *
@@ -3707,6 +3721,8 @@ export interface Config {
   onCollaborationReady?: (params: SuperDocEditorPayload) => void;
   /** Callback when document is updated. */
   onEditorUpdate?: (params: EditorUpdateEvent) => void;
+  /** Callback after an Accept All or Reject All tracked-change decision. */
+  onTrackedChangesBulkDecision?: (params: SuperDocTrackedChangesBulkDecisionPayload) => void;
   /**
    * Callback when SuperDoc emits an `exception` event. Check for `stage`,
    * `code`, `itemName`, or `source` before reading producer-specific fields.
