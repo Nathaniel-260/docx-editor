@@ -152,17 +152,17 @@ export const INTENT_GROUP_META: Record<string, IntentGroupMeta> = {
     toolName: 'superdoc_get_content',
     description:
       'Read document content in various formats. Call this first in any workflow to understand document structure before making edits. ' +
-      'Action "blocks" returns structured block data with nodeId, nodeType, textPreview, optional full text when includeText:true, formatting properties (fontFamily, fontSize, color, bold, underline, alignment), and ref handles for immediate use with superdoc_edit or superdoc_format. ' +
+      'Action "blocks" returns structured block data with nodeId, nodeType, textPreview, optional full text when includeText:true, formatting properties (fontFamily, fontSize, color, bold, underline, alignment), and ref handles for immediate use with superdoc_edit or superdoc_format. Its optional reviewMode selects final, original, or redline numbering metadata without filtering blocks. ' +
       'When you need to evaluate or rewrite existing paragraphs or clauses, prefer action "blocks" with includeText:true so you can identify the correct block and then target it by nodeId. ' +
       'Actions "text", "markdown", and "html" return compact strings. Actions "markdown_projection" and "html_projection" return detailed async projections with review modes, scopes, diagnostics, annotations, block maps, and optional source maps. ' +
       'Projection source targets use tracked coordinates and are valid only at evaluatedRevision; after any mutation, reproject before using them. Treat omitted or partially emitted annotations according to their status instead of guessing an anchor from rendered text. ' +
       'Action "info" returns document metadata: word count, paragraph count, page count, outline, available styles, and capability flags. ' +
-      'The "blocks" action supports pagination via "offset" and "limit", and filtering via "nodeTypes". Other actions ignore these parameters. ' +
+      'The "blocks" action supports pagination via "offset" and "limit", filtering via "nodeTypes", and numbering projection via "reviewMode". Other actions ignore pagination and filtering parameters. ' +
       'This tool never modifies the document. ' +
       'Do NOT call superdoc_edit or superdoc_format without first reading blocks to get valid refs and formatting reference values.',
     inputExamples: [
       { action: 'blocks' },
-      { action: 'blocks', includeText: true, offset: 0, limit: 20 },
+      { action: 'blocks', includeText: true, offset: 0, limit: 20, reviewMode: 'final' },
       { action: 'blocks', offset: 0, limit: 20, nodeTypes: ['heading', 'paragraph'] },
       { action: 'text' },
       { action: 'info' },
@@ -1091,9 +1091,9 @@ export const OPERATION_DEFINITIONS = {
   'blocks.list': {
     memberPath: 'blocks.list',
     description:
-      'List top-level blocks in document order with IDs, types, text previews, and optional full text when includeText:true. Supports pagination via offset/limit, optional nodeType filtering, and single-story scoping via `in: <StoryLocator>`.',
+      'List top-level blocks in document order with IDs, types, text previews, and optional full text when includeText:true. Supports pagination via offset/limit, optional nodeType filtering, single-story scoping via `in: <StoryLocator>`, and final/original/redline projection of numbering metadata without changing block membership.',
     expectedResult:
-      'Returns a BlocksListResult with total block count, an ordered array of block entries (ordinal, nodeId, nodeType, textPreview, optional text, isEmpty), and the current document revision.',
+      'Returns a BlocksListResult with total block count, an ordered array of block entries, the effective numbering reviewMode, and the current document revision.',
     requiresDocumentContext: true,
     metadata: readOperation({
       throws: ['INVALID_INPUT', ...T_STORY],

@@ -4457,6 +4457,7 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
         type: 'boolean',
         description: 'When true, includes the full flattened block text in each block entry.',
       },
+      reviewMode: ref('SDProjectionReviewMode'),
     }),
     output: objectSchema(
       {
@@ -4509,8 +4510,9 @@ const operationSchemas: Record<OperationId, OperationSchemaSet> = {
           ),
         },
         revision: { type: 'string' },
+        reviewMode: ref('SDProjectionReviewMode'),
       },
-      ['total', 'blocks', 'revision'],
+      ['total', 'blocks', 'revision', 'reviewMode'],
     ),
   },
   'blocks.delete': {

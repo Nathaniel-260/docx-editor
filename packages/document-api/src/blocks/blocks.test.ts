@@ -19,6 +19,16 @@ import type {
 import { DocumentApiValidationError } from '../errors.js';
 import type { StoryLocator } from '../types/story.types.js';
 
+type ReviewAwareBlocksListInput = BlocksListInput & {
+  reviewMode?: 'final' | 'original' | 'redline';
+};
+
+function executeReviewAwareBlocksList(adapter: BlocksAdapter, input?: ReviewAwareBlocksListInput): BlocksListResult {
+  return (
+    executeBlocksList as unknown as (value: BlocksAdapter, request?: ReviewAwareBlocksListInput) => BlocksListResult
+  )(adapter, input);
+}
+
 function makeAdapter(result?: BlocksDeleteResult): BlocksAdapter {
   const defaultResult: BlocksDeleteResult = {
     success: true,
@@ -321,6 +331,13 @@ describe('executeBlocksList', () => {
       executeBlocksList(adapter, input);
       expect(adapter.list).toHaveBeenCalledWith(input);
     });
+
+    it.each(['final', 'original', 'redline'] as const)('passes through reviewMode=%s unchanged', (reviewMode) => {
+      const adapter = makeListAdapter();
+      const input: ReviewAwareBlocksListInput = { reviewMode };
+      executeReviewAwareBlocksList(adapter, input);
+      expect(adapter.list).toHaveBeenCalledWith(input);
+    });
   });
 
   describe('input validation', () => {
@@ -340,6 +357,14 @@ describe('executeBlocksList', () => {
       expect(() => executeBlocksList(makeListAdapter(), { in: { storyType: 'body' } as any })).toThrow(
         DocumentApiValidationError,
       );
+    });
+
+    it('rejects an invalid reviewMode before calling the adapter', () => {
+      const adapter = makeListAdapter();
+      expect(() => executeReviewAwareBlocksList(adapter, { reviewMode: 'markup' as 'final' })).toThrow(
+        DocumentApiValidationError,
+      );
+      expect(adapter.list).not.toHaveBeenCalled();
     });
   });
 });

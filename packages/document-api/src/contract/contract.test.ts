@@ -128,6 +128,18 @@ describe('document-api contract catalog', () => {
     expect(input.required).not.toContain('isLgl');
   });
 
+  it('publishes review-aware blocks.list input and effective-mode output', () => {
+    const schemas = buildInternalContractSchemas();
+    const operation = schemas.operations['blocks.list'];
+    const input = operation.input as ContractTestSchemaShape;
+    const output = operation.output as ContractTestSchemaShape;
+
+    expect(input.properties?.reviewMode).toEqual({ $ref: '#/$defs/SDProjectionReviewMode' });
+    expect(input.required ?? []).not.toContain('reviewMode');
+    expect(output.properties?.reviewMode).toEqual({ $ref: '#/$defs/SDProjectionReviewMode' });
+    expect(output.required).toContain('reviewMode');
+  });
+
   it('keeps catalog key coverage in lockstep with operation ids', () => {
     const catalogKeys = Object.keys(COMMAND_CATALOG).sort();
     const operationIds = [...OPERATION_IDS].sort();

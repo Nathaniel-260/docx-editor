@@ -9,6 +9,7 @@ import type {
 } from './receipt.js';
 import type { StoryLocator } from './story.types.js';
 import type { ParagraphNumbering } from './paragraph.types.js';
+import type { SDProjectionReviewMode } from './content-projection.js';
 // ---------------------------------------------------------------------------
 // blocks.list
 // ---------------------------------------------------------------------------
@@ -45,7 +46,11 @@ export interface BlockListEntry {
    * marker/ordinal exposed on list items.
    */
   paragraphNumbering?: ParagraphNumbering;
-  /** Resolved list marker, hierarchy, and kind for list items. */
+  /**
+   * Resolved marker metadata for the selected numbering review view. Absent
+   * when that view excludes the marker or the numbering definition cannot be
+   * resolved.
+   */
   numbering?: {
     marker: string;
     path: number[];
@@ -62,11 +67,20 @@ export interface BlocksListInput {
   includeText?: boolean;
   /** Restrict block listing to a specific story. Omit for body (backward compatible). */
   in?: StoryLocator;
+  /**
+   * Selects final, original, or redline numbering metadata without changing
+   * returned block membership or source fields. Defaults to final. In tracked
+   * documents this default can differ from older source-state marker counters,
+   * where deleted list items could advance later markers.
+   */
+  reviewMode?: SDProjectionReviewMode;
 }
 export interface BlocksListResult {
   total: number;
   blocks: BlockListEntry[];
   revision: string;
+  /** Effective numbering review mode. Defaults to final when omitted from the request. */
+  reviewMode: SDProjectionReviewMode;
 }
 // ---------------------------------------------------------------------------
 // blocks.delete

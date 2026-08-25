@@ -15,6 +15,7 @@ import type {
   BlocksSplitResult,
 } from '../types/blocks.types.js';
 import { BLOCK_NODE_TYPES, DELETABLE_BLOCK_NODE_TYPES } from '../types/base.js';
+import { SD_PROJECTION_REVIEW_MODES } from '../types/content-projection.js';
 import { storyLocatorToKey, type StoryLocator } from '../types/story.types.js';
 import { DocumentApiValidationError } from '../errors.js';
 import { assertNoUnknownFields } from '../validation-primitives.js';
@@ -50,6 +51,7 @@ const SUPPORTED_DELETE_NODE_TYPES = new Set<string>(DELETABLE_BLOCK_NODE_TYPES);
 const REJECTED_DELETE_NODE_TYPES = new Set(['tableRow', 'tableCell']);
 const VALID_BLOCK_NODE_TYPES = new Set<string>(BLOCK_NODE_TYPES);
 const BLOCKS_DELETE_INPUT_ALLOWED_KEYS = new Set(['target']);
+const VALID_PROJECTION_REVIEW_MODES = new Set<string>(SD_PROJECTION_REVIEW_MODES);
 const BODY_STORY_LOCATOR: StoryLocator = { kind: 'story', storyType: 'body' };
 // ---------------------------------------------------------------------------
 // blocks.list validation
@@ -102,6 +104,13 @@ function validateBlocksListInput(input?: BlocksListInput): void {
     throw new DocumentApiValidationError('INVALID_INPUT', 'blocks.list includeText must be a boolean.', {
       fields: ['includeText'],
     });
+  }
+  if (input.reviewMode != null && !VALID_PROJECTION_REVIEW_MODES.has(input.reviewMode)) {
+    throw new DocumentApiValidationError(
+      'INVALID_INPUT',
+      'blocks.list reviewMode must be "final", "original", or "redline".',
+      { fields: ['reviewMode'] },
+    );
   }
   validateStoryLocator(input.in, 'in');
 }
