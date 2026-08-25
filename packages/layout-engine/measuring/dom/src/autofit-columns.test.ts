@@ -342,6 +342,59 @@ describe('computeAutoFitColumnWidths', () => {
     expect(result.columnWidths[3]).toBeGreaterThan(result.columnWidths[2]);
   });
 
+  it('resolves the SD-4458 overwide AutoFit case to the exact content-band vector', () => {
+    const authoredGridWidths = [3005, 3005, 3005, 3006].map((twips) => twips / 15);
+    const result = computeAutoFitColumnWidths(
+      buildExplicitInput({
+        workingInput: buildWorkingInput({
+          preferredTableWidth: undefined,
+          maxTableWidth: 576,
+          preferredColumnWidths: authoredGridWidths,
+          gridColumnCount: 4,
+          rows: [
+            buildAutoGridRow([240, 76.8, 144, 288]),
+            buildAutoGridRow([240, 76.8, 144, 288]),
+            buildAutoGridRow([144, 144, 144, 144]),
+          ],
+        }),
+        fixedLayout: {
+          columnWidths: [240, 144, 144, 288],
+          totalWidth: 816,
+          gridColumnCount: 4,
+          preferredTableWidth: undefined,
+        },
+        contentMetrics: buildContentMetrics([
+          [
+            { min: 40, max: 160, preferredWidth: 240 },
+            { min: 40, max: 80, preferredWidth: 76.8 },
+            { min: 40, max: 120, preferredWidth: 144 },
+            { min: 40, max: 220, preferredWidth: 288 },
+          ],
+          [
+            { min: 40, max: 160, preferredWidth: 240 },
+            { min: 40, max: 80, preferredWidth: 76.8 },
+            { min: 40, max: 120, preferredWidth: 144 },
+            { min: 40, max: 220, preferredWidth: 288 },
+          ],
+          [
+            { min: 40, max: 120, preferredWidth: 144 },
+            { min: 40, max: 120, preferredWidth: 144 },
+            { min: 40, max: 120, preferredWidth: 144 },
+            { min: 40, max: 120, preferredWidth: 144 },
+          ],
+        ]),
+      }),
+    );
+
+    expect(authoredGridWidths.reduce((sum, width) => sum + width, 0)).toBe(801.4);
+    expect(result).toEqual({
+      layoutMode: 'autofit',
+      columnWidths: [166.8292682926829, 105.95121951219512, 105.95121951219512, 197.2682926829268],
+      totalWidth: 576,
+      gridColumnCount: 4,
+    });
+  });
+
   it('keeps a fitting non-uniform tblW auto grid within its width budget when tcW preferences overflow it', () => {
     const result = computeAutoFitColumnWidths(
       buildExplicitInput({

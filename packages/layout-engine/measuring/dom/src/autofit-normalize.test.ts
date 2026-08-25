@@ -173,6 +173,44 @@ describe('buildAutoFitWorkingGridInput', () => {
     expect(result.preserveAutoGrid).toBe(true);
   });
 
+  it('preserves the explicit-auto versus omitted-width distinction for overwide authored grids', () => {
+    const buildOverwideGridInput = (attrs: TableBlock['attrs']) =>
+      buildAutoFitWorkingGridInput(
+        createTableBlock({
+          attrs,
+          columnWidths: [300, 340],
+          rows: [
+            {
+              id: 'row-1',
+              cells: [{ id: 'cell-1' }, { id: 'cell-2' }],
+            },
+          ],
+        }),
+        { maxWidth: 500 },
+      );
+
+    const explicitAuto = buildOverwideGridInput({
+      tableWidth: { value: 0, type: 'auto' },
+    });
+    const omittedWidth = buildOverwideGridInput({});
+
+    expect(explicitAuto).toMatchObject({
+      layoutMode: 'autofit',
+      maxTableWidth: 500,
+      preferredTableWidth: undefined,
+      preferredColumnWidths: [300, 340],
+      gridColumnCount: 2,
+    });
+    expect(omittedWidth).toMatchObject({
+      layoutMode: 'autofit',
+      maxTableWidth: 500,
+      preferredTableWidth: undefined,
+      preferredColumnWidths: [300, 340],
+      gridColumnCount: 2,
+    });
+    expect(explicitAuto).not.toEqual(omittedWidth);
+  });
+
   it('stabilizes a complete uniform tblW auto grid without redundant tcW metadata', () => {
     const block = createTableBlock({
       attrs: {

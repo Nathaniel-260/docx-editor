@@ -64,7 +64,7 @@ const baseComponentSpecs = Object.freeze([
   Object.freeze({ id: 'engine-consumer', payloadPath: 'payload/engine-consumer', destination: '.ci-docx-engine' }),
 ]);
 
-const cliRuntimeOutputDestinations = Object.freeze({
+export const CI_SUPERDOC_CLI_RUNTIME_OUTPUT_DESTINATIONS = Object.freeze({
   'leaf-document-compare': 'document-compare/dist',
   'leaf-editor-core': 'editor-core/dist',
   'leaf-collaboration-v2': 'collaboration-v2/dist',
@@ -311,7 +311,7 @@ function assertRuntimeTreeMatches(tree, output, id, label) {
 }
 
 export function assertCiSuperdocCliRuntimeClosure(engineProducerReceipt) {
-  const missing = Object.entries(cliRuntimeOutputDestinations)
+  const missing = Object.entries(CI_SUPERDOC_CLI_RUNTIME_OUTPUT_DESTINATIONS)
     .filter(([id, destination]) => engineProducerReceipt?.runtimeOutputs?.[id]?.destination !== destination)
     .map(([id, destination]) => `${id} (${destination})`);
   if (missing.length > 0) {

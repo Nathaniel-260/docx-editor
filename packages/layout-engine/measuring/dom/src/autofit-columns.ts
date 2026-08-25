@@ -252,8 +252,10 @@ export function computeAutoFitColumnWidths(input: AutoFitInput): AutoFitResult {
     (autoGridWidthBudget != null
       ? Math.min(fixedLayout.totalWidth, autoGridWidthBudget)
       : (implicitPreferredTableWidth ?? fixedLayout.totalWidth));
+  // Explicit preferred widths and omitted-width overwide authored grids retain
+  // overflow semantics. Explicit tblW=auto remains constrained to the text band.
   const canOverflowAvailableWidth =
-    preferredTableWidth != null || (autoGridWidthBudget == null && hasCompleteAuthoredGrid(workingInput));
+    preferredTableWidth != null || (workingInput.tableWidthSemantics === 'omitted' && autoGridWidthBudget != null);
   const maxResolvedTableWidth = canOverflowAvailableWidth
     ? Math.max(workingInput.maxTableWidth, targetTableWidth)
     : workingInput.maxTableWidth;
@@ -268,7 +270,9 @@ export function computeAutoFitColumnWidths(input: AutoFitInput): AutoFitResult {
     targetTableWidth = Math.min(targetTableWidth, maxResolvedTableWidth);
   } else {
     targetTableWidth = Math.min(targetTableWidth, maxResolvedTableWidth);
-    if (!shouldPreservePreferredGrid) {
+    // Content shaping distributes slack while growing. An already-overwide
+    // fixed pass must instead shrink directly toward its measured minima.
+    if (!shouldPreservePreferredGrid && sumWidths(resolvedWidths) <= targetTableWidth) {
       resolvedWidths = redistributeTowardMaximumsWithinCurrentTable(resolvedWidths, minBounds, maxBounds);
       resolvedWidths = redistributeTowardContentWeightedShape(resolvedWidths, minBounds, maxBounds);
     }

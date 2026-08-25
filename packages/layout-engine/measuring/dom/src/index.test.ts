@@ -7,6 +7,7 @@ import type {
   Measure,
   DrawingMeasure,
   DrawingBlock,
+  TableBlock,
   TableMeasure,
   Run,
   TabRun,
@@ -54,6 +55,40 @@ const expectDrawingMeasure = (measure: Measure): DrawingMeasure => {
   expect(measure.kind).toBe('drawing');
   return measure as DrawingMeasure;
 };
+
+const createOverwideGridTable = (attrs: TableBlock['attrs'] = {}): TableBlock => ({
+  kind: 'table',
+  id: 'overwide-grid-table',
+  attrs,
+  rows: [
+    {
+      id: 'row-0',
+      cells: [
+        {
+          id: 'cell-0-0',
+          blocks: [
+            {
+              kind: 'paragraph',
+              id: 'para-0',
+              runs: [{ text: 'A', fontFamily: 'Arial', fontSize: 12 }],
+            },
+          ],
+        },
+        {
+          id: 'cell-0-1',
+          blocks: [
+            {
+              kind: 'paragraph',
+              id: 'para-1',
+              runs: [{ text: 'B', fontFamily: 'Arial', fontSize: 12 }],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  columnWidths: [320, 320],
+});
 
 describe('measureBlock', () => {
   // Ensure we're in a jsdom environment
@@ -7492,7 +7527,7 @@ describe('measureBlock', () => {
     });
   });
 
-  describe('percentage table width (SD-1239)', () => {
+  describe('table width semantics (SD-1239, SD-4458)', () => {
     it('scales column widths to 100% of available width when tableWidth type is pct with value 5000', async () => {
       const block: FlowBlock = {
         kind: 'table',
@@ -7638,41 +7673,20 @@ describe('measureBlock', () => {
       expect(measure.columnWidths[1]).toBe(150);
     });
 
-    it('preserves imported grid widths that exceed the content column', async () => {
-      const block: FlowBlock = {
-        kind: 'table',
-        id: 'grid-wide-table',
-        rows: [
-          {
-            id: 'row-0',
-            cells: [
-              {
-                id: 'cell-0-0',
-                blocks: [
-                  {
-                    kind: 'paragraph',
-                    id: 'para-0',
-                    runs: [{ text: 'A', fontFamily: 'Arial', fontSize: 12 }],
-                  },
-                ],
-              },
-              {
-                id: 'cell-0-1',
-                blocks: [
-                  {
-                    kind: 'paragraph',
-                    id: 'para-1',
-                    runs: [{ text: 'B', fontFamily: 'Arial', fontSize: 12 }],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-        columnWidths: [320, 320],
-      };
+    it('constrains an explicit tblW auto grid to the content column', async () => {
+      const measure = await measureBlock(createOverwideGridTable({ tableWidth: { value: 0, type: 'auto' } }), {
+        maxWidth: 500,
+      });
 
-      const measure = await measureBlock(block, { maxWidth: 500 });
+      expect(measure.kind).toBe('table');
+      if (measure.kind !== 'table') throw new Error('expected table measure');
+
+      expect(measure.totalWidth).toBe(500);
+      expect(measure.columnWidths).toEqual([250, 250]);
+    });
+
+    it('preserves an intentionally overwide imported grid when tblW is omitted', async () => {
+      const measure = await measureBlock(createOverwideGridTable(), { maxWidth: 500 });
 
       expect(measure.kind).toBe('table');
       if (measure.kind !== 'table') throw new Error('expected table measure');
