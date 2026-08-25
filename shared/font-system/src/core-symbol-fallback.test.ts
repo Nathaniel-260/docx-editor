@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test';
-import { textForCoreSymbolFallback } from './core-symbol-fallback';
+import { CORE_SYMBOL_FALLBACK_COVERAGE, textForCoreSymbolFallback } from './core-symbol-fallback';
 
 describe('core symbol fallback coverage', () => {
   it('matches provider-backed symbols rather than a checkbox-specific allowlist', () => {
@@ -10,5 +10,13 @@ describe('core symbol fallback coverage', () => {
 
   it('deduplicates supplementary-plane characters by code point', () => {
     expect(textForCoreSymbolFallback('\u{1F5F9}\u{1F5F9}')).toBe('\u{1F5F9}');
+  });
+
+  it('does not claim ASCII digits', () => {
+    const coversCodePoint = (codePoint: number) =>
+      CORE_SYMBOL_FALLBACK_COVERAGE.ranges.some((r) => r.start <= codePoint && codePoint <= r.end);
+    for (const digit of '0123456789') {
+      expect(coversCodePoint(digit.codePointAt(0)!)).toBe(false);
+    }
   });
 });
