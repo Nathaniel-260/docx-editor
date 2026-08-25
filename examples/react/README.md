@@ -4,7 +4,7 @@ Mount SuperDoc with the React wrapper, wait for the document to open, and export
 
 ## Run it
 
-Requires Node 22.12 or newer and pnpm 10.
+Requires Node 22.12 or newer and pnpm 11.
 
 ```bash
 pnpm install

@@ -4,7 +4,7 @@ Open a DOCX in SuperDoc, edit it in the browser, and export the result.
 
 ## Run it
 
-Requires Node 22.12 or newer and pnpm 10.
+Requires Node 22.12 or newer and pnpm 11.
 
 ```bash
 pnpm install

@@ -1,11 +1,9 @@
 /**
  * pnpm settings live in pnpm-workspace.yaml, not package.json#pnpm.
  *
- * pnpm 10 reads both, which is how the two drifted: `better-sqlite3` and eight
- * `ignoredBuiltDependencies` sat in `package.json` where pnpm silently ignored
- * them, because a key present in the workspace file wins and one absent from it
- * was never merged back. pnpm 11 drops `package.json#pnpm` entirely, so the
- * duplicate is also a migration hazard.
+ * pnpm 11 ignores `package.json#pnpm`, so settings declared there read as live
+ * while having no effect. Build permissions also use one `allowBuilds` map;
+ * preserving separate allow and ignore lists would silently drop both policies.
  *
  * This asserts the settings have exactly one home. It is a structural check, so
  * it uses pnpm's workspace discovery but needs no installed project dependencies
@@ -30,7 +28,7 @@ function toRepositoryPath(path, separator = sep) {
 }
 
 /**
- * Settings pnpm accepts in either file, and therefore the ones that can drift.
+ * Settings this workspace owns and therefore the ones that can drift.
  *
  * This is the ALLOWLIST, and everything under a nested `pnpm` block is measured
  * against it: a key that is not here is reported too. The inverse — enumerating
@@ -42,8 +40,7 @@ function toRepositoryPath(path, separator = sep) {
 const SHAREABLE_KEYS = [
   'overrides',
   'patchedDependencies',
-  'onlyBuiltDependencies',
-  'ignoredBuiltDependencies',
+  'allowBuilds',
   'packageExtensions',
   'peerDependencyRules',
   'allowedDeprecatedVersions',
@@ -51,43 +48,10 @@ const SHAREABLE_KEYS = [
 ];
 
 /**
- * Workspace projects the repository also installs as their own root, each
- * pointing at the script that does it.
- *
- * `--ignore-workspace` makes that directory the root of a normal non-workspace
- * install, so pnpm reads its `pnpm` block and the setting is live rather than
- * dead. Reporting it would deny the project the only configuration path it has:
- * the root `pnpm-workspace.yaml` is exactly what that install ignores.
- *
- * `tests/consumer-typecheck` is the other standalone install and needs no entry,
- * because it is outside the workspace patterns and pnpm never returns it.
- *
- * Named rather than derived so any future exception has an explicit owner.
- */
-const STANDALONE_PROJECTS = Object.freeze({});
-
-test('every standalone exemption still names a script that installs it that way', () => {
-  // An exemption nobody revisits becomes a hole. If the script stops installing
-  // the project as its own root, its `pnpm` block goes back to being dead
-  // configuration and the entry has to go with it.
-  for (const [project, script] of Object.entries(STANDALONE_PROJECTS)) {
-    const path = resolve(REPO_ROOT, script);
-    assert.ok(existsSync(path), `${project} is exempt via ${script}, which no longer exists`);
-    const source = readFileSync(path, 'utf8');
-    assert.match(
-      source,
-      /pnpm install[^\n]*--ignore-workspace/,
-      `${script} no longer installs ${project} with --ignore-workspace, so the exemption is stale`,
-    );
-  }
-});
-
-/**
  * Every workspace manifest pnpm would read, tracked or not.
  *
- * Let pnpm expand its own workspace patterns. A repository-wide file glob also
- * included standalone fixtures such as `tests/consumer-typecheck`, where
- * `pnpm install --ignore-workspace` intentionally reads local overrides.
+ * Let pnpm expand its own workspace patterns instead of approximating them with
+ * a repository-wide file glob.
  */
 function listWorkspaceManifests(
   projects = JSON.parse(
@@ -98,14 +62,12 @@ function listWorkspaceManifests(
     }),
   ),
   manifestExists = existsSync,
-  standaloneProjects = STANDALONE_PROJECTS,
 ) {
   const manifestNames = ['package.json', 'package.json5', 'package.yaml'];
 
   return projects
     .map(({ path }) => resolve(path))
     .filter((projectPath) => projectPath !== REPO_ROOT)
-    .filter((projectPath) => !Object.hasOwn(standaloneProjects, toRepositoryPath(relative(REPO_ROOT, projectPath))))
     .map((projectPath) => manifestNames.map((name) => resolve(projectPath, name)).find(manifestExists))
     .filter(Boolean)
     .map((manifestPath) => toRepositoryPath(relative(REPO_ROOT, manifestPath)));
@@ -133,7 +95,7 @@ test('the root manifest declares no pnpm settings', () => {
  * silently, which is the same failure as the reader this replaced. Any edit
  * changes the digest, so the file has to be looked at again.
  *
- * Why attest rather than read. pnpm 10 also accepts `package.json5` and
+ * Why attest rather than read. pnpm also accepts `package.json5` and
  * `package.yaml`, and neither can be parsed here, because this runs before
  * `pnpm install` and so has no dependencies to parse with. An earlier version
  * matched the key in the source text instead. That reader was wrong four times
@@ -256,15 +218,12 @@ test('an attestation covers one exact file, not a pathname', () => {
   assert.match(attestationProblem('constructor', reviewed, {}), /never reviewed/);
 });
 
-test('a project path colliding with an Object prototype key is not exempt', () => {
-  // `in` answers for the whole prototype chain, so a project at `constructor`
-  // read as exempt and skipped the gate entirely.
+test('a project path colliding with an Object prototype key is discovered', () => {
   const project = resolve(REPO_ROOT, 'constructor');
   assert.deepEqual(
     listWorkspaceManifests(
       [{ path: REPO_ROOT }, { path: project }],
       (path) => path === resolve(project, 'package.json'),
-      {},
     ),
     ['constructor/package.json'],
   );
@@ -275,7 +234,7 @@ test('a project path colliding with an Object prototype key is not exempt', () =
  * the `package.json#pnpm` block this commit deleted, so a later edit that drops
  * one of them fails here instead of silently changing resolution or install
  * policy. An earlier version listed 5 of the 42 overrides and 6 of the 8
- * `ignoredBuiltDependencies`, which left deleting `protobufjs@8` or
+ * build permissions, which left deleting `protobufjs@8` or
  * `@playwright/browser-chromium` green.
  *
  * The `vite` override is deliberately absent here and asserted separately: its
@@ -284,26 +243,24 @@ test('a project path colliding with an Object prototype key is not exempt', () =
  * the silent-loss shape the list exists to catch.
  */
 const MIGRATED = Object.freeze({
-  onlyBuiltDependencies: Object.freeze([
-    '@vscode/vsce-sign',
-    'better-sqlite3',
-    'canvas',
-    'esbuild',
-    'keytar',
-    'puppeteer',
-    'sharp',
-    'unrs-resolver',
-    'vue-demi',
-  ]),
-  ignoredBuiltDependencies: Object.freeze([
-    '@parcel/watcher',
-    '@playwright/browser-chromium',
-    '@swc/core',
-    'lmdb',
-    'msgpackr-extract',
-    'msw',
-    'onnxruntime-node',
-    'protobufjs',
+  allowBuilds: Object.freeze([
+    '@parcel/watcher=false',
+    '@playwright/browser-chromium=false',
+    '@swc/core=false',
+    '@vscode/vsce-sign=true',
+    'better-sqlite3=true',
+    'canvas=true',
+    'esbuild=true',
+    'keytar=true',
+    'lmdb=false',
+    'msgpackr-extract=false',
+    'msw=false',
+    'onnxruntime-node=false',
+    'protobufjs=false',
+    'puppeteer=true',
+    'sharp=true',
+    'unrs-resolver=true',
+    'vue-demi=true',
   ]),
   // No `patchedDependencies`. This guard asks whether the migration out of
   // `package.json#pnpm` silently dropped a setting, and both patches have since
@@ -371,9 +328,8 @@ const MIGRATED = Object.freeze({
  * deleting the actual `vue:` override passed; `includes('canvas')` is satisfied
  * by the `catalog:` block a hundred lines earlier.
  *
- * Both shapes pnpm accepts here are flat: a sequence of scalars
- * (`onlyBuiltDependencies`) or a map of scalar to scalar (`overrides`). Read
- * with a small matcher rather than a YAML dependency, the same call
+ * The settings this guard reads are flat maps of scalar to scalar. Read with a
+ * small matcher rather than a YAML dependency, the same call
  * check-repo-structure already makes for the `packages:` list.
  */
 function readSectionEntries(workspace, key) {
@@ -456,7 +412,7 @@ test('readSectionEntries reads exact keys with their values, not substrings', ()
     // A `#` inside the quotes is part of the value, not the start of a comment.
     'marker=a # b',
   ]);
-  // A sequence section has no values to carry, so its entries stay bare.
+  // The workspace package list remains a sequence, so its entries stay bare.
   assert.deepEqual(readSectionEntries(sample, 'packages'), ['apps/*']);
   assert.equal(readSectionEntries(sample, 'absent'), null);
   // A comment on the header names the same section. An exact comparison found no
@@ -631,33 +587,5 @@ test('discovery follows pnpm workspace projects without mutating the repository'
   assert.equal(
     toRepositoryPath('packages\\untracked-workspace\\package.json', '\\'),
     'packages/untracked-workspace/package.json',
-  );
-});
-
-test('a project the repository installs as its own root is left to configure itself', () => {
-  // pnpm returns this project like any other workspace member, so the exemption
-  // has to be applied here or its live `pnpm` block reads as dead.
-  const exempt = resolve(REPO_ROOT, 'examples/demo');
-  const ordinary = resolve(REPO_ROOT, 'examples/other');
-  const manifests = [resolve(exempt, 'package.json'), resolve(ordinary, 'package.json')];
-
-  assert.deepEqual(
-    listWorkspaceManifests(
-      [{ path: REPO_ROOT }, { path: exempt }, { path: ordinary }],
-      (path) => manifests.includes(path),
-      { 'examples/demo': 'examples/run-demo.sh' },
-    ),
-    ['examples/other/package.json'],
-  );
-
-  // Without the entry it is checked like anything else, which is what makes the
-  // exemption the deliberate part rather than an accident of discovery.
-  assert.deepEqual(
-    listWorkspaceManifests(
-      [{ path: REPO_ROOT }, { path: exempt }, { path: ordinary }],
-      (path) => manifests.includes(path),
-      {},
-    ),
-    ['examples/demo/package.json', 'examples/other/package.json'],
   );
 });

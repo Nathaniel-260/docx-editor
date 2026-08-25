@@ -57,7 +57,7 @@ function planLocalCi({ privateWorkspaces, docsV1RouteScripts = privateWorkspaces
   writeFixtureFile(
     repoDir,
     'package.json',
-    `${JSON.stringify({ name: 'local-ci-plan-fixture', packageManager: 'pnpm@10.25.0', private: true })}\n`,
+    `${JSON.stringify({ name: 'local-ci-plan-fixture', packageManager: 'pnpm@11.24.0', private: true })}\n`,
   );
   writeFixtureFile(repoDir, '.github/workflows/validate.yml', 'name: Validate\n');
   for (const workflowPath of [

@@ -5,7 +5,7 @@ SuperDoc starts inside `$effect`, so it only runs after the route mounts in the 
 
 ## Run it
 
-Requires Node 22.12 or newer and pnpm 10.
+Requires Node 22.12 or newer and pnpm 11.
 
 ```bash
 pnpm install

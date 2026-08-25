@@ -113,26 +113,24 @@ catalog:
   yjs: ^13.6.19 # range allows consumers to use newer patch versions
   vite-plus: 0.2.7
 
-onlyBuiltDependencies:
-  - '@vscode/vsce-sign'
-  - better-sqlite3
-  - canvas
-  - esbuild
-  - keytar
-  - puppeteer
-  - sharp
-  - unrs-resolver
-  - vue-demi
-
-ignoredBuiltDependencies:
-  - '@parcel/watcher'
-  - '@playwright/browser-chromium'
-  - '@swc/core'
-  - lmdb
-  - msgpackr-extract
-  - msw
-  - onnxruntime-node
-  - protobufjs
+allowBuilds:
+  '@parcel/watcher': false
+  '@playwright/browser-chromium': false
+  '@swc/core': false
+  '@vscode/vsce-sign': true
+  better-sqlite3: true
+  canvas: true
+  esbuild: true
+  keytar: true
+  lmdb: false
+  msgpackr-extract: false
+  msw: false
+  onnxruntime-node: false
+  protobufjs: false
+  puppeteer: true
+  sharp: true
+  unrs-resolver: true
+  vue-demi: true
 
 overrides:
   canvas: '3.2.3'

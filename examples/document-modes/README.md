@@ -6,7 +6,7 @@ This example demonstrates editor behavior, not authorization. Your application s
 
 ## Run it
 
-Requires Node 22.12 or newer and pnpm 10.
+Requires Node 22.12 or newer and pnpm 11.
 
 ```bash
 pnpm install

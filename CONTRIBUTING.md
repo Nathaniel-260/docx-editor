@@ -36,7 +36,7 @@ changes into SuperDoc's canonical source history.
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 22, pinned in `.nvmrc`
-- [pnpm](https://pnpm.io/) 10, pinned in `package.json#packageManager`
+- [pnpm](https://pnpm.io/) 11, pinned in `package.json#packageManager`
   (`corepack enable` picks it up)
 
 ## Set up locally

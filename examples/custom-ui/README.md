@@ -6,7 +6,7 @@ The example intentionally implements one control. Add more commands only when yo
 
 ## Run it
 
-Requires Node 22.12 or newer and pnpm 10.
+Requires Node 22.12 or newer and pnpm 11.
 
 ```bash
 pnpm install

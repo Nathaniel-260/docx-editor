@@ -2,7 +2,7 @@
   "name": "superdoc-monorepo",
   "private": true,
   "license": "AGPL-3.0",
-  "packageManager": "pnpm@10.25.0",
+  "packageManager": "pnpm@11.24.0",
   "scripts": {
     "ci:local": "node scripts/oss-local-ci.mjs",
     "test": "node scripts/test.mjs",

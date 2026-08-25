@@ -6,7 +6,7 @@ The sample document contains one synthetic field tagged `company-name`.
 
 ## Run it
 
-Requires Node 22.12 or newer and pnpm 10.
+Requires Node 22.12 or newer and pnpm 11.
 
 ```bash
 pnpm install

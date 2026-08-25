@@ -4,7 +4,7 @@ Enable SuperDoc's built-in find surface and move between matches in the open DOC
 
 ## Run it
 
-Requires Node 22.12 or newer and pnpm 10.
+Requires Node 22.12 or newer and pnpm 11.
 
 ```bash
 pnpm install
