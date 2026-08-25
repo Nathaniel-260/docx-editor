@@ -22,9 +22,9 @@
     "build": "vp build",
     "dev": "vp build --watch",
     "test": "vp test run",
-    "pretype-check": "node ../../apps/cli/scripts/ensure-superdoc-build.js --types",
+    "pretype-check": "pnpm --prefix ../superdoc run build:es",
     "type-check": "tsc --noEmit",
-    "pretype-check:consumer": "node ../../apps/cli/scripts/ensure-superdoc-build.js --types",
+    "pretype-check:consumer": "pnpm --prefix ../superdoc run build:es",
     "type-check:consumer": "pnpm run build && vue-tsc --noEmit -p test/consumer/tsconfig.json",
     "lint": "pnpm -w exec vp lint packages/vue/src",
     "prepublishOnly": "pnpm run build"
