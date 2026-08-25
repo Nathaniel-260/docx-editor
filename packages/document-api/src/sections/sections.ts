@@ -82,6 +82,9 @@ const PAGE_NUMBER_FORMATS = [
   'lowerRoman',
   'upperRoman',
   'numberInDash',
+  // Word's Hebrew numerals: hebrew1 is gematria, hebrew2 counts the alphabet.
+  'hebrew1',
+  'hebrew2',
 ] as const;
 const PAGE_NUMBER_CHAPTER_SEPARATORS: readonly SectionPageNumberingChapterSeparator[] = [
   'hyphen',
