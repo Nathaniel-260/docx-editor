@@ -382,6 +382,10 @@ type V2ActiveEditorFacade = {
   authoring?: V2AuthoringFacade | null;
   v2Comments?: unknown;
   v2TrackedChanges?: unknown;
+  contextMenu?: {
+    open?(): unknown;
+    close?(): unknown;
+  } | null;
   presence?: {
     getSnapshot?: () => V2AwarenessSnapshotLike;
     subscribe?: (listener: (snapshot: V2AwarenessSnapshotLike) => void) => () => void;

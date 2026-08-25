@@ -1411,7 +1411,7 @@ export interface ContextMenuContext {
   /** ProseMirror end position of the selection. */
   selectionEnd: number;
   /** How the menu was opened. */
-  trigger: 'click' | 'slash';
+  trigger: 'click' | 'slash' | 'programmatic';
   /** Whether the cursor is inside a table. */
   isInTable: boolean;
   /** Whether the cursor is inside a list. */
@@ -1499,7 +1499,7 @@ export interface ContextMenuSelectContext {
   selectedTextSettled: Promise<string>;
   hasSelection: boolean;
   /** How the menu was opened. */
-  trigger: 'click' | 'slash';
+  trigger: 'click' | 'slash' | 'programmatic';
   isInTable: boolean;
   isInList: boolean;
   documentMode: 'editing' | 'suggesting' | 'viewing';
@@ -1539,9 +1539,18 @@ export interface ContextMenuSection {
   items: ContextMenuItem[];
 }
 
-/** Configuration for the context menu module. */
+/** Configuration for the built-in context menu. */
 export interface ContextMenuConfig {
-  /** Custom menu sections appended (or merged by id) to the default menu. */
+  /** Whether typing `/` after whitespace opens the menu (default: true). */
+  openOnSlash?: boolean;
+  /** Application sections appended to the menu, or merged into a built-in section with the same ID. */
+  sections?: ContextMenuSection[];
+  /** Whether to include SuperDoc's built-in items (default: true). */
+  defaultItems?: boolean;
+  /**
+   * Custom menu sections appended (or merged by id) to the default menu.
+   * @deprecated replaceWith=`sections` removeIn=v3.0
+   */
   customItems?: ContextMenuSection[];
   /**
    * Advanced: transform the final section list before render. Return
@@ -1551,7 +1560,10 @@ export interface ContextMenuConfig {
     context: ContextMenuContext,
     sections: ContextMenuSection[],
   ) => ContextMenuSection[] | null | undefined;
-  /** Whether to include default menu items (default: true). */
+  /**
+   * Whether to include default menu items (default: true).
+   * @deprecated replaceWith=`defaultItems` removeIn=v3.0
+   */
   includeDefaultItems?: boolean;
 }
 

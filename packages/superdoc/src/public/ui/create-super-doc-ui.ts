@@ -39,6 +39,7 @@ import type {
   ContentControlFocusResult,
   ContentControlsHandle,
   ContentControlsSlice,
+  ContextMenuHandle,
   CustomCommandContext,
   CustomCommandHandle,
   CustomCommandRegistration,
@@ -2119,6 +2120,40 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   const getEditor = (): LooseRecord | null => {
     const editor = superdoc?.activeEditor;
     return editor && typeof editor === 'object' ? (editor as LooseRecord) : null;
+  };
+
+  const contextMenu: ContextMenuHandle = {
+    open: (): WorkflowActionResult => {
+      if (disposed) return { ok: false, reason: SUPERDOC_UI_REASONS.notReady };
+      const editor = getEditor();
+      if (!editor) return { ok: false, reason: SUPERDOC_UI_REASONS.notReady };
+      const surface = editor.contextMenu;
+      if (!surface || typeof surface !== 'object' || typeof surface.open !== 'function') {
+        return { ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable };
+      }
+      try {
+        const result = surface.open();
+        if (result && typeof result === 'object' && (result as LooseRecord).ok === false) {
+          return {
+            ok: false,
+            reason: coerceSuperDocUIReason((result as LooseRecord).reason, SUPERDOC_UI_REASONS.operationUnavailable),
+          };
+        }
+        return { ok: true };
+      } catch {
+        return { ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable };
+      }
+    },
+    close: (): void => {
+      if (disposed) return;
+      const surface = getEditor()?.contextMenu;
+      if (!surface || typeof surface !== 'object' || typeof surface.close !== 'function') return;
+      try {
+        surface.close();
+      } catch {
+        // Closing an unavailable surface is intentionally idempotent.
+      }
+    },
   };
 
   /** Read the live browser Document API facade (or null). */
@@ -11577,6 +11612,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     metadata,
     tables,
     search,
+    contextMenu,
     styles,
     // Every entry point is disposal-guarded. This handle is the one place a
     // destroyed controller could still call back into application code:

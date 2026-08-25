@@ -797,6 +797,7 @@ const onV2EditorReady = (payload) => {
     bindSessionShortcuts,
     commentsAdapter,
     trackedChangesAdapter,
+    contextMenu,
     documentApi,
     documentMutationReadiness,
     documentApiUnavailableReason,
@@ -1163,6 +1164,7 @@ const onV2EditorReady = (payload) => {
     // v2 host APIs. Always present in v2 mode; null when the v2 editor host
     // boot failed.
     v2TrackedChanges: trackedChangesAdapter ?? null,
+    contextMenu: contextMenu ?? null,
     // ui-phase4-001: v2 page metrics + zoom runtime. Always present in v2
     // mode (null only if the v2 editor host boot failed). Consumers:
     //   - SuperDoc.vue's `activeZoom` watcher calls `pageMetrics.setZoom`
@@ -2121,7 +2123,7 @@ const editorOptions = (doc) => {
         console.warn('[SuperDoc] modules.slashMenu is deprecated. Use modules.contextMenu instead.');
       }
       // The profile already folded `ui.contextMenu` over both legacy spellings,
-      // so reading `modules.*` here is what dropped `ui.contextMenu.customItems`
+      // so reading `modules.*` here is what dropped `ui.contextMenu.sections`
       // on the floor. Boolean legacy forms carry no items and resolve to `{}`,
       // which the menu treats the same as the absent config it saw before.
       return proxy.$superdoc.uiConfig.contextMenu.options;

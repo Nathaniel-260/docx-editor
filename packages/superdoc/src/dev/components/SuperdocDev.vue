@@ -690,8 +690,8 @@ const init = async () => {
       },
       // Test custom context menu configuration
       contextMenu: {
-        // includeDefaultItems: true, // Include default items
-        // customItems: [
+        // defaultItems: true, // Include default items
+        // sections: [
         //   {
         //     id: 'custom-section',
         //     items: [

@@ -2244,6 +2244,57 @@ describe('public facade (ui)', () => {
   });
 });
 
+describe('public ui — context menu runtime control', () => {
+  it('opens and closes through the active editor facade', () => {
+    const open = vi.fn(() => ({ ok: true }));
+    const close = vi.fn();
+    const superdoc = {
+      activeEditor: { editorVersion: 2, contextMenu: { open, close } },
+      config: { documentMode: 'editing' },
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    const ui = createSuperDocUI({ superdoc });
+
+    expect(ui.contextMenu.open()).toEqual({ ok: true });
+    expect(open).toHaveBeenCalledOnce();
+
+    ui.contextMenu.close();
+    expect(close).toHaveBeenCalledOnce();
+
+    ui.destroy();
+    expect(ui.contextMenu.open()).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.notReady });
+    expect(open).toHaveBeenCalledOnce();
+    ui.contextMenu.close();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('preserves stable failure reasons from the editor facade', () => {
+    const superdoc = {
+      activeEditor: {
+        editorVersion: 2,
+        contextMenu: { open: () => ({ ok: false, reason: 'geometry-unavailable' }) },
+      },
+      config: { documentMode: 'editing' },
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    const ui = createSuperDocUI({ superdoc });
+
+    expect(ui.contextMenu.open()).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.geometryUnavailable });
+  });
+
+  it('fails closed before the editor or surface is available', () => {
+    const superdoc = { activeEditor: null, on: vi.fn(), off: vi.fn() };
+    const ui = createSuperDocUI({ superdoc });
+
+    expect(ui.contextMenu.open()).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.notReady });
+    superdoc.activeEditor = {};
+    expect(ui.contextMenu.open()).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable });
+    expect(() => ui.contextMenu.close()).not.toThrow();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Viewport + metadata geometry: routes through the v2 host target-geometry
 // surface, resolves metadata through the Document API, and fails closed.
