@@ -27,6 +27,7 @@ const builtInEditorDemoDataUrl = new URL('../lib/built-in-editor-demos.ts', impo
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
 const reactBuiltInSearchExampleUrl = new URL('../snippets/editor/react-built-in-find-replace.tsx', import.meta.url);
+const reactBuiltInHyperlinksExampleUrl = new URL('../snippets/editor/react-built-in-hyperlinks.tsx', import.meta.url);
 const documentApiReferenceModelUrl = new URL('../generated/document-api-reference.json', import.meta.url);
 const generatedProofingConfigUrl = new URL('../generated/proofing-config-reference.json', import.meta.url);
 const superdocCoreTypesUrl = new URL('../../../packages/superdoc/src/core/types/index.ts', import.meta.url);
@@ -83,7 +84,16 @@ const registeredComponents = new Set([
   'RuntimeExample',
   'RuntimeExampleTabs',
 ]);
-const editorDemoPresets = new Set(['comments', 'document-modes', 'proofing', 'search', 'toolbar', 'tracked-review']);
+const editorDemoPresets = new Set([
+  'comments',
+  'context-menu',
+  'document-modes',
+  'hyperlinks',
+  'proofing',
+  'search',
+  'toolbar',
+  'tracked-review',
+]);
 
 async function collectMdxFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -293,6 +303,15 @@ test('the React search example enables the built-in search surface with stable c
   assert.doesNotMatch(example, /\bui=\{\{/u);
 });
 
+test('the React hyperlinks example keeps restart-sensitive config identities stable', async () => {
+  const example = await readFile(reactBuiltInHyperlinksExampleUrl, 'utf8');
+
+  assert.match(example, /const editorConfig = \{/u);
+  assert.match(example, /hyperlinks=\{editorConfig\.hyperlinks\}/u);
+  assert.match(example, /ui=\{editorConfig\.ui\}/u);
+  assert.doesNotMatch(example, /\b(?:hyperlinks|ui)=\{\{/u);
+});
+
 test('the built-in Editor demos keep focused controls and restart-safe configuration changes', async () => {
   const demo = await readFile(editorDemoUrl, 'utf8');
 
@@ -311,7 +330,7 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /setState\(replacedEditor \|\| !hadMountedEditor \? 'error' : 'ready'\)/u);
   assert.match(
     demo,
-    /commentsLayout,\s+commentsLevel,\s+documentMode: currentDocumentMode,\s+replaceEnabled,\s+toolbarStrategy,/u,
+    /commentsLayout,\s+commentsLevel,\s+contextMenuStrategy,\s+documentMode: currentDocumentMode,\s+hyperlinkBehavior,\s+replaceEnabled,\s+toolbarStrategy,/u,
   );
   assert.match(
     demo,
@@ -330,6 +349,8 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /label='Toolbar'[\s\S]*options=\{toolbarDemoStrategies\}/u);
   assert.match(demo, /label='Layout'[\s\S]*options=\{commentsDemoLayouts\}/u);
   assert.match(demo, /label='Actions'[\s\S]*options=\{commentsDemoLevels\}/u);
+  assert.match(demo, /label='Menu'[\s\S]*options=\{contextMenuDemoStrategies\}/u);
+  assert.match(demo, /label='Activation'[\s\S]*options=\{hyperlinkDemoBehaviors\}/u);
   assert.match(demo, /label='Replacement'/u);
   assert.equal([...demo.matchAll(/<DemoViewControls\b/gu)].length, 2);
 });

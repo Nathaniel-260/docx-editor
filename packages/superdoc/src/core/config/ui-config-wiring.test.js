@@ -225,8 +225,9 @@ describe('uiConfig reaches the runtime', () => {
 
       expect(superdoc.config.hyperlinks).toEqual({ onActivate });
       expect(SuperDocSource).toContain('normalizeHyperlinksConfig(proxy.$superdoc?.config)');
-      expect(SuperDocSource).toContain('getResolver: getLinkPopoverResolver');
-      expect(SuperDocSource).toContain('linkPopoverResolver: getLinkPopoverResolver()');
+      expect(SuperDocSource).toContain('getActivationHandler: getHyperlinkActivationHandler');
+      expect(SuperDocSource).toContain('getActivationHandlerSource: getHyperlinkActivationSource');
+      expect(SuperDocSource).toContain('linkPopoverResolver: getHyperlinkActivationHandler()');
       expect(superdoc).not.toHaveProperty('hyperlinksConfig');
       superdoc.destroy?.();
       document.body.innerHTML = '';

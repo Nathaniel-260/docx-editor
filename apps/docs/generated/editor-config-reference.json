@@ -135,7 +135,7 @@
       "type": "false | {\n  onActivate?: (context: HyperlinkActivationContext) => HyperlinkActivationResult | null | undefined;\n}",
       "typeName": "false | HyperlinksConfig",
       "required": false,
-      "description": "Hyperlink activation behavior. Omit it for SuperDoc's mode-aware default: edit the hyperlink in Editing or Suggesting mode, and navigate in Viewing mode. Pass `false` to suppress activation entirely. A configured `onActivate` handler stays active with `ui: false`, so an application that renders its own interface can still handle hyperlinks.",
+      "description": "Hyperlink activation behavior. By default, editable links open the built-in hyperlink editor in Editing or Suggesting mode. In Viewing mode, and for links outside editable text, SuperDoc follows the URL or document anchor. Pass `false` to suppress activation in every mode. A configured `onActivate` handler stays active with `ui: false`, allowing a custom interface to handle hyperlinks.",
       "group": "other"
     },
     {
@@ -370,7 +370,7 @@
       "name": "onException",
       "type": "(params: SuperDocExceptionPayload) => void",
       "required": false,
-      "description": "Callback when SuperDoc emits an `exception` event. The payload is a union of three runtime shapes (store init, restore failure, editor lifecycle). Narrow with `'stage' in params` (store init) or `'code' in params` (editor) before reading shape-specific fields.",
+      "description": "Callback when SuperDoc emits an `exception` event. Check for `stage`, `code`, `itemName`, or `source` before reading producer-specific fields.",
       "group": "other"
     },
     {

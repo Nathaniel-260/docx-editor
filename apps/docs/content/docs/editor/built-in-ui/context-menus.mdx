@@ -1,0 +1,48 @@
+---
+title: Add actions to the context menu
+navTitle: Context menu
+description: Keep SuperDoc's document actions and add application actions for the current selection.
+---
+
+Add an application action to the built-in context menu when a workflow starts from document content.
+
+## Try the context menu
+
+Expand the Editor and select the sentence in the sample:
+
+1. Right-click with **Add action** selected, then choose **Send selection to workflow**.
+2. Change **Menu** to **Default**, select the sentence, and right-click again.
+3. Confirm that SuperDoc's document actions remain while the application action no longer appears.
+
+<EditorDemo fixture='/fixtures/context-menu-sample.docx' preset='context-menu' title='Try the context menu' />
+
+Changing the menu configuration reloads the current DOCX because `ui.contextMenu` is a startup option. Document edits
+remain; the selection and open menu reset.
+
+## Add an application action
+
+Continue with `/sample.docx` from the [Quickstart](/editor/quickstart). Keep SuperDoc's menu items, then append an action
+that appears only when text is selected:
+
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../../snippets/editor/built-in-context-menu.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/App.tsx' framework='React'>
+    <include>../../../../snippets/editor/react-built-in-context-menu.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
+
+Vanilla also needs an Editor mount:
+
+<include>../../../../snippets/editor/built-in-context-menu.html</include>
+
+`showWhen()` receives the document context captured when the menu opens. `onSelect()` receives the settled selection
+text and the Document API surface for work that should change the DOCX. The example logs the selected text; replace that
+line with your application action.
+
+`includeDefaultItems: true` keeps SuperDoc's actions. Set it to `false` only when the configured menu should contain
+application items alone.
+
+Use [Application-owned context menus](/editor/custom-ui/context-menus) when your application should render the complete
+menu surface.

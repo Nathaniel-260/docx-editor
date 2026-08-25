@@ -4,8 +4,6 @@
  * existing link-popover spellings.
  */
 
-import { firstDefined } from './merge-defined.js';
-
 const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
@@ -17,10 +15,11 @@ const isPlainObject = (value) => typeof value === 'object' && value !== null && 
  *
  * @param {Record<string, any>} [config] Raw consumer config.
  * @returns {{
- *   onActivate: import('../types/index.js').HyperlinkActivationHandler | import('../types/index.js').LinkPopoverResolver | undefined,
- *   suppressed: boolean,
- *   defaultUiSuppressed: boolean,
- *   handleNonEditable: boolean,
+ *   handler: import('../types/index.js').HyperlinkActivationHandler | import('../types/index.js').LinkPopoverResolver | undefined,
+ *   handlerSource: 'hyperlinks.onActivate' | 'compatibility' | undefined,
+ *   editableActivationDisabled: boolean,
+ *   builtInEditorDisabled: boolean,
+ *   interceptsNavigationOnly: boolean,
  * }}
  */
 export function normalizeHyperlinksConfig(config = {}) {
@@ -29,17 +28,22 @@ export function normalizeHyperlinksConfig(config = {}) {
   const ui = isPlainObject(config.ui) ? config.ui : {};
   const legacyUi = isPlainObject(ui.linkPopover) ? ui.linkPopover : {};
 
-  const canonicalSuppressed = config.hyperlinks === false;
-  const legacySuppressed = config.ui === false || ui.linkPopover === false;
-  const suppressed = canonicalSuppressed || (!hasCanonicalHandler && legacySuppressed);
-  const onActivate = suppressed
-    ? undefined
-    : firstDefined(canonical.onActivate, legacyUi.popoverResolver, config.modules?.links?.popoverResolver);
+  const allActivationDisabled = config.hyperlinks === false;
+  const builtInEditorDisabled = config.ui === false || ui.linkPopover === false;
+  const selectedHandler = [
+    { value: canonical.onActivate, source: 'hyperlinks.onActivate' },
+    { value: legacyUi.popoverResolver, source: 'compatibility' },
+    { value: config.modules?.links?.popoverResolver, source: 'compatibility' },
+  ].find(({ value }) => value !== undefined);
+  const editableActivationDisabled = allActivationDisabled || (!hasCanonicalHandler && builtInEditorDisabled);
+  const handler =
+    !editableActivationDisabled && typeof selectedHandler?.value === 'function' ? selectedHandler.value : undefined;
 
   return {
-    onActivate: typeof onActivate === 'function' ? onActivate : undefined,
-    suppressed,
-    defaultUiSuppressed: legacySuppressed,
-    handleNonEditable: config.hyperlinks === false || hasCanonicalHandler,
+    handler,
+    handlerSource: handler ? selectedHandler.source : undefined,
+    editableActivationDisabled,
+    builtInEditorDisabled,
+    interceptsNavigationOnly: allActivationDisabled || hasCanonicalHandler,
   };
 }

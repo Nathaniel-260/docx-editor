@@ -1,6 +1,8 @@
 export type ToolbarDemoStrategy = 'groups' | 'excludeItems' | 'customButtons';
 export type CommentsDemoLayout = 'auto' | 'sidebar' | 'inline';
 export type CommentsDemoLevel = 'read' | 'write' | 'resolve';
+export type ContextMenuDemoStrategy = 'default' | 'custom';
+export type HyperlinkDemoBehavior = 'default' | 'none' | 'custom';
 
 export type BuiltInDemoChoice<T extends string> = {
   id: T;
@@ -33,7 +35,20 @@ export const commentsDemoLevels = [
   { id: 'resolve', label: 'Resolve' },
 ] as const satisfies readonly BuiltInDemoChoice<CommentsDemoLevel>[];
 
-export function renderBuiltInEditorDemoMarkdown(preset: 'comments' | 'search' | 'toolbar') {
+export const contextMenuDemoStrategies = [
+  { id: 'default', label: 'Default' },
+  { id: 'custom', label: 'Add action' },
+] as const satisfies readonly BuiltInDemoChoice<ContextMenuDemoStrategy>[];
+
+export const hyperlinkDemoBehaviors = [
+  { id: 'default', label: 'Default' },
+  { id: 'none', label: 'Do nothing' },
+  { id: 'custom', label: 'Custom action' },
+] as const satisfies readonly BuiltInDemoChoice<HyperlinkDemoBehavior>[];
+
+export function renderBuiltInEditorDemoMarkdown(
+  preset: 'comments' | 'context-menu' | 'hyperlinks' | 'search' | 'toolbar',
+) {
   if (preset === 'toolbar') {
     return [
       'Toolbar configurations available in the interactive Editor:',
@@ -54,6 +69,28 @@ export function renderBuiltInEditorDemoMarkdown(preset: 'comments' | 'search' | 
       '- **Actions — `interaction.comments.level`:** choose `read`, `write`, or `resolve`. Read shows threads without mutation controls. Write adds create, reply, edit, and delete. Resolve also adds resolve and reopen.',
       '',
       'The sample contains one comment thread anchored to `September 30, 2026`. Changing either option recreates the Editor from its current DOCX. Thread changes remain; the open comment and selection reset.',
+    ].join('\n');
+  }
+
+  if (preset === 'context-menu') {
+    return [
+      'Context-menu configurations available in the interactive Editor:',
+      '',
+      '- **Menu — `ui.contextMenu`:** choose **Default** or **Add action**. Add action keeps SuperDoc’s menu items and appends **Send selection to workflow** when text is selected.',
+      '',
+      'Changing the menu configuration recreates the Editor from its current DOCX. Document edits remain; transient selection and menu state reset.',
+    ].join('\n');
+  }
+
+  if (preset === 'hyperlinks') {
+    return [
+      'Hyperlink behaviors available in the interactive Editor:',
+      '',
+      '- **Default:** SuperDoc opens its built-in hyperlink editor in Editing and Suggesting modes.',
+      '- **Do nothing — `hyperlinks: false`:** activation has no effect.',
+      '- **Custom action — `hyperlinks.onActivate`:** your application renders an action beside the hyperlink.',
+      '',
+      'The fixture contains one real external hyperlink. Changing the behavior recreates the Editor from its current DOCX.',
     ].join('\n');
   }
 

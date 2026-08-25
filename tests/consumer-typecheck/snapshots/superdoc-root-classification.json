@@ -574,6 +574,17 @@
       "inCjs": false
     },
     {
+      "name": "HyperlinkTarget",
+      "bucket": "supported-root",
+      "rationale": "Canonical Document API address returned by hyperlink activation and accepted by hyperlink read and write operations.",
+      "confidence": "high",
+      "source": "doc-api",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "HyperlinksConfig",
       "bucket": "supported-root",
       "rationale": "Canonical top-level configuration for hyperlink activation behavior.",
@@ -1179,9 +1190,20 @@
       "inCjs": false
     },
     {
+      "name": "SuperDocExceptionHyperlinkPayload",
+      "bucket": "supported-root",
+      "rationale": "Exception payload for application hyperlink activation and rendering failures, narrowed by source.",
+      "confidence": "high",
+      "source": "hyperlinks",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "SuperDocExceptionPayload",
       "bucket": "supported-root",
-      "rationale": "Public Config.onException callback parameter. Union of the three runtime emit shapes. SD-673 Phase 4D.",
+      "rationale": "Public Config.onException callback parameter. Consumers narrow the runtime producer by stage, code, itemName, or source.",
       "confidence": "high",
       "source": "locked",
       "inDts": true,

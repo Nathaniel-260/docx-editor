@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-24T18:53:38.655Z",
+  "generatedAt": "2026-08-24T22:15:24.770Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -69,6 +69,7 @@
         "HyperlinkActivationHandler",
         "HyperlinkActivationResult",
         "HyperlinkRenderContext",
+        "HyperlinkTarget",
         "HyperlinksConfig",
         "IntentSurfaceRequest",
         "InteractionConfig",
@@ -124,6 +125,7 @@
         "SuperDocDisposableBag",
         "SuperDocEditorPayload",
         "SuperDocExceptionEditorPayload",
+        "SuperDocExceptionHyperlinkPayload",
         "SuperDocExceptionPayload",
         "SuperDocExceptionRestorePayload",
         "SuperDocExceptionStorePayload",
@@ -286,6 +288,7 @@
         "HyperlinkActivationHandler",
         "HyperlinkActivationResult",
         "HyperlinkRenderContext",
+        "HyperlinkTarget",
         "HyperlinksConfig",
         "IntentSurfaceRequest",
         "InteractionConfig",
@@ -341,6 +344,7 @@
         "SuperDocDisposableBag",
         "SuperDocEditorPayload",
         "SuperDocExceptionEditorPayload",
+        "SuperDocExceptionHyperlinkPayload",
         "SuperDocExceptionPayload",
         "SuperDocExceptionRestorePayload",
         "SuperDocExceptionStorePayload",
@@ -479,11 +483,11 @@
     }
   },
   "counts": {
-    "types.import": 211,
-    "types.require": 211,
+    "types.import": 213,
+    "types.require": 213,
     "import": 10,
     "require": 10,
-    "union": 211
+    "union": 213
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -548,6 +552,7 @@
         "HyperlinkActivationHandler",
         "HyperlinkActivationResult",
         "HyperlinkRenderContext",
+        "HyperlinkTarget",
         "HyperlinksConfig",
         "IntentSurfaceRequest",
         "InteractionConfig",
@@ -601,6 +606,7 @@
         "SuperDocDisposableBag",
         "SuperDocEditorPayload",
         "SuperDocExceptionEditorPayload",
+        "SuperDocExceptionHyperlinkPayload",
         "SuperDocExceptionPayload",
         "SuperDocExceptionRestorePayload",
         "SuperDocExceptionStorePayload",

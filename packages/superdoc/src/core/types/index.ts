@@ -14,6 +14,7 @@
 import type { Doc as YDoc } from 'yjs';
 import type { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider';
 import type { Ref, ComputedRef } from 'vue';
+import type { HyperlinkTarget } from '@superdoc/document-api';
 
 import type {
   DocumentFontOption,
@@ -1185,9 +1186,9 @@ export interface UpgradeToCollaborationOptions {
 export interface HyperlinkActivationContext {
   /** The editor instance. */
   editor: Editor;
-  /** The href attribute of the clicked link. */
+  /** URL or document-anchor reference from the activated link's `href`. */
   href: string;
-  /** The target attribute of the clicked link. */
+  /** The link's HTML `target` attribute, such as `_blank`. */
   target: string | null;
   /** The rel attribute of the clicked link. */
   rel: string | null;
@@ -1195,9 +1196,9 @@ export interface HyperlinkActivationContext {
   tooltip: string | null;
   /** The clicked anchor DOM element. */
   element: HTMLAnchorElement;
-  /** X coordinate of the click. */
+  /** Horizontal activation coordinate in viewport pixels. */
   clientX: number;
-  /** Y coordinate of the click. */
+  /** Vertical activation coordinate in viewport pixels. */
   clientY: number;
   /** Whether this is an anchor link (href starts with #). */
   isAnchorLink: boolean;
@@ -1205,19 +1206,25 @@ export interface HyperlinkActivationContext {
   documentMode: DocumentMode;
   /** What SuperDoc would do if the handler chooses the default behavior. */
   defaultAction: 'edit' | 'navigate';
-  /** Suggested position for application-owned UI, relative to the editor surface. */
+  /** Suggested position for a custom action, relative to the Editor surface. */
   position: { left: string; top: string };
+  /**
+   * Resolve the activated hyperlink to its canonical Document API target.
+   * Pass this target to `doc.hyperlinks.get()`, `patch()`, or `remove()`.
+   * Returns `null` when the link cannot be matched to a Document API hyperlink.
+   */
+  getDocumentTarget: () => Promise<HyperlinkTarget | null>;
 }
 
-/** Context passed to an application-owned hyperlink renderer. */
+/** Context passed to a custom action rendered near a hyperlink. */
 export interface HyperlinkRenderContext {
-  /** Empty DOM container positioned beside the activated hyperlink. */
+  /** Empty DOM container positioned near the activated hyperlink. */
   container: HTMLElement;
-  /** Close the rendered UI and run its cleanup callback. */
+  /** Close the rendered UI. SuperDoc then calls the returned `destroy()` function. */
   close: () => void;
   /** The editor instance. */
   editor: Editor;
-  /** The activated hyperlink target. */
+  /** URL or document-anchor reference from the activated link's `href`. */
   href: string;
 }
 
@@ -1231,8 +1238,9 @@ export type HyperlinkActivationResult =
     };
 
 /**
- * Handles hyperlink activation. Must be synchronous; do not return a Promise.
- * Return null or undefined to use SuperDoc's mode-aware default behavior.
+ * Handles hyperlink activation. Return synchronously; Promises are not
+ * supported. Return `null`, `undefined`, or `{ type: 'default' }` to use
+ * SuperDoc's default behavior for this activation.
  */
 export type HyperlinkActivationHandler = (
   context: HyperlinkActivationContext,
@@ -1242,12 +1250,12 @@ export type HyperlinkActivationHandler = (
  * Controls what happens when a user activates a hyperlink.
  *
  * This behavior is separate from `ui` because a hyperlink can navigate or be
- * handled by application-owned UI without SuperDoc rendering a surface.
+ * handled by custom UI without SuperDoc rendering a surface.
  */
 export interface HyperlinksConfig {
   /**
-   * Choose SuperDoc's default behavior, suppress activation, or render an
-   * application-owned hyperlink editor.
+   * Use SuperDoc's default behavior, suppress this activation, or render a
+   * small custom action near the hyperlink.
    */
   onActivate?: HyperlinkActivationHandler;
 }
@@ -3093,23 +3101,28 @@ export interface SuperDocExceptionToolbarPayload {
   editor?: Editor | null;
 }
 
+/** Exception raised by hyperlink activation or a custom hyperlink renderer. */
+export interface SuperDocExceptionHyperlinkPayload {
+  error: Error;
+  editor?: Editor | null;
+  source:
+    | 'hyperlinks.onActivate'
+    | 'hyperlinks.onActivate.render'
+    | 'linkPopoverResolver'
+    | 'linkPopoverExternalRender';
+}
+
 /**
  * Union of all `exception` event payloads SuperDoc emits at runtime.
- * Consumers can narrow with `'stage' in payload` (store init),
- * `'code' in payload` (editor lifecycle), or `'itemName' in payload`
- * (built-in toolbar).
- *
- * The union exists today because four independent emit sites
- * (`initializeDocuments`, the restore path, the editor lifecycle, and the
- * built-in toolbar) pre-date a shared error contract. Normalizing them to a
- * single payload shape is a separate follow-up; consumers can narrow with
- * the `in` checks above in the meantime.
+ * Narrow with the `stage`, `code`, `itemName`, or `source` field before
+ * reading fields that belong to one producer.
  */
 export type SuperDocExceptionPayload =
   | SuperDocExceptionStorePayload
   | SuperDocExceptionRestorePayload
   | SuperDocExceptionEditorPayload
-  | SuperDocExceptionToolbarPayload;
+  | SuperDocExceptionToolbarPayload
+  | SuperDocExceptionHyperlinkPayload;
 
 /**
  * Zoom mode. `manual` holds whatever value was last set; `fit-width`
@@ -3551,12 +3564,13 @@ export interface Config {
    */
   ui?: false | UIConfig;
   /**
-   * Hyperlink activation behavior. Omit it for SuperDoc's mode-aware default:
-   * edit the hyperlink in Editing or Suggesting mode, and navigate in Viewing
-   * mode. Pass `false` to suppress activation entirely.
+   * Hyperlink activation behavior. By default, editable links open the built-in
+   * hyperlink editor in Editing or Suggesting mode. In Viewing mode, and for
+   * links outside editable text, SuperDoc follows the URL or document anchor.
+   * Pass `false` to suppress activation in every mode.
    *
-   * A configured `onActivate` handler stays active with `ui: false`, so an
-   * application that renders its own interface can still handle hyperlinks.
+   * A configured `onActivate` handler stays active with `ui: false`, allowing
+   * a custom interface to handle hyperlinks.
    */
   hyperlinks?: false | HyperlinksConfig;
   /**
@@ -3694,10 +3708,8 @@ export interface Config {
   /** Callback when document is updated. */
   onEditorUpdate?: (params: EditorUpdateEvent) => void;
   /**
-   * Callback when SuperDoc emits an `exception` event. The payload is a
-   * union of three runtime shapes (store init, restore failure, editor
-   * lifecycle). Narrow with `'stage' in params` (store init) or `'code'
-   * in params` (editor) before reading shape-specific fields.
+   * Callback when SuperDoc emits an `exception` event. Check for `stage`,
+   * `code`, `itemName`, or `source` before reading producer-specific fields.
    */
   onException?: (params: SuperDocExceptionPayload) => void;
   /** Callback when the comments list is rendered. */

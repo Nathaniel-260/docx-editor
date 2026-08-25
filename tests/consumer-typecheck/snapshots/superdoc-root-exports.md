@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-24T18:53:38.655Z
+Generated: 2026-08-24T22:15:24.770Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 211 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 211 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 213 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 213 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **211** |
+| **union** |  | **213** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 201
+- typed but no runtime export (phantom risk): 203
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -76,6 +76,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `HyperlinkActivationHandler`
 - `HyperlinkActivationResult`
 - `HyperlinkRenderContext`
+- `HyperlinkTarget`
 - `HyperlinksConfig`
 - `IntentSurfaceRequest`
 - `InteractionConfig`
@@ -129,6 +130,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `SuperDocDisposableBag`
 - `SuperDocEditorPayload`
 - `SuperDocExceptionEditorPayload`
+- `SuperDocExceptionHyperlinkPayload`
 - `SuperDocExceptionPayload`
 - `SuperDocExceptionRestorePayload`
 - `SuperDocExceptionStorePayload`
@@ -285,6 +287,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `HyperlinkActivationHandler` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkActivationResult` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkRenderContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `HyperlinkTarget` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinksConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `IntentSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `InteractionConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -340,6 +343,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SuperDocDisposableBag` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocEditorPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocExceptionEditorPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocExceptionHyperlinkPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocExceptionPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocExceptionRestorePayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocExceptionStorePayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |

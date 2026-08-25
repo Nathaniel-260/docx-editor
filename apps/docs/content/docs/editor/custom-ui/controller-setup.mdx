@@ -38,7 +38,7 @@ This guide's Bold button replaces one toolbar control, so `ui: { toolbar: false 
 - `ui: { toolbar: false }` renders no built-in toolbar.
 - `ui: { comments: false }` removes the built-in comments interface: the sidebar, floating threads, and comment dialog.
 - `ui: { contextMenu: false }` removes the built-in right-click and slash menus.
-- `ui: { linkPopover: false }` suppresses the popover that opens when a reader clicks a link.
+- `hyperlinks: false` suppresses hyperlink activation.
 
 Take only the switches whose surface you actually replace. They are independent, and each removes one presentation and nothing else, so turning off a surface you have not rebuilt leaves the reader with less than SuperDoc would have given them. The [custom comments UI](/editor/custom-ui/comments) shows the comments switch used the right way round: it mounts with `ui: { comments: false }` because it renders its own panel, and leaves everything else in place.
 

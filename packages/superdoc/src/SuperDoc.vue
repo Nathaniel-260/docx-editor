@@ -353,19 +353,22 @@ const getLinkPopoverSurfaceManager = () => {
     open: (request) => proxy.$superdoc.openSurface(request),
   };
 };
-const getLinkPopoverResolver = () => {
+const getHyperlinkActivationHandler = () => {
   const config = normalizeHyperlinksConfig(proxy.$superdoc?.config);
-  return config.suppressed ? () => ({ type: 'none' }) : config.onActivate;
+  return config.editableActivationDisabled ? () => ({ type: 'none' }) : config.handler;
 };
-const getBuiltInLinkPopoverSuppressed = () => normalizeHyperlinksConfig(proxy.$superdoc?.config).defaultUiSuppressed;
-const shouldHandleNonEditableHyperlinks = () => normalizeHyperlinksConfig(proxy.$superdoc?.config).handleNonEditable;
+const getHyperlinkActivationSource = () => normalizeHyperlinksConfig(proxy.$superdoc?.config).handlerSource;
+const getBuiltInLinkEditorDisabled = () => normalizeHyperlinksConfig(proxy.$superdoc?.config).builtInEditorDisabled;
+const shouldInterceptNavigationOnlyHyperlinks = () =>
+  normalizeHyperlinksConfig(proxy.$superdoc?.config).interceptsNavigationOnly;
 const linkPopover = useLinkPopover({
   getSurfaceManager: getLinkPopoverSurfaceManager,
   getActiveEditor: () => proxy.$superdoc?.activeEditor,
   getUi: getSuperDocUI,
-  getResolver: getLinkPopoverResolver,
-  getBuiltInPopoverSuppressed: getBuiltInLinkPopoverSuppressed,
-  shouldHandleNonEditableHyperlinks,
+  getActivationHandler: getHyperlinkActivationHandler,
+  getActivationHandlerSource: getHyperlinkActivationSource,
+  getBuiltInEditorDisabled: getBuiltInLinkEditorDisabled,
+  shouldInterceptNavigationOnlyHyperlinks,
   getLayerElement: () => layers.value,
   emitException: (payload) => {
     proxy.$superdoc?.emit('exception', {
@@ -2170,7 +2173,7 @@ const editorOptions = (doc) => {
     // omitting it, which resolves back to on.
     documentLoading: proxy.$superdoc.uiConfig.loading.enabled,
     // The editor host receives the same resolved activation handler as the shell.
-    linkPopoverResolver: getLinkPopoverResolver(),
+    linkPopoverResolver: getHyperlinkActivationHandler(),
     layoutEngineOptions: useLayoutEngine
       ? {
           ...(proxy.$superdoc.config.layoutEngineOptions || {}),

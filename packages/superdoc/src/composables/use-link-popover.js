@@ -18,6 +18,7 @@ import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js'
 /** @typedef {import('../core/types/index.js').DocumentMode} DocumentMode */
 /** @typedef {import('../core/types/index.js').Editor} Editor */
 /** @typedef {import('../public/ui/types.js').SuperDocUI} SuperDocUI */
+/** @typedef {import('@superdoc/document-api').HyperlinkTarget} HyperlinkTarget */
 
 /**
  * A single-block text-selection target in the Document API `query.match`
@@ -29,8 +30,8 @@ import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js'
  */
 
 /**
- * Block-anchored address carried by a Document API hyperlink record.
- * @typedef {Object} HyperlinkAddress
+ * Block-anchored address carried by a hyperlink record.
+ * @typedef {Object} HyperlinkAddressShape
  * @property {{ start?: { blockId?: string, offset?: number }, end?: { blockId?: string, offset?: number } }} [anchor]
  */
 
@@ -45,7 +46,7 @@ import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js'
  * @property {string} [anchor]
  * @property {string} [targetKind]
  * @property {string} [hyperlinkNodeId]
- * @property {HyperlinkAddress} [address]
+ * @property {HyperlinkTarget | HyperlinkAddressShape} [address]
  */
 
 /**
@@ -77,6 +78,7 @@ import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js'
  * One story entry of a `doc.hyperlinks.list()` result.
  * @typedef {Object} HyperlinkStory
  * @property {string} [storyId]
+ * @property {string} [partUri]
  * @property {HyperlinkRecord[]} [hyperlinks]
  */
 
@@ -140,6 +142,7 @@ import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js'
  * @property {string} href
  * @property {string | undefined} text
  * @property {string | undefined} targetKind
+ * @property {HyperlinkTarget | undefined} address
  * @property {TextSelectionTarget | null} textTarget
  */
 
@@ -162,6 +165,23 @@ const isThenable = (value) =>
  * @returns {value is Record<string, unknown>}
  */
 const isObject = (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+/**
+ * @param {unknown} value
+ * @returns {value is HyperlinkTarget}
+ */
+function isHyperlinkTarget(value) {
+  if (!isObject(value) || value.kind !== 'inline' || value.nodeType !== 'hyperlink') return false;
+  const anchor = isObject(value.anchor) ? value.anchor : null;
+  const start = anchor && isObject(anchor.start) ? anchor.start : null;
+  const end = anchor && isObject(anchor.end) ? anchor.end : null;
+  return (
+    typeof start?.blockId === 'string' &&
+    typeof start.offset === 'number' &&
+    typeof end?.blockId === 'string' &&
+    typeof end.offset === 'number'
+  );
+}
 
 /**
  * @param {unknown} value
@@ -233,20 +253,37 @@ function decodeAnchorFragment(value) {
 }
 
 /**
+ * @typedef {Object} PaintedSourceRef
+ * @property {string} [partUri]
+ * @property {string} [xpathLikePath]
+ */
+
+/**
+ * @param {HTMLElement | null | undefined} element
+ * @returns {PaintedSourceRef | null}
+ */
+function readPaintedSourceRef(element) {
+  const encoded = element?.dataset?.sourceAnchor;
+  if (!encoded) return null;
+  try {
+    const sourceRef = JSON.parse(encoded)?.sourceRef;
+    if (!isObject(sourceRef)) return null;
+    const partUri = typeof sourceRef.partUri === 'string' ? sourceRef.partUri : undefined;
+    const xpathLikePath = typeof sourceRef.xpathLikePath === 'string' ? sourceRef.xpathLikePath : undefined;
+    return partUri || xpathLikePath ? { partUri, xpathLikePath } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * @param {HTMLElement | null | undefined} fragment
  * @returns {number | null}
  */
 function readSourceParagraphOrdinal(fragment) {
-  const sourceAnchor = fragment?.dataset?.sourceAnchor;
-  if (typeof sourceAnchor !== 'string') return null;
-  try {
-    const parsed = JSON.parse(sourceAnchor);
-    const path = parsed?.sourceRef?.xpathLikePath;
-    const match = typeof path === 'string' ? path.match(/w:p\[ordinal=(\d+)\]/) : null;
-    return match ? Number(match[1]) : null;
-  } catch {
-    return null;
-  }
+  const path = readPaintedSourceRef(fragment)?.xpathLikePath;
+  const match = path?.match(/w:p\[ordinal=(\d+)\]/);
+  return match ? Number(match[1]) : null;
 }
 
 /**
@@ -312,6 +349,23 @@ function readClickedTextTarget(element, doc) {
 }
 
 /**
+ * @param {HTMLAnchorElement} element
+ * @returns {string | null}
+ */
+function readClickedPartUri(element) {
+  const sourceElement = /** @type {HTMLElement | null} */ (element?.closest?.('[data-source-anchor]'));
+  return readPaintedSourceRef(sourceElement)?.partUri ?? null;
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function normalizePartUri(value) {
+  return value.startsWith('/') ? value : `/${value}`;
+}
+
+/**
  * @param {string} value
  * @returns {string}
  */
@@ -335,7 +389,7 @@ function hrefFromHyperlink(hyperlink) {
 }
 
 /**
- * @param {HyperlinkAddress | null | undefined} address
+ * @param {HyperlinkAddressShape | HyperlinkTarget | null | undefined} address
  * @returns {TextSelectionTarget | null}
  */
 function textTargetFromHyperlinkAddress(address) {
@@ -353,7 +407,7 @@ function textTargetFromHyperlinkAddress(address) {
 
 /**
  * @param {TextSelectionTarget | null} textTarget
- * @param {HyperlinkAddress | null | undefined} address
+ * @param {HyperlinkAddressShape | HyperlinkTarget | null | undefined} address
  * @returns {boolean}
  */
 function textTargetMatchesHyperlinkAddress(textTarget, address) {
@@ -411,9 +465,10 @@ function isTocEntryLinkElement(element) {
  * @param {() => SurfaceManager | null | undefined} options.getSurfaceManager
  * @param {() => Editor | null | undefined} options.getActiveEditor
  * @param {() => SuperDocUI | null | undefined} options.getUi
- * @param {() => HyperlinkActivationHandler | LinkPopoverResolver | null | undefined} options.getResolver
- * @param {() => boolean} [options.getBuiltInPopoverSuppressed]
- * @param {() => boolean} [options.shouldHandleNonEditableHyperlinks]
+ * @param {() => HyperlinkActivationHandler | LinkPopoverResolver | null | undefined} options.getActivationHandler
+ * @param {() => 'hyperlinks.onActivate' | 'compatibility' | null | undefined} [options.getActivationHandlerSource]
+ * @param {() => boolean} [options.getBuiltInEditorDisabled]
+ * @param {() => boolean} [options.shouldInterceptNavigationOnlyHyperlinks]
  * @param {() => HTMLElement | null | undefined} options.getLayerElement
  * @param {(payload: { error: Error, source: string }) => void} options.emitException
  */
@@ -421,9 +476,10 @@ export function useLinkPopover({
   getSurfaceManager,
   getActiveEditor,
   getUi,
-  getResolver,
-  getBuiltInPopoverSuppressed = () => false,
-  shouldHandleNonEditableHyperlinks = () => false,
+  getActivationHandler,
+  getActivationHandlerSource = () => null,
+  getBuiltInEditorDisabled = () => false,
+  shouldInterceptNavigationOnlyHyperlinks = () => false,
   getLayerElement,
   emitException,
 }) {
@@ -432,6 +488,8 @@ export function useLinkPopover({
   /** @type {{ href: string, element: HTMLAnchorElement, closedAt: number } | null} */
   let recentOutsideClose = null;
   let openGeneration = 0;
+  /** @type {WeakMap<HyperlinkActivationContext, Promise<ResolvedHyperlinkTarget | null>>} */
+  const resolvedHyperlinksByActivation = new WeakMap();
 
   function cancelPendingOpen() {
     openGeneration += 1;
@@ -629,8 +687,14 @@ export function useLinkPopover({
     const clickedText = ctx.element?.textContent ?? '';
     const clickedHref = normalizeHrefForMatch(ctx.href);
     const clickedTextTarget = readClickedTextTarget(ctx.element, doc);
+    const clickedPartUri = readClickedPartUri(ctx.element);
+    const storiesWithPartUris = stories.filter((story) => typeof story?.partUri === 'string');
+    const candidateStories =
+      clickedPartUri && storiesWithPartUris.length > 0
+        ? storiesWithPartUris.filter((story) => normalizePartUri(story.partUri) === normalizePartUri(clickedPartUri))
+        : stories;
 
-    for (const story of stories) {
+    for (const story of candidateStories) {
       // `HyperlinkStory` declares the record shape this loop reads; the
       // runtime still narrows the array before trusting it.
       const hyperlinks = Array.isArray(story?.hyperlinks) ? story.hyperlinks : [];
@@ -694,12 +758,27 @@ export function useLinkPopover({
           href: hrefFromHyperlink(detailedHit),
           text: detailedHit.text,
           targetKind: detailedHit.targetKind,
+          address: isHyperlinkTarget(detailedHit.address) ? detailedHit.address : undefined,
           textTarget:
             addressTarget ?? textTargetFromQueryMatch(doc, detailedHit.text, clickedTextTarget?.start?.blockId),
         };
       }
     }
     return null;
+  }
+
+  /**
+   * Resolve a clicked hyperlink once per activation. The handler and built-in
+   * UI can both request the same Document API target.
+   * @param {HyperlinkActivationContext} ctx
+   * @returns {Promise<ResolvedHyperlinkTarget | null>}
+   */
+  function resolveClickedHyperlinkOnce(ctx) {
+    const pending = resolvedHyperlinksByActivation.get(ctx);
+    if (pending) return pending;
+    const resolution = resolveClickedHyperlink(ctx);
+    resolvedHyperlinksByActivation.set(ctx, resolution);
+    return resolution;
   }
 
   /**
@@ -759,7 +838,7 @@ export function useLinkPopover({
       return;
     }
 
-    if (getBuiltInPopoverSuppressed()) return;
+    if (getBuiltInEditorDisabled()) return;
 
     const closePopover = () => closeCurrentPopover('closed');
     /** @param {string | null | undefined} anchorUrl */
@@ -793,7 +872,7 @@ export function useLinkPopover({
         },
       });
     };
-    resolveClickedHyperlink(ctx).then(openWithHyperlinkTarget, () => openWithHyperlinkTarget(null));
+    resolveClickedHyperlinkOnce(ctx).then(openWithHyperlinkTarget, () => openWithHyperlinkTarget(null));
   }
 
   /**
@@ -835,12 +914,18 @@ export function useLinkPopover({
             ? userRender({ ...shared, close: () => surfaceCtx.close('closed') })
             : userRender({ ...shared, closePopover: () => surfaceCtx.close('closed') });
         } catch (error) {
-          emitException({ error: toError(error), source: 'linkPopoverExternalRender' });
-          surfaceCtx.close('external-error');
-          const generation = openGeneration;
-          queueMicrotask(() => {
-            if (generation === openGeneration) openDefaultPopover(ctx);
+          const usesOnActivate = resolution.type === 'render';
+          emitException({
+            error: toError(error),
+            source: usesOnActivate ? 'hyperlinks.onActivate.render' : 'linkPopoverExternalRender',
           });
+          surfaceCtx.close('external-error');
+          if (!usesOnActivate) {
+            const generation = openGeneration;
+            queueMicrotask(() => {
+              if (generation === openGeneration) openDefaultPopover(ctx);
+            });
+          }
           return undefined;
         }
       },
@@ -854,7 +939,8 @@ export function useLinkPopover({
     const layerRect = getLayerElement()?.getBoundingClientRect?.();
     const layerLeft = typeof layerRect?.left === 'number' ? layerRect.left : 0;
     const layerTop = typeof layerRect?.top === 'number' ? layerRect.top : 0;
-    return {
+    /** @type {import('../core/types/index.js').LinkPopoverContext} */
+    const context = {
       // A link click always originates from a mounted editor surface, so the
       // active editor is present here; the public context type declares it
       // required.
@@ -878,39 +964,53 @@ export function useLinkPopover({
         left: `${Math.max(0, payload.clientX - layerLeft)}px`,
         top: `${Math.max(0, payload.clientY - layerTop)}px`,
       },
+      getDocumentTarget: async () => (await resolveClickedHyperlinkOnce(context))?.address ?? null,
       closePopover: () => closeCurrentPopover('closed'),
     };
+    return context;
   }
 
   /**
    * @param {HyperlinkActivationContext} ctx
    * @returns {HyperlinkActivationResolution}
    */
-  function resolvePopover(ctx) {
-    const resolver = getResolver();
-    if (typeof resolver !== 'function') return { type: 'default' };
+  function resolveActivation(ctx) {
+    const handler = getActivationHandler();
+    if (typeof handler !== 'function') return { type: 'default' };
+    const usesOnActivate = getActivationHandlerSource() === 'hyperlinks.onActivate';
+    const errorSource = usesOnActivate ? 'hyperlinks.onActivate' : 'linkPopoverResolver';
+    const fallbackResolution = () => (usesOnActivate ? { type: 'none' } : { type: 'default' });
 
     try {
-      const resolution = resolver(ctx);
+      const resolution = handler(ctx);
       if (isThenable(resolution)) {
+        void Promise.resolve(resolution).catch(() => undefined);
         emitException({
-          error: new Error('The hyperlink activation handler must return synchronously.'),
-          source: 'linkPopoverResolver',
+          error: new Error(
+            usesOnActivate
+              ? 'hyperlinks.onActivate must return synchronously; Promises are not supported.'
+              : 'The hyperlink activation handler must return synchronously.',
+          ),
+          source: errorSource,
         });
-        return { type: 'default' };
+        return fallbackResolution();
       }
       if (resolution == null) return { type: 'default' };
       if (!isValidResolution(resolution)) {
         emitException({
-          error: new Error('The hyperlink activation handler returned an invalid result.'),
-          source: 'linkPopoverResolver',
+          error: new Error(
+            usesOnActivate
+              ? 'hyperlinks.onActivate returned an invalid result.'
+              : 'The hyperlink activation handler returned an invalid result.',
+          ),
+          source: errorSource,
         });
-        return { type: 'default' };
+        return fallbackResolution();
       }
       return resolution;
     } catch (error) {
-      emitException({ error: toError(error), source: 'linkPopoverResolver' });
-      return { type: 'default' };
+      emitException({ error: toError(error), source: errorSource });
+      return fallbackResolution();
     }
   }
 
@@ -925,11 +1025,11 @@ export function useLinkPopover({
     if (matchesRecentOutsideClose(payload)) return;
 
     const ctx = buildContext(payload);
-    if (payload.editableText === false && !shouldHandleNonEditableHyperlinks()) {
+    if (payload.editableText === false && !shouldInterceptNavigationOnlyHyperlinks()) {
       openDefaultPopover(ctx);
       return;
     }
-    const resolution = resolvePopover(ctx);
+    const resolution = resolveActivation(ctx);
 
     if (resolution.type === 'none') {
       closeCurrentPopover('none');
@@ -939,11 +1039,7 @@ export function useLinkPopover({
       openCustomPopover(ctx, resolution);
       return;
     }
-    if (resolution.type === 'external') {
-      openApplicationHyperlinkUi(ctx, resolution);
-      return;
-    }
-    if (resolution.type === 'render') {
+    if (resolution.type === 'external' || resolution.type === 'render') {
       openApplicationHyperlinkUi(ctx, resolution);
       return;
     }

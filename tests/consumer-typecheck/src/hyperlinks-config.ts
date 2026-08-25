@@ -4,13 +4,17 @@ import type {
   HyperlinkActivationHandler,
   HyperlinkActivationResult,
   HyperlinkRenderContext,
+  HyperlinkTarget,
   HyperlinksConfig,
   LinkPopoverConfig,
   LinkPopoverResolver,
+  SuperDocExceptionHyperlinkPayload,
 } from 'superdoc';
 
 const onActivate: HyperlinkActivationHandler = (context: HyperlinkActivationContext): HyperlinkActivationResult => {
   const _defaultAction: 'edit' | 'navigate' = context.defaultAction;
+  const _documentTarget: Promise<HyperlinkTarget | null> = context.getDocumentTarget();
+  void _documentTarget;
   if (context.isAnchorLink) return { type: 'default' };
   if (context.href.startsWith('https://app.example.com/')) return { type: 'none' };
   return {
@@ -30,6 +34,12 @@ const _options: HyperlinksConfig = { onActivate };
 const _canonical: Config = {
   selector: '#editor',
   hyperlinks: { onActivate },
+  onException: (payload) => {
+    if ('source' in payload) {
+      const _hyperlinkError: SuperDocExceptionHyperlinkPayload = payload;
+      void _hyperlinkError;
+    }
+  },
 };
 
 const _disabled: Config = {

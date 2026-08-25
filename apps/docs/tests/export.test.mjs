@@ -31,7 +31,8 @@ const routes = [
   ['editor/built-in-ui/configure-the-toolbar/index.html', 'Configure the built-in toolbar'],
   ['editor/built-in-ui/comments/index.html', 'Add comments to the Editor'],
   ['editor/built-in-ui/search-and-replace/index.html', 'Search and replace document text'],
-  ['editor/built-in-ui/links-and-context-menus/index.html', 'Links and context menus'],
+  ['editor/built-in-ui/hyperlinks/index.html', 'Configure hyperlink behavior'],
+  ['editor/built-in-ui/context-menus/index.html', 'Add actions to the context menu'],
   ['editor/built-in-ui/structured-content/index.html', 'Work with structured content'],
   ['editor/built-in-ui/responsive-layout/index.html', 'Build a responsive Editor layout'],
   ['editor/custom-ui/overview/index.html', 'Custom UI overview'],
@@ -645,8 +646,12 @@ test('exports built-in and custom search without duplicating Document API querie
 });
 
 test('exports the remaining built-in UI workflows as clean Markdown', async () => {
-  const links = await readFile(
-    new URL('../out/md/editor/built-in-ui/links-and-context-menus.md', import.meta.url),
+  const hyperlinks = await readFile(
+    new URL('../out/md/editor/built-in-ui/hyperlinks.md', import.meta.url),
+    'utf8',
+  );
+  const contextMenu = await readFile(
+    new URL('../out/md/editor/built-in-ui/context-menus.md', import.meta.url),
     'utf8',
   );
   const structured = await readFile(
@@ -658,8 +663,20 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
     'utf8',
   );
 
-  assert.match(links, /satisfies ContextMenuConfig/);
-  assert.match(links, /Context-menu visibility is not authorization/);
+  assert.match(hyperlinks, /hyperlinks-sample\.docx/);
+  assert.match(hyperlinks, /HyperlinkActivationHandler/);
+  assert.match(hyperlinks, /hyperlinks: \{\s+onActivate: handleHyperlinkActivation/s);
+  assert.match(hyperlinks, /Custom action — `hyperlinks\.onActivate`/);
+  assert.match(hyperlinks, /await context\.getDocumentTarget\(\)/);
+  assert.match(hyperlinks, /reports the failure through `onException`/);
+  assert.match(hyperlinks, /Use \[Custom UI\]\(\/editor\/custom-ui\/overview\)/);
+  assert.match(hyperlinks, /\*\*React — `src\/App\.tsx`\*\*/);
+  assert.doesNotMatch(hyperlinks, /linkPopover|popoverResolver|closePopover/);
+  assert.match(contextMenu, /context-menu-sample\.docx/);
+  assert.match(contextMenu, /satisfies ContextMenuConfig/);
+  assert.match(contextMenu, /Send selection to workflow/);
+  assert.match(contextMenu, /ui\.contextMenu/);
+  assert.match(contextMenu, /\*\*React — `src\/App\.tsx`\*\*/);
   assert.match(structured, /handleImageUpload/);
   assert.match(structured, /object URLs.*browser session/s);
   assert.match(responsive, /mode: 'fit-width'/);
@@ -667,7 +684,7 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
   assert.match(responsive, /retained semantic document surface/);
   assert.match(responsive, /fullscreenchange/);
   assert.match(responsive, /Avoid nesting the Editor inside another horizontal scroller/);
-  assert.doesNotMatch(`${links}\n${structured}\n${responsive}`, /<include>/);
+  assert.doesNotMatch(`${hyperlinks}\n${contextMenu}\n${structured}\n${responsive}`, /<include>/);
 });
 
 test('exports the redistributed Editor guidance as clean Markdown', async () => {

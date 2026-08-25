@@ -618,13 +618,8 @@ interface SuperDocEventMap {
 }
 // Notes on the event map above:
 //
-// `exception` is typed as `SuperDocExceptionPayload`, a union of the three
-// shapes the runtime currently emits today: `{ error, stage, document }`
-// from `superdoc-store.js` document-init failures, `{ error, document }`
-// from the catch in `restoreUnsavedChanges()`, and `{ error, editor?,
-// code?, documentId? }` from `SuperDoc.vue` editor lifecycle. Normalizing
-// these is tracked as a separate follow-up; the union types the current
-// reality so consumers can narrow with `'stage' in payload` etc.
+// `exception` carries a union of producer-specific payloads. Consumers narrow
+// it by `stage`, `code`, `itemName`, or `source` before reading other fields.
 //
 // `fonts-resolved` uses a listener-transport pattern: SuperDoc never
 // emits it directly. `SuperDoc.vue:719` reads

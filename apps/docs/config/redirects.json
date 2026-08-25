@@ -94,6 +94,11 @@
       "source": "/editor/frameworks/sveltekit/",
       "destination": "/editor/quickstart/",
       "reason": "Framework-specific guides are deferred until the documentation supports a broader tested set."
+    },
+    {
+      "source": "/editor/built-in-ui/links-and-context-menus/",
+      "destination": "/editor/built-in-ui/hyperlinks/",
+      "reason": "Hyperlink behavior and context-menu actions now have focused guides."
     }
   ],
   "redirects": [

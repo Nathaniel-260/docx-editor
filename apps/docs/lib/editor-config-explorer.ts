@@ -254,7 +254,7 @@ const presentation = {
   },
   hyperlinks: {
     example: { value: '{ onActivate: … }', code: 'hyperlinks: { onActivate: handleHyperlinkActivation }' },
-    guide: { label: 'Links and menus', href: '/editor/built-in-ui/links-and-context-menus' },
+    guide: { label: 'Hyperlinks', href: '/editor/built-in-ui/hyperlinks' },
   },
   toolbar: {
     example: { value: "'#toolbar'", code: "toolbar: '#toolbar'" },

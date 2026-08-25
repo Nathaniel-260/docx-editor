@@ -5,6 +5,8 @@
  * - `public/fixtures/document-modes.docx`
  * - `public/fixtures/comments-sample.docx`
  * - `public/fixtures/search-sample.docx`
+ * - `public/fixtures/hyperlinks-sample.docx`
+ * - `public/fixtures/context-menu-sample.docx`
  *
  * The other two fixtures are full synthetic NDAs, sized for guides that need a
  * realistic contract. These demos need the opposite: each reader has one job,
@@ -16,7 +18,9 @@
  * comments fixture has one short thread because that thread is the behavior the
  * page asks the reader to inspect. The search fixture follows the same rule:
  * three large-type paragraphs across three short pages, with enough repeated
- * terms to show the real search surface moving between results.
+ * terms to show the real search surface moving between results. The hyperlinks
+ * fixture contains one real external hyperlink. The context-menu fixture keeps
+ * one selectable instruction sentence in view.
  *
  * Written as a minimal OOXML package rather than through a library so the bytes
  * are stable: no timestamps, no generated ids, no zip metadata that changes
@@ -45,6 +49,10 @@ const PLAIN_FIXTURES = [
     fileName: 'document-modes.docx',
     paragraphs: ['Notice period', 'Either party may end this agreement by giving 30 days’ written notice.'],
   },
+  {
+    fileName: 'context-menu-sample.docx',
+    paragraphs: ['Context menu', 'Select this sentence, then right-click it to open the document menu.'],
+  },
 ];
 
 const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -64,6 +72,11 @@ const DOCUMENT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const COMMENT_DOCUMENT_RELS = DOCUMENT_RELS.replace(
   '</Relationships>',
   '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>',
+);
+
+const HYPERLINKS_DOCUMENT_RELS = DOCUMENT_RELS.replace(
+  '</Relationships>',
+  '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://docs.superdoc.dev/" TargetMode="External"/></Relationships>',
 );
 
 /**
@@ -118,6 +131,9 @@ const SEARCH_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${SEARCH_PARAGRAPHS.map(
   (text, index) => `${index === 0 ? '' : pageBreak}${paragraph(text)}`,
 ).join('')}<w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+
+const HYPERLINKS_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:t>Hyperlink behavior</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Click </w:t></w:r><w:hyperlink r:id="rId2" w:history="1"><w:r><w:rPr><w:color w:val="1355FF"/><w:u w:val="single"/></w:rPr><w:t>SuperDoc documentation</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> to try the selected activation behavior.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
 
 /**
  * Every core property stays empty, including title and description.
@@ -183,4 +199,14 @@ await writeDocx('search-sample.docx', [
   ['word/styles.xml', SEARCH_STYLES],
   ['docProps/core.xml', CORE_PROPERTIES],
   ['docProps/app.xml', appProperties(SEARCH_PARAGRAPHS.length)],
+]);
+
+await writeDocx('hyperlinks-sample.docx', [
+  ['[Content_Types].xml', CONTENT_TYPES],
+  ['_rels/.rels', ROOT_RELS],
+  ['word/document.xml', HYPERLINKS_DOCUMENT],
+  ['word/_rels/document.xml.rels', HYPERLINKS_DOCUMENT_RELS],
+  ['word/styles.xml', STYLES],
+  ['docProps/core.xml', CORE_PROPERTIES],
+  ['docProps/app.xml', appProperties(2)],
 ]);

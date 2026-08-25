@@ -4,10 +4,11 @@ import { normalizeHyperlinksConfig } from './normalize-hyperlinks-config.js';
 describe('normalizeHyperlinksConfig', () => {
   it('uses SuperDoc mode-aware behavior when no handler is configured', () => {
     expect(normalizeHyperlinksConfig({})).toEqual({
-      onActivate: undefined,
-      suppressed: false,
-      defaultUiSuppressed: false,
-      handleNonEditable: false,
+      handler: undefined,
+      handlerSource: undefined,
+      editableActivationDisabled: false,
+      builtInEditorDisabled: false,
+      interceptsNavigationOnly: false,
     });
   });
 
@@ -15,10 +16,11 @@ describe('normalizeHyperlinksConfig', () => {
     const onActivate = vi.fn();
 
     expect(normalizeHyperlinksConfig({ hyperlinks: { onActivate } })).toEqual({
-      onActivate,
-      suppressed: false,
-      defaultUiSuppressed: false,
-      handleNonEditable: true,
+      handler: onActivate,
+      handlerSource: 'hyperlinks.onActivate',
+      editableActivationDisabled: false,
+      builtInEditorDisabled: false,
+      interceptsNavigationOnly: true,
     });
   });
 
@@ -32,7 +34,7 @@ describe('normalizeHyperlinksConfig', () => {
         hyperlinks: { onActivate },
         ui: { linkPopover: { popoverResolver: uiResolver } },
         modules: { links: { popoverResolver: moduleResolver } },
-      }).onActivate,
+      }).handler,
     ).toBe(onActivate);
   });
 
@@ -44,14 +46,17 @@ describe('normalizeHyperlinksConfig', () => {
       normalizeHyperlinksConfig({
         ui: { linkPopover: { popoverResolver: uiResolver } },
         modules: { links: { popoverResolver: moduleResolver } },
-      }).onActivate,
+      }).handler,
     ).toBe(uiResolver);
   });
 
   it('still accepts modules.links.popoverResolver', () => {
     const popoverResolver = vi.fn();
 
-    expect(normalizeHyperlinksConfig({ modules: { links: { popoverResolver } } }).onActivate).toBe(popoverResolver);
+    expect(normalizeHyperlinksConfig({ modules: { links: { popoverResolver } } })).toMatchObject({
+      handler: popoverResolver,
+      handlerSource: 'compatibility',
+    });
   });
 
   it('lets hyperlinks: false suppress every deprecated handler', () => {
@@ -64,10 +69,11 @@ describe('normalizeHyperlinksConfig', () => {
         modules: { links: { popoverResolver } },
       }),
     ).toEqual({
-      onActivate: undefined,
-      suppressed: true,
-      defaultUiSuppressed: false,
-      handleNonEditable: true,
+      handler: undefined,
+      handlerSource: undefined,
+      editableActivationDisabled: true,
+      builtInEditorDisabled: false,
+      interceptsNavigationOnly: true,
     });
   });
 
@@ -75,16 +81,18 @@ describe('normalizeHyperlinksConfig', () => {
     const popoverResolver = vi.fn();
 
     expect(normalizeHyperlinksConfig({ ui: false, modules: { links: { popoverResolver } } })).toEqual({
-      onActivate: undefined,
-      suppressed: true,
-      defaultUiSuppressed: true,
-      handleNonEditable: false,
+      handler: undefined,
+      handlerSource: undefined,
+      editableActivationDisabled: true,
+      builtInEditorDisabled: true,
+      interceptsNavigationOnly: false,
     });
     expect(normalizeHyperlinksConfig({ ui: { linkPopover: false }, modules: { links: { popoverResolver } } })).toEqual({
-      onActivate: undefined,
-      suppressed: true,
-      defaultUiSuppressed: true,
-      handleNonEditable: false,
+      handler: undefined,
+      handlerSource: undefined,
+      editableActivationDisabled: true,
+      builtInEditorDisabled: true,
+      interceptsNavigationOnly: false,
     });
   });
 
@@ -92,16 +100,18 @@ describe('normalizeHyperlinksConfig', () => {
     const onActivate = vi.fn();
 
     expect(normalizeHyperlinksConfig({ ui: false, hyperlinks: { onActivate } })).toEqual({
-      onActivate,
-      suppressed: false,
-      defaultUiSuppressed: true,
-      handleNonEditable: true,
+      handler: onActivate,
+      handlerSource: 'hyperlinks.onActivate',
+      editableActivationDisabled: false,
+      builtInEditorDisabled: true,
+      interceptsNavigationOnly: true,
     });
     expect(normalizeHyperlinksConfig({ ui: { linkPopover: false }, hyperlinks: { onActivate } })).toEqual({
-      onActivate,
-      suppressed: false,
-      defaultUiSuppressed: true,
-      handleNonEditable: true,
+      handler: onActivate,
+      handlerSource: 'hyperlinks.onActivate',
+      editableActivationDisabled: false,
+      builtInEditorDisabled: true,
+      interceptsNavigationOnly: true,
     });
   });
 });

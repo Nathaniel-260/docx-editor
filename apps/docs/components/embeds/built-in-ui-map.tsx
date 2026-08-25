@@ -80,12 +80,15 @@ export function BuiltInUiMap() {
                 </div>
 
                 <div className='sd-builtin-map-segments' style={{ width: '80%' }}>
-                  <span className='sd-builtin-map-selection' style={{ width: '34%' }} />
+                  <span
+                    className={`${regionClass(selected, 'hyperlinks', 'float')} sd-builtin-map-hyperlink`}
+                    style={{ width: '34%' }}
+                  />
                   <span style={{ width: '50%' }} />
                 </div>
                 <span className='sd-builtin-map-line' style={{ width: '56%' }} />
 
-                <div className={`${regionClass(selected, 'menus', 'float')} sd-builtin-map-menu`}>
+                <div className={`${regionClass(selected, 'context-menu', 'float')} sd-builtin-map-menu`}>
                   <span style={{ width: '70%' }} />
                   <span style={{ width: '55%' }} />
                   <span style={{ width: '62%' }} />

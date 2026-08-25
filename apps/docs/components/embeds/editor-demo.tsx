@@ -2,17 +2,21 @@
 
 import { Bold, Check, Expand, Italic, Minus, Plus, RotateCcw, Shrink, Underline, Undo2, X } from 'lucide-react';
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
-import type { Config, DocumentMode, ViewingTrackedChangesMode } from 'superdoc';
+import type { Config, ContextMenuConfig, DocumentMode, ViewingTrackedChangesMode } from 'superdoc';
 import type { CommandState, SuperDocUI, ZoomSlice } from 'superdoc/ui';
 import {
   commentsDemoLayouts,
   commentsDemoLevels,
+  contextMenuDemoStrategies,
+  hyperlinkDemoBehaviors,
   toolbarDemoExcludedItems,
   toolbarDemoGroups,
   toolbarDemoStrategies,
   type BuiltInDemoChoice,
   type CommentsDemoLayout,
   type CommentsDemoLevel,
+  type ContextMenuDemoStrategy,
+  type HyperlinkDemoBehavior,
   type ToolbarDemoStrategy,
 } from '@/lib/built-in-editor-demos';
 import { CollapsibleEditorPreview } from './collapsible-editor-preview';
@@ -21,7 +25,15 @@ import { createRuntimeEditor, loadRuntime, loadUIModule, type SuperDocInstance }
 const zoomStep = 10;
 const initialZoom = { max: 200, min: 10, mode: 'manual', value: 100 } satisfies ZoomSlice;
 
-type EditorDemoPreset = 'comments' | 'document-modes' | 'proofing' | 'search' | 'toolbar' | 'tracked-review';
+type EditorDemoPreset =
+  | 'comments'
+  | 'context-menu'
+  | 'document-modes'
+  | 'hyperlinks'
+  | 'proofing'
+  | 'search'
+  | 'toolbar'
+  | 'tracked-review';
 
 type EditorDemoProps = {
   allowLocalFile?: boolean;
@@ -35,7 +47,9 @@ type DemoState = 'idle' | 'loading' | 'ready' | 'error';
 type MountDocumentOptions = {
   commentsLayout?: CommentsDemoLayout;
   commentsLevel?: CommentsDemoLevel;
+  contextMenuStrategy?: ContextMenuDemoStrategy;
   documentMode?: DocumentMode;
+  hyperlinkBehavior?: HyperlinkDemoBehavior;
   replaceEnabled?: boolean;
   toolbarStrategy?: ToolbarDemoStrategy;
 };
@@ -294,6 +308,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   );
   const [fitActive, setFitActive] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [contextMenuActionStatus, setContextMenuActionStatus] = useState<string | null>(null);
+  const [contextMenuStrategy, setContextMenuStrategy] = useState<ContextMenuDemoStrategy>('custom');
+  const [hyperlinkBehavior, setHyperlinkBehavior] = useState<HyperlinkDemoBehavior>('default');
   const [modeResetBusy, setModeResetBusy] = useState(false);
   const [replaceEnabled, setReplaceEnabled] = useState(true);
   const [reviewBusy, setReviewBusy] = useState(false);
@@ -405,6 +422,59 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     uiCleanupRef.current = () => cleanup.forEach((unsubscribe) => unsubscribe());
   }
 
+  function getContextMenu(strategy: ContextMenuDemoStrategy): true | ContextMenuConfig {
+    if (strategy === 'default') return true;
+
+    return {
+      includeDefaultItems: true,
+      customItems: [
+        {
+          id: 'application-actions',
+          items: [
+            {
+              id: 'send-selection-to-workflow',
+              label: 'Send selection to workflow',
+              showWhen: ({ hasSelection }) => hasSelection,
+              onSelect: async ({ context }) => {
+                const text = (await context?.selectedTextSettled)?.trim();
+                if (!mountedRef.current) return;
+                setContextMenuActionStatus(
+                  text ? `Sent “${text.slice(0, 48)}” to the workflow.` : 'Select text first.',
+                );
+              },
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  function getPinnedRuntimeLinkPopover(behavior: HyperlinkDemoBehavior): UiConfig['linkPopover'] {
+    if (behavior === 'none') return false;
+    if (behavior === 'default') return undefined;
+
+    return {
+      popoverResolver: ({ href }) => ({
+        type: 'external',
+        render: ({ container, closePopover }) => {
+          const link = document.createElement('a');
+          link.href = href;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = 'Open in a new tab';
+
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = 'Close';
+          button.addEventListener('click', closePopover);
+          container.append(link, button);
+
+          return { destroy: () => button.removeEventListener('click', closePopover) };
+        },
+      }),
+    };
+  }
+
   async function mountDocument(getFile?: () => Promise<File>, options: MountDocumentOptions = {}) {
     if (!mountRef.current || state === 'loading') return false;
 
@@ -412,7 +482,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     const hadMountedEditor = instanceRef.current !== null;
     const initialCommentsLayout = options.commentsLayout ?? 'auto';
     const initialCommentsLevel = options.commentsLevel ?? 'resolve';
+    const initialContextMenuStrategy = options.contextMenuStrategy ?? 'custom';
     const initialDocumentMode = options.documentMode ?? (preset === 'tracked-review' ? 'suggesting' : 'editing');
+    const initialHyperlinkBehavior = options.hyperlinkBehavior ?? 'default';
     const initialReplaceEnabled = options.replaceEnabled ?? true;
     const initialToolbarStrategy = options.toolbarStrategy ?? 'groups';
     setDemoInteractionBlocked(true);
@@ -433,7 +505,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       const [file, SuperDoc, uiModule] = await Promise.all([getFile?.(), loadRuntime(), loadUIModule()]);
       if (!mountedRef.current || !mountRef.current || loadId !== loadIdRef.current) return false;
       const builtInToolbar = toolbarRef.current;
-      if ((preset === 'search' || preset === 'toolbar') && !builtInToolbar) {
+      if ((preset === 'hyperlinks' || preset === 'search' || preset === 'toolbar') && !builtInToolbar) {
         throw new Error('The built-in toolbar mount is unavailable.');
       }
 
@@ -444,6 +516,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       setCommentsLayout(initialCommentsLayout);
       setCommentsLevel(initialCommentsLevel);
       setDocumentMode(initialDocumentMode);
+      setContextMenuActionStatus(null);
+      setContextMenuStrategy(initialContextMenuStrategy);
+      setHyperlinkBehavior(initialHyperlinkBehavior);
       fitActiveRef.current = true;
       setFitActive(true);
       setModeResetBusy(false);
@@ -470,6 +545,27 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                 toolbar: {
                   container: builtInToolbar!,
                   groups: { left: ['search'] },
+                  responsiveToContainer: true,
+                },
+              }
+            : {}),
+          ...(preset === 'context-menu'
+            ? {
+                comments: false,
+                contextMenu: getContextMenu(initialContextMenuStrategy),
+              }
+            : {}),
+          ...(preset === 'hyperlinks'
+            ? {
+                comments: false,
+                // AIDEV-NOTE: This embed executes the exact stable release in
+                // config/editor-demo-runtime.json. Keep this compatible
+                // resolver until that pin includes Config.hyperlinks; the
+                // published examples use the canonical API added in this stack.
+                linkPopover: getPinnedRuntimeLinkPopover(initialHyperlinkBehavior),
+                toolbar: {
+                  container: builtInToolbar!,
+                  groups: { center: ['link'] },
                   responsiveToContainer: true,
                 },
               }
@@ -613,7 +709,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
         options: {
           commentsLayout,
           commentsLevel,
+          contextMenuStrategy,
           documentMode: currentDocumentMode,
+          hyperlinkBehavior,
           replaceEnabled,
           toolbarStrategy,
           ...options,
@@ -645,6 +743,16 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   function changeCommentsLevel(level: CommentsDemoLevel) {
     if (level === commentsLevel) return;
     void reconfigureDemo({ commentsLevel: level });
+  }
+
+  function changeContextMenuStrategy(strategy: ContextMenuDemoStrategy) {
+    if (strategy === contextMenuStrategy) return;
+    void reconfigureDemo({ contextMenuStrategy: strategy });
+  }
+
+  function changeHyperlinkBehavior(behavior: HyperlinkDemoBehavior) {
+    if (behavior === hyperlinkBehavior) return;
+    void reconfigureDemo({ hyperlinkBehavior: behavior });
   }
 
   function changeSearchReplacement(value: 'on' | 'off') {
@@ -745,7 +853,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       <div className='sd-editor-demo-header'>
         <div className='sd-editor-demo-copy'>
           <strong>{title}</strong>
-          <span aria-live={preset === 'document-modes' ? 'polite' : undefined}>
+          <span aria-live={preset === 'context-menu' || preset === 'document-modes' ? 'polite' : undefined}>
             {preset === 'document-modes'
               ? activeDocumentMode.note
               : allowLocalFile
@@ -754,11 +862,15 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                   ? 'Type “mispelled”, “workng”, or “teh”, then right-click its underline.'
                   : preset === 'comments'
                     ? 'Open the existing thread, then change its layout or available actions.'
-                    : preset === 'search'
-                      ? 'Search for “Client”, then replace one result with “Customer”.'
-                      : preset === 'toolbar'
-                        ? 'Switch strategies, then try the rendered controls in the document.'
-                        : 'Loads the sample DOCX in suggesting mode.'}
+                    : preset === 'context-menu'
+                      ? (contextMenuActionStatus ?? 'Select text, then right-click to open the document menu.')
+                      : preset === 'hyperlinks'
+                        ? 'Click the hyperlink to try the selected activation behavior.'
+                        : preset === 'search'
+                          ? 'Search for “Client”, then replace one result with “Customer”.'
+                          : preset === 'toolbar'
+                            ? 'Switch strategies, then try the rendered controls in the document.'
+                            : 'Loads the sample DOCX in suggesting mode.'}
           </span>
         </div>
         <div className='sd-editor-demo-actions'>
@@ -794,7 +906,12 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           ) : null}
         </div>
       </div>
-      {preset === 'toolbar' || preset === 'search' || preset === 'comments' || preset === 'document-modes' ? (
+      {preset === 'toolbar' ||
+      preset === 'search' ||
+      preset === 'comments' ||
+      preset === 'context-menu' ||
+      preset === 'hyperlinks' ||
+      preset === 'document-modes' ? (
         <div className='sd-editor-demo-config-bar' aria-label={`${title} configuration`}>
           {preset === 'document-modes' ? (
             <div className='sd-editor-demo-mode-controls'>
@@ -874,6 +991,24 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               />
             </>
           ) : null}
+          {preset === 'context-menu' ? (
+            <DemoConfigGroup
+              disabled={state !== 'ready' || configurationBusy}
+              label='Menu'
+              onChange={changeContextMenuStrategy}
+              options={contextMenuDemoStrategies}
+              value={contextMenuStrategy}
+            />
+          ) : null}
+          {preset === 'hyperlinks' ? (
+            <DemoConfigGroup
+              disabled={state !== 'ready' || configurationBusy}
+              label='Activation'
+              onChange={changeHyperlinkBehavior}
+              options={hyperlinkDemoBehaviors}
+              value={hyperlinkBehavior}
+            />
+          ) : null}
           <DemoViewControls
             disabled={state !== 'ready' || modeResetBusy}
             fitActive={fitActive}
@@ -897,11 +1032,15 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                 ? 'The proofing editor could not load. Try again.'
                 : preset === 'comments'
                   ? 'The comments editor could not load. Try again.'
-                  : preset === 'search'
-                    ? 'The search editor could not load. Try again.'
-                    : preset === 'toolbar'
-                      ? 'The toolbar editor could not load. Try again.'
-                      : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
+                  : preset === 'context-menu'
+                    ? 'The context-menu editor could not load. Try again.'
+                    : preset === 'hyperlinks'
+                      ? 'The hyperlinks editor could not load. Try again.'
+                      : preset === 'search'
+                        ? 'The search editor could not load. Try again.'
+                        : preset === 'toolbar'
+                          ? 'The toolbar editor could not load. Try again.'
+                          : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
           </p>
         ) : null}
         {configurationError ? (
@@ -909,7 +1048,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
             {configurationError}
           </p>
         ) : null}
-        {preset === 'search' || preset === 'toolbar' ? (
+        {preset === 'hyperlinks' || preset === 'search' || preset === 'toolbar' ? (
           <div
             ref={toolbarRef}
             className='sd-editor-demo-built-in-toolbar'
@@ -921,7 +1060,14 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
         ) : null}
         <div
           className='sd-editor-demo-toolbar'
-          hidden={state === 'idle' || preset === 'comments' || preset === 'search' || preset === 'toolbar'}
+          hidden={
+            state === 'idle' ||
+            preset === 'comments' ||
+            preset === 'context-menu' ||
+            preset === 'hyperlinks' ||
+            preset === 'search' ||
+            preset === 'toolbar'
+          }
           aria-label='Editor controls'
         >
           <div className='sd-editor-demo-toolbar-group sd-editor-demo-edit-controls' role='group' aria-label='Edit'>
@@ -1023,11 +1169,15 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                   ? 'The proofing editor is loading.'
                   : preset === 'comments'
                     ? 'The comments editor is loading.'
-                    : preset === 'search'
-                      ? 'The search editor is loading.'
-                      : preset === 'toolbar'
-                        ? 'The toolbar editor is loading.'
-                        : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
+                    : preset === 'context-menu'
+                      ? 'The context-menu editor is loading.'
+                      : preset === 'hyperlinks'
+                        ? 'The hyperlinks editor is loading.'
+                        : preset === 'search'
+                          ? 'The search editor is loading.'
+                          : preset === 'toolbar'
+                            ? 'The toolbar editor is loading.'
+                            : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
             </p>
           </div>
         ) : null}

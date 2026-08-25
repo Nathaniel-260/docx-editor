@@ -1,0 +1,81 @@
+---
+title: Configure hyperlink behavior
+navTitle: Hyperlinks
+description: Keep SuperDoc's defaults, suppress activation, or handle one hyperlink activation in your application.
+---
+
+By default, SuperDoc opens the built-in editor when a hyperlink can be edited and follows the link when it cannot.
+Configure activation only when your application needs different behavior.
+
+## Try hyperlink activation
+
+Expand the Editor, then click **SuperDoc documentation** after each change:
+
+1. **Default** opens the built-in hyperlink editor in Editing mode.
+2. **Do nothing** suppresses activation.
+3. **Custom action** renders an action from your application beside the hyperlink.
+
+<EditorDemo fixture='/fixtures/hyperlinks-sample.docx' preset='hyperlinks' title='Try hyperlink activation' />
+
+Changing the behavior reloads the current DOCX because `hyperlinks` is a startup option. Document edits remain; the
+open hyperlink surface and selection reset.
+
+## Keep the mode-aware default
+
+Omit `hyperlinks` when SuperDoc should choose the behavior from the document mode:
+
+| Document mode | Default activation                      |
+| ------------- | --------------------------------------- |
+| Editing       | Open the built-in hyperlink editor.     |
+| Suggesting    | Open the built-in hyperlink editor.     |
+| Viewing       | Navigate to the URL or document anchor. |
+
+Links outside editable text, such as linked images and links in headers or footers, navigate in every mode.
+
+Set `hyperlinks: false` when activation should do nothing in every mode.
+
+## Render a custom action
+
+Use `hyperlinks.onActivate` when your application should decide what happens for one activation. Create
+`src/hyperlink-activation.ts` with a small DOM surface for open and close actions:
+
+<include>../../../../snippets/editor/hyperlink-activation.ts</include>
+
+Add the handler to the `/sample.docx` project from the [Quickstart](/editor/quickstart):
+
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../../snippets/editor/built-in-hyperlinks.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/App.tsx' framework='React'>
+    <include>../../../../snippets/editor/react-built-in-hyperlinks.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
+
+Vanilla also needs separate toolbar and Editor mounts:
+
+<include>../../../../snippets/editor/built-in-hyperlinks.html</include>
+
+Return `{ type: 'default' }` to use SuperDoc's default for that activation or `{ type: 'none' }` to suppress it. The
+render callback receives an empty positioned `container` and a `close()` function. Return `destroy()` when the
+application adds listeners or mounts a framework root.
+
+The context includes the `href`, current `documentMode`, and `defaultAction`. The default action is `edit` when SuperDoc
+can edit the link and `navigate` otherwise.
+
+`onActivate` must return synchronously. Code it starts may continue asynchronously. From that code, call
+`await context.getDocumentTarget()` to get the exact `HyperlinkTarget` to pass as `target` to
+`editor.doc.hyperlinks.get()`, `patch()`, or `remove()`. It returns `null` when SuperDoc cannot match the activated link
+to a Document API hyperlink.
+
+If `onActivate` throws, returns a Promise, returns an invalid result, or its render callback throws, SuperDoc suppresses
+the activation and reports the failure through `onException`.
+
+## Choose the right extension point
+
+Use `onActivate` for work tied to one activation: analytics, application routing, suppression, or a small anchored
+action. Use [Custom UI](/editor/custom-ui/overview) for a persistent toolbar, sidebar, or dialog and for complete
+insert, edit, and remove workflows. An `onActivate` handler can open that custom UI.
+
+Use the [Document API hyperlink reference](/document-api/reference/hyperlinks) when code needs to list, create, update,
+or remove hyperlinks without a visual interaction.

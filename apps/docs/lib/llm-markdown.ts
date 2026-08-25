@@ -165,7 +165,14 @@ export function renderLLMMarkdown(markdown: string) {
       const fixture = textAttribute(attributes, 'fixture');
       const preset = textAttribute(attributes, 'preset');
       const localFile = booleanAttribute(attributes, 'allowLocalFile');
-      const builtInDemo = preset === 'comments' || preset === 'search' || preset === 'toolbar' ? preset : null;
+      const builtInDemo =
+        preset === 'comments' ||
+        preset === 'context-menu' ||
+        preset === 'hyperlinks' ||
+        preset === 'search' ||
+        preset === 'toolbar'
+          ? preset
+          : null;
       const details = [
         fixture ? `Sample: [open the fixture](${fixture}).` : undefined,
         preset ? `Preset: \`${preset}\`.` : undefined,

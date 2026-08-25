@@ -256,3 +256,43 @@ test('the search fixture provides three short pages with deliberate query result
     assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
   }
 });
+
+test('the hyperlinks fixture keeps one real external hyperlink', async () => {
+  const { bytes, document, documentRels, core, app } = await openFixture('hyperlinks-sample.docx');
+  const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');
+
+  assert.equal(firstArchiveEntry(bytes), '[Content_Types].xml');
+  assert.ok(visibleText.length < 200, `hyperlinks-sample.docx must stay short, got ${visibleText.length} characters`);
+  assert.match(document, /<w:hyperlink r:id="rId2" w:history="1">/);
+  assert.match(document, /SuperDoc documentation/);
+  assert.match(
+    documentRels,
+    /Id="rId2" Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/hyperlink" Target="https:\/\/docs\.superdoc\.dev\/" TargetMode="External"/,
+  );
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+
+  for (const element of REVISION_ELEMENTS) {
+    assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
+  }
+});
+
+test('the context-menu fixture stays focused on one selectable sentence', async () => {
+  const { bytes, document, documentRels, core, app } = await openFixture('context-menu-sample.docx');
+  const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');
+
+  assert.equal(firstArchiveEntry(bytes), '[Content_Types].xml');
+  assert.match(visibleText, /Select this sentence, then right-click it to open the document menu\./);
+  assert.doesNotMatch(document, /<w:hyperlink\b/);
+  assert.doesNotMatch(documentRels, /relationships\/hyperlink/);
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+
+  for (const element of REVISION_ELEMENTS) {
+    assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
+  }
+});

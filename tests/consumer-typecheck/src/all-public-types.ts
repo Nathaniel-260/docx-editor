@@ -71,6 +71,7 @@ import type {
   HyperlinkActivationHandler,
   HyperlinkActivationResult,
   HyperlinkRenderContext,
+  HyperlinkTarget,
   HyperlinksConfig,
   IntentSurfaceRequest,
   Layout,
@@ -132,6 +133,7 @@ import type {
   SuperDocDisposableBag,
   SuperDocEditorPayload,
   SuperDocExceptionEditorPayload,
+  SuperDocExceptionHyperlinkPayload,
   SuperDocExceptionToolbarPayload,
   SuperDocExceptionPayload,
   SuperDocExceptionRestorePayload,
@@ -277,6 +279,7 @@ const _real_HyperlinkActivationContext: AssertNotAny<HyperlinkActivationContext>
 const _real_HyperlinkActivationHandler: AssertNotAny<HyperlinkActivationHandler> = true;
 const _real_HyperlinkActivationResult: AssertNotAny<HyperlinkActivationResult> = true;
 const _real_HyperlinkRenderContext: AssertNotAny<HyperlinkRenderContext> = true;
+const _real_HyperlinkTarget: AssertNotAny<HyperlinkTarget> = true;
 const _real_HyperlinksConfig: AssertNotAny<HyperlinksConfig> = true;
 const _real_IntentSurfaceRequest: AssertNotAny<IntentSurfaceRequest> = true;
 const _real_Layout: AssertNotAny<Layout> = true;
@@ -338,6 +341,7 @@ const _real_SuperDocDecorationProvider: AssertNotAny<SuperDocDecorationProvider>
 const _real_SuperDocDisposableBag: AssertNotAny<SuperDocDisposableBag> = true;
 const _real_SuperDocEditorPayload: AssertNotAny<SuperDocEditorPayload> = true;
 const _real_SuperDocExceptionEditorPayload: AssertNotAny<SuperDocExceptionEditorPayload> = true;
+const _real_SuperDocExceptionHyperlinkPayload: AssertNotAny<SuperDocExceptionHyperlinkPayload> = true;
 const _real_SuperDocExceptionToolbarPayload: AssertNotAny<SuperDocExceptionToolbarPayload> = true;
 const _real_SuperDocExceptionPayload: AssertNotAny<SuperDocExceptionPayload> = true;
 const _real_SuperDocExceptionRestorePayload: AssertNotAny<SuperDocExceptionRestorePayload> = true;

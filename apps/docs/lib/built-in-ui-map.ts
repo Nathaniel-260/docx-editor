@@ -1,4 +1,11 @@
-export type BuiltInUiSurfaceId = 'toolbar' | 'comments' | 'search' | 'menus' | 'structured' | 'layout';
+export type BuiltInUiSurfaceId =
+  | 'toolbar'
+  | 'comments'
+  | 'search'
+  | 'hyperlinks'
+  | 'context-menu'
+  | 'structured'
+  | 'layout';
 
 export type BuiltInUiInlinePart = { kind: 'text'; value: string } | { kind: 'code'; value: string };
 
@@ -49,12 +56,20 @@ export const builtInUiSurfaces = [
     description: 'Find and replace document text, then move between matches across paginated pages.',
   },
   {
-    id: 'menus',
-    slug: 'links-and-context-menus',
-    label: 'Links and menus',
-    href: '/editor/built-in-ui/links-and-context-menus',
-    initialBehavior: [{ kind: 'text', value: 'The context menu and built-in link editor are available by default.' }],
-    description: 'Create and edit links, then add application actions to the context menu.',
+    id: 'hyperlinks',
+    slug: 'hyperlinks',
+    label: 'Hyperlinks',
+    href: '/editor/built-in-ui/hyperlinks',
+    initialBehavior: [{ kind: 'text', value: 'Edit in Editing or Suggesting mode. Navigate in Viewing mode.' }],
+    description: 'Keep the mode-aware behavior, suppress activation, or render a custom action.',
+  },
+  {
+    id: 'context-menu',
+    slug: 'context-menus',
+    label: 'Context menu',
+    href: '/editor/built-in-ui/context-menus',
+    initialBehavior: [{ kind: 'text', value: 'SuperDoc shows document-aware actions on right-click.' }],
+    description: 'Keep the built-in menu, add application actions, or render the complete menu yourself.',
   },
   {
     id: 'structured',

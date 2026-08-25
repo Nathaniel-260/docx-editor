@@ -47,11 +47,12 @@ function createPayload(overrides = {}) {
 
 function createSubject({
   resolver,
+  handlerSource = null,
   manager = createManagerStub(),
   editor = { id: 'editor' },
   ui,
-  defaultUiSuppressed = false,
-  handleNonEditable = false,
+  builtInEditorDisabled = false,
+  interceptsNavigationOnly = false,
 } = {}) {
   const layer = document.createElement('div');
   vi.spyOn(layer, 'getBoundingClientRect').mockReturnValue({
@@ -71,9 +72,10 @@ function createSubject({
     getSurfaceManager: () => manager,
     getActiveEditor: () => editor,
     getUi: () => uiController,
-    getResolver: () => resolver,
-    getBuiltInPopoverSuppressed: () => defaultUiSuppressed,
-    shouldHandleNonEditableHyperlinks: () => handleNonEditable,
+    getActivationHandler: () => resolver,
+    getActivationHandlerSource: () => handlerSource,
+    getBuiltInEditorDisabled: () => builtInEditorDisabled,
+    shouldInterceptNavigationOnlyHyperlinks: () => interceptsNavigationOnly,
     getLayerElement: () => layer,
     emitException,
   });
@@ -161,6 +163,127 @@ describe('useLinkPopover', () => {
       storyId: 'main:/word/document.xml',
       hyperlinkNodeId: 'hl:1',
       href: 'https://new.example/',
+    });
+  });
+
+  it('resolves the exact Document API address for a custom hyperlink action', async () => {
+    const address = {
+      kind: 'inline',
+      nodeType: 'hyperlink',
+      anchor: {
+        start: { blockId: 'p-1', offset: 0 },
+        end: { blockId: 'p-1', offset: 8 },
+      },
+    };
+    const list = vi.fn(() => ({
+      stories: [
+        {
+          storyId: 'main:/word/document.xml',
+          hyperlinks: [
+            {
+              hyperlinkNodeId: 'hl:1',
+              text: 'Example',
+              externalTarget: 'https://example.com',
+              address,
+            },
+          ],
+        },
+      ],
+    }));
+    const resolver = vi.fn((context) => {
+      void context.getDocumentTarget();
+      void context.getDocumentTarget();
+      return { type: 'none' };
+    });
+    const { popover } = createSubject({
+      editor: { doc: { hyperlinks: { list } } },
+      resolver,
+      handlerSource: 'hyperlinks.onActivate',
+    });
+    const element = document.createElement('a');
+    element.textContent = 'Example';
+
+    popover.handleLinkClick(createPayload({ element }));
+    await tick();
+
+    const context = resolver.mock.calls[0][0];
+    await expect(context.getDocumentTarget()).resolves.toEqual(address);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not expose a body Document API target for an identical header hyperlink', async () => {
+    const bodyAddress = {
+      kind: 'inline',
+      nodeType: 'hyperlink',
+      anchor: {
+        start: { blockId: 'body-p-1', offset: 0 },
+        end: { blockId: 'body-p-1', offset: 7 },
+      },
+    };
+    const list = vi.fn(() => ({
+      stories: [
+        {
+          storyId: 'main:/word/document.xml',
+          partUri: '/word/document.xml',
+          hyperlinks: [
+            {
+              hyperlinkNodeId: 'body-link',
+              rId: 'rId1',
+              text: 'Example',
+              externalTarget: 'https://example.com',
+              address: bodyAddress,
+            },
+          ],
+        },
+        {
+          storyId: 'header:/word/header1.xml',
+          partUri: '/word/header1.xml',
+          hyperlinks: [
+            {
+              hyperlinkNodeId: 'header-link',
+              rId: 'rId1',
+              text: 'Example',
+              externalTarget: 'https://example.com',
+            },
+          ],
+        },
+      ],
+    }));
+    const get = vi.fn(() => ({
+      success: true,
+      hyperlink: {
+        hyperlinkNodeId: 'header-link',
+        rId: 'rId1',
+        text: 'Example',
+        externalTarget: 'https://example.com',
+      },
+    }));
+    const resolver = vi.fn(() => ({ type: 'none' }));
+    const { popover } = createSubject({
+      editor: { doc: { hyperlinks: { list, get } } },
+      resolver,
+      handlerSource: 'hyperlinks.onActivate',
+    });
+    const fragment = document.createElement('p');
+    fragment.dataset.blockId = 'header-p-1';
+    fragment.dataset.pmStart = '1';
+    fragment.dataset.sourceAnchor = JSON.stringify({
+      sourceRef: { partUri: '/word/header1.xml', xpathLikePath: '/w:hdr[1]/w:p[ordinal=0]' },
+    });
+    const element = document.createElement('a');
+    element.href = 'https://example.com';
+    element.dataset.linkRid = 'rId1';
+    element.textContent = 'Example';
+    fragment.append(element);
+
+    popover.handleLinkClick(createPayload({ element }));
+    await tick();
+
+    const context = resolver.mock.calls[0][0];
+    await expect(context.getDocumentTarget()).resolves.toBeNull();
+    expect(get).toHaveBeenCalledWith({
+      storyId: 'header:/word/header1.xml',
+      hyperlinkNodeId: 'header-link',
     });
   });
 
@@ -812,7 +935,7 @@ describe('useLinkPopover', () => {
 
   it('does not open the built-in editor when custom UI falls back to default', async () => {
     const resolver = vi.fn(() => undefined);
-    const { popover, manager } = createSubject({ resolver, defaultUiSuppressed: true });
+    const { popover, manager } = createSubject({ resolver, builtInEditorDisabled: true });
 
     popover.handleLinkClick(createPayload());
     await tick();
@@ -823,7 +946,7 @@ describe('useLinkPopover', () => {
 
   it('routes non-text hyperlinks through canonical activation', async () => {
     const resolver = vi.fn(() => ({ type: 'render', render: vi.fn() }));
-    const { popover, manager } = createSubject({ resolver, handleNonEditable: true });
+    const { popover, manager } = createSubject({ resolver, interceptsNavigationOnly: true });
 
     popover.handleLinkClick(createPayload({ editableText: false }));
     await tick();
@@ -835,7 +958,7 @@ describe('useLinkPopover', () => {
   it('suppresses non-text hyperlinks when canonical activation returns none', async () => {
     const resolver = vi.fn(() => ({ type: 'none' }));
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
-    const { popover, manager } = createSubject({ resolver, handleNonEditable: true });
+    const { popover, manager } = createSubject({ resolver, interceptsNavigationOnly: true });
 
     popover.handleLinkClick(createPayload({ editableText: false }));
     await tick();
@@ -1000,6 +1123,81 @@ describe('useLinkPopover', () => {
     expect(emitException).toHaveBeenCalledWith({ error, source: 'linkPopoverExternalRender' });
     expect(close).toHaveBeenCalledWith('external-error');
     expect(manager.open).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed with canonical error sources when onActivate throws', async () => {
+    const error = new Error('bad activation handler');
+    const { popover, manager, emitException } = createSubject({
+      resolver: () => {
+        throw error;
+      },
+      handlerSource: 'hyperlinks.onActivate',
+    });
+
+    popover.handleLinkClick(createPayload());
+    await tick();
+
+    expect(emitException).toHaveBeenCalledWith({ error, source: 'hyperlinks.onActivate' });
+    expect(manager.open).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when onActivate returns a Promise', async () => {
+    const { popover, manager, emitException } = createSubject({
+      resolver: () => Promise.reject(new Error('async failure')),
+      handlerSource: 'hyperlinks.onActivate',
+    });
+
+    popover.handleLinkClick(createPayload());
+    await tick();
+
+    expect(emitException).toHaveBeenCalledWith({
+      error: expect.objectContaining({
+        message: 'hyperlinks.onActivate must return synchronously; Promises are not supported.',
+      }),
+      source: 'hyperlinks.onActivate',
+    });
+    expect(manager.open).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when onActivate returns an invalid result', async () => {
+    const { popover, manager, emitException } = createSubject({
+      resolver: () => ({ type: 'unknown' }),
+      handlerSource: 'hyperlinks.onActivate',
+    });
+
+    popover.handleLinkClick(createPayload());
+    await tick();
+
+    expect(emitException).toHaveBeenCalledWith({
+      error: expect.objectContaining({ message: 'hyperlinks.onActivate returned an invalid result.' }),
+      source: 'hyperlinks.onActivate',
+    });
+    expect(manager.open).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with canonical error sources when application rendering throws', async () => {
+    const error = new Error('bad application render');
+    const { popover, manager, emitException } = createSubject({
+      resolver: () => ({
+        type: 'render',
+        render: () => {
+          throw error;
+        },
+      }),
+      handlerSource: 'hyperlinks.onActivate',
+    });
+
+    popover.handleLinkClick(createPayload());
+    await tick();
+    const request = manager.open.mock.calls[0][0];
+    const close = vi.fn();
+
+    request.render({ container: document.createElement('div'), close });
+    await tick();
+
+    expect(emitException).toHaveBeenCalledWith({ error, source: 'hyperlinks.onActivate.render' });
+    expect(close).toHaveBeenCalledWith('external-error');
+    expect(manager.open).toHaveBeenCalledTimes(1);
   });
 
   it('does not fall back to default after an external renderer error if destroyed first', async () => {
