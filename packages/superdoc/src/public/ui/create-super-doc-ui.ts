@@ -2305,6 +2305,10 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       const value = pending[method];
       let matched: boolean;
       if (BOOLEAN_INLINE_FORMAT_METHODS.has(method)) {
+        // An empty caret omits inactive marks, so absence cannot prove that an
+        // explicit off override was consumed. The insert or caret-move path
+        // retires it after the authored run carries the override.
+        if (value === false) continue;
         matched = activeMarks.includes(method) === (value === true);
       } else if (isProjectedInlineSelectionValueKey(method)) {
         // A pending null value-key ("None") is an explicit clear-on-next-insert.

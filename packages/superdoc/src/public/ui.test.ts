@@ -10737,6 +10737,28 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
     expect(ui.commands.get('bold').getState().active).toBe(true);
   });
 
+  it('does not retire a pending explicit-off mark from an empty caret projection (SD-3941)', () => {
+    const store = new Map<string, boolean | string | number | null>([['bold', false]]);
+    const clearPendingInlineFormat = vi.fn((method?: string) =>
+      method === undefined ? store.clear() : store.delete(method),
+    );
+    const host = {
+      getPendingInlineFormat: () => (store.size ? Object.fromEntries(store) : null),
+      setPendingInlineFormat: vi.fn(),
+      clearPendingInlineFormat,
+      getHandles: () => ({ editing: { selection: { subscribe: () => () => {} } } }),
+    };
+    const superdoc = makeBlockSuperdoc(
+      { format: { bold: vi.fn() } },
+      { selectionInfo: COLLAPSED_CARET_INFO, editorExtra: { host } },
+    );
+
+    const ui = createSuperDocUI({ superdoc });
+
+    expect(clearPendingInlineFormat).not.toHaveBeenCalledWith('bold');
+    expect(ui.commands.get('bold').getState().active).toBe(false);
+  });
+
   it('does not retire a pending null ("None") value on reconcile (SD-3654)', async () => {
     // A pending null is an explicit clear-on-next-insert. A collapsed caret
     // projects no color, so `current == null` would spuriously match and retire
