@@ -1738,7 +1738,7 @@ describe('useLinkPopover', () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it('treats viewport failure as authoritative without DOM, reveal, page, or window fallback', async () => {
+  it('bounds viewport retries without DOM, reveal, page, or window fallback', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     const host = document.createElement('div');
     host.innerHTML = '<a name="stale-anchor"></a>';
@@ -1772,7 +1772,7 @@ describe('useLinkPopover', () => {
     await tick();
     await tick();
 
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledTimes(4);
     expect(scrollTo).not.toHaveBeenCalled();
     expect(revealBodyTarget).not.toHaveBeenCalled();
     expect(pageIndexForBodyTarget).not.toHaveBeenCalled();

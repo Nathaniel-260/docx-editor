@@ -148,6 +148,7 @@ import { scrollToElement } from '../internal/toolbar/built-in/scroll-helpers.js'
 
 const FLOATING_SURFACE_ID = 'link-popover';
 const RECENT_OUTSIDE_CLOSE_MS = 500;
+const MAX_ANCHOR_NAVIGATION_STEPS = 4;
 
 /**
  * @param {unknown} value
@@ -656,16 +657,20 @@ export function useLinkPopover({
     const viewport = getUi()?.viewport;
     const scrollIntoView = viewport?.scrollIntoView;
     if (typeof scrollIntoView !== 'function') return;
-    try {
-      await Promise.resolve(
-        scrollIntoView.call(viewport, {
-          target: { kind: 'text', blockId, range: { start: 0, end: 0 } },
-          block: 'start',
-          behavior: 'instant',
-        }),
-      );
-    } catch {
-      // The model viewport result is authoritative; do not retry via stale DOM.
+    const target = { kind: 'text', blockId, range: { start: 0, end: 0 } };
+    for (let step = 0; step < MAX_ANCHOR_NAVIGATION_STEPS; step += 1) {
+      try {
+        const result = await Promise.resolve(
+          scrollIntoView.call(viewport, {
+            target,
+            block: 'start',
+            behavior: 'instant',
+          }),
+        );
+        if (result?.success !== false) return;
+      } catch {
+        return;
+      }
     }
   }
 
