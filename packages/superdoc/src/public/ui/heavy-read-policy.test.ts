@@ -54,6 +54,7 @@ interface Harness {
   setForeground: (state: { active: number; pending: number }) => void;
   /** Per-policy-key issued-read counters. */
   countFor: (policyKey: string) => number;
+  styleCatalogInputs: () => unknown[];
   /** Raw Document API fallback calls, which the shared v2 catalog must avoid. */
   countAllStoryFallback: () => number;
 }
@@ -228,6 +229,7 @@ function makeHarness(
       foreground = state;
     },
     countFor,
+    styleCatalogInputs: () => stylesGetCatalog.mock.calls.map(([input]) => input),
     countAllStoryFallback: () =>
       trackChangesList.mock.calls.filter(([input]) => (input as { in?: string } | undefined)?.in === 'all').length,
   };
@@ -383,6 +385,22 @@ describe('public ui — heavy-read policy behavior details', () => {
     harness.ui.contentControls.list();
     await settle();
     expect(harness.countFor('contentControls')).toBeGreaterThan(0);
+    harness.ui.destroy();
+  });
+
+  it('explicit style-catalog demand issues only the requested read during loading', async () => {
+    vi.useFakeTimers();
+    const harness = makeHarness('source-loading');
+    await settle();
+    expect(harness.countFor('styles:catalog:')).toBe(0);
+
+    const requested = { view: 'inUse', types: ['paragraph'], includePreview: false } as const;
+    harness.ui.styles.getCatalog(requested);
+    await settle();
+    harness.ui.styles.getCatalog(requested);
+    await settle();
+    expect(harness.countFor('styles:catalog:')).toBe(1);
+    expect(harness.styleCatalogInputs()).toEqual([requested]);
     harness.ui.destroy();
   });
 

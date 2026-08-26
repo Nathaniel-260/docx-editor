@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, nextTick, watch } from 'vue';
 
 /**
  * Built-in linked-styles (quick format) dropdown list.
@@ -71,12 +71,23 @@ const previewStyle = (style) => {
   return css && typeof css === 'object' ? css : undefined;
 };
 
-onMounted(() => {
+const focusFirstStyle = () => {
   if (styleRefs.value[0]) {
     styleRefs.value[0].setAttribute('tabindex', '0');
     styleRefs.value[0].focus();
   }
-});
+};
+
+onMounted(focusFirstStyle);
+
+watch(
+  () => props.styles.length,
+  async (length, previousLength) => {
+    if (length === 0 || previousLength !== 0) return;
+    await nextTick();
+    focusFirstStyle();
+  },
+);
 </script>
 
 <template>

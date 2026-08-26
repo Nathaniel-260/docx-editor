@@ -6076,6 +6076,9 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     diagnostics: [],
   };
 
+  const styleCatalogReadKey = (input?: StylesGetCatalogInput): string =>
+    `styles:catalog:${JSON.stringify(input ?? {})}`;
+
   /**
    * Read the public Document API style catalogue (`doc.styles.getCatalog`)
    * through the async read coordinator. A promise-returning browser read
@@ -6091,7 +6094,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     const stylesApi = doc?.styles as LooseRecord | undefined;
     if (!stylesApi || typeof stylesApi.getCatalog !== 'function') return { value: null, status: 'ready' };
     return readAsync<StylesGetCatalogResult>(
-      `styles:catalog:${JSON.stringify(input ?? {})}`,
+      styleCatalogReadKey(input),
       contentToken(),
       () => (stylesApi.getCatalog as AnyFn)(input),
       (raw) => (raw && typeof raw === 'object' ? (raw as StylesGetCatalogResult) : null),
@@ -11495,7 +11498,10 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     getSnapshot: stylesSnap.getSnapshot,
     subscribe: stylesSnap.subscribe,
     observe: stylesSnap.observe,
-    getCatalog: (options?: StylesGetCatalogInput): StylesGetCatalogResult | null => readStyleCatalogLive(options).value,
+    getCatalog: (options?: StylesGetCatalogInput): StylesGetCatalogResult | null => {
+      demandHeavyDocRead(styleCatalogReadKey(options));
+      return readStyleCatalogLive(options).value;
+    },
     getQuickGallery: (): readonly StyleCatalogItem[] => stylesSub.get().quickGallery,
     getActiveParagraphStyle: (): ActiveParagraphStyle =>
       computeActiveParagraphStyle(state.selection, getStyleCatalog().cache).style,

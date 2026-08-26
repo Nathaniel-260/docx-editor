@@ -23,7 +23,7 @@
  * `headless-toolbar*` subpath is reintroduced.
  */
 import { EventEmitter } from 'eventemitter3';
-import { createApp } from 'vue';
+import { createApp, shallowRef } from 'vue';
 import { vClickOutside } from '@superdoc/common';
 
 import {
@@ -183,6 +183,7 @@ export class BuiltInToolbar extends EventEmitter {
   toolbarContainer = null;
   toolbar = null;
   _detachFontsChanged = null;
+  _linkedStyleOptions = shallowRef([]);
 
   /**
    * @param {object} config Toolbar config forwarded by `SuperDoc`. Requires
@@ -301,6 +302,9 @@ export class BuiltInToolbar extends EventEmitter {
     this.snapshot = this.ui.toolbar.getSnapshot();
     this._unsubscribeController = this.ui.toolbar.subscribe(() => {
       this.snapshot = this.ui.toolbar.getSnapshot();
+      if (this.getToolbarItemByName('linkedStyles')?.expand.value) {
+        this.#refreshLinkedStyleOptions();
+      }
       this.updateToolbarState();
     });
     this._detachFormatPainterModeChange = this.ui.formatPainter.onModeChange((mode) => {
@@ -585,7 +589,15 @@ export class BuiltInToolbar extends EventEmitter {
    * @returns {Array}
    */
   getLinkedStyleOptions() {
-    return this.ui?.styles?.getQuickGallery?.() ?? [];
+    this.#refreshLinkedStyleOptions();
+    return this._linkedStyleOptions.value;
+  }
+
+  #refreshLinkedStyleOptions() {
+    this.ui?.styles?.getCatalog?.({ includePreview: true });
+    const catalog = this.ui?.styles?.getCatalog?.({ view: 'quickGallery', includePreview: true });
+    const options = catalog?.items ?? this.ui?.styles?.getQuickGallery?.() ?? [];
+    if (options !== this._linkedStyleOptions.value) this._linkedStyleOptions.value = options;
   }
 
   /**

@@ -1056,6 +1056,76 @@ describe('BuiltInToolbar', () => {
     toolbar.destroy();
   });
 
+  it('loads and refreshes linked styles when the dropdown opens during document loading', async () => {
+    const toolbarContainer = document.createElement('div');
+    document.body.append(toolbarContainer);
+    const getCatalog = vi.fn(async (input?: { view?: string }) => ({
+      version: 'style-catalog/v1',
+      revision: 'rev-1',
+      view: input?.view ?? 'all',
+      defaults: { paragraphStyleId: 'Normal', characterStyleId: null, tableStyleId: null },
+      items: input?.view === 'quickGallery' ? [{ id: 'Heading1', name: 'Heading 1' }] : [],
+      styles: [
+        { id: 'Normal', name: 'Normal', visibility: { quickGallery: false } },
+        { id: 'Heading1', name: 'Heading 1', visibility: { quickGallery: true } },
+      ],
+      sourceStatus: null,
+      diagnostics: [],
+    }));
+    const host = makeHost({
+      activeEditor: {
+        id: 'editor-1',
+        doc: {
+          getNodeById: () => ({ node: { kind: 'paragraph', paragraph: { styleRef: 'Normal' } } }),
+          selection: {
+            current: () => ({
+              empty: false,
+              target: { kind: 'text', segments: [{ blockId: 'P1', range: { start: 0, end: 4 } }] },
+              selectionTarget: {
+                kind: 'selection',
+                start: { kind: 'text', blockId: 'P1', offset: 0 },
+                end: { kind: 'text', blockId: 'P1', offset: 4 },
+              },
+              activeMarks: [],
+              activeCommentIds: [],
+              activeChangeIds: [],
+              text: 'Body',
+            }),
+          },
+          styles: { getCatalog, paragraph: { setStyle: vi.fn() } },
+        },
+        host: {
+          getDocumentLoadingSnapshot: () => ({ sourceStage: 'source-loading' }),
+          subscribeDocumentLoading: () => () => {},
+          getForegroundMutationState: () => ({ active: 0, pending: 0 }),
+          events: { subscribe: () => () => {} },
+        },
+      },
+    });
+    const toolbar = new BuiltInToolbar({
+      superdoc: host,
+      selector: toolbarContainer,
+      groups: { center: ['linkedStyles'] },
+      hideButtons: false,
+    });
+
+    expect(getCatalog).not.toHaveBeenCalled();
+    toolbarContainer.querySelector<HTMLElement>('[data-item="btn-linkedStyles"]')?.click();
+    let headingOption: HTMLElement | null = null;
+    await vi.waitFor(() => {
+      headingOption = document.querySelector('[aria-label="Linked style - Heading1"]');
+      expect(headingOption).not.toBeNull();
+    });
+    expect(document.activeElement).toBe(headingOption);
+    expect(headingOption?.tabIndex).toBe(0);
+    expect(getCatalog).toHaveBeenCalledWith({ includePreview: true });
+    expect(getCatalog).toHaveBeenCalledWith({ view: 'quickGallery', includePreview: true });
+    toolbar.getToolbarItemByName('linkedStyles')!.expand.value = false;
+    await nextTick();
+    await nextTick();
+    toolbar.destroy();
+  });
+
   it('routes a selected linked-style catalogue item through the linked-style command as a style id', () => {
     const toolbar = new BuiltInToolbar({ superdoc: makeHost() });
     const execute = vi.fn();
