@@ -1,6 +1,8 @@
+import type { CommentInteractionLevel, CommentsLayout } from 'superdoc';
+
 export type ToolbarDemoStrategy = 'items' | 'excludeItems' | 'customItems';
-export type CommentsDemoLayout = 'auto' | 'sidebar' | 'inline';
-export type CommentsDemoLevel = 'read' | 'write' | 'resolve';
+export type CommentsDemoLayout = CommentsLayout;
+export type CommentsDemoLevel = CommentInteractionLevel;
 export type ContextMenuDemoStrategy = 'default' | 'custom';
 export type HyperlinkDemoBehavior = 'default' | 'none' | 'custom';
 
@@ -65,10 +67,10 @@ export function renderBuiltInEditorDemoMarkdown(
     return [
       'Comment configurations available in the interactive Editor:',
       '',
-      '- **Layout — `ui.comments.displayMode`:** choose `auto`, `sidebar`, or `inline`. Auto selects sidebar or inline from the Editor width.',
+      '- **Layout — `ui.comments.layout`:** choose `auto`, `sidebar`, or `inline`. Auto selects sidebar or inline from the Editor width.',
       '- **Actions — `interaction.comments.level`:** choose `read`, `write`, or `resolve`. Read shows threads without mutation controls. Write adds create, reply, edit, and delete. Resolve also adds resolve and reopen.',
       '',
-      'The sample contains one comment thread anchored to `September 30, 2026`. Changing either option recreates the Editor from its current DOCX. Thread changes remain; the open comment and selection reset.',
+      'The sample contains one comment thread anchored to `September 30, 2026`.',
     ].join('\n');
   }
 

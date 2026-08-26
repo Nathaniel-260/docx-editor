@@ -60,6 +60,7 @@ type RetryMount = {
 };
 
 type UiConfig = Exclude<NonNullable<Config['ui']>, false>;
+type CommentsUiConfig = Exclude<NonNullable<UiConfig['comments']>, boolean>;
 type ToolbarUiConfig = Exclude<NonNullable<UiConfig['toolbar']>, boolean>;
 
 const pinnedToolbarItems = {
@@ -117,13 +118,10 @@ function getPinnedToolbarOptions(strategy: ToolbarDemoStrategy, container: HTMLD
   return getPinnedFocusedToolbarOptions(container, pinnedToolbarItems);
 }
 
-function getCommentsInteractionOptions(level: CommentsDemoLevel) {
-  // The pinned 2.8 runtime reads the booleans; 2.9 and later give `level` precedence.
-  return {
-    level,
-    readOnly: level === 'read',
-    allowResolve: level === 'resolve',
-  };
+function getPinnedCommentsOptions(layout: CommentsDemoLayout): CommentsUiConfig {
+  // The exact stable release in editor-demo-runtime.json predates `layout`.
+  // Published examples and agent Markdown use the canonical field.
+  return { displayMode: layout };
 }
 
 type DemoConfigGroupProps<T extends string> = {
@@ -551,7 +549,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
         documentMode: initialDocumentMode,
         proofing: preset === 'proofing' ? { enabled: true, provider: proofingProvider } : undefined,
         ui: {
-          comments: { displayMode: preset === 'comments' ? initialCommentsLayout : 'inline' },
+          comments: getPinnedCommentsOptions(preset === 'comments' ? initialCommentsLayout : 'inline'),
           loading: false,
           ...(preset === 'search'
             ? {
@@ -580,8 +578,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
             ? { toolbar: getPinnedToolbarOptions(initialToolbarStrategy, builtInToolbar!) }
             : {}),
         },
-        interaction:
-          preset === 'comments' ? { comments: getCommentsInteractionOptions(initialCommentsLevel) } : undefined,
+        interaction: preset === 'comments' ? { comments: { level: initialCommentsLevel } } : undefined,
         viewing: preset === 'document-modes' ? { trackedChanges: 'original' } : undefined,
         zoom: {
           mode: 'manual',

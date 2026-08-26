@@ -589,12 +589,13 @@ test('exports the comments workflow through each canonical surface', async () =>
   assert.match(builtIn, /\*\*Vanilla — `src\/main\.ts`\*\*/);
   assert.match(builtIn, /\*\*React — `src\/App\.tsx`\*\*/);
   assert.match(builtIn, /Comment configurations available in the interactive Editor/);
-  assert.match(builtIn, /Layout — `ui\.comments\.displayMode`/);
+  assert.match(builtIn, /Layout — `ui\.comments\.layout`/);
   assert.match(builtIn, /Actions — `interaction\.comments\.level`/);
-  assert.match(builtIn, /displayMode: 'auto'/);
+  assert.match(builtIn, /layout: 'auto'/);
   assert.match(builtIn, /level: 'write'/);
   assert.match(builtIn, /not an authorization boundary/);
   assert.match(builtIn, /comment\s+permissions in a trusted backend/);
+  assert.doesNotMatch(builtIn, /\b(?:displayMode|readOnly|allowResolve)\b/);
   assert.match(trackedChanges, /allowDecisions: false/);
   assert.match(customUI, /ui\.comments\.createFromCapture/);
   assert.match(customUI, /ui\.comments\.createFromSelection/);

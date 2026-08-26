@@ -140,7 +140,7 @@
     },
     {
       "name": "interaction",
-      "type": "{\n  comments?: { level?: CommentInteractionLevel; readOnly?: boolean; allowResolve?: boolean; };\n  trackedChanges?: { allowDecisions?: boolean; };\n}",
+      "type": "{\n  comments?: CommentInteractionConfig;\n  trackedChanges?: { allowDecisions?: boolean; };\n}",
       "typeName": "InteractionConfig",
       "required": false,
       "description": "Client-side interaction policy. Independent of `ui`, so it still applies when the application renders its own UI. This is not an authorization boundary.",

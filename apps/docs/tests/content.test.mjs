@@ -332,10 +332,10 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /toolbar: getPinnedToolbarOptions\(initialToolbarStrategy, builtInToolbar!\)/u);
   assert.match(
     demo,
-    /interaction:\s+preset === 'comments' \? \{ comments: getCommentsInteractionOptions\(initialCommentsLevel\) \} : undefined/u,
+    /interaction:\s+preset === 'comments' \? \{ comments: \{ level: initialCommentsLevel \} \} : undefined/u,
   );
-  assert.match(demo, /readOnly: level === 'read'/u);
-  assert.match(demo, /allowResolve: level === 'resolve'/u);
+  assert.match(demo, /getPinnedCommentsOptions\(preset === 'comments' \? initialCommentsLayout : 'inline'\)/u);
+  assert.match(demo, /return \{ displayMode: layout \}/u);
   assert.match(demo, /export\(\{ exportType: \['docx'\], triggerDownload: false \}\)/u);
   assert.match(demo, /const currentDocumentMode = instance\.config\.documentMode/u);
   assert.match(demo, /const hadMountedEditor = instanceRef\.current !== null/u);
@@ -464,6 +464,9 @@ test('the Editor configuration reference starts with concise essential fields', 
     editorConfigExplorer.fields.find((field) => field.name === 'onException')?.type,
     '(params: SuperDocExceptionPayload) => void',
   );
+  const interactionType = editorConfigExplorer.fields.find((field) => field.name === 'interaction')?.type ?? '';
+  assert.match(interactionType, /comments\?: \{ level\?: CommentInteractionLevel; \}/u);
+  assert.doesNotMatch(interactionType, /CommentInteractionConfig|readOnly|allowResolve/u);
   assert.equal(
     editorConfigExplorer.fields.find((field) => field.name === 'rulerContainer')?.deprecatedReplacement,
     'ui.ruler.container',

@@ -19,7 +19,7 @@ const superdoc = new SuperDoc({
       container: '#toolbar',
       responsiveTo: 'container',
     },
-    comments: { displayMode: 'auto' },
+    comments: { layout: 'auto' },
   },
 });
 

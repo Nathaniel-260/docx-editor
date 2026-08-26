@@ -21,8 +21,27 @@ Configure fit-to-width and container-aware chrome, then refit after the browser 
 `zoom.mode: 'fit-width'` continuously follows the available document width. The `min`, `max`, and `padding` values constrain that policy. Calling `setZoom()` switches to manual mode; call `setZoomMode('fit-width')` to resume automatic fitting.
 
 `responsiveTo: 'container'` measures the toolbar mount instead of the browser window. Lower-priority controls move into
-the overflow menu when space becomes tight. `comments.displayMode: 'auto'` lets the review UI move between the sidebar
-and a compact inline presentation.
+the overflow menu when space becomes tight. `comments.layout: 'auto'` lets the review UI move between the sidebar and
+inline threads.
+
+Auto layout measures the nearest Editor ancestor with a width and derives when to switch. Override that behavior only
+when another element defines the available space or your application needs a fixed breakpoint:
+
+```ts
+const config = {
+  ui: {
+    comments: {
+      layout: 'auto',
+      responsive: {
+        target: '#editor-shell',
+        breakpoint: 1200,
+      },
+    },
+  },
+};
+```
+
+`target` accepts a CSS selector or an `HTMLElement`. Below `breakpoint`, measured in CSS pixels, comments render inline.
 
 ## Reflow document content
 

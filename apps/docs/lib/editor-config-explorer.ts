@@ -6,6 +6,7 @@ type ConfigFieldName = Extract<keyof Config, string>;
 type ConfigGroupId = 'essentials' | 'document' | 'interface' | 'behavior' | 'integrations' | 'lifecycle' | 'advanced';
 
 type ConfigPresentation = {
+  type?: ConfigField['type'];
   kind?: ConfigField['kind'];
   default?: string;
   example?: ConfigFieldExample;
@@ -247,7 +248,11 @@ const presentation = {
     guide: { label: 'Choose your interface', href: '/editor/who-renders-the-ui' },
   },
   interaction: {
-    example: { value: '{ comments: … }', code: 'interaction: { comments: { readOnly: true } }' },
+    type: `{
+  comments?: { level?: CommentInteractionLevel; };
+  trackedChanges?: { allowDecisions?: boolean; };
+}`,
+    example: { value: '{ comments: … }', code: "interaction: { comments: { level: 'read' } }" },
     guide: { label: 'Choose your interface', href: '/editor/who-renders-the-ui' },
   },
   surfaces: {

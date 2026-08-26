@@ -8,7 +8,7 @@ const editorConfig = {
   },
   ui: {
     comments: {
-      displayMode: 'auto',
+      layout: 'auto',
     },
   },
 } satisfies Pick<SuperDocEditorProps, 'user' | 'ui'>;
