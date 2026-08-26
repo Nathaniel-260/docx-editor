@@ -58,9 +58,19 @@ import {
   SEMANTIC_PAGE_HEIGHT_PX,
   SINGLE_COLUMN_DEFAULT,
   resolveTableFrame,
+  readTableLayoutResumeCheckpoints,
+  writeTableLayoutResume,
+  writeTableLayoutResumeCheckpoints,
+  type TableLayoutResumeCheckpoint,
 } from '@superdoc/layout-engine';
 import { clearRemeasureTextCaches, remeasureParagraph } from './remeasure';
 import { computeDirtyRegions } from './diff';
+import {
+  analyzeTableLayoutLocality,
+  tableFragmentIsStableSuffix,
+  tableFragmentTouchesAffectedRows,
+  type TableLayoutLocality,
+} from './table-layout-locality';
 import { MeasureCache, hashMeasureContent } from './cache';
 import {
   layoutHeaderFooterWithCache,
@@ -2866,6 +2876,7 @@ export async function incrementalLayout(
     previousBlocks,
     blocks: nextBlocks,
     measures,
+    previousMeasures,
     options: initialBodyLayoutOptions,
     dirty,
     stableBlockIds: dirty.stableBlockIds,
@@ -4172,6 +4183,7 @@ export async function incrementalLayout(
               previousBlocks,
               blocks: currentBlocks,
               measures: currentMeasures,
+              previousMeasures,
               options: footnoteLayoutOptions,
               dirty,
               stableBlockIds: dirty.stableBlockIds,
@@ -5768,10 +5780,141 @@ function buildProvedNoteOnlyExtraPlane(input: {
   return { blocks, measures };
 }
 
+function resolveDirtyTableLocality(input: {
+  previousBlocks: readonly FlowBlock[];
+  blocks: readonly FlowBlock[];
+  measures: readonly Measure[];
+  previousMeasures?: readonly Measure[] | null;
+  dirtyBlockIds: readonly string[];
+  reuse: IncrementalLayoutReuseOptions;
+}): TableLayoutLocality | null {
+  if (
+    input.dirtyBlockIds.length !== 1 ||
+    !input.previousMeasures ||
+    input.previousMeasures.length !== input.previousBlocks.length
+  ) {
+    return null;
+  }
+  const currentBlockId = input.dirtyBlockIds[0]!;
+  const previousBlockId = input.reuse.blockIdRewrites?.currentToPrevious.get(currentBlockId) ?? currentBlockId;
+  const currentIndex =
+    input.reuse.currentBlockIndexById?.get(currentBlockId) ??
+    input.blocks.findIndex((block) => block.id === currentBlockId);
+  const previousIndex =
+    input.reuse.previousBlockIndexById?.get(previousBlockId) ??
+    input.previousBlocks.findIndex((block) => block.id === previousBlockId);
+  const currentBlock = input.blocks[currentIndex];
+  const previousBlock = input.previousBlocks[previousIndex];
+  const currentMeasure = input.measures[currentIndex];
+  const previousMeasure = input.previousMeasures[previousIndex];
+  if (
+    currentBlock?.kind !== 'table' ||
+    previousBlock?.kind !== 'table' ||
+    currentMeasure?.kind !== 'table' ||
+    previousMeasure?.kind !== 'table'
+  ) {
+    return null;
+  }
+  return analyzeTableLayoutLocality({ previousBlock, currentBlock, previousMeasure, currentMeasure });
+}
+
+function tableAffectedPageRange(
+  pages: readonly Page[],
+  locality: TableLayoutLocality,
+  generation: 'previous' | 'current',
+): { firstPage: number; lastPage: number } | null {
+  let firstPage = Number.POSITIVE_INFINITY;
+  let lastPage = -1;
+  pages.forEach((page, pageIndex) => {
+    if (
+      page.fragments.some(
+        (fragment) =>
+          fragment.kind === 'table' &&
+          fragment.blockId === locality.blockId &&
+          tableFragmentTouchesAffectedRows(fragment, locality, generation),
+      )
+    ) {
+      firstPage = Math.min(firstPage, pageIndex);
+      lastPage = Math.max(lastPage, pageIndex);
+    }
+  });
+  return Number.isFinite(firstPage) && lastPage >= firstPage ? { firstPage, lastPage } : null;
+}
+
+function createSplicedTableResumeCheckpointMap(input: {
+  previous: ReadonlyMap<string, readonly TableLayoutResumeCheckpoint[]> | null;
+  local: ReadonlyMap<string, readonly TableLayoutResumeCheckpoint[]> | null;
+  checkpointPageIndex: number;
+  relaidPageCount: number;
+  sourceTailStartPageIndex: number;
+  pageIndexDelta: number;
+  checkpointPagePrefixFragmentCount: number | null;
+  previousToCurrentBlockId: ReadonlyMap<string, string> | null;
+  positionTransforms: readonly LayoutPositionTransform[];
+}): ReadonlyMap<string, readonly TableLayoutResumeCheckpoint[]> | null {
+  if (!input.previous || !input.local) return null;
+  const combined = new Map<string, TableLayoutResumeCheckpoint[]>();
+  const add = (blockId: string, checkpoint: TableLayoutResumeCheckpoint): void => {
+    const current = combined.get(blockId);
+    if (current) current.push(checkpoint);
+    else combined.set(blockId, [checkpoint]);
+  };
+
+  for (const [previousBlockId, checkpoints] of input.previous) {
+    const currentBlockId = input.previousToCurrentBlockId?.get(previousBlockId) ?? previousBlockId;
+    for (const checkpoint of checkpoints) {
+      const inPrefix =
+        checkpoint.pageIndex < input.checkpointPageIndex ||
+        (checkpoint.pageIndex === input.checkpointPageIndex &&
+          input.checkpointPagePrefixFragmentCount != null &&
+          checkpoint.prefixFragmentCount <= input.checkpointPagePrefixFragmentCount);
+      if (inPrefix) {
+        add(
+          currentBlockId,
+          currentBlockId === checkpoint.blockId ? checkpoint : { ...checkpoint, blockId: currentBlockId },
+        );
+        continue;
+      }
+      if (checkpoint.pageIndex < input.sourceTailStartPageIndex) continue;
+      add(currentBlockId, {
+        ...checkpoint,
+        blockId: currentBlockId,
+        pageIndex: checkpoint.pageIndex + input.pageIndexDelta,
+        footnoteAnchorsThisPage: checkpoint.footnoteAnchorsThisPage.map((anchor) => ({
+          ...anchor,
+          pmPos: applyPositionTransforms(anchor.pmPos, input.positionTransforms),
+        })),
+      });
+    }
+  }
+  for (const [blockId, checkpoints] of input.local) {
+    for (const checkpoint of checkpoints) {
+      if (checkpoint.pageIndex < 0 || checkpoint.pageIndex >= input.relaidPageCount) continue;
+      add(blockId, { ...checkpoint, pageIndex: checkpoint.pageIndex + input.checkpointPageIndex });
+    }
+  }
+  for (const [blockId, checkpoints] of combined) {
+    checkpoints.sort(
+      (left, right) => left.pageIndex - right.pageIndex || left.prefixFragmentCount - right.prefixFragmentCount,
+    );
+    combined.set(
+      blockId,
+      checkpoints.filter(
+        (checkpoint, index) =>
+          index === 0 ||
+          checkpoint.pageIndex !== checkpoints[index - 1]!.pageIndex ||
+          checkpoint.prefixFragmentCount !== checkpoints[index - 1]!.prefixFragmentCount,
+      ),
+    );
+  }
+  return combined;
+}
+
 async function layoutWithOptionalReuse(input: {
   previousBlocks: readonly FlowBlock[];
   blocks: FlowBlock[];
   measures: Measure[];
+  previousMeasures?: readonly Measure[] | null;
   options: LayoutOptions;
   dirty: ReturnType<typeof computeDirtyRegions>;
   stableBlockIds: ReadonlySet<string>;
@@ -6069,6 +6212,7 @@ async function layoutWithOptionalReuse(input: {
   if (dirtyBlockIds.length === 0) {
     return full('m4-layout-reuse-disabled-dirty-set-empty');
   }
+  let tableLocality: TableLayoutLocality | null = null;
   const pageRelativeAnchorProofFailure = validateNonFlowingPageRelativeAnchorDependency({
     proof: reuse.dependencyProof,
     previousLayout,
@@ -6091,6 +6235,14 @@ async function layoutWithOptionalReuse(input: {
   ) {
     return full('m4-layout-reuse-disabled-table-dependency-class-missing');
   }
+  tableLocality = resolveDirtyTableLocality({
+    previousBlocks: input.previousBlocks,
+    blocks: input.blocks,
+    measures: input.measures,
+    previousMeasures: input.previousMeasures,
+    dirtyBlockIds,
+    reuse,
+  });
   const provedNoteOnlyResult = reuse.provedNoteOnlyRefresh
     ? tryBuildProvedNoteOnlyLayoutReuse({
         previousLayout,
@@ -6195,9 +6347,16 @@ async function layoutWithOptionalReuse(input: {
         `m4-layout-reuse-disabled-current-block-index-stale:dirty=${blockId}@${String(currentBlockIndex)} saw=${String(input.blocks[currentBlockIndex ?? -1]?.id)} blocks=${input.blocks.length} indexed=${reuse.currentBlockIndexById.size}`,
       );
     }
-    dirtyPageRanges.push({ blockId, firstPage: pageRange.firstPage, lastPage: pageRange.lastPage });
-    earliestDirtyPage = Math.min(earliestDirtyPage, pageRange.firstPage);
-    sourceAffectedFrontierPageIndex = Math.max(sourceAffectedFrontierPageIndex, pageRange.lastPage);
+    const tablePageRange =
+      tableLocality?.blockId === blockId ? tableAffectedPageRange(previousPages, tableLocality, 'previous') : null;
+    const affectedPageRange = tablePageRange ?? pageRange;
+    dirtyPageRanges.push({
+      blockId,
+      firstPage: affectedPageRange.firstPage,
+      lastPage: affectedPageRange.lastPage,
+    });
+    earliestDirtyPage = Math.min(earliestDirtyPage, affectedPageRange.firstPage);
+    sourceAffectedFrontierPageIndex = Math.max(sourceAffectedFrontierPageIndex, affectedPageRange.lastPage);
   }
   for (const deletedBlockId of input.dirty.deletedBlockIds) {
     const retainedPageRange = reuse.previousBlockPageIndex.get(deletedBlockId);
@@ -6239,17 +6398,28 @@ async function layoutWithOptionalReuse(input: {
     reuse.requireDocumentStartCheckpoint !== true &&
     dirtyBlockIds.length === 1 &&
     input.dirty.insertedBlockIds.length === 0
-      ? findSafePartialPageCheckpoint({
-          layout: previousLayout,
-          pages: previousPages,
-          previousBlockId: reuse.blockIdRewrites?.currentToPrevious.get(dirtyBlockIds[0]!) ?? dirtyBlockIds[0]!,
-          currentBlockId: dirtyBlockIds[0]!,
-          currentBlockIndexById: reuse.currentBlockIndexById!,
-          blocks: input.blocks,
-          expectedPageIndex: earliestDirtyPage,
-          stableBlockIds: input.stableBlockIds,
-          previousToCurrentBlockId: reuse.blockIdRewrites?.previousToCurrent ?? null,
-        })
+      ? tableLocality
+        ? findSafeTablePartialPageCheckpoint({
+            layout: previousLayout,
+            pages: previousPages,
+            locality: tableLocality,
+            currentBlockIndexById: reuse.currentBlockIndexById!,
+            blocks: input.blocks,
+            expectedPageIndex: earliestDirtyPage,
+            stableBlockIds: input.stableBlockIds,
+            previousToCurrentBlockId: reuse.blockIdRewrites?.previousToCurrent ?? null,
+          })
+        : findSafePartialPageCheckpoint({
+            layout: previousLayout,
+            pages: previousPages,
+            previousBlockId: reuse.blockIdRewrites?.currentToPrevious.get(dirtyBlockIds[0]!) ?? dirtyBlockIds[0]!,
+            currentBlockId: dirtyBlockIds[0]!,
+            currentBlockIndexById: reuse.currentBlockIndexById!,
+            blocks: input.blocks,
+            expectedPageIndex: earliestDirtyPage,
+            stableBlockIds: input.stableBlockIds,
+            previousToCurrentBlockId: reuse.blockIdRewrites?.previousToCurrent ?? null,
+          })
       : { ok: false as const, reason: 'profile-or-dirty-shape-ineligible' };
   const partialPageCheckpoint = partialPageCheckpointResult.ok ? partialPageCheckpointResult : null;
   const partialPageCheckpointRejection = partialPageCheckpointResult.ok ? null : partialPageCheckpointResult.reason;
@@ -6509,6 +6679,9 @@ async function layoutWithOptionalReuse(input: {
           }
         : {}),
     };
+    if (partialPageCheckpoint?.kind === 'table') {
+      writeTableLayoutResume(suffixLayoutOptions, partialPageCheckpoint.resume);
+    }
     if (probeIncludesExactCurrentSuffix) {
       // A caller boundary is valid for a cold range layout, but it cannot survive
       // into the exact terminal proof: this probe must consume the complete
@@ -6520,7 +6693,7 @@ async function layoutWithOptionalReuse(input: {
 
     for (let completedPageIndex = 0; completedPageIndex < suffixLayout.pages.length; completedPageIndex += 1) {
       const completedPage = suffixLayout.pages[completedPageIndex];
-      if (pageContainsAnyBlock(completedPage, dirtyBlockIds)) {
+      if (pageContainsAffectedDirtyContent(completedPage, dirtyBlockIds, tableLocality)) {
         affectedFrontierPageIndex = Math.max(affectedFrontierPageIndex, checkpointPageIndex + completedPageIndex);
       }
     }
@@ -6544,6 +6717,8 @@ async function layoutWithOptionalReuse(input: {
           input.stableBlockIds,
           null,
           footnoteFinalizerFragmentsAreExternal ? (reuse.currentBlockIndexById ?? null) : null,
+          tableLocality,
+          'current',
         )
       ) {
         checkpointConvergenceRejection = `target-${targetPageIndex}-contains-unstable-block`;
@@ -6622,6 +6797,8 @@ async function layoutWithOptionalReuse(input: {
             input.stableBlockIds,
             reuse.blockIdRewrites?.previousToCurrent ?? null,
             footnoteFinalizerFragmentsAreExternal ? (reuse.currentBlockIndexById ?? null) : null,
+            tableLocality,
+            'previous',
           )
         ) {
           checkpointConvergenceRejection = `target-${targetPageIndex}-source-contains-unstable-block`;
@@ -6730,13 +6907,26 @@ async function layoutWithOptionalReuse(input: {
         suffixStartBlockId: input.blocks[suffixStartBlockIndex]?.id ?? null,
         checkpointPagePrefixFragmentCount: partialPageCheckpoint ? partialPageCheckpoint.prefixFragments.length : null,
       });
+      const nextLayout: Layout = {
+        ...suffixLayout,
+        pages,
+        columns: previousLayout.columns ?? suffixLayout.columns,
+        ...(blockResumeCheckpoints ? { blockResumeCheckpoints } : {}),
+      };
+      const tableResumeCheckpoints = createSplicedTableResumeCheckpointMap({
+        previous: readTableLayoutResumeCheckpoints(previousLayout),
+        local: readTableLayoutResumeCheckpoints(suffixLayout),
+        checkpointPageIndex,
+        relaidPageCount,
+        sourceTailStartPageIndex: sourceConvergencePageIndex,
+        pageIndexDelta,
+        checkpointPagePrefixFragmentCount: partialPageCheckpoint ? partialPageCheckpoint.prefixFragments.length : null,
+        previousToCurrentBlockId: reuse.blockIdRewrites?.previousToCurrent ?? null,
+        positionTransforms,
+      });
+      if (tableResumeCheckpoints) writeTableLayoutResumeCheckpoints(nextLayout, tableResumeCheckpoints);
       return {
-        layout: {
-          ...suffixLayout,
-          pages,
-          columns: previousLayout.columns ?? suffixLayout.columns,
-          ...(blockResumeCheckpoints ? { blockResumeCheckpoints } : {}),
-        },
+        layout: nextLayout,
         reuse: {
           mode: 'tail-splice',
           reason: withSpecializedRejections('m4-affected-frontier-converged-tail-adopted'),
@@ -6811,13 +7001,26 @@ async function layoutWithOptionalReuse(input: {
         suffixStartBlockId: input.blocks[suffixStartBlockIndex]?.id ?? null,
         checkpointPagePrefixFragmentCount: partialPageCheckpoint ? partialPageCheckpoint.prefixFragments.length : null,
       });
+      const nextLayout: Layout = {
+        ...suffixLayout,
+        pages,
+        columns: previousLayout.columns ?? suffixLayout.columns,
+        ...(blockResumeCheckpoints ? { blockResumeCheckpoints } : {}),
+      };
+      const tableResumeCheckpoints = createSplicedTableResumeCheckpointMap({
+        previous: readTableLayoutResumeCheckpoints(previousLayout),
+        local: readTableLayoutResumeCheckpoints(suffixLayout),
+        checkpointPageIndex,
+        relaidPageCount: suffixLayout.pages.length,
+        sourceTailStartPageIndex: previousPages.length,
+        pageIndexDelta: 0,
+        checkpointPagePrefixFragmentCount: partialPageCheckpoint ? partialPageCheckpoint.prefixFragments.length : null,
+        previousToCurrentBlockId: reuse.blockIdRewrites?.previousToCurrent ?? null,
+        positionTransforms: normalizePositionTransforms(reuse.pmShift),
+      });
+      if (tableResumeCheckpoints) writeTableLayoutResumeCheckpoints(nextLayout, tableResumeCheckpoints);
       return {
-        layout: {
-          ...suffixLayout,
-          pages,
-          columns: previousLayout.columns ?? suffixLayout.columns,
-          ...(blockResumeCheckpoints ? { blockResumeCheckpoints } : {}),
-        },
+        layout: nextLayout,
         reuse: {
           mode: 'tail-splice',
           reason: withSpecializedRejections('m4-terminal-suffix-relaid-with-prefix-adoption'),
@@ -6845,6 +7048,12 @@ async function layoutWithOptionalReuse(input: {
       // proved prefix and lay out the remaining current suffix exactly once.
       // This is not the old geometric probe expansion: no speculative
       // intermediate result or retained tail can be adopted from this retry.
+      terminalSuffixRelayoutAttempted = true;
+      convergenceProbePageHorizon = previousPages.length;
+      continue;
+    }
+
+    if (tableLocality && !terminalSuffixRelayoutAttempted && !reachesSourceTail) {
       terminalSuffixRelayoutAttempted = true;
       convergenceProbePageHorizon = previousPages.length;
       continue;
@@ -7356,6 +7565,7 @@ interface LazyPageSegment {
   sourceStart: number;
   /** Every retained-tail position is after the proved local edit frontier. */
   positionDelta: number;
+  positionTransforms: CheckpointPositionTransformLedger | null;
   pageIndexDelta: number;
   sectionPageNumberDeltas: ReadonlyMap<number, number> | null;
   displayPageNumberTransforms: readonly IncrementalDisplayPageNumberTransform[] | null;
@@ -7406,6 +7616,7 @@ function appendPageSequenceSlice(
       sourcePages,
       sourceStart,
       positionDelta: 0,
+      positionTransforms: null,
       pageIndexDelta: 0,
       sectionPageNumberDeltas: null,
       displayPageNumberTransforms: null,
@@ -7458,6 +7669,7 @@ function createLazyPageSequence(segments: readonly LazyPageSegment[]): Page[] {
         if (!sourcePage) throw new RangeError(`Layout page index ${index} is out of range.`);
         const page =
           segment.positionDelta !== 0 ||
+          segment.positionTransforms != null ||
           segment.pageIndexDelta !== 0 ||
           (segment.sectionPageNumberDeltas?.size ?? 0) > 0 ||
           segment.displayPageNumberTransforms != null ||
@@ -7465,11 +7677,12 @@ function createLazyPageSequence(segments: readonly LazyPageSegment[]): Page[] {
           segment.ensureEmptyFootnoteMetadata
             ? materializeAdoptedLayoutPage(
                 sourcePage,
-                segment.positionDelta === 0 ? [] : [{ atChar: Number.NEGATIVE_INFINITY, delta: segment.positionDelta }],
+                segment.positionTransforms,
                 segment.pageIndexDelta,
                 segment.blockIdRewrites,
                 segment.sectionPageNumberDeltas,
                 segment.displayPageNumberTransforms,
+                segment.positionDelta,
               )
             : sourcePage;
         if (segment.ensureEmptyFootnoteMetadata) {
@@ -7521,6 +7734,20 @@ function createLazyPageSequence(segments: readonly LazyPageSegment[]): Page[] {
   });
   lazyPageSequences.set(pages, descriptor);
   return pages;
+}
+
+export function __test_only_lazyPageTransformStats(
+  pages: Page[],
+): { segmentCount: number; maximumLedgerCount: number; maximumTreeDepth: number } | null {
+  const descriptor = lazyPageSequences.get(pages);
+  if (!descriptor) return null;
+  const depth = (node: CheckpointPositionTransformNode | undefined): number =>
+    node ? 1 + Math.max(depth(node.left), depth(node.right)) : 0;
+  return {
+    segmentCount: descriptor.segments.length,
+    maximumLedgerCount: Math.max(0, ...descriptor.segments.map((segment) => segment.positionTransforms?.count ?? 0)),
+    maximumTreeDepth: Math.max(0, ...descriptor.segments.map((segment) => depth(segment.positionTransforms?.root))),
+  };
 }
 
 const composedBlockIdRewriteMaps = new WeakSet<ReadonlyMap<string, string>>();
@@ -7668,7 +7895,6 @@ function composeDisplayPageNumberTransforms(
 function addAdoptionTransform(pages: Page[], adoption: IncrementalLayoutTailAdoption): Page[] {
   const source = lazyPageSequences.get(pages);
   if (!source) return pages;
-  const adoptionDelta = adoption.positionTransforms.reduce((total, transform) => total + transform.delta, 0);
   const transformed: LazyPageSegment[] = [];
   const appendRange = (segment: LazyPageSegment, start: number, end: number, adopt: boolean): void => {
     if (end <= start) return;
@@ -7677,7 +7903,10 @@ function addAdoptionTransform(pages: Page[], adoption: IncrementalLayoutTailAdop
       targetStart: pageSegmentLength(transformed),
       length: end - start,
       sourceStart: segment.sourceStart + start - segment.targetStart,
-      positionDelta: segment.positionDelta + (adopt ? adoptionDelta : 0),
+      positionDelta: segment.positionDelta,
+      positionTransforms: adopt
+        ? appendCheckpointPositionTransforms(segment.positionTransforms, adoption.positionTransforms)
+        : segment.positionTransforms,
       pageIndexDelta: segment.pageIndexDelta + (adopt ? adoption.pageIndexDelta : 0),
       sectionPageNumberDeltas: adopt
         ? composeSectionPageNumberDeltas(segment.sectionPageNumberDeltas, adoption.sectionPageNumberTransform)
@@ -7818,19 +8047,28 @@ function guardAdoptedLayoutPages(
 
 function materializeAdoptedLayoutPage(
   sourcePage: Page,
-  transforms: readonly LayoutPositionTransform[],
+  transforms: readonly LayoutPositionTransform[] | CheckpointPositionTransformLedger | null,
   pageIndexDelta: number,
   blockIdRewrites: ReadonlyMap<string, string> | null = null,
   sectionPageNumberDeltas: ReadonlyMap<number, number> | null = null,
   displayPageNumberTransforms: readonly IncrementalDisplayPageNumberTransform[] | null = null,
+  positionDelta = 0,
 ): Page {
+  const transformPosition = (value: number): number => {
+    const shifted = value + positionDelta;
+    return transforms == null
+      ? shifted
+      : Array.isArray(transforms)
+        ? applyPositionTransforms(shifted, transforms)
+        : applyCheckpointPositionTransforms(shifted, transforms as CheckpointPositionTransformLedger);
+  };
   const seen = new WeakMap<object, unknown>();
   const clone = (value: unknown, key?: string, parentKey?: string): unknown => {
     if ((key === 'pmStart' || key === 'pmEnd') && typeof value === 'number') {
-      return applyPositionTransforms(value, transforms);
+      return transformPosition(value);
     }
     if (parentKey === 'pmRange' && (key === 'from' || key === 'to') && typeof value === 'number') {
-      return applyPositionTransforms(value, transforms);
+      return transformPosition(value);
     }
     if (key === 'blockId' && typeof value === 'string') {
       return blockIdRewrites?.get(value) ?? value;
@@ -8307,10 +8545,18 @@ function buildPageStartKeyIndex(keys: readonly string[]): ReadonlyMap<string, re
   return index;
 }
 
-function pageContainsAnyBlock(page: Page | undefined, blockIds: readonly string[]): boolean {
-  if (!page || blockIds.length === 0) return false;
-  const targetIds = new Set(blockIds);
-  return page.fragments.some((fragment) => targetIds.has(fragment.blockId));
+function pageContainsAffectedDirtyContent(
+  page: Page | undefined,
+  blockIds: readonly string[],
+  tableLocality: TableLayoutLocality | null,
+): boolean {
+  if (!page) return false;
+  const dirtyIds = new Set(blockIds);
+  return page.fragments.some((fragment) => {
+    if (!dirtyIds.has(fragment.blockId)) return false;
+    if (fragment.kind !== 'table' || fragment.blockId !== tableLocality?.blockId) return true;
+    return tableFragmentTouchesAffectedRows(fragment, tableLocality, 'current');
+  });
 }
 
 function pageContainsBlock(page: Page | undefined, blockId: string): boolean {
@@ -8420,6 +8666,112 @@ function pageStartsAtCleanBlockBoundary(page: { fragments?: Fragment[] } | undef
   return (fromLine ?? 0) === 0 && (fromRow ?? 0) === 0 && partialRow == null;
 }
 
+function findSafeTablePartialPageCheckpoint(input: {
+  layout: Layout;
+  pages: readonly Page[];
+  locality: TableLayoutLocality;
+  currentBlockIndexById: ReadonlyMap<string, number>;
+  blocks: readonly FlowBlock[];
+  expectedPageIndex: number;
+  stableBlockIds: ReadonlySet<string>;
+  previousToCurrentBlockId: ReadonlyMap<string, string> | null;
+}):
+  | {
+      ok: true;
+      kind: 'table';
+      checkpoint: TableLayoutResumeCheckpoint;
+      previousBlockId: string;
+      prefixFragments: readonly Fragment[];
+      resume: { blockId: string; cursor: TableLayoutResumeCheckpoint['cursor'] };
+    }
+  | { ok: false; reason: string } {
+  const checkpoints = readTableLayoutResumeCheckpoints(input.layout)?.get(input.locality.previousBlock.id);
+  if (!checkpoints || checkpoints.length === 0) return { ok: false, reason: 'table-sidecar-missing' };
+  const currentBlockIndex = input.currentBlockIndexById.get(input.locality.currentBlock.id);
+  if (!Number.isInteger(currentBlockIndex) || input.blocks[currentBlockIndex!]?.kind !== 'table') {
+    return { ok: false, reason: 'current-block-not-table' };
+  }
+
+  const candidates = checkpoints
+    .filter((checkpoint) => {
+      if (checkpoint.pageIndex !== input.expectedPageIndex) return false;
+      if (checkpoint.cursor.pendingPartialRow != null) return false;
+      const page = input.pages[checkpoint.pageIndex];
+      const fragment = page?.fragments[checkpoint.prefixFragmentCount];
+      return (
+        fragment?.kind === 'table' &&
+        fragment.blockId === input.locality.previousBlock.id &&
+        fragment.isAnchored !== true &&
+        checkpoint.cursor.currentRow <= input.locality.previousFirstAffectedRow &&
+        fragment.fromRow <= input.locality.previousFirstAffectedRow &&
+        fragment.toRow > input.locality.previousFirstAffectedRow
+      );
+    })
+    .sort(
+      (left, right) =>
+        right.cursor.currentRow - left.cursor.currentRow ||
+        right.pageIndex - left.pageIndex ||
+        right.prefixFragmentCount - left.prefixFragmentCount,
+    );
+  const checkpoint = candidates[0];
+  if (!checkpoint) return { ok: false, reason: 'table-fragment-checkpoint-not-found' };
+  const page = input.pages[checkpoint.pageIndex];
+  if (!page) return { ok: false, reason: 'page-missing' };
+  if (
+    !Number.isInteger(checkpoint.prefixFragmentCount) ||
+    checkpoint.prefixFragmentCount < 0 ||
+    checkpoint.prefixFragmentCount >= page.fragments.length
+  ) {
+    return { ok: false, reason: 'table-fragment-boundary-mismatch' };
+  }
+  if (
+    checkpoint.cursor.currentRow < 0 ||
+    checkpoint.cursor.currentRow >= input.locality.currentBlock.rows.length ||
+    checkpoint.cursor.pendingPartialRow != null
+  ) {
+    return { ok: false, reason: 'table-cursor-incompatible' };
+  }
+  const prefixFragments = page.fragments.slice(0, checkpoint.prefixFragmentCount);
+  if (
+    prefixFragments.some((fragment) => {
+      if (fragment.kind === 'table' && fragment.blockId === input.locality.previousBlock.id) {
+        return tableFragmentTouchesAffectedRows(fragment, input.locality, 'previous');
+      }
+      if (fragment.kind !== 'para' && fragment.kind !== 'list-item' && fragment.kind !== 'table') return true;
+      const currentBlockId = input.previousToCurrentBlockId?.get(fragment.blockId) ?? fragment.blockId;
+      return !input.stableBlockIds.has(currentBlockId);
+    })
+  ) {
+    return { ok: false, reason: 'table-prefix-fragment-unsupported-or-unstable' };
+  }
+  if (
+    !Number.isInteger(checkpoint.columnIndex) ||
+    checkpoint.columnIndex < 0 ||
+    !Number.isFinite(checkpoint.cursorY) ||
+    !Number.isFinite(checkpoint.maxCursorY) ||
+    !Number.isFinite(checkpoint.trailingSpacing) ||
+    !Number.isFinite(checkpoint.footnoteDemandThisPage) ||
+    !Number.isInteger(checkpoint.footnoteRefsThisPage) ||
+    checkpoint.footnoteRefsThisPage < 0
+  ) {
+    return { ok: false, reason: 'table-paginator-state-invalid' };
+  }
+  return {
+    ok: true,
+    kind: 'table',
+    checkpoint,
+    previousBlockId: input.locality.previousBlock.id,
+    prefixFragments,
+    resume: {
+      blockId: input.locality.currentBlock.id,
+      cursor: {
+        ...checkpoint.cursor,
+        pendingPartialRow: null,
+      },
+    },
+  };
+}
+
 function findSafePartialPageCheckpoint(input: {
   layout: Layout;
   pages: readonly Page[];
@@ -8433,6 +8785,7 @@ function findSafePartialPageCheckpoint(input: {
 }):
   | {
       ok: true;
+      kind: 'paragraph';
       checkpoint: LayoutBlockResumeCheckpoint;
       previousBlockId: string;
       prefixFragments: readonly Fragment[];
@@ -8491,7 +8844,7 @@ function findSafePartialPageCheckpoint(input: {
   ) {
     return { ok: false, reason: 'paginator-state-invalid-or-multicolumn' };
   }
-  return { ok: true, checkpoint, previousBlockId: input.previousBlockId, prefixFragments };
+  return { ok: true, kind: 'paragraph', checkpoint, previousBlockId: input.previousBlockId, prefixFragments };
 }
 
 function pageContainsOnlyStableBlocks(
@@ -8499,11 +8852,21 @@ function pageContainsOnlyStableBlocks(
   stableBlockIds: ReadonlySet<string>,
   blockIdRewrite: ReadonlyMap<string, string> | null = null,
   currentBodyBlockIndex: ReadonlyMap<string, number> | null = null,
+  tableLocality: TableLayoutLocality | null = null,
+  tableGeneration: 'previous' | 'current' = 'current',
 ): boolean {
   const fragments = page?.fragments ?? [];
   return fragments.every((fragment) => {
     if (typeof fragment.blockId !== 'string') return false;
     const blockId = blockIdRewrite?.get(fragment.blockId) ?? fragment.blockId;
+    if (
+      fragment.kind === 'table' &&
+      tableLocality != null &&
+      blockId === tableLocality.blockId &&
+      tableFragmentIsStableSuffix(fragment, tableLocality, tableGeneration)
+    ) {
+      return true;
+    }
     return stableBlockIds.has(blockId) || (currentBodyBlockIndex != null && !currentBodyBlockIndex.has(blockId));
   });
 }

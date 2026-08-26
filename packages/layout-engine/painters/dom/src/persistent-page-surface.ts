@@ -41,6 +41,7 @@ import type { DocumentBackground, ResolvedPage } from '@superdoc/contracts';
 import { computeExpectedSdtLabelKeys } from './sdt/boundaries.js';
 import {
   dehydratePageContent,
+  applyPmReuseDecision,
   hydratePageContent,
   persistentPageVersionKey,
   patchPage,
@@ -49,7 +50,6 @@ import {
   renderPageShell,
   resolvedPmInteriorVersion,
   sdtLabelSetsEqual,
-  shiftFragmentPositionAttributes,
   type FragmentDomState,
   type PageContentContext,
   type PageDomState,
@@ -552,8 +552,8 @@ function reconcileContentWindow(
           decorationsRefreshed = true;
         }
         if (remap.kind === 'remap') {
-          for (const { fragmentState, freshItem, deltaPm } of remap.drifted) {
-            shiftFragmentPositionAttributes(fragmentState.element, deltaPm);
+          for (const { fragmentState, freshItem, decision } of remap.drifted) {
+            applyPmReuseDecision(fragmentState.element, decision);
             fragmentState.fragment = freshItem.fragment;
             fragmentState.pmInteriorVersion = resolvedPmInteriorVersion(freshItem);
           }

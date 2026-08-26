@@ -21,6 +21,8 @@ import {
   type TableAttrs,
   type TableBlock,
   type TableCellAttrs,
+  type TableFragment,
+  type TableMeasure,
   type TextboxDrawing,
   type TrackedChangeMeta,
   type TextRun,
@@ -662,6 +664,145 @@ export const deriveBlockVersion = (block: FlowBlock): string => {
   return block.id;
 };
 
+const tableBlockStructureVersionCache = new WeakMap<TableBlock, string>();
+const tableMeasureStructureVersionCache = new WeakMap<TableMeasure, string>();
+
+const hashStableValue = (seed: number, value: unknown): number => hashString(seed, stableSerializeEvidenceValue(value));
+
+const hashMeasurementNumber = (seed: number, value: number | undefined): number =>
+  hashString(seed, value == null || !Number.isFinite(value) ? '' : String(value));
+
+const deriveTableBlockStructureVersion = (block: TableBlock): string => {
+  const cached = tableBlockStructureVersionCache.get(block);
+  if (cached != null) return cached;
+
+  let hash = 2166136261;
+  hash = hashString(hash, block.id);
+  hash = hashNumber(hash, block.rows.length);
+  hash = hashStableValue(hash, block.attrs);
+  hash = hashStableValue(hash, block.columnWidths);
+  hash = hashStableValue(hash, block.anchor);
+  hash = hashStableValue(hash, block.wrap);
+  for (const row of block.rows) {
+    hash = hashStableValue(hash, row.attrs);
+    hash = hashNumber(hash, row.cells.length);
+    for (const cell of row.cells) {
+      hash = hashNumber(hash, cell.rowSpan ?? 1);
+      hash = hashNumber(hash, cell.colSpan ?? 1);
+      hash = hashStableValue(hash, cell.attrs);
+    }
+  }
+
+  const version = hash.toString(16);
+  tableBlockStructureVersionCache.set(block, version);
+  return version;
+};
+
+const deriveTableMeasureStructureVersion = (measure: TableMeasure): string => {
+  const cached = tableMeasureStructureVersionCache.get(measure);
+  if (cached != null) return cached;
+
+  let hash = 2166136261;
+  hash = hashStableValue(hash, measure.columnWidths);
+  hash = hashMeasurementNumber(hash, measure.totalWidth);
+  hash = hashMeasurementNumber(hash, measure.totalHeight);
+  hash = hashMeasurementNumber(hash, measure.cellSpacingPx);
+  hash = hashStableValue(hash, measure.tableBorderWidths);
+  hash = hashNumber(hash, measure.rows.length);
+  for (const row of measure.rows) {
+    hash = hashMeasurementNumber(hash, row.height);
+    hash = hashNumber(hash, row.cells.length);
+    for (const cell of row.cells) {
+      hash = hashMeasurementNumber(hash, cell.width);
+      hash = hashMeasurementNumber(hash, cell.height);
+      hash = hashNumber(hash, cell.gridColumnStart);
+      hash = hashNumber(hash, cell.rowSpan ?? 1);
+      hash = hashNumber(hash, cell.colSpan ?? 1);
+    }
+  }
+
+  const version = hash.toString(16);
+  tableMeasureStructureVersionCache.set(measure, version);
+  return version;
+};
+
+const renderedTableRowIndices = (fragment: TableFragment, rowCount: number): number[] => {
+  const indices = new Set<number>();
+  const repeatHeaderCount = Math.min(fragment.repeatHeaderCount ?? 0, rowCount);
+  for (let rowIndex = 0; rowIndex < repeatHeaderCount; rowIndex += 1) indices.add(rowIndex);
+  const fromRow = Math.max(0, fragment.fromRow);
+  const toRow = Math.min(fragment.toRow, rowCount);
+  for (let rowIndex = fromRow; rowIndex < toRow; rowIndex += 1) indices.add(rowIndex);
+  return [...indices].sort((left, right) => left - right);
+};
+
+const hashBlockPaintIdentity = (seed: number, block: FlowBlock): number => {
+  let hash = hashString(hashString(seed, block.kind), block.id);
+  const blockSourceAnchor = 'sourceAnchor' in block ? block.sourceAnchor : undefined;
+  hash = hashString(hash, sourceAnchorSignature(blockSourceAnchor));
+  if (block.kind === 'list') {
+    for (const item of block.items) {
+      hash = hashString(hash, item.id);
+      hash = hashString(hash, sourceAnchorSignature(item.sourceAnchor ?? item.paragraph.sourceAnchor));
+      hash = hashBlockPaintIdentity(hash, item.paragraph);
+    }
+  } else if (block.kind === 'table') {
+    for (const row of block.rows) {
+      hash = hashString(hash, row.id);
+      hash = hashString(hash, sourceAnchorSignature(row.sourceAnchor));
+      for (const cell of row.cells) {
+        hash = hashString(hash, cell.id);
+        hash = hashString(hash, sourceAnchorSignature(cell.sourceAnchor));
+        for (const cellBlock of cell.blocks ?? (cell.paragraph ? [cell.paragraph] : [])) {
+          hash = hashBlockPaintIdentity(hash, cellBlock);
+        }
+      }
+    }
+  } else if (block.kind === 'drawing') {
+    const contentBlocks = (block as { contentBlocks?: FlowBlock[] }).contentBlocks;
+    for (const contentBlock of contentBlocks ?? []) {
+      hash = hashBlockPaintIdentity(hash, contentBlock);
+    }
+  }
+  return hash;
+};
+
+export const deriveTableFragmentPaintVersion = (
+  fragment: TableFragment,
+  block: TableBlock,
+  measure: TableMeasure,
+): string => {
+  const rowIndices = renderedTableRowIndices(fragment, block.rows.length);
+  const localBlock: TableBlock = {
+    ...block,
+    rows: rowIndices.map((rowIndex) => block.rows[rowIndex]!),
+  };
+  let identityHash = 2166136261;
+  for (const rowIndex of rowIndices) {
+    const row = block.rows[rowIndex];
+    if (!row) continue;
+    identityHash = hashNumber(identityHash, rowIndex);
+    for (const cell of row.cells) {
+      for (const cellBlock of cell.blocks ?? (cell.paragraph ? [cell.paragraph] : [])) {
+        identityHash = hashBlockPaintIdentity(identityHash, cellBlock);
+      }
+    }
+  }
+  const fragmentDataVersion = hashStableValue(
+    hashStableValue(2166136261, fragment.columnWidths),
+    fragment.metadata,
+  ).toString(16);
+  const localBlockVersion = [
+    deriveTableBlockStructureVersion(block),
+    deriveTableMeasureStructureVersion(measure),
+    rowIndices.join(','),
+    deriveBlockVersion(localBlock),
+    identityHash.toString(16),
+    fragmentDataVersion,
+  ].join(':');
+  return fragmentSignature(fragment, localBlockVersion);
+};
+
 // ---------------------------------------------------------------------------
 // pmInteriorVersion (painter plan P5)
 // ---------------------------------------------------------------------------
@@ -734,6 +875,10 @@ const collectBlockPmPositions = (block: FlowBlock, positions: number[]): void =>
 export const derivePmInteriorVersion = (block: FlowBlock): string => {
   const positions: number[] = [];
   collectBlockPmPositions(block, positions);
+  return derivePmInteriorVersionFromPositions(positions);
+};
+
+const derivePmInteriorVersionFromPositions = (positions: readonly number[]): string => {
   if (positions.length === 0) return 'pm:none';
   const base = positions[0]!;
   let hash = 5381;
@@ -741,6 +886,39 @@ export const derivePmInteriorVersion = (block: FlowBlock): string => {
     hash = hashNumber(hash, position - base);
   }
   return `pm:${positions.length}:${(hash >>> 0).toString(36)}@${base}`;
+};
+
+export const deriveTableFragmentPmInteriorVersion = (block: TableBlock, fragment: TableFragment): string => {
+  const collectRows = (rowIndices: readonly number[]): string => {
+    const positions: number[] = [];
+    for (const rowIndex of rowIndices) {
+      const row = block.rows[rowIndex];
+      if (!row) continue;
+      for (const cell of row.cells) {
+        for (const cellBlock of cell.blocks ?? (cell.paragraph ? [cell.paragraph] : [])) {
+          collectBlockPmPositions(cellBlock, positions);
+        }
+      }
+    }
+    return derivePmInteriorVersionFromPositions(positions);
+  };
+  const repeatHeaderCount = Math.min(fragment.repeatHeaderCount ?? 0, block.rows.length);
+  const bodyRowIndices: number[] = [];
+  for (
+    let rowIndex = Math.max(0, fragment.fromRow);
+    rowIndex < Math.min(fragment.toRow, block.rows.length);
+    rowIndex += 1
+  ) {
+    bodyRowIndices.push(rowIndex);
+  }
+  const bodyVersion = collectRows(bodyRowIndices);
+  if (repeatHeaderCount === 0) return bodyVersion;
+
+  const headerRowIndices: number[] = [];
+  for (let rowIndex = 0; rowIndex < repeatHeaderCount; rowIndex += 1) {
+    headerRowIndices.push(rowIndex);
+  }
+  return `table-pm:${repeatHeaderCount}:${collectRows(headerRowIndices)}|${bodyVersion}`;
 };
 
 // ---------------------------------------------------------------------------

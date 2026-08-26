@@ -63,7 +63,7 @@ export type PaginatorOptions = {
   getActivePageSize(): { w: number; h: number };
   getDefaultPageSize(): { w: number; h: number };
   getActiveColumns(): ColumnLayout;
-  /** Exact first-page state from an engine-authored paragraph checkpoint. */
+  /** Exact first-page state from an engine-authored flow-fragment checkpoint. */
   initialPageState?: {
     prefixFragments: readonly Page['fragments'][number][];
     cursorY: number;

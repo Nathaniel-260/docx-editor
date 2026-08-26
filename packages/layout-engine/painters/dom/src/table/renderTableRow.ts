@@ -33,6 +33,7 @@ import {
 import type { TrackedChangesRenderConfig } from '../runs/types.js';
 import type { FragmentRenderContext } from '../renderer.js';
 import type { SdtAncestorOptions } from '../sdt/container.js';
+import { TABLE_ROW_ROLE_ATTRIBUTE, type TableRowRole } from './row-role.js';
 
 type TableRowMeasure = TableMeasure['rows'][number];
 type TableRow = TableBlock['rows'][number];
@@ -267,6 +268,8 @@ type TableRowRenderDependencies = {
   container: HTMLElement;
   /** Zero-based index of this row */
   rowIndex: number;
+  /** Whether this is a repeated header copy or a body row. */
+  rowRole?: TableRowRole;
   /** Vertical position (top edge) in pixels */
   y: number;
   /** Measurement data for this row (height, cell measurements) */
@@ -406,6 +409,7 @@ export const renderTableRow = (deps: TableRowRenderDependencies): void => {
     doc,
     container,
     rowIndex,
+    rowRole = 'body',
     y,
     rowMeasure,
     row,
@@ -746,6 +750,7 @@ export const renderTableRow = (deps: TableRowRenderDependencies): void => {
       chrome,
       resolvePhysical,
     });
+    cellElement.setAttribute(TABLE_ROW_ROLE_ATTRIBUTE, rowRole);
 
     // Paint the structural row-level tracked change onto each cell element of
     // the row (no <tr> exists in the painted DOM), reusing the inline helpers.

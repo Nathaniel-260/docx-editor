@@ -189,27 +189,100 @@ const tableBlocksEqual = (a: TableBlock, b: TableBlock): boolean => {
   if (a.rows.length !== b.rows.length) return false;
 
   for (let rowIndex = 0; rowIndex < a.rows.length; rowIndex += 1) {
-    const rowA = a.rows[rowIndex]!;
-    const rowB = b.rows[rowIndex]!;
-    if (rowA.id !== rowB.id || !jsonEqual(rowA.attrs, rowB.attrs) || rowA.cells.length !== rowB.cells.length) {
-      return false;
-    }
-    for (let cellIndex = 0; cellIndex < rowA.cells.length; cellIndex += 1) {
-      const cellA = rowA.cells[cellIndex]!;
-      const cellB = rowB.cells[cellIndex]!;
-      if (
-        cellA.id !== cellB.id ||
-        cellA.rowSpan !== cellB.rowSpan ||
-        cellA.colSpan !== cellB.colSpan ||
-        !jsonEqual(cellA.attrs, cellB.attrs)
-      ) {
-        return false;
-      }
-      if (!optionalFlowBlocksEqual(cellA.blocks, cellB.blocks)) return false;
-      if (!optionalFlowBlockEqual(cellA.paragraph, cellB.paragraph)) return false;
-    }
+    if (!tableRowsEqual(a.rows[rowIndex]!, b.rows[rowIndex]!)) return false;
   }
   return true;
+};
+
+const tableRowsEqual = (rowA: TableBlock['rows'][number], rowB: TableBlock['rows'][number]): boolean => {
+  if (rowA === rowB) return true;
+  if (rowA.id !== rowB.id || !jsonEqual(rowA.attrs, rowB.attrs) || rowA.cells.length !== rowB.cells.length) {
+    return false;
+  }
+  for (let cellIndex = 0; cellIndex < rowA.cells.length; cellIndex += 1) {
+    const cellA = rowA.cells[cellIndex]!;
+    const cellB = rowB.cells[cellIndex]!;
+    if (
+      cellA.id !== cellB.id ||
+      cellA.rowSpan !== cellB.rowSpan ||
+      cellA.colSpan !== cellB.colSpan ||
+      !jsonEqual(cellA.attrs, cellB.attrs)
+    ) {
+      return false;
+    }
+    if (!optionalFlowBlocksEqual(cellA.blocks, cellB.blocks)) return false;
+    if (!optionalFlowBlockEqual(cellA.paragraph, cellB.paragraph)) return false;
+  }
+  return true;
+};
+
+export type TableDirtyRowRange = {
+  firstRow: number;
+  previousLastRowExclusive: number;
+  currentLastRowExclusive: number;
+  globalGeometryInputsChanged: boolean;
+  rowTopologyUnchanged: boolean;
+};
+
+export const computeTableDirtyRowRange = (previous: TableBlock, current: TableBlock): TableDirtyRowRange | null => {
+  const globalGeometryInputsChanged =
+    !jsonEqual(previous.attrs, current.attrs) ||
+    !jsonEqual(previous.columnWidths, current.columnWidths) ||
+    !jsonEqual(previous.anchor, current.anchor) ||
+    !jsonEqual(previous.wrap, current.wrap);
+  if (globalGeometryInputsChanged) {
+    return {
+      firstRow: 0,
+      previousLastRowExclusive: previous.rows.length,
+      currentLastRowExclusive: current.rows.length,
+      globalGeometryInputsChanged: true,
+      rowTopologyUnchanged: false,
+    };
+  }
+
+  const sharedLength = Math.min(previous.rows.length, current.rows.length);
+  let firstRow = 0;
+  while (firstRow < sharedLength && tableRowsEqual(previous.rows[firstRow]!, current.rows[firstRow]!)) firstRow += 1;
+  if (firstRow === sharedLength && previous.rows.length === current.rows.length) return null;
+
+  let previousLastRowExclusive = previous.rows.length;
+  let currentLastRowExclusive = current.rows.length;
+  while (
+    previousLastRowExclusive > firstRow &&
+    currentLastRowExclusive > firstRow &&
+    tableRowsEqual(previous.rows[previousLastRowExclusive - 1]!, current.rows[currentLastRowExclusive - 1]!)
+  ) {
+    previousLastRowExclusive -= 1;
+    currentLastRowExclusive -= 1;
+  }
+
+  const rowTopologyUnchanged =
+    previous.rows.length === current.rows.length &&
+    previous.rows.every((row, rowIndex) => {
+      const nextRow = current.rows[rowIndex];
+      return (
+        nextRow != null &&
+        row.id === nextRow.id &&
+        row.cells.length === nextRow.cells.length &&
+        row.cells.every((cell, cellIndex) => {
+          const nextCell = nextRow.cells[cellIndex];
+          return (
+            nextCell != null &&
+            cell.id === nextCell.id &&
+            (cell.rowSpan ?? 1) === (nextCell.rowSpan ?? 1) &&
+            (cell.colSpan ?? 1) === (nextCell.colSpan ?? 1)
+          );
+        })
+      );
+    });
+
+  return {
+    firstRow,
+    previousLastRowExclusive,
+    currentLastRowExclusive,
+    globalGeometryInputsChanged: false,
+    rowTopologyUnchanged,
+  };
 };
 
 const optionalFlowBlockEqual = (a: FlowBlock | undefined, b: FlowBlock | undefined): boolean => {

@@ -8,7 +8,15 @@
 // steady same-generation paints.
 
 import { describe, expect, it } from 'vite-plus/test';
-import type { FlowBlock, Layout, Measure, ResolvedLayout, ResolvedPage } from '@superdoc/contracts';
+import type {
+  FlowBlock,
+  Layout,
+  Measure,
+  ResolvedLayout,
+  ResolvedPage,
+  TableBlock,
+  TableMeasure,
+} from '@superdoc/contracts';
 import { resolveLayout } from '@superdoc/layout-resolved';
 import { createDomPainter } from './index.js';
 import type { DomPainterPersistentPageInput, DomPainterPersistentScaffold } from './persistent-page-surface.js';
@@ -143,6 +151,80 @@ function realResolved(pageCount: number): ResolvedLayout {
     blocks: texts.map((text, index) => paraBlock(`body-${index}`, text)),
     measures: texts.map((text) => paraMeasure([[0, text.length]])),
   });
+}
+
+function repeatedHeaderTableResolved(interveningText: string, bodyPmShift: number): ResolvedLayout {
+  const rowTexts = ['Header', interveningText, 'Body two', 'Body three'];
+  const basePositions = [0, 10, 20 + bodyPmShift, 30 + bodyPmShift];
+  const rows: TableBlock['rows'] = rowTexts.map((text, rowIndex) => {
+    const pmStart = basePositions[rowIndex]!;
+    return {
+      id: `row-${rowIndex}`,
+      cells: [
+        {
+          id: `cell-${rowIndex}`,
+          blocks: [
+            {
+              kind: 'paragraph',
+              id: `paragraph-${rowIndex}`,
+              runs: [
+                {
+                  kind: 'text',
+                  text,
+                  fontFamily: 'Arial',
+                  fontSize: 12,
+                  pmStart,
+                  pmEnd: pmStart + text.length,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  });
+  const block: TableBlock = { kind: 'table', id: 'repeated-header-table', rows, columnWidths: [320] };
+  const measure: TableMeasure = {
+    kind: 'table',
+    columnWidths: [320],
+    totalWidth: 320,
+    totalHeight: 80,
+    rows: rowTexts.map((text) => ({
+      height: 20,
+      cells: [
+        {
+          width: 320,
+          height: 20,
+          gridColumnStart: 0,
+          blocks: [paraMeasure([[0, text.length]])],
+        },
+      ],
+    })),
+  };
+  const layout: Layout = {
+    pageSize: REAL_PAGE,
+    pages: [
+      {
+        number: 1,
+        fragments: [
+          {
+            kind: 'table',
+            blockId: block.id,
+            fromRow: 2,
+            toRow: 4,
+            repeatHeaderCount: 1,
+            x: 20,
+            y: 30,
+            width: 320,
+            height: 60,
+            pmStart: 20 + bodyPmShift,
+            pmEnd: 40 + bodyPmShift,
+          },
+        ],
+      },
+    ],
+  };
+  return resolveLayout({ layout, flowMode: 'paginated', blocks: [block], measures: [measure] });
 }
 
 function realScaffold(resolved: ResolvedLayout, generation: number): DomPainterPersistentScaffold {
@@ -418,6 +500,33 @@ describe('persistent content hydration and dehydration', () => {
     expect(pageAfter.dataset.layoutEpoch).toBe('2');
     expect(pageAfter.dataset.pageNumber).toBe('1');
     expect(fragmentAfter.dataset.layoutEpoch).toBe('1');
+  });
+
+  it('remaps repeated headers and table body positions independently without rebuilding the fragment', () => {
+    const before = repeatedHeaderTableResolved('Middle', 0);
+    const after = repeatedHeaderTableResolved('Middle+', 1);
+    const scaffold = realScaffold(before, 0);
+    const mount = document.createElement('div');
+    const painter = createDomPainter({ layoutMode: 'vertical', pageGap: GAP_PX });
+
+    painter.paintPersistentPages(persistentInput(scaffold, packetsFor(before.pages), [0]), mount);
+    painter.consumePaintWorkSummary();
+    const fragmentBefore = mount.querySelector<HTMLElement>('.superdoc-table-fragment')!;
+
+    painter.paintPersistentPages(persistentInput(scaffold, packetsFor(after.pages), [0]), mount);
+    const work = painter.consumePaintWorkSummary();
+    const fragmentAfter = mount.querySelector<HTMLElement>('.superdoc-table-fragment')!;
+
+    expect(fragmentAfter).toBe(fragmentBefore);
+    expect(work.contentRemapped).toBe(1);
+    expect(work.contentPmDemoted).toBe(0);
+    expect(work.contentPatched).toBe(0);
+    expect(work.fragmentsRendered).toBe(0);
+
+    const freshMount = document.createElement('div');
+    const freshPainter = createDomPainter({ layoutMode: 'vertical', pageGap: GAP_PX });
+    freshPainter.paintPersistentPages(persistentInput(scaffold, packetsFor(after.pages), [0]), freshMount);
+    expect(mount.innerHTML).toBe(freshMount.innerHTML);
   });
 
   it('dehydration restores shell-only posture without replacing or resizing the root', () => {

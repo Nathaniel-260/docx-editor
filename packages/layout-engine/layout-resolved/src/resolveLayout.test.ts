@@ -10,7 +10,10 @@ import type {
   TableFragment,
   ListItemFragment,
   DrawingFragment,
+  ResolvedTableItem,
   SourceAnchor,
+  TableBlock,
+  TableMeasure,
 } from '@superdoc/contracts';
 import { sliceRunsForLine } from '@superdoc/contracts';
 
@@ -4024,6 +4027,166 @@ describe('resolveLayout', () => {
       const item = result.pages[0].items[0] as any;
       expect(item.version).toBeDefined();
       expect(typeof item.version).toBe('string');
+    });
+
+    it('keeps table paint reuse and pm remapping local to the rendered rows', () => {
+      const makeRow = (rowIndex: number, text: string, pmStart: number): TableBlock['rows'][number] => ({
+        id: `row-${rowIndex}`,
+        cells: [
+          {
+            id: `cell-${rowIndex}`,
+            blocks: [
+              {
+                kind: 'paragraph',
+                id: `paragraph-${rowIndex}`,
+                runs: [
+                  {
+                    kind: 'text',
+                    text,
+                    fontFamily: 'Arial',
+                    fontSize: 12,
+                    pmStart,
+                    pmEnd: pmStart + text.length,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+      const makeMeasure = (): TableMeasure => ({
+        kind: 'table',
+        columnWidths: [468],
+        totalWidth: 468,
+        totalHeight: 80,
+        rows: Array.from({ length: 4 }, () => ({
+          height: 20,
+          cells: [{ width: 468, height: 20, gridColumnStart: 0 }],
+        })),
+      });
+      const makeLayout = (secondPageStart: number, secondPageEnd: number): Layout => ({
+        pageSize: { w: 612, h: 792 },
+        pages: [
+          {
+            number: 1,
+            fragments: [
+              {
+                kind: 'table',
+                blockId: 'local-table',
+                fromRow: 0,
+                toRow: 2,
+                x: 72,
+                y: 0,
+                width: 468,
+                height: 40,
+                pmStart: 10,
+                pmEnd: secondPageStart - 1,
+              },
+            ],
+          },
+          {
+            number: 2,
+            fragments: [
+              {
+                kind: 'table',
+                blockId: 'local-table',
+                fromRow: 2,
+                toRow: 4,
+                x: 72,
+                y: 0,
+                width: 468,
+                height: 40,
+                pmStart: secondPageStart,
+                pmEnd: secondPageEnd,
+              },
+            ],
+          },
+        ],
+      });
+      const resolve = (block: TableBlock, layout: Layout): ResolvedTableItem[] =>
+        resolveLayout({ layout, flowMode: 'paginated', blocks: [block], measures: [makeMeasure()] }).pages.map(
+          (page) => page.items[0] as ResolvedTableItem,
+        );
+
+      const before = resolve(
+        {
+          kind: 'table',
+          id: 'local-table',
+          rows: [makeRow(0, 'aaaa', 10), makeRow(1, 'bbbb', 15), makeRow(2, 'cccc', 20), makeRow(3, 'dddd', 25)],
+        },
+        makeLayout(20, 29),
+      );
+      const after = resolve(
+        {
+          kind: 'table',
+          id: 'local-table',
+          rows: [makeRow(0, 'aaaaa', 10), makeRow(1, 'bbbb', 16), makeRow(2, 'cccc', 21), makeRow(3, 'dddd', 26)],
+        },
+        makeLayout(21, 30),
+      );
+
+      expect(after[0].paintCacheVersion).not.toBe(before[0].paintCacheVersion);
+      expect(after[1].paintCacheVersion).toBe(before[1].paintCacheVersion);
+      expect(after[1].version).not.toBe(before[1].version);
+      expect(after[1].pmInteriorVersion?.split('@')[0]).toBe(before[1].pmInteriorVersion?.split('@')[0]);
+      expect(
+        Number(after[1].pmInteriorVersion?.split('@')[1]) - Number(before[1].pmInteriorVersion?.split('@')[1]),
+      ).toBe(1);
+    });
+
+    it('invalidates continuation fragments for repeated-header and table-structure changes', () => {
+      const paragraph = (id: string, text: string) => ({
+        kind: 'paragraph' as const,
+        id,
+        runs: [{ kind: 'text' as const, text, fontFamily: 'Arial', fontSize: 12 }],
+      });
+      const makeBlock = (headerText: string): TableBlock => ({
+        kind: 'table',
+        id: 'header-table',
+        rows: Array.from({ length: 4 }, (_, rowIndex) => ({
+          id: `row-${rowIndex}`,
+          cells: [
+            {
+              id: `cell-${rowIndex}`,
+              blocks: [paragraph(`paragraph-${rowIndex}`, rowIndex === 0 ? headerText : `row ${rowIndex}`)],
+            },
+          ],
+        })),
+      });
+      const makeMeasure = (firstRowHeight = 20): TableMeasure => ({
+        kind: 'table',
+        columnWidths: [468],
+        totalWidth: 468,
+        totalHeight: firstRowHeight + 60,
+        rows: Array.from({ length: 4 }, (_, rowIndex) => ({
+          height: rowIndex === 0 ? firstRowHeight : 20,
+          cells: [{ width: 468, height: rowIndex === 0 ? firstRowHeight : 20, gridColumnStart: 0 }],
+        })),
+      });
+      const fragment: TableFragment = {
+        kind: 'table',
+        blockId: 'header-table',
+        fromRow: 2,
+        toRow: 4,
+        repeatHeaderCount: 1,
+        x: 72,
+        y: 0,
+        width: 468,
+        height: 60,
+      };
+      const layout: Layout = {
+        pageSize: { w: 612, h: 792 },
+        pages: [{ number: 1, fragments: [fragment] }],
+      };
+      const resolve = (block: TableBlock, measure: TableMeasure): ResolvedTableItem =>
+        resolveLayout({ layout, flowMode: 'paginated', blocks: [block], measures: [measure] }).pages[0]
+          .items[0] as ResolvedTableItem;
+
+      const baseline = resolve(makeBlock('header'), makeMeasure());
+      expect(resolve(makeBlock('changed header'), makeMeasure()).paintCacheVersion).not.toBe(
+        baseline.paintCacheVersion,
+      );
+      expect(resolve(makeBlock('header'), makeMeasure(20.5)).paintCacheVersion).not.toBe(baseline.paintCacheVersion);
     });
 
     it('sets version on image fragment items', () => {

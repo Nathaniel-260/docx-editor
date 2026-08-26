@@ -30,6 +30,7 @@ import { shouldRebuildForSdtBoundary, type SdtBoundaryOptions } from './sdt/cont
 import { computeBetweenBorderFlags, type BetweenBorderInfo } from './paragraph/borders/index.js';
 import { applyStyles } from './utils/apply-styles.js';
 import { CLASS_NAMES, pageStyles, type PageStyles } from './styles.js';
+import { TABLE_ROW_ROLE_ATTRIBUTE } from './table/row-role.js';
 
 export type FragmentDomState = {
   key: string;
@@ -511,8 +512,8 @@ export function patchPage(
         // every descendant by `deltaPm` is byte-exact — kind-agnostic.
         // Painter plan P5 — closes the P3-era gap where the root wrapper got
         // fresh pm attrs while leaf spans kept pre-edit positions.
-        if (pmDecision?.kind === 'shift') {
-          shiftFragmentPositionAttributes(current.element, pmDecision.deltaPm);
+        if (pmDecision?.kind === 'shift' || pmDecision?.kind === 'table-shift') {
+          applyPmReuseDecision(current.element, pmDecision);
         }
         fragmentsReused += 1;
       }
@@ -712,26 +713,45 @@ export function needsRebuildForPageContext(
  * (block runs / content lines) and silently no-ops for tables — the raw-sha
  * paint-equivalence oracle caught exactly that on real table pages.
  */
-export function shiftFragmentPositionAttributes(fragmentEl: HTMLElement, deltaPm: number): void {
+function shiftElementPositionAttributes(element: HTMLElement, deltaPm: number): void {
   if (!Number.isFinite(deltaPm) || deltaPm === 0) return;
-  const elements = [
-    fragmentEl,
-    ...Array.from(fragmentEl.querySelectorAll<HTMLElement>('[data-pm-start], [data-pm-end]')),
-  ];
-  for (const el of elements) {
-    // Guard empty strings like the other two position walkers
-    // (updateStoryPositionAttributes / updatePositionAttributes):
-    // Number('') === 0 is finite, and rewriting '' to String(delta) would
-    // FABRICATE a position where none existed.
-    const rawStart = el.dataset.pmStart;
-    if (rawStart !== undefined && rawStart !== '') {
-      const start = Number(rawStart);
-      if (Number.isFinite(start)) el.dataset.pmStart = String(start + deltaPm);
-    }
-    const rawEnd = el.dataset.pmEnd;
-    if (rawEnd !== undefined && rawEnd !== '') {
-      const end = Number(rawEnd);
-      if (Number.isFinite(end)) el.dataset.pmEnd = String(end + deltaPm);
+  const rawStart = element.dataset.pmStart;
+  if (rawStart !== undefined && rawStart !== '') {
+    const start = Number(rawStart);
+    if (Number.isFinite(start)) element.dataset.pmStart = String(start + deltaPm);
+  }
+  const rawEnd = element.dataset.pmEnd;
+  if (rawEnd !== undefined && rawEnd !== '') {
+    const end = Number(rawEnd);
+    if (Number.isFinite(end)) element.dataset.pmEnd = String(end + deltaPm);
+  }
+}
+
+function shiftPositionAttributesInSubtree(root: HTMLElement, deltaPm: number): void {
+  shiftElementPositionAttributes(root, deltaPm);
+  if (!Number.isFinite(deltaPm) || deltaPm === 0) return;
+  for (const element of Array.from(root.querySelectorAll<HTMLElement>('[data-pm-start], [data-pm-end]'))) {
+    shiftElementPositionAttributes(element, deltaPm);
+  }
+}
+
+export function shiftFragmentPositionAttributes(fragmentEl: HTMLElement, deltaPm: number): void {
+  shiftPositionAttributesInSubtree(fragmentEl, deltaPm);
+}
+
+function shiftTableFragmentPositionAttributes(
+  fragmentEl: HTMLElement,
+  repeatHeaderDeltaPm: number,
+  bodyDeltaPm: number,
+): void {
+  shiftElementPositionAttributes(fragmentEl, bodyDeltaPm);
+  for (const child of Array.from(fragmentEl.children)) {
+    if (!(child instanceof HTMLElement)) continue;
+    const role = child.getAttribute(TABLE_ROW_ROLE_ATTRIBUTE);
+    if (role === 'repeat-header') {
+      shiftPositionAttributesInSubtree(child, repeatHeaderDeltaPm);
+    } else if (role === 'body') {
+      shiftPositionAttributesInSubtree(child, bodyDeltaPm);
     }
   }
 }
@@ -768,9 +788,50 @@ export function pmInteriorParts(version: string | null): { relative: string; bas
   return { relative: version.slice(0, at), base: Number.isFinite(base) ? base : null };
 }
 
-export type PmReuseDecision = { kind: 'clean' } | { kind: 'shift'; deltaPm: number } | { kind: 'rebuild' };
+export type PmReuseDecision =
+  | { kind: 'clean' }
+  | { kind: 'shift'; deltaPm: number }
+  | { kind: 'table-shift'; repeatHeaderDeltaPm: number; bodyDeltaPm: number }
+  | { kind: 'rebuild' };
 const PM_REUSE_CLEAN: PmReuseDecision = { kind: 'clean' };
 const PM_REUSE_REBUILD: PmReuseDecision = { kind: 'rebuild' };
+
+type SegmentedTablePmInterior = {
+  repeatHeaderCount: number;
+  repeatHeader: { relative: string; base: number | null };
+  body: { relative: string; base: number | null };
+};
+
+function segmentedTablePmInteriorParts(version: string | null): SegmentedTablePmInterior | null {
+  if (!version?.startsWith('table-pm:')) return null;
+  const firstSeparator = version.indexOf(':', 'table-pm:'.length);
+  const segmentSeparator = version.indexOf('|', firstSeparator + 1);
+  if (firstSeparator < 0 || segmentSeparator < 0) return null;
+  const repeatHeaderCount = Number(version.slice('table-pm:'.length, firstSeparator));
+  const repeatHeader = pmInteriorParts(version.slice(firstSeparator + 1, segmentSeparator));
+  const body = pmInteriorParts(version.slice(segmentSeparator + 1));
+  if (!Number.isInteger(repeatHeaderCount) || repeatHeaderCount <= 0 || repeatHeader == null || body == null) {
+    return null;
+  }
+  return { repeatHeaderCount, repeatHeader, body };
+}
+
+function pmSegmentDelta(
+  previous: { relative: string; base: number | null },
+  fresh: { relative: string; base: number | null },
+): number | null {
+  if (previous.relative !== fresh.relative || (previous.base == null) !== (fresh.base == null)) return null;
+  if (previous.base == null || fresh.base == null) return 0;
+  return fresh.base - previous.base;
+}
+
+export function applyPmReuseDecision(fragmentEl: HTMLElement, decision: PmReuseDecision): void {
+  if (decision.kind === 'shift') {
+    shiftFragmentPositionAttributes(fragmentEl, decision.deltaPm);
+  } else if (decision.kind === 'table-shift') {
+    shiftTableFragmentPositionAttributes(fragmentEl, decision.repeatHeaderDeltaPm, decision.bodyDeltaPm);
+  }
+}
 
 /**
  * Painter plan P5 (review fix): THE single soundness decision for reusing a
@@ -805,6 +866,30 @@ export function planPmReuse(
   }
   if (freshSpan.end - freshSpan.start !== previousSpan.end - previousSpan.start) return PM_REUSE_REBUILD;
   const deltaPm = freshSpan.start - previousSpan.start;
+  const previousTableParts = segmentedTablePmInteriorParts(current.pmInteriorVersion);
+  const freshTableParts = segmentedTablePmInteriorParts(freshInteriorVersion);
+  const hasSegmentedTableVersion =
+    current.pmInteriorVersion?.startsWith('table-pm:') === true ||
+    freshInteriorVersion?.startsWith('table-pm:') === true;
+  if (hasSegmentedTableVersion) {
+    if (
+      previousTableParts == null ||
+      freshTableParts == null ||
+      current.fragment.kind !== 'table' ||
+      freshFragment.kind !== 'table' ||
+      previousTableParts.repeatHeaderCount !== freshTableParts.repeatHeaderCount ||
+      (freshFragment.repeatHeaderCount ?? 0) !== freshTableParts.repeatHeaderCount
+    ) {
+      return PM_REUSE_REBUILD;
+    }
+    const repeatHeaderDeltaPm = pmSegmentDelta(previousTableParts.repeatHeader, freshTableParts.repeatHeader);
+    const bodyDeltaPm = pmSegmentDelta(previousTableParts.body, freshTableParts.body);
+    if (repeatHeaderDeltaPm == null || bodyDeltaPm == null || bodyDeltaPm !== deltaPm) return PM_REUSE_REBUILD;
+    if (repeatHeaderDeltaPm === bodyDeltaPm) {
+      return bodyDeltaPm === 0 ? PM_REUSE_CLEAN : { kind: 'shift', deltaPm: bodyDeltaPm };
+    }
+    return { kind: 'table-shift', repeatHeaderDeltaPm, bodyDeltaPm };
+  }
   const previousParts = pmInteriorParts(current.pmInteriorVersion);
   const freshParts = pmInteriorParts(freshInteriorVersion);
   if (previousParts == null || freshParts == null) return PM_REUSE_REBUILD;
@@ -881,8 +966,7 @@ export function sdtLabelSetsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>
 export type WindowPositionRemapEntry = {
   fragmentState: FragmentDomState;
   freshItem: ResolvedPaintItem & { fragment: Fragment };
-  /** Fresh minus retained fragment pmStart — the exact uniform shift. */
-  deltaPm: number;
+  decision: Exclude<PmReuseDecision, { kind: 'clean' | 'rebuild' }>;
 };
 
 export type WindowPositionRemapPlan = { kind: 'none' | 'remap' | 'demote'; drifted: WindowPositionRemapEntry[] };
@@ -922,8 +1006,8 @@ export function planWindowPositionRemap(state: PageDomState, resolvedPage: Resol
     // here lands on a patch applying the SAME rule, so it rebuilds for real.
     const decision = planPmReuse(fragmentState, fresh.fragment, resolvedPmInteriorVersion(fresh));
     if (decision.kind === 'rebuild') return REMAP_DEMOTE;
-    if (decision.kind === 'shift') {
-      (drifted ??= []).push({ fragmentState, freshItem: fresh, deltaPm: decision.deltaPm });
+    if (decision.kind === 'shift' || decision.kind === 'table-shift') {
+      (drifted ??= []).push({ fragmentState, freshItem: fresh, decision });
     }
   }
   if (cursor !== fragments.length) return REMAP_DEMOTE;

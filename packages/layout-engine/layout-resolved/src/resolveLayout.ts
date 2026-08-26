@@ -40,6 +40,8 @@ import { hashParagraphBorders } from './paragraphBorderHash.js';
 import {
   deriveBlockVersion,
   derivePmInteriorVersion,
+  deriveTableFragmentPaintVersion,
+  deriveTableFragmentPmInteriorVersion,
   fragmentSignature,
   resolveFragmentLayoutIdentity,
   sourceAnchorSignature,
@@ -586,9 +588,14 @@ function stampPmInteriorVersion(
   item: Extract<ResolvedPaintItem, { kind: 'fragment' }>,
   blockMap: Map<string, BlockMapEntry>,
   blockId: string,
+  fragment: Fragment,
 ): void {
   const block = (item as { block?: FlowBlock }).block ?? blockMap.get(blockId)?.block;
   if (!block) return;
+  if (block.kind === 'table' && fragment.kind === 'table') {
+    item.pmInteriorVersion = deriveTableFragmentPmInteriorVersion(block, fragment);
+    return;
+  }
   let interior = pmInteriorCache.get(block);
   if (interior == null) {
     interior = derivePmInteriorVersion(block);
@@ -703,13 +710,16 @@ export function resolveFragmentItem(
       if (sdtContainerKey != null) item.sdtContainerKey = sdtContainerKey;
       if (fragment.sourceAnchor != null) item.sourceAnchor = fragment.sourceAnchor;
       item.layoutSourceIdentity = layoutSourceIdentity;
+      const tableVisualVersion = tablePageRefs.changed
+        ? fragmentSignature(fragment, deriveFontAwareBlockVersion(tablePageRefs.block, fontSignature))
+        : version;
+      const tableFragmentPaintVersion = deriveTableFragmentPaintVersion(fragment, item.block, item.measure);
       applyPaintVersions(
         item,
-        tablePageRefs.changed
-          ? fragmentSignature(fragment, deriveFontAwareBlockVersion(tablePageRefs.block, fontSignature))
-          : version,
+        tableVisualVersion,
+        fontSignature ? `${fontSignature}|${tableFragmentPaintVersion}` : tableFragmentPaintVersion,
       );
-      stampPmInteriorVersion(item, blockMap, fragment.blockId);
+      stampPmInteriorVersion(item, blockMap, fragment.blockId, fragment);
       return item;
     }
     case 'image': {
@@ -718,7 +728,7 @@ export function resolveFragmentItem(
       if (fragment.sourceAnchor != null) item.sourceAnchor = fragment.sourceAnchor;
       item.layoutSourceIdentity = layoutSourceIdentity;
       applyPaintVersions(item, version);
-      stampPmInteriorVersion(item, blockMap, fragment.blockId);
+      stampPmInteriorVersion(item, blockMap, fragment.blockId, fragment);
       return item;
     }
     case 'drawing': {
@@ -727,7 +737,7 @@ export function resolveFragmentItem(
       if (fragment.sourceAnchor != null) item.sourceAnchor = fragment.sourceAnchor;
       item.layoutSourceIdentity = layoutSourceIdentity;
       applyPaintVersions(item, version);
-      stampPmInteriorVersion(item, blockMap, fragment.blockId);
+      stampPmInteriorVersion(item, blockMap, fragment.blockId, fragment);
       return item;
     }
     default: {
@@ -828,7 +838,7 @@ export function resolveFragmentItem(
         if (listItem.markerWidth != null) item.markerWidth = listItem.markerWidth;
       }
       applyPaintVersions(item, itemVersion, appendMeasurePaintSignature(itemVersion, measurePaintSignature));
-      stampPmInteriorVersion(item, blockMap, fragment.blockId);
+      stampPmInteriorVersion(item, blockMap, fragment.blockId, fragment);
       return item;
     }
   }

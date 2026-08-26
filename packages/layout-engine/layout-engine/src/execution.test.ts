@@ -6,6 +6,8 @@ import type {
   ParagraphBlock,
   ParagraphMeasure,
   SectionMetadata,
+  TableBlock,
+  TableMeasure,
 } from '@superdoc/contracts';
 import {
   buildChapterContextByPage,
@@ -45,6 +47,28 @@ function paragraphFixture(count: number): { blocks: FlowBlock[]; measures: Measu
     } satisfies ParagraphMeasure);
   }
   return { blocks, measures };
+}
+
+function tableFixture(rowCount: number): { blocks: FlowBlock[]; measures: Measure[] } {
+  const block: TableBlock = {
+    kind: 'table',
+    id: 'table',
+    rows: Array.from({ length: rowCount }, (_, rowIndex) => ({
+      id: `row-${rowIndex}`,
+      cells: [{ id: `cell-${rowIndex}`, blocks: [] }],
+    })),
+  };
+  const measure: TableMeasure = {
+    kind: 'table',
+    rows: Array.from({ length: rowCount }, () => ({
+      height: 20,
+      cells: [{ width: 100, height: 20, gridColumnStart: 0, blocks: [] }],
+    })),
+    columnWidths: [100],
+    totalWidth: 100,
+    totalHeight: rowCount * 20,
+  };
+  return { blocks: [block], measures: [measure] };
 }
 
 describe('cooperative layout execution', () => {
@@ -94,6 +118,31 @@ describe('cooperative layout execution', () => {
     expect(Math.max(...visitedBlockIndexes)).toBeLessThan(fixture.blocks.length);
     expect(fixture.blocks).toHaveLength(256);
     expect(fixture.measures).toHaveLength(256);
+  });
+
+  it('yields and can abort between fragments of one large table block', async () => {
+    const fixture = tableFixture(100);
+    const controller = new AbortController();
+    const superseded = new Error('table layout superseded');
+    const visitedRows: number[] = [];
+
+    const run = layoutDocumentCooperatively(
+      fixture.blocks,
+      fixture.measures,
+      { pageSize: { w: 400, h: 240 }, margins: { top: 20, right: 20, bottom: 20, left: 20 } },
+      {
+        signal: controller.signal,
+        yieldToHost: async (checkpoint) => {
+          if (checkpoint.phase !== 'layout-document:table-fragment') return;
+          visitedRows.push(checkpoint.index ?? -1);
+          if (visitedRows.length === 3) controller.abort(superseded);
+        },
+      },
+    );
+
+    await expect(run).rejects.toBe(superseded);
+    expect(visitedRows).toHaveLength(3);
+    expect(visitedRows.at(-1)!).toBeLessThan(100);
   });
 
   it('interrupts document-scale footnote-anchor preflight before pagination starts', async () => {

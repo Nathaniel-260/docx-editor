@@ -25,6 +25,7 @@ import type {
 } from '@superdoc/contracts';
 import { clearIncrementalModuleState, incrementalLayout, type IncrementalLayoutReuseOptions } from '../src/index.js';
 import { computeDirtyRegions } from '../src/diff.js';
+import { __test_only_lazyPageTransformStats } from '../src/incrementalLayout.js';
 
 const OPTIONS = {
   pageSize: { w: 240, h: 140 },
@@ -67,6 +68,17 @@ function documentBlocks(cellTexts: readonly string[]): FlowBlock[] {
     blocks.push(paragraph(`p${index}`, `text-${index}`, 1 + (index + (index >= TABLE_INDEX ? 3 : 0)) * 20));
   }
   return blocks;
+}
+
+function largeTableDocument(rowCount: number, growingRow: number | null = null): FlowBlock[] {
+  const cellTexts = Array.from({ length: rowCount }, (_, rowIndex) =>
+    rowIndex === growingRow ? '12345678' : `r${rowIndex}`.padEnd(7, '-'),
+  );
+  return [
+    paragraph('before-table', 'before', 1),
+    table(cellTexts, 100),
+    paragraph('after-table', 'after', 100 + rowCount * 20),
+  ];
 }
 
 /** Cell paragraphs wrap to one line per 8 characters; body paragraphs are one 30px line. */
@@ -129,6 +141,42 @@ async function measureBlock(block: FlowBlock): Promise<Measure> {
       const text = cellParagraph.kind === 'paragraph' ? cellParagraph.runs[0]!.text : '';
       return sum + cellLineCount(text) * CELL_LINE_HEIGHT + 4;
     }, 0),
+  };
+}
+
+async function measureFixedHeightTableBlock(block: FlowBlock): Promise<Measure> {
+  if (block.kind !== 'table') return measureBlock(block);
+  return {
+    kind: 'table',
+    rows: block.rows.map((row) => {
+      const cellParagraph = row.cells[0]!.blocks![0]!;
+      if (cellParagraph.kind !== 'paragraph') throw new Error('Expected cell paragraph');
+      const textLength = cellParagraph.runs[0]!.text.length;
+      const line: Line = {
+        fromRun: 0,
+        fromChar: 0,
+        toRun: 0,
+        toChar: textLength,
+        width: 100,
+        ascent: 9,
+        descent: 3,
+        lineHeight: CELL_LINE_HEIGHT,
+      };
+      return {
+        height: CELL_LINE_HEIGHT + 4,
+        cells: [
+          {
+            width: 120,
+            height: CELL_LINE_HEIGHT + 4,
+            gridColumnStart: 0,
+            blocks: [{ kind: 'paragraph' as const, lines: [line], totalHeight: CELL_LINE_HEIGHT }],
+          },
+        ],
+      };
+    }),
+    columnWidths: [120],
+    totalWidth: 120,
+    totalHeight: block.rows.length * (CELL_LINE_HEIGHT + 4),
   };
 }
 
@@ -294,6 +342,99 @@ describe('incrementalLayout table-local closure (plan 12)', () => {
       reason: 'm4-affected-frontier-converged-tail-adopted',
     });
     expect(incremental.layoutReuse.pagesPaginated!).toBeLessThanOrEqual(6);
+  });
+
+  it('resumes a deep same-geometry edit at its 95-row table fragment', async () => {
+    const previousBlocks = largeTableDocument(95);
+    const previous = await incrementalLayout([], null, previousBlocks, OPTIONS, measureBlock);
+    previous.layout.layoutEpoch = 1;
+    const retainedTablePages = blockPageIndex(previous.layout).get('table-mid')!;
+
+    const { next: nextBlocks, editPmEnd } = applyCellEdit(previousBlocks, 80);
+    const incremental = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      OPTIONS,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      undefined,
+      buildTableReuse(previousBlocks, nextBlocks, previous.layout, editPmEnd, true),
+    );
+
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, nextBlocks, OPTIONS, measureBlock);
+    expect(json(incremental.layout)).toEqual(json(cold.layout));
+    expect(incremental.layoutReuse.mode).toBe('tail-splice');
+    expect(incremental.layoutReuse.checkpointPageIndex!).toBeGreaterThan(retainedTablePages.firstPage + 8);
+    expect(incremental.layoutReuse.sourceAffectedFrontierPageIndex).toBe(incremental.layoutReuse.checkpointPageIndex);
+    expect(incremental.layoutReuse.pagesPaginated!).toBeLessThan(
+      retainedTablePages.lastPage - retainedTablePages.firstPage + 1,
+    );
+  });
+
+  it('keeps sustained same-cell position rebases in a persistent ledger', async () => {
+    let blocks = largeTableDocument(95);
+    let current = await incrementalLayout([], null, blocks, OPTIONS, measureFixedHeightTableBlock);
+
+    for (let editIndex = 0; editIndex < 64; editIndex += 1) {
+      current.layout.layoutEpoch = editIndex + 1;
+      const { next, editPmEnd } = applyCellEdit(blocks, 80);
+      const nextLayout = await incrementalLayout(
+        blocks,
+        current.layout,
+        next,
+        OPTIONS,
+        measureFixedHeightTableBlock,
+        undefined,
+        current.measures,
+        undefined,
+        undefined,
+        buildTableReuse(blocks, next, current.layout, editPmEnd, true),
+      );
+      expect(nextLayout.layoutReuse.mode).toBe('tail-splice');
+      expect(nextLayout.layoutReuse.pagesPaginated!).toBeLessThanOrEqual(6);
+      blocks = next;
+      current = nextLayout;
+    }
+
+    const transformStats = __test_only_lazyPageTransformStats(current.layout.pages);
+    expect(transformStats?.maximumLedgerCount).toBe(64);
+    expect(transformStats?.maximumTreeDepth).toBeLessThanOrEqual(32);
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, blocks, OPTIONS, measureFixedHeightTableBlock);
+    expect(json(current.layout)).toEqual(json(cold.layout));
+  });
+
+  it('resumes a deep row-growing edit at its table fragment instead of the table start', async () => {
+    const previousBlocks = largeTableDocument(95, 80);
+    const previous = await incrementalLayout([], null, previousBlocks, OPTIONS, measureBlock);
+    previous.layout.layoutEpoch = 1;
+    const retainedTablePages = blockPageIndex(previous.layout).get('table-mid')!;
+
+    const { next: nextBlocks, editPmEnd } = applyCellEdit(previousBlocks, 80);
+    const incremental = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      OPTIONS,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      undefined,
+      buildTableReuse(previousBlocks, nextBlocks, previous.layout, editPmEnd, true),
+    );
+
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, nextBlocks, OPTIONS, measureBlock);
+    expect(json(incremental.layout)).toEqual(json(cold.layout));
+    expect(incremental.layoutReuse.mode).toBe('tail-splice');
+    expect(incremental.layoutReuse.checkpointPageIndex!).toBeGreaterThan(retainedTablePages.firstPage + 8);
+    expect(incremental.layoutReuse.sourceAffectedFrontierPageIndex).toBe(incremental.layoutReuse.checkpointPageIndex);
+    expect(incremental.layoutReuse.pagesPaginated!).toBeLessThan(retainedTablePages.lastPage + 1);
   });
 
   it('stays typed and cold-exact when the proof omits the tables class for a dirty table', async () => {

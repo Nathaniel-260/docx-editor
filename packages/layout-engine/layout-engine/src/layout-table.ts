@@ -31,7 +31,36 @@ export type TableLayoutContext = {
   ensurePage: () => PageState;
   advanceColumn: (state: PageState) => PageState;
   columnX: (state: PageState, columnIndex?: number) => number;
+  resumeCursor?: TableLayoutCursor;
+  onFragmentStart?: (state: PageState, cursor: TableLayoutCursor) => void;
 };
+
+export type TableLayoutCursor = {
+  currentRow: number;
+  isTableContinuation: boolean;
+  pendingPartialRow: PartialRowInfo | null;
+  samePagePartialContinuation: boolean;
+  retryWithoutHeaders: boolean;
+};
+
+export type TableLayoutStep = {
+  index: number;
+  total: number;
+};
+
+const clonePartialRow = (partialRow: PartialRowInfo | null): PartialRowInfo | null =>
+  partialRow
+    ? {
+        ...partialRow,
+        fromLineByCell: partialRow.fromLineByCell.slice(),
+        toLineByCell: partialRow.toLineByCell.slice(),
+      }
+    : null;
+
+const cloneTableLayoutCursor = (cursor: TableLayoutCursor): TableLayoutCursor => ({
+  ...cursor,
+  pendingPartialRow: clonePartialRow(cursor.pendingPartialRow),
+});
 
 /**
  * Safely extract the tableIndent width value from table attributes.
@@ -1379,14 +1408,16 @@ function layoutMonolithicTable(context: TableLayoutContext): void {
  * @param context - Table layout context
 
  */
-export function layoutTableBlock({
+export function* layoutTableBlockSteps({
   block,
   measure,
   columnWidth,
   ensurePage,
   advanceColumn,
   columnX,
-}: TableLayoutContext): void {
+  resumeCursor,
+  onFragmentStart,
+}: TableLayoutContext): Generator<TableLayoutStep, void, void> {
   // Anchored/floating tables are normally placed by the float manager when we layout their anchor
   // paragraph. Treat full-width floating tables as inline so they flow like normal tables and
   // don't create overlap or extra pages.
@@ -1437,7 +1468,7 @@ export function layoutTableBlock({
   const hasPriorFragments = state.page.fragments.length > 0;
   const hasMeasuredRows = measure.rows.length > 0 && block.rows.length > 0;
 
-  if (hasMeasuredRows && hasPriorFragments) {
+  if (!resumeCursor && hasMeasuredRows && hasPriorFragments) {
     // Decision tree for tables with measured rows and existing page content:
     const firstRowCantSplit = block.rows[0]?.attrs?.tableRowProperties?.cantSplit === true;
     const firstRowHeight = measure.rows[0]?.height ?? measure.totalHeight ?? 0;
@@ -1468,7 +1499,7 @@ export function layoutTableBlock({
       }
       // Otherwise, start on current page and let normal row processing handle the split
     }
-  } else if (hasPriorFragments) {
+  } else if (!resumeCursor && hasPriorFragments) {
     // Fallback for cases without measured rows (e.g., empty measure.rows)
     let minRequiredHeight = 0;
     if (measure.rows.length > 0) {
@@ -1482,9 +1513,9 @@ export function layoutTableBlock({
     }
   }
 
-  let currentRow = 0;
-  let isTableContinuation = false;
-  let pendingPartialRow: PartialRowInfo | null = null;
+  let currentRow = resumeCursor?.currentRow ?? 0;
+  let isTableContinuation = resumeCursor?.isTableContinuation ?? false;
+  let pendingPartialRow: PartialRowInfo | null = clonePartialRow(resumeCursor?.pendingPartialRow ?? null);
 
   // Handle edge case: table with no rows but non-zero totalHeight
   // This can occur in test scenarios or with placeholder tables
@@ -1513,9 +1544,17 @@ export function layoutTableBlock({
       sourceAnchor: block.sourceAnchor,
     };
     applyTableFragmentPmRange(fragment, block, measure);
+    onFragmentStart?.(state, {
+      currentRow,
+      isTableContinuation,
+      pendingPartialRow: null,
+      samePagePartialContinuation: false,
+      retryWithoutHeaders: false,
+    });
     state.page.fragments.push(fragment);
     state.cursorY += height;
     state.maxCursorY = Math.max(state.maxCursorY, state.cursorY);
+    yield { index: 1, total: 1 };
     return;
   }
 
@@ -1534,7 +1573,7 @@ export function layoutTableBlock({
   // with no page advance in between. Headers must not repeat mid-page: the
   // painter always renders repeated headers at the top of a fragment, which
   // would insert a duplicate header between two fragments that share a page.
-  let samePagePartialContinuation = false;
+  let samePagePartialContinuation = resumeCursor?.samePagePartialContinuation ?? false;
 
   // When computePartialRow makes no progress because repeated headers
   // consumed the body budget, this flag causes the next iteration to retry
@@ -1542,12 +1581,19 @@ export function layoutTableBlock({
   // a new page with the same cramped budget. This avoids both livelocking
   // and the content-dropping alternative of forcing line indices forward
   // with zero content height.
-  let retryWithoutHeaders = false;
+  let retryWithoutHeaders = resumeCursor?.retryWithoutHeaders ?? false;
 
   // 4. Loop until all rows processed (including pending partial rows)
   while (currentRow < block.rows.length || pendingPartialRow !== null) {
     state = ensurePage();
     const availableHeight = state.contentBottom - state.cursorY;
+    const fragmentCursor = cloneTableLayoutCursor({
+      currentRow,
+      isTableContinuation,
+      pendingPartialRow,
+      samePagePartialContinuation,
+      retryWithoutHeaders,
+    });
 
     // Determine repeat header count for this fragment
     let repeatHeaderCount = 0;
@@ -1688,9 +1734,11 @@ export function layoutTableBlock({
         };
 
         applyTableFragmentPmRange(fragment, block, measure);
+        onFragmentStart?.(state, fragmentCursor);
         state.page.fragments.push(fragment);
         state.cursorY += fragmentHeight;
         state.maxCursorY = Math.max(state.maxCursorY, state.cursorY);
+        yield { index: Math.min(block.rows.length, rowIndex + 1), total: block.rows.length };
       }
 
       const rowComplete = !hasRemainingLinesAfterContinuation;
@@ -1810,9 +1858,11 @@ export function layoutTableBlock({
       };
 
       applyTableFragmentPmRange(fragment, block, measure);
+      onFragmentStart?.(state, fragmentCursor);
       state.page.fragments.push(fragment);
       state.cursorY += fragmentHeight;
       state.maxCursorY = Math.max(state.maxCursorY, state.cursorY);
+      yield { index: Math.min(block.rows.length, forcedEndRow), total: block.rows.length };
       pendingPartialRow = forcedPartialRow;
       samePagePartialContinuation = true;
       isTableContinuation = true;
@@ -1862,9 +1912,11 @@ export function layoutTableBlock({
     };
 
     applyTableFragmentPmRange(fragment, block, measure);
+    onFragmentStart?.(state, fragmentCursor);
     state.page.fragments.push(fragment);
     state.cursorY += fragmentHeight;
     state.maxCursorY = Math.max(state.maxCursorY, state.cursorY);
+    yield { index: Math.min(block.rows.length, endRow), total: block.rows.length };
 
     // Handle partial row tracking
     if (partialRow && !partialRow.isLastPart) {
@@ -1883,6 +1935,12 @@ export function layoutTableBlock({
       samePagePartialContinuation = true;
     }
   }
+}
+
+export function layoutTableBlock(context: TableLayoutContext): void {
+  const steps = layoutTableBlockSteps(context);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
 }
 
 /**

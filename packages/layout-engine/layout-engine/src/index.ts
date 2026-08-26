@@ -68,7 +68,17 @@ import { layoutImageBlock } from './layout-image.js';
 import { layoutDrawingBlock } from './layout-drawing.js';
 import { alignInlineZeroHeightDrawingFragments } from './inline-drawing-alignment.js';
 import { layoutTextboxContent, resolveTextboxContentMeasures } from './layout-textbox.js';
-import { layoutTableBlock, createAnchoredTableFragment, isAnchoredTableFullWidth } from './layout-table.js';
+import {
+  layoutTableBlockSteps,
+  createAnchoredTableFragment,
+  isAnchoredTableFullWidth,
+  type TableLayoutCursor,
+} from './layout-table.js';
+import {
+  readTableLayoutResume,
+  writeTableLayoutResumeCheckpoints,
+  type TableLayoutResumeCheckpoint,
+} from './table-resume.js';
 import {
   collectAnchoredDrawingsSteps,
   collectAnchoredTablesSteps,
@@ -687,7 +697,7 @@ export type LayoutOptions = {
     activePageSize?: { w: number; h: number };
     /** Resolved active column layout at the resumed boundary. */
     activeColumns?: ColumnLayout;
-    /** Engine-authored exact state for a paragraph boundary inside the first emitted page. */
+    /** Engine-authored exact state for a flow-fragment boundary inside the first emitted page. */
     initialPageState?: {
       prefixFragments: readonly Page['fragments'][number][];
       cursorY: number;
@@ -2631,6 +2641,35 @@ function* layoutDocumentSteps(
   }
 
   const blockResumeCheckpoints = new Map<string, import('@superdoc/contracts').LayoutBlockResumeCheckpoint>();
+  const tableResumeCheckpoints = new Map<string, TableLayoutResumeCheckpoint[]>();
+  const requestedTableResume = readTableLayoutResume(options);
+  let tableResumeConsumed = false;
+  const captureTableResumeCheckpoint = (blockId: string, state: PageState, cursor: TableLayoutCursor): void => {
+    const checkpoint: TableLayoutResumeCheckpoint = {
+      blockId,
+      pageIndex: state.page.number - 1 - pageNumberOffset,
+      prefixFragmentCount: state.page.fragments.length,
+      cursorY: state.cursorY,
+      maxCursorY: state.maxCursorY,
+      columnIndex: state.columnIndex,
+      trailingSpacing: state.trailingSpacing,
+      ...(state.lastParagraphStyleId ? { lastParagraphStyleId: state.lastParagraphStyleId } : {}),
+      lastParagraphContextualSpacing: state.lastParagraphContextualSpacing,
+      ...(state.lastParagraphBorderHash ? { lastParagraphBorderHash: state.lastParagraphBorderHash } : {}),
+      constraintBoundaries: state.constraintBoundaries.map((boundary) => ({
+        y: boundary.y,
+        columns: { ...boundary.columns },
+      })),
+      activeConstraintIndex: state.activeConstraintIndex,
+      footnoteDemandThisPage: state.footnoteDemandThisPage,
+      footnoteRefsThisPage: state.footnoteRefsThisPage,
+      footnoteAnchorsThisPage: state.footnoteAnchorsThisPage.map((anchor) => ({ ...anchor })),
+      cursor,
+    };
+    const current = tableResumeCheckpoints.get(blockId);
+    if (current) current.push(checkpoint);
+    else tableResumeCheckpoints.set(blockId, [checkpoint]);
+  };
   const captureRenderDiagnosticPaginationProgress = (block: FlowBlock): V2RenderDiagnosticPaginationProgress | null => {
     if (block.kind !== 'paragraph') return null;
     const checkpoint = blockResumeCheckpoints.get(block.id);
@@ -3535,14 +3574,32 @@ function* layoutDocumentSteps(
           if (measure.kind !== 'table') {
             throw new Error(`layoutDocument: expected table measure for block ${block.id}`);
           }
-          layoutTableBlock({
+          const resumeCursor =
+            !tableResumeConsumed && requestedTableResume?.blockId === block.id
+              ? requestedTableResume.cursor
+              : undefined;
+          if (resumeCursor) tableResumeConsumed = true;
+          const tableSteps = layoutTableBlockSteps({
             block: block as TableBlock,
             measure: measure as TableMeasure,
             columnWidth: getCurrentColumnWidth(),
             ensurePage: paginator.ensurePage,
             advanceColumn: paginator.advanceColumn,
             columnX,
+            ...(resumeCursor ? { resumeCursor } : {}),
+            onFragmentStart: (state, cursor) => captureTableResumeCheckpoint(block.id, state, cursor),
           });
+          while (true) {
+            const tableStep = tableSteps.next();
+            if (tableStep.done) break;
+            if (checkpointEveryBlocks != null) {
+              yield {
+                phase: 'layout-document:table-fragment',
+                index: tableStep.value.index,
+                total: tableStep.value.total,
+              };
+            }
+          }
           continue;
         }
         // (handled earlier) list and image
@@ -4106,7 +4163,7 @@ function* layoutDocumentSteps(
     (pages[i] as { bodyMaxY?: number }).bodyMaxY = Math.max(s.topMargin ?? 0, adjusted);
   }
 
-  return {
+  const layout: Layout = {
     pageSize,
     pages,
     blockResumeCheckpoints,
@@ -4117,6 +4174,8 @@ function* layoutDocumentSteps(
     // a static document-wide value.
     columns: resolveColumnCount(activeColumns) > 1 ? resolveColumnLayout(activeColumns) : undefined,
   };
+  writeTableLayoutResumeCheckpoints(layout, tableResumeCheckpoints);
+  return layout;
 }
 
 /**
@@ -5179,6 +5238,13 @@ export type { NumberingContext, ResolvePageTokensResult, ResolvePageTokensOption
 // Table utilities consumed by layout-bridge and cross-package sync tests
 export { getCellLines, getEmbeddedRowLines, resolveTableFrame, resolveRenderedTableWidth } from './layout-table.js';
 export { describeCellRenderBlocks, computeCellSliceContentHeight } from './table-cell-slice.js';
+export {
+  readTableLayoutResumeCheckpoints,
+  writeTableLayoutResume,
+  writeTableLayoutResumeCheckpoints,
+} from './table-resume.js';
+export type { TableLayoutResumeCheckpoint, TableLayoutResumeInput } from './table-resume.js';
+export type { TableLayoutCursor, TableLayoutStep } from './layout-table.js';
 export { layoutTextboxContent, resolveTextboxContentMeasures } from './layout-textbox.js';
 
 export { SINGLE_COLUMN_DEFAULT } from './section-breaks.js';
