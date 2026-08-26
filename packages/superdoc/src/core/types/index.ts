@@ -1310,27 +1310,51 @@ export type LinkPopoverResolution =
 /** @deprecated replaceWith=`HyperlinkActivationHandler` removeIn=v3.0 */
 export type LinkPopoverResolver = (context: LinkPopoverContext) => LinkPopoverResolution | null | undefined;
 
-/**
- * Canonical presentation settings for the built-in comments UI.
- *
- * This type excludes interaction fields and `permissionResolver`. Those
- * settings stay active when the built-in comments UI is disabled, so
- * `normalizeUiConfig` removes them from the presentation bag.
- *
- * Open on purpose, for the same reason `modules.comments` is: the runtime
- * merges this bag over that block and spreads the result through the comments
- * store, which accepts pass-through keys. Closing it would reject working
- * configurations, which is a worse failure than the missing autocomplete it
- * would buy. The named fields are the ones the shell reads.
- */
-export type CommentsConfig = {
-  /** How comments present themselves as the surface narrows. */
-  displayMode?: 'auto' | 'sidebar' | 'inline';
-  /** CSS selector for an explicit width measurement target in `auto` mode. */
+/** Layouts supported by the built-in comments UI. */
+export type CommentsLayout = 'auto' | 'sidebar' | 'inline';
+
+/** Width settings used when `ui.comments.layout` is `auto`. */
+export interface CommentsResponsiveConfig {
+  /**
+   * Element whose width controls the layout. Pass an element or a CSS
+   * selector. Defaults to the nearest measurable Editor ancestor.
+   */
+  target?: string | HTMLElement;
+  /**
+   * Switch from sidebar to inline below this width, in CSS pixels. When
+   * omitted, SuperDoc derives the threshold from the document and sidebar.
+   */
+  breakpoint?: number;
+}
+
+/** Startup options for the built-in comments UI rendered by `ui.comments`. */
+export interface CommentsConfig {
+  /**
+   * Where comment threads render (default: `'sidebar'`). `auto` uses the
+   * available width to choose between sidebar and inline.
+   */
+  layout?: CommentsLayout;
+  /** Optional width settings for the `auto` layout. */
+  responsive?: CommentsResponsiveConfig;
+  /**
+   * How comments present themselves as the surface narrows.
+   * @deprecated replaceWith=`ui.comments.layout` removeIn=v3.0
+   */
+  displayMode?: CommentsLayout;
+  /**
+   * CSS selector for the width measurement target in `auto` mode.
+   * @deprecated replaceWith=`ui.comments.responsive.target` removeIn=v3.0
+   */
   compactMeasurementSelector?: string;
-  /** Fixed compact-mode breakpoint override, in pixels. */
+  /**
+   * Fixed compact-mode breakpoint in pixels.
+   * @deprecated replaceWith=`ui.comments.responsive.breakpoint` removeIn=v3.0
+   */
   compactBreakpointPx?: number;
-  /** Comment highlight colors (internal/external and active overrides). */
+  /**
+   * Comment highlight colors (internal/external and active overrides).
+   * @deprecated replaceWith=`--sd-comments-highlight-internal*` and `--sd-comments-highlight-external*` CSS custom properties removeIn=v3.0
+   */
   highlightColors?: {
     /** Base highlight color for internal comments. */
     internal?: string;
@@ -1341,18 +1365,30 @@ export type CommentsConfig = {
     /** Active highlight color override for external comments. */
     activeExternal?: string;
   };
-  /** Comment highlight opacity, active and inactive. */
+  /**
+   * Comment highlight opacity, active and inactive.
+   * @deprecated replaceWith=alpha values in the `--sd-comments-highlight-internal*` and `--sd-comments-highlight-external*` CSS custom properties removeIn=v3.0
+   */
   highlightOpacity?: {
     /** Opacity for the active comment highlight. */
     active?: number;
     /** Opacity for inactive comment highlights. */
     inactive?: number;
   };
-  /** Highlight color used while hovering a comment. */
+  /**
+   * Highlight color used while hovering a comment.
+   * @deprecated replaceWith=`--sd-comments-highlight-hover` removeIn=v3.0
+   */
   highlightHoverColor?: string;
-  /** Tracked-change highlight colors. */
+  /**
+   * Tracked-change highlight colors.
+   * @deprecated replaceWith=`--sd-tracked-changes-*` CSS custom properties removeIn=v3.0
+   */
   trackChangeHighlightColors?: TrackChangeHighlightColors;
-  /** Active tracked-change highlight colors (defaults to the above). */
+  /**
+   * Active tracked-change highlight colors.
+   * @deprecated replaceWith=`--sd-tracked-changes-*` CSS custom properties removeIn=v3.0
+   */
   trackChangeActiveHighlightColors?: TrackChangeHighlightColors;
   /**
    * These fields are not presentation settings. `normalizeUiConfig` removes
@@ -1372,7 +1408,7 @@ export type CommentsConfig = {
   allowResolve?: never;
   level?: never;
   permissionResolver?: never;
-} & Record<string, unknown>;
+}
 
 /** Border and background colors for one tracked-change highlight state. */
 export interface TrackChangeHighlightColors {
@@ -2388,11 +2424,12 @@ export interface Modules {
     chrome?: 'default' | 'none';
   };
   /**
-   * Comments module configuration (false to disable). The named fields below
-   * are typed for IDE help; the runtime spreads the entire object through the
-   * comments store and accepts additional keys (`useInternalExternalComments`,
-   * `suppressInternalExternalComments`, etc.), so the type intersects with an
-   * open index signature to keep pass-through configs compiling.
+   * Comments module configuration (false to disable). Retained for v2
+   * compatibility; new integrations configure presentation through
+   * `ui.comments`, actions through `interaction.comments`, and a custom
+   * resolver through top-level `permissionResolver`.
+   *
+   * @deprecated replaceWith=`ui.comments|interaction.comments|permissionResolver` removeIn=v3.0
    */
   comments?:
     | false
@@ -2410,7 +2447,10 @@ export interface Modules {
          * @deprecated replaceWith=`interaction.comments.level` compat-indefinitely=v2 configuration compatibility
          */
         allowResolve?: boolean;
-        /** Comment highlight colors (internal/external and active overrides). */
+        /**
+         * Comment highlight colors (internal/external and active overrides).
+         * @deprecated replaceWith=`--sd-comments-highlight-internal*` and `--sd-comments-highlight-external*` CSS custom properties removeIn=v3.0
+         */
         highlightColors?: {
           /** Base highlight color for internal comments. */
           internal?: string;
@@ -2421,16 +2461,25 @@ export interface Modules {
           /** Active highlight color override for external comments. */
           activeExternal?: string;
         };
-        /** Comment highlight opacity values (0-1). */
+        /**
+         * Comment highlight opacity values (0-1).
+         * @deprecated replaceWith=alpha values in the `--sd-comments-highlight-internal*` and `--sd-comments-highlight-external*` CSS custom properties removeIn=v3.0
+         */
         highlightOpacity?: {
           /** Opacity for active comment highlight. */
           active?: number;
           /** Opacity for inactive comment highlight. */
           inactive?: number;
         };
-        /** Hover highlight color for comment marks. */
+        /**
+         * Hover highlight color for comment marks.
+         * @deprecated replaceWith=`--sd-comments-highlight-hover` removeIn=v3.0
+         */
         highlightHoverColor?: string;
-        /** Track change highlight colors. */
+        /**
+         * Track change highlight colors.
+         * @deprecated replaceWith=`--sd-tracked-changes-*` CSS custom properties removeIn=v3.0
+         */
         trackChangeHighlightColors?: {
           /** Border color for inserted text highlight. */
           insertBorder?: string;
@@ -2443,7 +2492,10 @@ export interface Modules {
           /** Border color for format change highlight. */
           formatBorder?: string;
         };
-        /** Active track change highlight colors (defaults to trackChangeHighlightColors). */
+        /**
+         * Active track change highlight colors (defaults to trackChangeHighlightColors).
+         * @deprecated replaceWith=`--sd-tracked-changes-*` CSS custom properties removeIn=v3.0
+         */
         trackChangeActiveHighlightColors?: {
           /** Active border color for inserted text highlight. */
           insertBorder?: string;
@@ -2456,11 +2508,20 @@ export interface Modules {
           /** Active border color for format change highlight. */
           formatBorder?: string;
         };
-        /** Comments/track-changes UI display policy for responsive comment surfaces. */
+        /**
+         * Comments UI layout.
+         * @deprecated replaceWith=`ui.comments.layout` removeIn=v3.0
+         */
         displayMode?: 'auto' | 'sidebar' | 'inline';
-        /** CSS selector for an explicit width measurement target in auto mode. */
+        /**
+         * CSS selector for an explicit width measurement target in auto mode.
+         * @deprecated replaceWith=`ui.comments.responsive.target` removeIn=v3.0
+         */
         compactMeasurementSelector?: string;
-        /** Optional fixed compact-mode breakpoint override in pixels. */
+        /**
+         * Optional fixed compact-mode breakpoint override in pixels.
+         * @deprecated replaceWith=`ui.comments.responsive.breakpoint` removeIn=v3.0
+         */
         compactBreakpointPx?: number;
       } & Record<string, unknown>);
   /** AI module configuration. */
@@ -3820,6 +3881,28 @@ export interface UIConfig {
 /** Allowed values for `interaction.comments.level`. */
 export type CommentInteractionLevel = 'read' | 'write' | 'resolve';
 
+/** Client-side comment actions allowed by this Editor. */
+export interface CommentInteractionConfig {
+  /**
+   * The highest comment interaction level this Editor allows (default: `resolve`).
+   *
+   * `read` allows reading threads only. `write` also allows create, reply,
+   * edit, and delete. `resolve` also allows resolve and reopen.
+   */
+  level?: CommentInteractionLevel;
+  /**
+   * Block comment mutations. Also block tracked-change accept/reject unless
+   * `interaction.trackedChanges.allowDecisions` is set (default: false).
+   * @deprecated replaceWith=`interaction.comments.level` and `interaction.trackedChanges.allowDecisions` compat-indefinitely=v2 configuration compatibility
+   */
+  readOnly?: boolean;
+  /**
+   * Allow comment resolve and reopen actions when comment writes are enabled (default: true).
+   * @deprecated replaceWith=`interaction.comments.level` compat-indefinitely=v2 configuration compatibility
+   */
+  allowResolve?: boolean;
+}
+
 /**
  * Controls which interactions this Editor allows, independent of what
  * SuperDoc renders.
@@ -3829,26 +3912,7 @@ export type CommentInteractionLevel = 'read' | 'write' | 'resolve';
  */
 export interface InteractionConfig {
   /** Comment interaction policy. */
-  comments?: {
-    /**
-     * The highest comment interaction level this Editor allows (default: `resolve`).
-     *
-     * `read` allows reading threads only. `write` also allows create, reply,
-     * edit, and delete. `resolve` also allows resolve and reopen.
-     */
-    level?: CommentInteractionLevel;
-    /**
-     * Block comment mutations. Also block tracked-change accept/reject unless
-     * `interaction.trackedChanges.allowDecisions` is set (default: false).
-     * @deprecated replaceWith=`interaction.comments.level` and `interaction.trackedChanges.allowDecisions` compat-indefinitely=v2 configuration compatibility
-     */
-    readOnly?: boolean;
-    /**
-     * Allow comment resolve and reopen actions when comment writes are enabled (default: true).
-     * @deprecated replaceWith=`interaction.comments.level` compat-indefinitely=v2 configuration compatibility
-     */
-    allowResolve?: boolean;
-  };
+  comments?: CommentInteractionConfig;
   /** Tracked-change interaction policy. */
   trackedChanges?: {
     /**

@@ -12,48 +12,42 @@
  * that failure is worse: it blocks a working configuration at compile time.
  * Each accepted field below is one the runtime reads.
  *
- * Which is why the three bags do not all close. `ui.search` and
- * `ui.contentControls` reach readers with fixed field sets, so an unknown key
- * there is always a mistake and both reject one. `ui.comments` is merged over
- * `modules.comments` and spread through the comments store, which takes
- * pass-through keys, so closing it would reject configurations that work
- * today.
- *
- * That leaves `ui.comments` unable to catch a plain typo, which is the part of
- * #1094 this cannot finish. What it does catch is the two failures that are
- * not guesses about intent: a wrong value for a named field, and the three
- * policy fields the profile strips. Accepting those would be the same defect
- * as an options bag nobody reads, so they are rejected by name.
+ * All three canonical bags now have fixed public contracts. Legacy comment
+ * pass-through options remain available through `modules.comments`, while
+ * `ui.comments` rejects unknown presentation fields instead of accepting a
+ * typo that has no effect.
  */
-import type { CommentsConfig, ContentControlsConfig, Config, FindReplaceConfig } from 'superdoc';
+import type {
+  CommentInteractionConfig,
+  CommentsConfig,
+  CommentsLayout,
+  CommentsResponsiveConfig,
+  ContentControlsConfig,
+  Config,
+  FindReplaceConfig,
+} from 'superdoc';
 
 // --- Accepted: every field the runtime actually reads ----------------------
 
-// The shell merges this bag over `modules.comments` and reads both the
-// responsive-layout fields and the highlight colors off the result, so all of
-// them have to compile through the canonical spelling.
+// Layout is canonical. Advanced responsive settings stay grouped under the
+// decision they affect instead of exposing compact-mode implementation names.
 const _comments: Config = {
   selector: '#editor',
   ui: {
     comments: {
-      displayMode: 'inline',
-      compactMeasurementSelector: '#doc',
-      compactBreakpointPx: 720,
-      highlightHoverColor: '#eef',
-      highlightColors: { internal: '#fee', activeExternal: '#eff' },
-      highlightOpacity: { active: 0.4, inactive: 0.2 },
-      trackChangeHighlightColors: { insertBorder: '#0a0' },
-      trackChangeActiveHighlightColors: { deleteBackground: '#fdd' },
+      layout: 'auto',
+      responsive: {
+        target: '#doc',
+        breakpoint: 720,
+      },
     },
   },
 };
 
-// The comments store spreads whatever it is given, so pass-through keys stay
-// legal. This bag is open for that reason and cannot catch a typo; the two
-// closed bags below can.
-const _commentsPassthrough: Config = {
+const _typoComments: Config = {
   selector: '#editor',
-  ui: { comments: { useInternalExternalComments: true } },
+  // @ts-expect-error `layuot` is not a comments UI option.
+  ui: { comments: { layuot: 'inline' } },
 };
 
 // `ui.search` options reach `useFindReplace` as its config, so the surface's
@@ -113,8 +107,8 @@ const _typoChrome: Config = {
 // applies even though unknown keys fall through to the index signature.
 const _badDisplayMode: Config = {
   selector: '#editor',
-  // @ts-expect-error 'sidebarr' is not one of the three display modes.
-  ui: { comments: { displayMode: 'sidebarr' } },
+  // @ts-expect-error 'sidebarr' is not one of the three layouts.
+  ui: { comments: { layout: 'sidebarr' } },
 };
 
 // Policy is not presentation. `normalizeUiConfig` strips these three before
@@ -146,7 +140,25 @@ const _policyResolver: Config = {
   ui: { comments: { permissionResolver: () => true } },
 };
 
-// The legacy block still accepts these fields for v2 compatibility.
+// Deprecated aliases remain source-compatible while their declarations point
+// consumers to `layout` and `responsive`.
+const _deprecatedPresentation: Config = {
+  selector: '#editor',
+  ui: {
+    comments: {
+      displayMode: 'inline',
+      compactMeasurementSelector: '#doc',
+      compactBreakpointPx: 720,
+      highlightHoverColor: '#eef',
+      highlightColors: { internal: '#fee', activeExternal: '#eff' },
+      highlightOpacity: { active: 0.4, inactive: 0.2 },
+      trackChangeHighlightColors: { insertBorder: '#0a0' },
+      trackChangeActiveHighlightColors: { deleteBackground: '#fdd' },
+    },
+  },
+};
+
+// The legacy block still accepts its fields for v2 compatibility.
 // `permissionResolver` has no `interaction` spelling: `pickResolver` checks
 // `modules.comments.permissionResolver`, then the top-level `Config` field.
 const _legacyPolicy: Config = {
@@ -175,13 +187,16 @@ const _badChrome: Config = {
 
 // The interfaces are reachable by name, so an application can annotate the
 // config it builds before handing it over.
-const _namedComments: CommentsConfig = { displayMode: 'auto' };
+const _namedComments: CommentsConfig = { layout: 'auto' };
+const _namedLayout: CommentsLayout = 'inline';
+const _namedResponsive: CommentsResponsiveConfig = { target: document.body, breakpoint: 900 };
+const _namedInteraction: CommentInteractionConfig = { level: 'write' };
 const _namedChrome: ContentControlsConfig = { chrome: 'default' };
 const _namedSearch: FindReplaceConfig = { findPlaceholder: 'Find' };
 
 export {
   _comments,
-  _commentsPassthrough,
+  _typoComments,
   _search,
   _searchFloating,
   _contentControls,
@@ -194,10 +209,14 @@ export {
   _policyAllowResolve,
   _policyLevel,
   _policyResolver,
+  _deprecatedPresentation,
   _legacyPolicy,
   _interactionPolicy,
   _topLevelResolver,
   _namedComments,
+  _namedLayout,
+  _namedResponsive,
+  _namedInteraction,
   _namedChrome,
   _namedSearch,
 };

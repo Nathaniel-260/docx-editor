@@ -7,6 +7,7 @@
  */
 import { describe, expect, it, vi } from 'vite-plus/test';
 import SuperDocSource from '../../SuperDoc.vue?raw';
+import { mergeCommentsConfig } from './merge-comments-config.js';
 import { normalizeUiConfig } from './normalize-ui-config.js';
 import { mergeDefined } from './merge-defined.js';
 
@@ -523,20 +524,57 @@ describe('uiConfig reaches the runtime', () => {
       // `commentsModuleConfig` merges the profile's presentation options over
       // the live `modules.comments` block, so the assertion is on that merge:
       // presentation arrives, and the policy the runtime assigned survives it.
-      const merged = (superdoc) => mergeDefined(superdoc.config.modules.comments, superdoc.uiConfig.comments.options);
+      const merged = (superdoc) =>
+        mergeCommentsConfig(superdoc.config.modules.comments, superdoc.uiConfig.comments.options);
 
-      it('carries the canonical display mode to the layout', async () => {
-        const superdoc = await mountInstance({ ui: { comments: { displayMode: 'auto' } } });
-        expect(merged(superdoc).displayMode).toBe('auto');
+      it('carries the canonical layout and responsive settings to the UI', async () => {
+        const superdoc = await mountInstance({
+          ui: { comments: { layout: 'auto', responsive: { target: '#workspace', breakpoint: 1200 } } },
+        });
+        expect(merged(superdoc)).toMatchObject({
+          layout: 'auto',
+          responsive: { target: '#workspace', breakpoint: 1200 },
+        });
+        cleanup(superdoc);
+      });
+
+      it('combines responsive settings while each field is migrated independently', async () => {
+        const legacyTarget = await mountInstance({
+          modules: { comments: { compactMeasurementSelector: '#legacy-workspace' } },
+          ui: { comments: { responsive: { breakpoint: 1200 } } },
+        });
+        expect(merged(legacyTarget).responsive).toEqual({ target: '#legacy-workspace', breakpoint: 1200 });
+        cleanup(legacyTarget);
+
+        const legacyBreakpoint = await mountInstance({
+          modules: { comments: { compactBreakpointPx: 960 } },
+          ui: { comments: { responsive: { target: '#workspace' } } },
+        });
+        expect(merged(legacyBreakpoint).responsive).toEqual({ target: '#workspace', breakpoint: 960 });
+        cleanup(legacyBreakpoint);
+      });
+
+      it('prefers canonical responsive settings when both spellings set the same field', async () => {
+        const superdoc = await mountInstance({
+          modules: {
+            comments: {
+              compactMeasurementSelector: '#legacy-workspace',
+              compactBreakpointPx: 960,
+            },
+          },
+          ui: { comments: { responsive: { target: '#workspace', breakpoint: 1200 } } },
+        });
+
+        expect(merged(superdoc).responsive).toEqual({ target: '#workspace', breakpoint: 1200 });
         cleanup(superdoc);
       });
 
       it('validates the canonical spelling the same way the legacy block is validated', async () => {
-        const superdoc = await mountInstance({ ui: { comments: { displayMode: 'bogus' } } });
-        expect(merged(superdoc).displayMode).toBeUndefined();
+        const superdoc = await mountInstance({ ui: { comments: { layout: 'bogus' } } });
+        expect(merged(superdoc).layout).toBeUndefined();
         cleanup(superdoc);
 
-        const bad = normalizeUiConfig({ ui: { comments: { compactBreakpointPx: -1 } } });
+        const bad = normalizeUiConfig({ ui: { comments: { responsive: { breakpoint: -1 } } } });
         expect(bad.comments.options).toEqual({});
       });
 
@@ -547,10 +585,10 @@ describe('uiConfig reaches the runtime', () => {
         const permissionResolver = () => true;
         const superdoc = await mountInstance({
           interaction: { comments: { readOnly: false, allowResolve: true } },
-          ui: { comments: { displayMode: 'auto', readOnly: true, allowResolve: false, permissionResolver } },
+          ui: { comments: { layout: 'auto', readOnly: true, allowResolve: false, permissionResolver } },
         });
 
-        expect(superdoc.uiConfig.comments.options).toEqual({ displayMode: 'auto' });
+        expect(superdoc.uiConfig.comments.options).toEqual({ layout: 'auto' });
 
         const view = merged(superdoc);
         expect(view.readOnly).toBe(false);

@@ -106,7 +106,12 @@ export type { SuperDocLayoutEngineOptions as LayoutEngineOptions } from '../core
 export type { FlowBlock, FlowMode, Layout, Fragment as LayoutFragment, Page as LayoutPage } from '@superdoc/contracts';
 export type { LayoutMetrics } from '@superdoc/layout-bridge';
 export type { LayoutMode } from '@superdoc/painter-dom';
-export type { CommentsConfig } from '../core/types/index.js';
+export type {
+  CommentInteractionConfig,
+  CommentsConfig,
+  CommentsLayout,
+  CommentsResponsiveConfig,
+} from '../core/types/index.js';
 export type { TrackChangeHighlightColors } from '../core/types/index.js';
 export type { ContentControlsConfig } from '../core/types/index.js';
 export type { FontFamilyOption } from './ui/types.js';

@@ -38,7 +38,7 @@ import { useHighContrastMode } from './composables/use-high-contrast-mode';
 import { useCommentSmallScreen } from './composables/use-comment-small-screen.js';
 import { useCompactCommentPopover } from './composables/use-compact-comment-popover.js';
 import { getVisibleThreadAnchorClientY } from './helpers/comment-focus.js';
-import { mergeDefined } from './core/config/merge-defined.js';
+import { mergeCommentsConfig } from './core/config/merge-comments-config.js';
 import { normalizeHyperlinksConfig } from './core/config/normalize-hyperlinks-config.js';
 import { getV2TrackedChangeMutationImpact } from './helpers/v2-review-mutation-impact.js';
 import { resolveV2ReviewTargetCommentId } from './helpers/v2-review-target.js';
@@ -63,10 +63,10 @@ import { resolveV2Integration } from './core/v2-integration/v2-integration.js';
 import { resolveV2CollaborationTarget } from './core/collaboration/resolve-v2-collaboration-target.js';
 import SurfaceHost from './components/surfaces/SurfaceHost.vue';
 import {
-  DEFAULT_COMMENTS_DISPLAY_MODE,
+  DEFAULT_COMMENTS_LAYOUT,
   isActiveTrackedChangeContextMenuTarget,
   RIGHT_CLICK_COMMENT_SUPPRESS_MS,
-  VALID_COMMENTS_DISPLAY_MODES,
+  VALID_COMMENTS_LAYOUTS,
 } from './helpers/comment-small-screen.js';
 
 const PdfViewer = defineAsyncComponent(() => import('./components/PdfViewer/PdfViewer.vue'));
@@ -247,7 +247,7 @@ const commentsModuleConfig = computed(() => {
   // shared object) keeps policy and collaboration state untouched.
   const presentation = proxy.$superdoc?.uiConfig?.comments?.options;
   if (!presentation || Object.keys(presentation).length === 0) return config;
-  return mergeDefined(config, presentation);
+  return mergeCommentsConfig(config, presentation);
 });
 
 const superdocStyleVars = computed(() => {
@@ -2581,12 +2581,12 @@ const hasPdfFloatingComments = computed(() => {
 });
 
 const shouldUseSidebarComments = computed(() => {
-  const displayMode = commentsModuleConfig.value?.displayMode ?? DEFAULT_COMMENTS_DISPLAY_MODE;
-  if (!VALID_COMMENTS_DISPLAY_MODES.has(displayMode)) return true;
-  if (displayMode === 'sidebar') return true;
-  if (displayMode === 'inline') return false;
+  const layout = commentsModuleConfig.value?.layout ?? DEFAULT_COMMENTS_LAYOUT;
+  if (!VALID_COMMENTS_LAYOUTS.has(layout)) return true;
+  if (layout === 'sidebar') return true;
+  if (layout === 'inline') return false;
   // Backward-compatible default: keep sidebar unless integrator explicitly opts into auto.
-  if (displayMode !== 'auto') return true;
+  if (layout !== 'auto') return true;
   return !isCompactCommentsMode.value;
 });
 const showCommentsSidebar = computed(() => {

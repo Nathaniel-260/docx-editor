@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-25T21:12:02.168Z",
+  "generatedAt": "2026-08-26T00:46:15.601Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -26,8 +26,11 @@
         "CanPerformPermissionParams",
         "CollaborationConfig",
         "CommentAddress",
+        "CommentInteractionConfig",
         "CommentInteractionLevel",
         "CommentsConfig",
+        "CommentsLayout",
+        "CommentsResponsiveConfig",
         "CommentsType",
         "Config",
         "ContentControlActiveChangePayload",
@@ -269,8 +272,11 @@
         "CanPerformPermissionParams",
         "CollaborationConfig",
         "CommentAddress",
+        "CommentInteractionConfig",
         "CommentInteractionLevel",
         "CommentsConfig",
+        "CommentsLayout",
+        "CommentsResponsiveConfig",
         "CommentsType",
         "Config",
         "ContentControlActiveChangePayload",
@@ -531,11 +537,11 @@
     }
   },
   "counts": {
-    "types.import": 237,
-    "types.require": 237,
+    "types.import": 240,
+    "types.require": 240,
     "import": 10,
     "require": 10,
-    "union": 237
+    "union": 240
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -559,8 +565,11 @@
         "CanPerformPermissionParams",
         "CollaborationConfig",
         "CommentAddress",
+        "CommentInteractionConfig",
         "CommentInteractionLevel",
         "CommentsConfig",
+        "CommentsLayout",
+        "CommentsResponsiveConfig",
         "CommentsType",
         "Config",
         "ContentControlActiveChangePayload",

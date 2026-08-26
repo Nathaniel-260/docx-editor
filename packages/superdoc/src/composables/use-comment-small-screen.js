@@ -1,6 +1,6 @@
 import { onBeforeUnmount, ref } from 'vue';
 import {
-  DEFAULT_COMMENTS_DISPLAY_MODE,
+  DEFAULT_COMMENTS_LAYOUT,
   DEFAULT_COMMENTS_MIN_GUTTER_PX,
   DEFAULT_COMMENTS_SIDEBAR_LANE_PX,
   DEFAULT_DOCUMENT_VISIBLE_MIN_WIDTH_PX,
@@ -34,12 +34,18 @@ export function useCommentSmallScreen({ commentsModuleConfig, superdocRoot, laye
   };
 
   // Resolve where "available width" should be read from:
-  // explicit selector -> nearest measurable ancestor -> superdoc root.
+  // explicit target -> nearest measurable ancestor -> superdoc root.
   const resolveCompactMeasurementTarget = () => {
     const root = superdocRoot.value;
-    const selector = commentsModuleConfig.value?.compactMeasurementSelector;
-    if (typeof selector === 'string' && selector.trim().length > 0 && typeof document !== 'undefined') {
-      const selected = document.querySelector(selector.trim());
+    const target = commentsModuleConfig.value?.responsive?.target;
+    if (isValidMeasurementTarget(target)) return target;
+    if (typeof target === 'string' && target.trim().length > 0 && typeof document !== 'undefined') {
+      let selected = null;
+      try {
+        selected = document.querySelector(target.trim());
+      } catch {
+        selected = null;
+      }
       if (isValidMeasurementTarget(selected)) return selected;
     }
     let ancestor = root?.parentElement ?? null;
@@ -52,8 +58,8 @@ export function useCommentSmallScreen({ commentsModuleConfig, superdocRoot, laye
     return null;
   };
 
-  // Keep a single ResizeObserver bound to the current effective target and
-  // rebind it when selector/DOM structure changes.
+  // Keep one ResizeObserver bound to the effective target. Rebind it when the
+  // configured target or surrounding DOM changes.
   const ensureCompactMeasurementObserver = () => {
     const ResizeObserverClass = typeof window !== 'undefined' ? window.ResizeObserver : undefined;
     if (typeof ResizeObserverClass === 'undefined') return;
@@ -108,19 +114,19 @@ export function useCommentSmallScreen({ commentsModuleConfig, superdocRoot, laye
     return DEFAULT_DOCUMENT_VISIBLE_MIN_WIDTH_PX;
   };
 
-  // Compute compact mode from policy:
-  // explicit display mode wins, then optional breakpoint override, then formula threshold.
+  // For `auto`, prefer an explicit breakpoint and otherwise derive one from
+  // the measured document and sidebar widths.
   const recalculateCompactCommentsMode = () => {
     const width = getAvailableCommentsContainerWidth();
 
     const commentsConfig = commentsModuleConfig.value;
-    const displayMode = commentsConfig?.displayMode ?? DEFAULT_COMMENTS_DISPLAY_MODE;
-    if (displayMode === 'sidebar') {
+    const layout = commentsConfig?.layout ?? DEFAULT_COMMENTS_LAYOUT;
+    if (layout === 'sidebar') {
       superdocContainerWidth.value = width;
       isCompactCommentsMode.value = false;
       return;
     }
-    if (displayMode === 'inline') {
+    if (layout === 'inline') {
       superdocContainerWidth.value = width;
       isCompactCommentsMode.value = true;
       return;
@@ -130,7 +136,7 @@ export function useCommentSmallScreen({ commentsModuleConfig, superdocRoot, laye
     }
     superdocContainerWidth.value = width;
 
-    const configuredBreakpoint = commentsConfig?.compactBreakpointPx;
+    const configuredBreakpoint = commentsConfig?.responsive?.breakpoint;
     if (isValidCompactBreakpoint(configuredBreakpoint)) {
       isCompactCommentsMode.value = width < configuredBreakpoint;
       return;

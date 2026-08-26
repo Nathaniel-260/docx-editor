@@ -72,7 +72,7 @@ describe('useCommentSmallScreen', () => {
     setClientWidth(root, 1000);
     setClientWidth(layers, 816);
 
-    commentsModuleConfig = ref({ displayMode: 'auto' });
+    commentsModuleConfig = ref({ layout: 'auto' });
   });
 
   afterEach(() => {
@@ -80,8 +80,8 @@ describe('useCommentSmallScreen', () => {
     document.body.innerHTML = '';
   });
 
-  it('forces sidebar mode when displayMode is sidebar', () => {
-    commentsModuleConfig.value = { displayMode: 'sidebar' };
+  it('forces sidebar layout', () => {
+    commentsModuleConfig.value = { layout: 'sidebar' };
     const { api: state, wrapper } = mountComposable();
 
     state.recalculateCompactCommentsMode();
@@ -91,8 +91,8 @@ describe('useCommentSmallScreen', () => {
     wrapper.unmount();
   });
 
-  it('forces inline mode when displayMode is inline', () => {
-    commentsModuleConfig.value = { displayMode: 'inline' };
+  it('forces inline layout', () => {
+    commentsModuleConfig.value = { layout: 'inline' };
     const { api: state, wrapper } = mountComposable();
 
     state.recalculateCompactCommentsMode();
@@ -102,8 +102,8 @@ describe('useCommentSmallScreen', () => {
     wrapper.unmount();
   });
 
-  it('uses compactBreakpointPx when configured', () => {
-    commentsModuleConfig.value = { displayMode: 'auto', compactBreakpointPx: 1100 };
+  it('uses the configured responsive breakpoint', () => {
+    commentsModuleConfig.value = { layout: 'auto', responsive: { breakpoint: 1100 } };
     const { api: state, wrapper } = mountComposable();
 
     state.recalculateCompactCommentsMode();
@@ -118,7 +118,7 @@ describe('useCommentSmallScreen', () => {
   });
 
   it('uses measured document width formula when no explicit breakpoint', () => {
-    commentsModuleConfig.value = { displayMode: 'auto' };
+    commentsModuleConfig.value = { layout: 'auto' };
     const documentEl = document.createElement('div');
     documentEl.className = 'superdoc__document';
     root.appendChild(documentEl);
@@ -139,7 +139,7 @@ describe('useCommentSmallScreen', () => {
   });
 
   it('falls back to default document width when document/layers width is unavailable', () => {
-    commentsModuleConfig.value = { displayMode: 'auto' };
+    commentsModuleConfig.value = { layout: 'auto' };
     setClientWidth(layers, 0);
     setRectWidth(layers, 0);
 
@@ -157,21 +157,51 @@ describe('useCommentSmallScreen', () => {
     wrapper.unmount();
   });
 
-  it('uses compactMeasurementSelector when provided', () => {
+  it('uses the configured responsive target selector', () => {
     const shell = document.createElement('div');
     shell.id = 'measurement-shell';
     document.body.appendChild(shell);
     setClientWidth(shell, 777);
 
     commentsModuleConfig.value = {
-      displayMode: 'sidebar',
-      compactMeasurementSelector: '#measurement-shell',
+      layout: 'sidebar',
+      responsive: { target: '#measurement-shell' },
     };
 
     const { api: state, wrapper } = mountComposable();
     state.recalculateCompactCommentsMode();
 
     expect(state.superdocContainerWidth.value).toBe(777);
+    wrapper.unmount();
+  });
+
+  it('uses a responsive target element without a selector lookup', () => {
+    const shell = document.createElement('div');
+    document.body.appendChild(shell);
+    setClientWidth(shell, 888);
+
+    commentsModuleConfig.value = {
+      layout: 'sidebar',
+      responsive: { target: shell },
+    };
+
+    const { api: state, wrapper } = mountComposable();
+    state.recalculateCompactCommentsMode();
+
+    expect(state.superdocContainerWidth.value).toBe(888);
+    wrapper.unmount();
+  });
+
+  it('falls back to the nearest measurable ancestor for an invalid target selector', () => {
+    commentsModuleConfig.value = {
+      layout: 'sidebar',
+      responsive: { target: '[' },
+    };
+
+    const { api: state, wrapper } = mountComposable();
+
+    expect(() => state.recalculateCompactCommentsMode()).not.toThrow();
+    expect(state.superdocContainerWidth.value).toBe(1200);
     wrapper.unmount();
   });
 
@@ -183,8 +213,8 @@ describe('useCommentSmallScreen', () => {
     setRectWidth(selectorTarget, 654);
 
     commentsModuleConfig.value = {
-      displayMode: 'sidebar',
-      compactMeasurementSelector: '#rect-only',
+      layout: 'sidebar',
+      responsive: { target: '#rect-only' },
     };
 
     const { api: state, wrapper } = mountComposable();
@@ -194,7 +224,7 @@ describe('useCommentSmallScreen', () => {
   });
 
   it('falls back to layers width when document width is unavailable', () => {
-    commentsModuleConfig.value = { displayMode: 'auto' };
+    commentsModuleConfig.value = { layout: 'auto' };
     const documentEl = document.createElement('div');
     documentEl.className = 'superdoc__document';
     root.appendChild(documentEl);
@@ -228,7 +258,7 @@ describe('useCommentSmallScreen', () => {
   });
 
   it('returns null measurement target when root is missing', () => {
-    const detachedConfig = ref({ displayMode: 'auto' });
+    const detachedConfig = ref({ layout: 'auto' });
     let api;
     const Harness = defineComponent({
       setup() {

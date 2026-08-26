@@ -29,7 +29,7 @@
  */
 
 import { firstDefined, mergeDefined } from './merge-defined.js';
-import { normalizeCommentsUiPolicy } from '../../helpers/comment-small-screen.js';
+import { normalizeCommentsUiConfig } from '../../helpers/comment-small-screen.js';
 import { TOOLBAR_ITEM_ALIASES } from '../../internal/toolbar/toolbar-item-aliases.js';
 
 /** Surfaces that render when the consumer says nothing at all. */
@@ -579,10 +579,9 @@ export function normalizeUiConfig(config = {}) {
       // is stripped rather than merged: it resolves through the interaction
       // profile, and a copy here would outrank it in the merged view.
       //
-      // Validated with the same rules the legacy block gets in `SuperDoc.ts`,
-      // so an invalid `ui.comments.displayMode` falls back to the default
-      // instead of reaching the layout through the newer spelling.
-      options: allDisabled ? {} : normalizeCommentsUiPolicy(withoutCommentPolicy(options('comments'))),
+      // Validate this block with the same rules used for `modules.comments` so
+      // invalid canonical values cannot reach the layout code.
+      options: allDisabled ? {} : normalizeCommentsUiConfig(withoutCommentPolicy(options('comments'))),
     },
 
     contextMenu: {

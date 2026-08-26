@@ -664,9 +664,8 @@ const init = async () => {
         // useInternalExternalComments: true,
         // suppressInternalExternal: true,
         permissionResolver: commentPermissionResolver,
-        displayMode: 'auto',
-        // compactMeasurementSelector: '#superdoc',
-        // compactBreakpointPx: 1400,
+        layout: 'auto',
+        // responsive: { target: '#superdoc', breakpoint: 1400 },
       },
       trackChanges: {
         visible: true,

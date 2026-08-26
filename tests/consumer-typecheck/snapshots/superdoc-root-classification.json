@@ -1,10 +1,10 @@
 {
   "generatedAt": "2026-06-23T01:53:02.997Z",
   "summary": {
-    "total": 231,
+    "total": 234,
     "byBucket": {
       "legacy-root": 3,
-      "supported-root": 228
+      "supported-root": 231
     },
     "byConfidence": {
       "high": 183,
@@ -134,6 +134,17 @@
       "inCjs": false
     },
     {
+      "name": "CommentInteractionConfig",
+      "bucket": "supported-root",
+      "rationale": "Named client-side comment action policy accepted by InteractionConfig.comments.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "CommentInteractionLevel",
       "bucket": "supported-root",
       "rationale": "Canonical comment-interaction policy level used by InteractionConfig.comments and exported for consumers configuring custom comment UI.",
@@ -148,6 +159,28 @@
       "name": "CommentsConfig",
       "bucket": "supported-root",
       "rationale": "Canonical comments presentation config type. Public extension surface for ui.comments; interaction policy lives on interaction.comments.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "CommentsLayout",
+      "bucket": "supported-root",
+      "rationale": "Layout values accepted by the built-in comments UI configuration.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "CommentsResponsiveConfig",
+      "bucket": "supported-root",
+      "rationale": "Named width-source and breakpoint options used by the automatic comments layout.",
       "confidence": "high",
       "source": "config-supported",
       "inDts": true,

@@ -1,8 +1,8 @@
 /**
  * Client-side interaction policy, separate from the UI that SuperDoc renders.
  *
- * `modules.comments` currently mixes the two. `highlightColors` and
- * `displayMode` describe the built-in comment UI, while comment capability
+ * `modules.comments` currently mixes the two. Highlight styling and `layout`
+ * describe the built-in comment UI, while comment capability
  * and tracked-change decisions stay meaningful when the application renders
  * its own UI. Under `ui: false` the built-in dialog is gone, but interaction
  * policy still has to reject forbidden mutations.

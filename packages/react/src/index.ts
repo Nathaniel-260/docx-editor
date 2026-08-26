@@ -1,6 +1,13 @@
 // Main component
 export { SuperDocEditor, default } from './SuperDocEditor';
-export type { ToolbarConfig } from 'superdoc';
+export type {
+  CommentInteractionConfig,
+  CommentInteractionLevel,
+  CommentsConfig,
+  CommentsLayout,
+  CommentsResponsiveConfig,
+  ToolbarConfig,
+} from 'superdoc';
 
 // Types - extracted from superdoc package for convenience
 export type {

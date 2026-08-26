@@ -32,7 +32,7 @@ import { DEFAULT_SUPERDOC_USER as DEFAULT_USER, normalizeSuperDocUser } from './
 import { normalizeUiConfig } from './config/normalize-ui-config.js';
 import { normalizeInteractionConfig } from './config/normalize-interaction-config.js';
 import { normalizeSurfacesConfig } from './config/normalize-surfaces-config.js';
-import { normalizeCommentsUiPolicy } from '../helpers/comment-small-screen.js';
+import { normalizeCommentsUiConfig } from '../helpers/comment-small-screen.js';
 import { EditorRuntimeRegistry } from './editor-runtime/editor-runtime-registry.js';
 import type { EditorRuntimeFocusOptions } from './editor-runtime/types.js';
 import { createBuiltInToolbar } from '../internal/toolbar/index.js';
@@ -1122,7 +1122,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     if (!Object.prototype.hasOwnProperty.call(this.config.modules, 'comments')) {
       this.config.modules.comments = {};
     }
-    this.config.modules.comments = normalizeCommentsUiPolicy(this.config.modules.comments);
+    this.config.modules.comments = normalizeCommentsUiConfig(this.config.modules.comments);
 
     // Resolve the built-in UI profile once, before anything reads it. Every
     // surface decision downstream comes from here rather than re-deriving
