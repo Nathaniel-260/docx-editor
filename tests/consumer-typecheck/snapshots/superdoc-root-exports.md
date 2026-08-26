@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-24T22:15:24.770Z
+Generated: 2026-08-25T15:10:56.397Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 216 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 216 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 220 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 220 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **216** |
+| **union** |  | **220** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 206
+- typed but no runtime export (phantom risk): 210
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -208,12 +208,16 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `TextAddress`
 - `TextSegment`
 - `TextTarget`
+- `ToolbarConfig`
 - `ToolbarCustomButton`
+- `ToolbarCustomButtonCommand`
 - `ToolbarCustomButtonContext`
 - `ToolbarCustomButtonItem`
 - `ToolbarCustomDropdownItem`
 - `ToolbarCustomDropdownOption`
 - `ToolbarCustomSeparatorItem`
+- `ToolbarDropdownOption`
+- `ToolbarFontOption`
 - `TrackChangeAuthor`
 - `TrackChangeHighlightColors`
 - `TrackChangesAuthorColorsConfig`
@@ -249,29 +253,29 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `CommentInteractionLevel` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsType` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Config` | ✓ | ✓ |   |   | 17 |   | 6 | 3 | 0 |
+| `Config` | ✓ | ✓ |   |   | 20 |   | 7 | 3 | 0 |
 | `ContentControlActiveChangePayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContentControlClickPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContentControlsConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `ContextMenuConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `ContextMenuContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `ContextMenuItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ContextMenuConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ContextMenuContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ContextMenuItem` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuOpenContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuResolvedItem` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuResolvedSection` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `ContextMenuSection` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `ContextMenuSelectContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ContextMenuSection` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ContextMenuSelectContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuSelectPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContextMenuSelectReadiness` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 268 | 43 | 0 |
+| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 270 | 43 | 0 |
 | `DiffApplyOperationReceipt` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DiffApplyResult` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DiffApplyReviewItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DirectSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DocRange` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Document` | ✓ | ✓ |   |   | 2 |   | 89 | 6 | 0 |
+| `Document` | ✓ | ✓ |   |   | 2 |   | 93 | 6 | 0 |
 | `DocumentApi` | ✓ | ✓ |   |   | 2 |   | 2 | 0 | 0 |
-| `DocumentMode` | ✓ | ✓ |   |   | 2 |   | 1 | 2 | 0 |
+| `DocumentMode` | ✓ | ✓ |   |   | 3 |   | 1 | 2 | 0 |
 | `DocumentProtectionState` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `EditorSurface` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `EditorTransactionEvent` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -293,11 +297,11 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `HyperlinkActivationHandler` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkActivationResult` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkRenderContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `HyperlinkTarget` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `HyperlinkTarget` | ✓ | ✓ |   |   | 2 |   | 1 | 0 | 0 |
 | `HyperlinksConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `IntentSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `InteractionConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `Layout` | ✓ | ✓ |   |   | 1 |   | 4 | 0 | 0 |
+| `Layout` | ✓ | ✓ |   |   | 1 |   | 5 | 0 | 0 |
 | `LayoutEngineOptions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `LayoutFragment` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `LayoutMetrics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -307,7 +311,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `LinkPopoverContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `LinkPopoverResolution` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `LinkPopoverResolver` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `Modules` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `Modules` | ✓ | ✓ |   |   | 3 |   | 0 | 0 | 0 |
 | `NavigableAddress` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `PDF` | ✓ | ✓ | ✓ | ✓ | 1 |   | 1 | 0 | 0 |
 | `PasswordPromptAttemptResult` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -325,7 +329,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SelectionHandle` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 2 | 0 | 0 |
-| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 21 |   | 231 | 35 | 0 |
+| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 23 |   | 243 | 35 | 0 |
 | `SuperDocActiveEditorExtensions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsCommands` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsDiagnostics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -424,12 +428,16 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `TextAddress` | ✓ | ✓ |   |   | 1 |   | 7 | 0 | 0 |
 | `TextSegment` | ✓ | ✓ |   |   | 1 |   | 1 | 0 | 0 |
 | `TextTarget` | ✓ | ✓ |   |   | 1 |   | 4 | 0 | 0 |
+| `ToolbarConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ToolbarCustomButton` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarCustomButtonCommand` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ToolbarCustomButtonContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarCustomButtonItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarCustomDropdownItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarCustomDropdownOption` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarCustomSeparatorItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ToolbarDropdownOption` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarFontOption` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `TrackChangeAuthor` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `TrackChangeHighlightColors` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `TrackChangesAuthorColorsConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |

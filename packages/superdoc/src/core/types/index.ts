@@ -2484,6 +2484,8 @@ export interface Modules {
    * item ids (composition) and has no top-level alias, so omitting it uses the
    * built-in composition. Supplying it also replaces the group ordering with
    * its own keys.
+   *
+   * @deprecated replaceWith=`ui.toolbar` removeIn=v3.0
    */
   toolbar?:
     | boolean
@@ -3323,6 +3325,51 @@ export interface SuperDocZoomConfig {
   /** Bounds and padding for the `fit-width` policy. */
   fitWidth?: SuperDocFitWidthOptions;
 }
+
+/** Startup options for the built-in toolbar rendered by `ui.toolbar`. */
+export interface ToolbarConfig {
+  /**
+   * Where to render the toolbar: an element, an id selector (`#toolbar`), a
+   * class selector (`.toolbar`), or a bare element id. Other CSS selector
+   * syntax resolves to nothing.
+   */
+  container?: string | HTMLElement;
+  /**
+   * Which groups render, or which items they contain.
+   *
+   * An array selects groups. The built-in layout still places them in its
+   * left, center, and right regions, and always renders the center region.
+   *
+   * An object maps each group to its toolbar item ids. Its keys choose the
+   * regions and its values form a grouped allowlist.
+   */
+  groups?: readonly string[] | Readonly<Record<string, readonly string[]>>;
+  /** Toolbar item ids to remove from the default set. */
+  excludeItems?: readonly string[];
+  /** Icon overrides keyed by toolbar item id. */
+  icons?: Readonly<Record<string, unknown>>;
+  /** Text overrides keyed by toolbar item id. */
+  texts?: Readonly<Record<string, unknown>>;
+  /** Move controls that do not fit into the overflow menu (default: true). */
+  hideButtons?: boolean;
+  /** Measure available width from the toolbar container instead of the viewport (default: false). */
+  responsiveToContainer?: boolean;
+  /**
+   * Rows for the font-family dropdown. Register loadable font families through
+   * `fonts.families` instead.
+   */
+  fonts?: readonly ToolbarFontOption[];
+  /** Custom entries appended to the built-in item set. */
+  customButtons?: readonly ToolbarCustomButton[];
+  /**
+   * Show the formatting-marks button (default: false). This does not decide
+   * whether formatting marks are visible in the document.
+   */
+  showFormattingMarksButton?: boolean;
+  /** Show the table-of-contents button (default: false). */
+  showTableOfContentsButton?: boolean;
+}
+
 /**
  * Per-surface built-in UI configuration. Every field is optional; an omitted
  * field keeps that surface's historical default rather than inheriting from
@@ -3339,76 +3386,7 @@ export interface UIConfig {
    * `container` resolves to an element — enabling it without one creates the
    * `superdoc.toolbar` handle and renders nothing.
    */
-  toolbar?:
-    | boolean
-    | {
-        /**
-         * Where to render the toolbar: an element, an id selector
-         * (`#toolbar`), a class selector (`.toolbar`), or a bare element id.
-         * Other CSS selector syntax resolves to nothing.
-         */
-        container?: string | HTMLElement;
-        /**
-         * Which groups render, or what goes in them. The shape decides which
-         * of the two it means, so both v1 spellings have somewhere to land.
-         *
-         * An array selects which groups render, e.g.
-         * `['left', 'center', 'right']`. This is where `Config.toolbarGroups`
-         * moves to. It is a membership list, not a sort order: the built-in
-         * toolbar lays groups out left, center, right, and renders center
-         * whether or not it is listed.
-         *
-         * An object is composition: a group id mapped to the item ids inside
-         * it, e.g. `{ right: ['bold'] }`. This is where
-         * `modules.toolbar.groups` moves to. Supplying both an ordering array
-         * here and a legacy composition map keeps the composition and applies
-         * the ordering as a filter.
-         */
-        groups?: string[] | Record<string, string[]>;
-        /** Toolbar item ids to hide from the default set. */
-        excludeItems?: string[];
-        /** Icon overrides, merged over the built-in set. */
-        icons?: Record<string, unknown>;
-        /** Text overrides, merged over the built-in set. */
-        texts?: Record<string, unknown>;
-        /**
-         * Hide buttons that overflow the available width (default: true).
-         *
-         * The runtime has always honored this through the toolbar options
-         * pass-through; it was only missing from this type, so passing it here
-         * failed excess-property checks while working at runtime.
-         */
-        hideButtons?: boolean;
-        /** Size the toolbar to its container rather than the viewport. */
-        responsiveToContainer?: boolean;
-        /**
-         * Custom font list rendered in the font-family dropdown. The runtime
-         * uses this list verbatim, so entries are dropdown rows
-         * ({@link ToolbarFontOption}), not families to load
-         * ({@link FontFamilyConfig}). Register loadable families through
-         * `fonts.families` instead.
-         */
-        fonts?: ToolbarFontOption[];
-        /**
-         * Custom toolbar entries appended to the default item set. See
-         * `ToolbarCustomButton` for which shapes render.
-         *
-         * `readonly` so an `as const` array is accepted. Without it the array
-         * built in a separate variable had no way through: widening turns each
-         * `type` into `string`, `as const` is the documented answer to that,
-         * and a mutable field then rejected the result. The toolbar only reads
-         * this.
-         */
-        customButtons?: readonly ToolbarCustomButton[];
-        /**
-         * Show the formatting marks (pilcrow) button in the toolbar. Off by
-         * default. Distinct from `layoutEngineOptions.showFormattingMarks`, which
-         * controls whether the marks render in the document.
-         */
-        showFormattingMarksButton?: boolean;
-        /** Show the table of contents insert button in the toolbar. Off by default. */
-        showTableOfContentsButton?: boolean;
-      };
+  toolbar?: boolean | ToolbarConfig;
   /** Built-in comments UI. Enabled by default. */
   comments?: boolean | CommentsConfig;
   /** Built-in right-click and slash context menu. Enabled by default. */
@@ -3675,13 +3653,24 @@ export interface Config {
    * `modules.toolbar: true` on its own does not render one either — it creates
    * the `superdoc.toolbar` handle without a mount target. See
    * {@link Modules.toolbar}.
+   *
+   * @deprecated replaceWith=`ui.toolbar.container` removeIn=v3.0
    */
   toolbar?: string | HTMLElement;
-  /** Toolbar groups to show. */
+  /**
+   * Toolbar groups to show.
+   * @deprecated replaceWith=`ui.toolbar.groups` removeIn=v3.0
+   */
   toolbarGroups?: string[];
-  /** Icons to show in the toolbar. */
+  /**
+   * Icons to show in the toolbar.
+   * @deprecated replaceWith=`ui.toolbar.icons` removeIn=v3.0
+   */
   toolbarIcons?: object;
-  /** Texts to override in the toolbar. */
+  /**
+   * Texts to override in the toolbar.
+   * @deprecated replaceWith=`ui.toolbar.texts` removeIn=v3.0
+   */
   toolbarTexts?: object;
   /**
    * The font-family to use for all SuperDoc UI surfaces (toolbar, comments

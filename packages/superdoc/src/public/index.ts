@@ -109,16 +109,16 @@ export type { LayoutMode } from '@superdoc/painter-dom';
 export type { CommentsConfig } from '../core/types/index.js';
 export type { TrackChangeHighlightColors } from '../core/types/index.js';
 export type { ContentControlsConfig } from '../core/types/index.js';
-// The entry union and its members. A consumer assembling `customButtons` in a
-// variable rather than inline needs a name to annotate with: widening turns
-// each `type` into `string`, and without an exported type the only answers
-// were `as const` or a per-entry assertion.
+export type { ToolbarConfig } from '../core/types/index.js';
 export type { ToolbarCustomButton } from '../core/types/index.js';
+export type { ToolbarCustomButtonCommand } from '../core/types/index.js';
+export type { ToolbarCustomButtonContext } from '../core/types/index.js';
 export type { ToolbarCustomButtonItem } from '../core/types/index.js';
 export type { ToolbarCustomDropdownItem } from '../core/types/index.js';
 export type { ToolbarCustomDropdownOption } from '../core/types/index.js';
 export type { ToolbarCustomSeparatorItem } from '../core/types/index.js';
-export type { ToolbarCustomButtonContext } from '../core/types/index.js';
+export type { ToolbarDropdownOption } from '../core/types/index.js';
+export type { ToolbarFontOption } from '../core/types/index.js';
 export type { LinkPopoverConfig } from '../core/types/index.js';
 export type { LinkPopoverContext } from '../core/types/index.js';
 export type { LinkPopoverResolution } from '../core/types/index.js';

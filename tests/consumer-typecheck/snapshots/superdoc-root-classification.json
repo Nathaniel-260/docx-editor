@@ -1,13 +1,13 @@
 {
   "generatedAt": "2026-06-23T01:53:02.997Z",
   "summary": {
-    "total": 212,
+    "total": 216,
     "byBucket": {
       "legacy-root": 3,
-      "supported-root": 209
+      "supported-root": 213
     },
     "byConfidence": {
-      "high": 164,
+      "high": 168,
       "medium": 48
     }
   },
@@ -2048,9 +2048,31 @@
       "inCjs": false
     },
     {
+      "name": "ToolbarConfig",
+      "bucket": "supported-root",
+      "rationale": "Named startup configuration for the built-in toolbar under ui.toolbar. Lets consumers assemble and validate a readonly toolbar config outside the root Config object.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "ToolbarCustomButton",
       "bucket": "supported-root",
       "rationale": "Canonical union of the ui.toolbar.customButtons entry shapes. Public extension surface, and the name a consumer annotates with when assembling entries outside the config object.",
+      "confidence": "high",
+      "source": "toolbar-custom-buttons",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarCustomButtonCommand",
+      "bucket": "supported-root",
+      "rationale": "Command value accepted by a custom toolbar button: a canonical command id or a callback receiving ToolbarCustomButtonContext.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
       "inDts": true,
@@ -2108,6 +2130,28 @@
       "rationale": "Separator member of the ToolbarCustomButton union. Renders on its own and has nothing to run, so it carries no command.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarDropdownOption",
+      "bucket": "supported-root",
+      "rationale": "Runtime dropdown row passed to a custom toolbar command through ToolbarCustomButtonContext.option.",
+      "confidence": "high",
+      "source": "toolbar-custom-buttons",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarFontOption",
+      "bucket": "supported-root",
+      "rationale": "Named row shape accepted by ui.toolbar.fonts for the built-in font-family dropdown.",
+      "confidence": "high",
+      "source": "toolbar-config",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,

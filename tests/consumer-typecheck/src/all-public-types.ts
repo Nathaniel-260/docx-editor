@@ -85,11 +85,15 @@ import type {
   LayoutPage,
   CommentsConfig,
   ToolbarCustomButton,
+  ToolbarConfig,
   ToolbarCustomButtonContext,
+  ToolbarCustomButtonCommand,
   ToolbarCustomButtonItem,
   ToolbarCustomDropdownItem,
   ToolbarCustomDropdownOption,
   ToolbarCustomSeparatorItem,
+  ToolbarDropdownOption,
+  ToolbarFontOption,
   TrackChangeHighlightColors,
   ContentControlsConfig,
   LinkPopoverConfig,
@@ -296,11 +300,15 @@ const _real_LayoutMode: AssertNotAny<LayoutMode> = true;
 const _real_LayoutPage: AssertNotAny<LayoutPage> = true;
 const _real_CommentsConfig: AssertNotAny<CommentsConfig> = true;
 const _real_ToolbarCustomButton: AssertNotAny<ToolbarCustomButton> = true;
+const _real_ToolbarConfig: AssertNotAny<ToolbarConfig> = true;
 const _real_ToolbarCustomButtonContext: AssertNotAny<ToolbarCustomButtonContext> = true;
+const _real_ToolbarCustomButtonCommand: AssertNotAny<ToolbarCustomButtonCommand> = true;
 const _real_ToolbarCustomButtonItem: AssertNotAny<ToolbarCustomButtonItem> = true;
 const _real_ToolbarCustomDropdownItem: AssertNotAny<ToolbarCustomDropdownItem> = true;
 const _real_ToolbarCustomDropdownOption: AssertNotAny<ToolbarCustomDropdownOption> = true;
 const _real_ToolbarCustomSeparatorItem: AssertNotAny<ToolbarCustomSeparatorItem> = true;
+const _real_ToolbarDropdownOption: AssertNotAny<ToolbarDropdownOption> = true;
+const _real_ToolbarFontOption: AssertNotAny<ToolbarFontOption> = true;
 const _real_TrackChangeHighlightColors: AssertNotAny<TrackChangeHighlightColors> = true;
 const _real_ContentControlsConfig: AssertNotAny<ContentControlsConfig> = true;
 const _real_LinkPopoverConfig: AssertNotAny<LinkPopoverConfig> = true;
