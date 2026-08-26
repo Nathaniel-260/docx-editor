@@ -190,7 +190,7 @@ function isHyperlinkTarget(value) {
  */
 function isValidResolution(value) {
   if (!isObject(value)) return false;
-  if (value.type === 'default' || value.type === 'none') return true;
+  if (value.type === 'default' || value.type === 'suppress' || value.type === 'none') return true;
   if (value.type === 'custom') return value.component != null;
   if (value.type === 'external') return typeof value.render === 'function';
   if (value.type === 'render') return typeof value.render === 'function';
@@ -984,7 +984,7 @@ export function useLinkPopover({
     if (typeof handler !== 'function') return { type: 'default' };
     const usesOnActivate = getActivationHandlerSource() === 'hyperlinks.onActivate';
     const errorSource = usesOnActivate ? 'hyperlinks.onActivate' : 'linkPopoverResolver';
-    const fallbackResolution = () => (usesOnActivate ? { type: 'none' } : { type: 'default' });
+    const fallbackResolution = () => (usesOnActivate ? { type: 'suppress' } : { type: 'default' });
 
     try {
       const resolution = handler(ctx);
@@ -1036,7 +1036,7 @@ export function useLinkPopover({
     }
     const resolution = resolveActivation(ctx);
 
-    if (resolution.type === 'none') {
+    if (resolution.type === 'suppress' || resolution.type === 'none') {
       closeCurrentPopover('none');
       return;
     }

@@ -16,7 +16,7 @@ const onActivate: HyperlinkActivationHandler = (context: HyperlinkActivationCont
   const _documentTarget: Promise<HyperlinkTarget | null> = context.getDocumentTarget();
   void _documentTarget;
   if (context.isAnchorLink) return { type: 'default' };
-  if (context.href.startsWith('https://app.example.com/')) return { type: 'none' };
+  if (context.href.startsWith('https://app.example.com/')) return { type: 'suppress' };
   return {
     type: 'render',
     render: ({ container, href, close }: HyperlinkRenderContext) => {
@@ -29,7 +29,15 @@ const onActivate: HyperlinkActivationHandler = (context: HyperlinkActivationCont
   };
 };
 
+const observeActivation: HyperlinkActivationHandler = (context) => {
+  void context.href;
+  return undefined;
+};
+declare const activationContext: HyperlinkActivationContext;
+const _activationResult: HyperlinkActivationResult | null | undefined = observeActivation(activationContext);
+
 const _options: HyperlinksConfig = { onActivate };
+const _observerOptions: HyperlinksConfig = { onActivate: observeActivation };
 
 const _canonical: Config = {
   selector: '#editor',
@@ -50,10 +58,11 @@ const _disabled: Config = {
 // Deprecated public types and configuration remain source-compatible in v2.
 const legacyResolver: LinkPopoverResolver = () => ({ type: 'default' });
 const _legacyOptions: LinkPopoverConfig = { popoverResolver: legacyResolver };
+const _legacyActivationResult: HyperlinkActivationResult = { type: 'none' };
 const _legacy: Config = {
   selector: '#editor',
   ui: { linkPopover: _legacyOptions },
   modules: { links: { popoverResolver: legacyResolver } },
 };
 
-void [_options, _canonical, _disabled, _legacy];
+void [_activationResult, _options, _observerOptions, _canonical, _disabled, _legacyActivationResult, _legacy];

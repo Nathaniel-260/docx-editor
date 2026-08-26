@@ -1250,7 +1250,11 @@ export interface HyperlinkRenderContext {
 /** Result returned by a hyperlink activation handler. */
 export type HyperlinkActivationResult =
   | { type: 'default' }
-  | { type: 'none' }
+  | { type: 'suppress' }
+  | {
+      /** @deprecated replaceWith=`type: 'suppress'` removeIn=v3.0 */
+      type: 'none';
+    }
   | {
       type: 'render';
       render: (context: HyperlinkRenderContext) => { destroy?: () => void } | void;
@@ -1258,7 +1262,7 @@ export type HyperlinkActivationResult =
 
 /**
  * Handles hyperlink activation. Return synchronously; Promises are not
- * supported. Return `null`, `undefined`, or `{ type: 'default' }` to use
+ * supported. Return `undefined`, `null`, or `{ type: 'default' }` to use
  * SuperDoc's default behavior for this activation.
  */
 export type HyperlinkActivationHandler = (

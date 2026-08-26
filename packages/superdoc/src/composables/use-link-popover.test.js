@@ -955,17 +955,32 @@ describe('useLinkPopover', () => {
     expect(manager.open).toHaveBeenCalledTimes(1);
   });
 
-  it('suppresses non-text hyperlinks when canonical activation returns none', async () => {
-    const resolver = vi.fn(() => ({ type: 'none' }));
+  it('suppresses non-text hyperlinks when canonical activation returns suppress', async () => {
+    const resolver = vi.fn(() => ({ type: 'suppress' }));
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
-    const { popover, manager } = createSubject({ resolver, interceptsNavigationOnly: true });
+    const { popover, manager, emitException } = createSubject({ resolver, interceptsNavigationOnly: true });
 
     popover.handleLinkClick(createPayload({ editableText: false }));
     await tick();
 
     expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ defaultAction: 'navigate' }));
+    expect(emitException).not.toHaveBeenCalled();
     expect(manager.open).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it('continues to suppress canonical activations that return deprecated none', async () => {
+    const resolver = vi.fn(() => ({ type: 'none' }));
+    const { popover, manager } = createSubject({
+      resolver,
+      handlerSource: 'hyperlinks.onActivate',
+    });
+
+    popover.handleLinkClick(createPayload());
+    await tick();
+
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(manager.open).not.toHaveBeenCalled();
   });
 
   it('keeps deprecated resolvers away from non-text hyperlinks', async () => {

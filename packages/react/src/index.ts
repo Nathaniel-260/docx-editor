@@ -6,10 +6,17 @@ export type {
   CommentsConfig,
   CommentsLayout,
   CommentsResponsiveConfig,
+  HyperlinkActivationContext,
+  HyperlinkActivationHandler,
+  HyperlinkActivationResult,
+  HyperlinkRenderContext,
+  HyperlinkTarget,
+  HyperlinksConfig,
   SearchConfig,
   SearchFloatingConfig,
   SearchStrings,
   ToolbarConfig,
+  SuperDocExceptionHyperlinkPayload,
 } from 'superdoc';
 
 // Types - extracted from superdoc package for convenience
