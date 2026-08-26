@@ -4,7 +4,7 @@ export type ToolbarDemoStrategy = 'items' | 'excludeItems' | 'customItems';
 export type CommentsDemoLayout = CommentsLayout;
 export type CommentsDemoLevel = CommentInteractionLevel;
 export type ContextMenuDemoStrategy = 'default' | 'custom';
-export type HyperlinkDemoBehavior = 'default' | 'none' | 'custom';
+export type HyperlinkDemoBehavior = 'default' | 'suppress' | 'custom';
 
 export type BuiltInDemoChoice<T extends string> = {
   id: T;
@@ -44,7 +44,7 @@ export const contextMenuDemoStrategies = [
 
 export const hyperlinkDemoBehaviors = [
   { id: 'default', label: 'Default' },
-  { id: 'none', label: 'Do nothing' },
+  { id: 'suppress', label: 'Do nothing' },
   { id: 'custom', label: 'Custom action' },
 ] as const satisfies readonly BuiltInDemoChoice<HyperlinkDemoBehavior>[];
 

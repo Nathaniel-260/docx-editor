@@ -19,7 +19,7 @@ function getSafeHref(rawHref: string) {
 
 export const handleHyperlinkActivation: HyperlinkActivationHandler = ({ href }) => {
   const safeHref = getSafeHref(href);
-  if (!safeHref) return { type: 'none' };
+  if (!safeHref) return { type: 'suppress' };
 
   return {
     type: 'render',

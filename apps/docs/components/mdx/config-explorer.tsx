@@ -207,7 +207,7 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
         </div>
       </div>
       <p className='sd-config-explorer-caption'>
-        {data.fields.length} fields · generated from <code>{data.name}</code>
+        {data.fields.length} {data.fields.length === 1 ? 'field' : 'fields'} · generated from <code>{data.name}</code>
       </p>
     </div>
   );

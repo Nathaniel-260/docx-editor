@@ -1,0 +1,21 @@
+{
+  "id": "hyperlinks-config-source",
+  "name": "HyperlinksConfig",
+  "root": "hyperlinks",
+  "label": "hyperlink configuration",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "onActivate",
+      "type": "(context: HyperlinkActivationContext) => HyperlinkActivationResult | null | undefined",
+      "required": false,
+      "description": "Use SuperDoc's default behavior, suppress this activation, or render a small custom action near the hyperlink.",
+      "group": "other"
+    }
+  ]
+}

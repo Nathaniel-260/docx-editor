@@ -67,8 +67,8 @@ type ToolbarUiConfig = Exclude<NonNullable<UiConfig['toolbar']>, boolean>;
 const pinnedToolbarItems = {
   left: [...toolbarDemoItems.left],
   center: [...toolbarDemoItems.center],
-  // The embed runs the stable 2.8 release. Translate the public item id and
-  // include the overflow trigger that release still requires in a focused toolbar.
+  // Translate the public item id and include the overflow trigger required by
+  // the stable release pinned in config/editor-demo-runtime.json.
   right: ['documentMode', 'zoom', 'overflow'],
 };
 
@@ -464,7 +464,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   }
 
   function getPinnedRuntimeLinkPopover(behavior: HyperlinkDemoBehavior): UiConfig['linkPopover'] {
-    if (behavior === 'none') return false;
+    if (behavior === 'suppress') return false;
     if (behavior === 'default') return undefined;
 
     return {
@@ -578,9 +578,8 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
             ? {
                 comments: false,
                 // AIDEV-NOTE: This embed executes the exact stable release in
-                // config/editor-demo-runtime.json. Keep this compatible
-                // resolver until that pin includes Config.hyperlinks; the
-                // published examples use the canonical API added in this stack.
+                // config/editor-demo-runtime.json. Keep this adapter until that
+                // pin supports the canonical Config.hyperlinks API used below.
                 linkPopover: getPinnedRuntimeLinkPopover(initialHyperlinkBehavior),
                 toolbar: getPinnedFocusedToolbarOptions(builtInToolbar!, { center: ['link'] }),
               }

@@ -5,6 +5,7 @@ import {
   renderReferenceOperationMarkdown,
 } from './document-api-reference/markdown';
 import { renderConfigReferenceMarkdown } from './config-explorer';
+import { hyperlinksConfigExplorer } from './hyperlinks-config-explorer';
 import { renderBuiltInUiMapMarkdown } from './built-in-ui-map';
 import { renderBuiltInEditorDemoMarkdown } from './built-in-editor-demos';
 import { renderLifecycleJourneyMarkdown } from './lifecycle-journey';
@@ -29,6 +30,7 @@ export const llmPlaceholderComponents = [
   'FileDownload',
   'FrameworkExample',
   'FrameworkExampleTabs',
+  'HyperlinksConfigReference',
   'InterfaceOwnership',
   'LifecycleJourney',
   'MigrationAgentPrompt',
@@ -108,6 +110,9 @@ export function renderLLMMarkdown(markdown: string) {
     },
     ConfigReference() {
       return renderConfigReferenceMarkdown(editorConfigExplorer);
+    },
+    HyperlinksConfigReference() {
+      return renderConfigReferenceMarkdown(hyperlinksConfigExplorer);
     },
     CustomBoldDemo() {
       return [

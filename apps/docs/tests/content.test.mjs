@@ -39,6 +39,7 @@ const generatedProofingConfigUrl = new URL('../generated/proofing-config-referen
 const generatedSearchConfigUrl = new URL('../generated/search-config-reference.json', import.meta.url);
 const generatedSearchFloatingConfigUrl = new URL('../generated/search-floating-config-reference.json', import.meta.url);
 const generatedSearchStringsUrl = new URL('../generated/search-strings-reference.json', import.meta.url);
+const generatedHyperlinksConfigUrl = new URL('../generated/hyperlinks-config-reference.json', import.meta.url);
 const superdocCoreTypesUrl = new URL('../../../packages/superdoc/src/core/types/index.ts', import.meta.url);
 const reviewHighlightsExampleUrl = new URL('../snippets/editor/review-highlights.ts', import.meta.url);
 const commentThreadExampleUrl = new URL('../snippets/document-api/comment-thread.ts', import.meta.url);
@@ -78,6 +79,7 @@ const registeredComponents = new Set([
   'FileDownload',
   'FrameworkExample',
   'FrameworkExampleTabs',
+  'HyperlinksConfigReference',
   'InterfaceOwnership',
   'LifecycleJourney',
   'MigrationAgentPrompt',
@@ -484,6 +486,33 @@ test('the generated Search reference mirrors every canonical nested field', asyn
       reference.fields.every((field) => field.type && field.description && !field.deprecated),
     ),
   );
+});
+
+test('the generated Hyperlinks reference mirrors every canonical field', async () => {
+  const [generatedHyperlinksConfig, superdocTypes] = await Promise.all([
+    readFile(generatedHyperlinksConfigUrl, 'utf8').then(JSON.parse),
+    readFile(superdocCoreTypesUrl, 'utf8'),
+  ]);
+  const configBody = superdocTypes.match(/export interface HyperlinksConfig \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+  const sourceFields = [...configBody.matchAll(/^\s{2}(\w+)\??:/gmu)].map((match) => match[1]);
+  const generatedFields = generatedHyperlinksConfig.fields.map((field) => field.name);
+
+  assert.deepEqual(generatedFields, sourceFields);
+  assert.equal(new Set(generatedFields).size, generatedFields.length);
+  assert.ok(generatedHyperlinksConfig.fields.every((field) => field.type && field.description && !field.deprecated));
+});
+
+test('the Hyperlinks configuration explorer renders the canonical activation result', async () => {
+  const { hyperlinksConfigExplorer } = await import('../lib/hyperlinks-config-explorer.ts');
+  const { configFieldTemplate, renderConfigReferenceMarkdown } = await import('../lib/config-explorer.ts');
+  const field = hyperlinksConfigExplorer.fields[0];
+  const group = hyperlinksConfigExplorer.groups[0];
+
+  assert.equal(field.name, 'onActivate');
+  assert.equal(field.default, 'undefined');
+  assert.match(configFieldTemplate(hyperlinksConfigExplorer, group, field), /type: 'suppress'/u);
+  assert.match(renderConfigReferenceMarkdown(hyperlinksConfigExplorer), /\| `onActivate` \|/u);
+  assert.doesNotMatch(renderConfigReferenceMarkdown(hyperlinksConfigExplorer), /type: 'none'/u);
 });
 
 test('the Search configuration explorer renders valid nested examples', async () => {

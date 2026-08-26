@@ -633,7 +633,7 @@ test('exports built-in and custom search without duplicating Document API querie
   assert.match(article, /data-config-explorer="true"/);
   assert.match(article, /Position &amp; size/);
   assert.match(article, /Accessibility/);
-  assert.match(article, /34<!-- --> fields · generated from <code>SearchConfig<\/code>/);
+  assert.match(article, /34(?:<!-- -->|\s)+fields(?:<!-- -->|\s)+· generated from <code>SearchConfig<\/code>/);
   assert.match(builtIn, /search: true/);
   assert.match(builtIn, /browser keeps its native page search shortcut/);
   assert.match(builtIn, /\*\*React — `src\/App\.tsx`\*\*/);
@@ -660,10 +660,10 @@ test('exports built-in and custom search without duplicating Document API querie
 });
 
 test('exports the remaining built-in UI workflows as clean Markdown', async () => {
-  const hyperlinks = await readFile(
-    new URL('../out/md/editor/built-in-ui/hyperlinks.md', import.meta.url),
-    'utf8',
-  );
+  const [hyperlinks, hyperlinksArticle] = await Promise.all([
+    readFile(new URL('../out/md/editor/built-in-ui/hyperlinks.md', import.meta.url), 'utf8'),
+    readFile(new URL('../out/editor/built-in-ui/hyperlinks/index.html', import.meta.url), 'utf8'),
+  ]);
   const contextMenu = await readFile(
     new URL('../out/md/editor/built-in-ui/context-menus.md', import.meta.url),
     'utf8',
@@ -681,11 +681,19 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
   assert.match(hyperlinks, /HyperlinkActivationHandler/);
   assert.match(hyperlinks, /hyperlinks: \{\s+onActivate: handleHyperlinkActivation/s);
   assert.match(hyperlinks, /Custom action — `hyperlinks\.onActivate`/);
+  assert.match(hyperlinks, /\| `onActivate` \|/);
+  assert.match(hyperlinks, /type: 'suppress'/);
+  assert.match(hyperlinksArticle, /id="hyperlinks-config"/);
+  assert.match(
+    hyperlinksArticle,
+    /1(?:<!-- -->|\s)+field(?:<!-- -->|\s)+· generated from <code>HyperlinksConfig<\/code>/,
+  );
   assert.match(hyperlinks, /await context\.getDocumentTarget\(\)/);
   assert.match(hyperlinks, /reports the failure through `onException`/);
   assert.match(hyperlinks, /Use \[Custom UI\]\(\/editor\/custom-ui\/overview\)/);
   assert.match(hyperlinks, /\*\*React — `src\/App\.tsx`\*\*/);
   assert.doesNotMatch(hyperlinks, /linkPopover|popoverResolver|closePopover/);
+  assert.doesNotMatch(hyperlinks, /<HyperlinksConfigReference\b/);
   assert.match(contextMenu, /context-menu-sample\.docx/);
   assert.match(contextMenu, /satisfies ContextMenuConfig/);
   assert.match(contextMenu, /openOnSlash: false/);

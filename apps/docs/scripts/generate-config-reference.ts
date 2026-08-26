@@ -77,6 +77,16 @@ const references: ReferenceDefinition[] = [
     label: 'search text config',
     groups: [{ id: 'other', label: 'Options' }],
   },
+  {
+    typeName: 'HyperlinksConfig',
+    outputFile: 'hyperlinks-config-reference.json',
+    id: 'hyperlinks-config-source',
+    name: 'HyperlinksConfig',
+    root: 'hyperlinks',
+    label: 'hyperlink configuration',
+    excludeDeprecated: true,
+    groups: [{ id: 'other', label: 'Options' }],
+  },
 ];
 
 for (const reference of references) await generateReference(reference);
