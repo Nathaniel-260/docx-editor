@@ -123,7 +123,6 @@
     "jsdom": "catalog:",
     "konva": "catalog:",
     "pinia": "catalog:",
-    "rollup-plugin-copy": "catalog:",
     "uuid": "catalog:",
     "vue": "^3.5.11",
     "y-websocket": "catalog:"
@@ -175,6 +174,7 @@
     "pdfjs-dist": "catalog:",
     "postcss-nested": "catalog:",
     "postcss-prefixwrap": "catalog:",
+    "rollup-plugin-copy": "catalog:",
     "rollup-plugin-visualizer": "catalog:",
     "sirv": "catalog:",
     "tsx": "catalog:",
