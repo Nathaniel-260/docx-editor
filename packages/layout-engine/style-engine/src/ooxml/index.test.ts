@@ -72,6 +72,35 @@ describe('ooxml - resolveStyleChain', () => {
     expect(resolveStyleChain('runProperties', params, 'Heading1')).toEqual({ bold: true });
   });
 
+  it('applies builtInRoleOverrides even when the requested style definition exists (SD-3403)', () => {
+    const params = buildParams({
+      translatedLinkedStyles: {
+        ...emptyStyles,
+        styles: {
+          Heading1: { runProperties: { bold: true } },
+          Kop1: { runProperties: { italic: true } },
+        },
+      },
+      builtInRoleOverrides: { Kop1: 'Heading1' },
+    });
+    expect(resolveStyleChain('runProperties', params, 'Kop1')).toEqual({ bold: true });
+  });
+
+  it('applies builtInRoleOverrides across a basedOn hop', () => {
+    const params = buildParams({
+      translatedLinkedStyles: {
+        ...emptyStyles,
+        styles: {
+          Heading1: { runProperties: { bold: true } },
+          Kop1: { runProperties: { italic: true } },
+          Derived: { basedOn: 'Kop1', runProperties: { fontSize: 24 } },
+        },
+      },
+      builtInRoleOverrides: { Kop1: 'Heading1' },
+    });
+    expect(resolveStyleChain('runProperties', params, 'Derived')).toEqual({ fontSize: 24, bold: true });
+  });
+
   it('memoizes enabled style chains for the immutable resolver input', () => {
     const styles = {
       ...emptyStyles,

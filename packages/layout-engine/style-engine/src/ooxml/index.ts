@@ -44,6 +44,13 @@ export interface OoxmlResolverParams {
   /** Bounded read-only aliases for legacy dangling semantic references. */
   styleIdAliases?: Readonly<Record<string, string>>;
   /**
+   * Unconditional cascade-only styleId substitution for built-in-name
+   * collisions (SD-3403): unlike `styleIdAliases`, this is consulted even
+   * when the literal styleId exists in `styles` — e.g. a localized `Kop1`
+   * style that shares its reserved name with a distinct `Heading1` style.
+   */
+  builtInRoleOverrides?: Readonly<Record<string, string>>;
+  /**
    * Opt-in memoization of `resolveStyleChain` results, keyed per params
    * object. Only set this when `translatedLinkedStyles` is immutable for the
    * lifetime of this params object (the compiled WordStyleModel guarantees
@@ -335,7 +342,9 @@ function resolveStyleChainUncached<T extends PropertyObject>(
   followBasedOnChain: boolean,
 ): T {
   const styles = params.translatedLinkedStyles?.styles;
-  const resolvedStyleId = styles?.[styleId] ? styleId : (params.styleIdAliases?.[styleId] ?? styleId);
+  const resolvedStyleId =
+    params.builtInRoleOverrides?.[styleId] ??
+    (styles?.[styleId] ? styleId : (params.styleIdAliases?.[styleId] ?? styleId));
   const styleDef = styles?.[resolvedStyleId];
   if (!styleDef) return {} as T;
 
@@ -346,7 +355,9 @@ function resolveStyleChainUncached<T extends PropertyObject>(
   const seenStyles = new Set<string>([resolvedStyleId]);
   let nextBasedOn = basedOn;
   while (followBasedOnChain && nextBasedOn) {
-    const resolvedBasedOn = styles?.[nextBasedOn] ? nextBasedOn : (params.styleIdAliases?.[nextBasedOn] ?? nextBasedOn);
+    const resolvedBasedOn =
+      params.builtInRoleOverrides?.[nextBasedOn] ??
+      (styles?.[nextBasedOn] ? nextBasedOn : (params.styleIdAliases?.[nextBasedOn] ?? nextBasedOn));
     if (seenStyles.has(resolvedBasedOn as string)) {
       break;
     }
