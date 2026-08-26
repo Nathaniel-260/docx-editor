@@ -13,6 +13,7 @@ import { InterfaceOwnership } from '@/components/embeds/interface-ownership';
 import { DocsHome } from '@/components/docs-home';
 import { Callout } from '@/components/mdx/callout';
 import { ConfigReference } from '@/components/mdx/ConfigReference';
+import { ContextMenuConfigReference } from '@/components/mdx/context-menu-config-reference';
 import { FileDownload } from '@/components/mdx/file-download';
 import { FrameworkExample, FrameworkExampleTabs } from '@/components/mdx/FrameworkExampleTabs';
 import { HyperlinksConfigReference } from '@/components/mdx/hyperlinks-config-reference';
@@ -51,6 +52,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     Callout,
     BuiltInUiMap,
     ConfigReference,
+    ContextMenuConfigReference,
     CommandStateDemo,
     CustomBoldDemo,
     CustomUiArchitecture,

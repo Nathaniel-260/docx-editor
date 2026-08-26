@@ -1,0 +1,42 @@
+{
+  "id": "context-menu-config-source",
+  "name": "ContextMenuConfig",
+  "root": "contextMenu",
+  "label": "context menu configuration",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "openOnSlash",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether typing `/` after whitespace opens the menu (default: true).",
+      "group": "other"
+    },
+    {
+      "name": "sections",
+      "type": "readonly ContextMenuSection[]",
+      "required": false,
+      "description": "Application sections appended to the menu, or merged into a built-in section with the same ID.",
+      "group": "other"
+    },
+    {
+      "name": "defaultItems",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether to include SuperDoc's built-in items (default: true).",
+      "group": "other"
+    },
+    {
+      "name": "menuProvider",
+      "type": "(context: ContextMenuOpenContext, sections: readonly ContextMenuResolvedSection[]) => readonly ContextMenuResolvedSection[] | null | undefined",
+      "required": false,
+      "description": "Filter or reorder the resolved sections before they render. Return `null` or `undefined` to keep the original list.",
+      "group": "other"
+    }
+  ]
+}

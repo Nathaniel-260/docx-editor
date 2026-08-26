@@ -4,49 +4,26 @@ navTitle: Context menu
 description: Add application actions or open SuperDoc's document-aware menu from your interface.
 ---
 
-Right-clicking or typing `/` after whitespace opens SuperDoc's built-in menu. Keep those triggers, disable slash opening,
-or open the menu from your application.
+SuperDoc opens its document-aware menu when a user right-clicks or types `/` after whitespace. You can add application
+actions, change the slash trigger, or open the menu from your interface.
 
 ## Try the context menu
 
 Expand the Editor, then select “Select this sentence, then right-click it to open the document menu.”
 
-1. Right-click the selection with **Add action** selected, then choose **Send selection to workflow**.
-2. Confirm that the line below the Editor reports the selected text.
-3. Change **Menu** to **Default**, select the sentence, and right-click again. SuperDoc's actions remain, but the
-   application action no longer appears.
+1. With **Add action** selected, right-click the selection and choose **Send selection to workflow**.
+2. Confirm that the line below the Editor reports the selection.
+3. Choose **Default** and right-click the selection again. SuperDoc's actions remain, but the application action is gone.
 
 <EditorDemo fixture='/fixtures/context-menu-sample.docx' preset='context-menu' title='Try the context menu' />
 
-Changing the menu configuration reloads the current DOCX because `ui.contextMenu` is a startup option. Document edits
-remain; the selection and open menu reset.
-
-## Open the menu from your application
-
-Set `openOnSlash: false` when your application owns the keyboard shortcut. Right-click still opens the menu. A button,
-shortcut, or other application control can call `superdoc.ui.contextMenu.open()` at the current selection or caret:
-
-<FrameworkExampleTabs>
-  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
-    <include>../../../../snippets/editor/context-menu-runtime.ts</include>
-  </FrameworkExample>
-  <FrameworkExample filename='src/App.tsx' framework='React'>
-    <include>../../../../snippets/editor/react-context-menu-runtime.tsx</include>
-  </FrameworkExample>
-</FrameworkExampleTabs>
-
-Vanilla also needs the button and Editor mount:
-
-<include>../../../../snippets/editor/context-menu-runtime.html</include>
-
-`open()` returns `{ ok: false, reason }` when the Editor is not ready, the document is read-only, or there is no usable
-selection geometry. Call `superdoc.ui.contextMenu.close()` when your application needs to dismiss the menu; calling it
-when the menu is already closed is safe.
+Changing `ui.contextMenu` recreates the Editor from its current DOCX. Document edits remain, while the selection and
+open menu reset.
 
 ## Add an application action
 
-Continue with `/sample.docx` from the [Quickstart](/editor/quickstart). Keep SuperDoc's menu items, then append an action
-that appears only when text is selected:
+Continue with `/sample.docx` from the [Quickstart](/editor/quickstart). Append an action that appears only when the user
+right-clicks selected text:
 
 <FrameworkExampleTabs>
   <FrameworkExample filename='src/main.ts' framework='Vanilla'>
@@ -61,24 +38,44 @@ Vanilla also needs an Editor mount:
 
 <include>../../../../snippets/editor/built-in-context-menu.html</include>
 
-`showWhen()` receives the document context captured when the menu opens. The example requires a right-click trigger and
-an expanded selection, so the action does not appear after `/`, a programmatic `open()`, or a collapsed caret.
+`showWhen()` receives the document context captured when the menu opens. The example requires a right-click and an
+expanded selection, so the action stays hidden after `/`, a programmatic `open()`, or a collapsed caret.
 
-`onSelect()` runs after the menu closes. The example awaits `context.selectedTextSettled` because it needs the final
-selection text. If an action must preserve the click's user activation for `navigator.clipboard`, `window.open`, or a
-file picker, use `context.selectedText` synchronously instead of awaiting first.
+`onSelect()` runs after the menu closes. Await `context.selectedTextSettled` when the action needs the final selection
+text. Use `context.selectedText` synchronously when the action must preserve user activation for a clipboard call,
+`window.open()`, or a file picker.
 
-## Choose how much of the menu to change
+## Configure the menu
 
-| Result                                        | Configuration                         |
-| --------------------------------------------- | ------------------------------------- |
-| Keep SuperDoc's actions and add yours         | `sections`                            |
-| Show only configured application actions      | `sections` with `defaultItems: false` |
-| Filter or reorder the final resolved sections | `menuProvider(context, sections)`     |
-| Render the complete menu in your application  | `ui: { contextMenu: false }`          |
+Choose a group, then choose a field. Each entry shows its generated TypeScript signature and a configuration fragment
+you can copy.
+
+<ContextMenuConfigReference />
 
 Use `showWhen()` on an item for ordinary context checks. Reserve `menuProvider()` for changes that need the complete
 resolved section list.
+
+## Open the menu from your application
+
+Set `openOnSlash: false` when your application owns the keyboard shortcut. Right-click still works. A button, shortcut,
+or other control can call `superdoc.ui.contextMenu.open()` at the current selection or caret:
+
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../../snippets/editor/context-menu-runtime.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/App.tsx' framework='React'>
+    <include>../../../../snippets/editor/react-context-menu-runtime.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
+
+Vanilla also needs the button and Editor mount:
+
+<include>../../../../snippets/editor/context-menu-runtime.html</include>
+
+`open()` returns `{ ok: false, reason }` when it cannot open. This includes an Editor that is not ready, a read-only
+document, or missing selection geometry. Call `superdoc.ui.contextMenu.close()` to dismiss the menu; calling `close()`
+when it is already closed is safe.
 
 Continue with [Application-owned context menus](/editor/custom-ui/context-menus) when your application should render the
 surface, or [Structured content](/editor/built-in-ui/structured-content) to configure controls for tables, images, and

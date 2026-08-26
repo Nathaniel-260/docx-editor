@@ -5,6 +5,7 @@ import {
   renderReferenceOperationMarkdown,
 } from './document-api-reference/markdown';
 import { renderConfigReferenceMarkdown } from './config-explorer';
+import { contextMenuConfigExplorer } from './context-menu-config-explorer';
 import { hyperlinksConfigExplorer } from './hyperlinks-config-explorer';
 import { renderBuiltInUiMapMarkdown } from './built-in-ui-map';
 import { renderBuiltInEditorDemoMarkdown } from './built-in-editor-demos';
@@ -20,6 +21,7 @@ export const llmPlaceholderComponents = [
   'Cards',
   'CommandStateDemo',
   'ConfigReference',
+  'ContextMenuConfigReference',
   'CustomBoldDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
@@ -110,6 +112,9 @@ export function renderLLMMarkdown(markdown: string) {
     },
     ConfigReference() {
       return renderConfigReferenceMarkdown(editorConfigExplorer);
+    },
+    ContextMenuConfigReference() {
+      return renderConfigReferenceMarkdown(contextMenuConfigExplorer);
     },
     HyperlinksConfigReference() {
       return renderConfigReferenceMarkdown(hyperlinksConfigExplorer);

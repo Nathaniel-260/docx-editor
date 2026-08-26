@@ -40,6 +40,7 @@ const generatedSearchConfigUrl = new URL('../generated/search-config-reference.j
 const generatedSearchFloatingConfigUrl = new URL('../generated/search-floating-config-reference.json', import.meta.url);
 const generatedSearchStringsUrl = new URL('../generated/search-strings-reference.json', import.meta.url);
 const generatedHyperlinksConfigUrl = new URL('../generated/hyperlinks-config-reference.json', import.meta.url);
+const generatedContextMenuConfigUrl = new URL('../generated/context-menu-config-reference.json', import.meta.url);
 const superdocCoreTypesUrl = new URL('../../../packages/superdoc/src/core/types/index.ts', import.meta.url);
 const reviewHighlightsExampleUrl = new URL('../snippets/editor/review-highlights.ts', import.meta.url);
 const commentThreadExampleUrl = new URL('../snippets/document-api/comment-thread.ts', import.meta.url);
@@ -68,6 +69,7 @@ const registeredComponents = new Set([
   'BuiltInUiMap',
   'CommandStateDemo',
   'ConfigReference',
+  'ContextMenuConfigReference',
   'CustomBoldDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
@@ -513,6 +515,42 @@ test('the Hyperlinks configuration explorer renders the canonical activation res
   assert.match(configFieldTemplate(hyperlinksConfigExplorer, group, field), /type: 'suppress'/u);
   assert.match(renderConfigReferenceMarkdown(hyperlinksConfigExplorer), /\| `onActivate` \|/u);
   assert.doesNotMatch(renderConfigReferenceMarkdown(hyperlinksConfigExplorer), /type: 'none'/u);
+});
+
+test('the generated Context menu reference mirrors every canonical field', async () => {
+  const [generatedContextMenuConfig, superdocTypes] = await Promise.all([
+    readFile(generatedContextMenuConfigUrl, 'utf8').then(JSON.parse),
+    readFile(superdocCoreTypesUrl, 'utf8'),
+  ]);
+  const configBody = superdocTypes.match(/export interface ContextMenuConfig \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+  const compatibilityFields = new Set(['customItems', 'includeDefaultItems']);
+  const sourceFields = [...configBody.matchAll(/^\s{2}(?:readonly\s+)?(\w+)\??:/gmu)]
+    .map((match) => match[1])
+    .filter((name) => !compatibilityFields.has(name));
+  const generatedFields = generatedContextMenuConfig.fields.map((field) => field.name);
+
+  assert.deepEqual(generatedFields, sourceFields);
+  assert.equal(new Set(generatedFields).size, generatedFields.length);
+  assert.ok(generatedContextMenuConfig.fields.every((field) => field.type && field.description && !field.deprecated));
+  assert.match(configBody, /@deprecated replaceWith=`sections`/u);
+  assert.match(configBody, /@deprecated replaceWith=`defaultItems`/u);
+});
+
+test('the Context menu configuration explorer renders valid canonical examples', async () => {
+  const { contextMenuConfigExplorer } = await import('../lib/context-menu-config-explorer.ts');
+  const { configFieldTemplate, renderConfigReferenceMarkdown } = await import('../lib/config-explorer.ts');
+  const field = (name) => contextMenuConfigExplorer.fields.find((candidate) => candidate.name === name);
+  const group = (id) => contextMenuConfigExplorer.groups.find((candidate) => candidate.id === id);
+  const markdown = renderConfigReferenceMarkdown(contextMenuConfigExplorer);
+
+  assert.deepEqual(
+    contextMenuConfigExplorer.fields.map((candidate) => candidate.name),
+    ['openOnSlash', 'sections', 'defaultItems', 'menuProvider'],
+  );
+  assert.match(configFieldTemplate(contextMenuConfigExplorer, group('items'), field('sections')), /ui: \{/u);
+  assert.match(configFieldTemplate(contextMenuConfigExplorer, group('items'), field('sections')), /onSelect:/u);
+  assert.match(configFieldTemplate(contextMenuConfigExplorer, group('advanced'), field('menuProvider')), /item\.disabled/u);
+  assert.doesNotMatch(markdown, /customItems|includeDefaultItems/u);
 });
 
 test('the Search configuration explorer renders valid nested examples', async () => {

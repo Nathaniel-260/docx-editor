@@ -664,10 +664,10 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
     readFile(new URL('../out/md/editor/built-in-ui/hyperlinks.md', import.meta.url), 'utf8'),
     readFile(new URL('../out/editor/built-in-ui/hyperlinks/index.html', import.meta.url), 'utf8'),
   ]);
-  const contextMenu = await readFile(
-    new URL('../out/md/editor/built-in-ui/context-menus.md', import.meta.url),
-    'utf8',
-  );
+  const [contextMenu, contextMenuArticle] = await Promise.all([
+    readFile(new URL('../out/md/editor/built-in-ui/context-menus.md', import.meta.url), 'utf8'),
+    readFile(new URL('../out/editor/built-in-ui/context-menus/index.html', import.meta.url), 'utf8'),
+  ]);
   const structured = await readFile(
     new URL('../out/md/editor/built-in-ui/structured-content.md', import.meta.url),
     'utf8',
@@ -703,7 +703,17 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
   assert.match(contextMenu, /ui\.contextMenu/);
   assert.match(contextMenu, /trigger === 'click' && hasSelection/);
   assert.match(contextMenu, /context\.selectedTextSettled/);
-  assert.match(contextMenu, /menuProvider\(context, sections\)/);
+  assert.match(contextMenu, /\| `openOnSlash` \|/);
+  assert.match(contextMenu, /\| `sections` \|/);
+  assert.match(contextMenu, /\| `defaultItems` \|/);
+  assert.match(contextMenu, /\| `menuProvider` \|/);
+  assert.match(contextMenuArticle, /id="context-menu-config"/);
+  assert.match(
+    contextMenuArticle,
+    /4(?:<!-- -->|\s)+fields(?:<!-- -->|\s)+· generated from <code>ContextMenuConfig<\/code>/,
+  );
+  assert.doesNotMatch(contextMenu, /\b(?:customItems|includeDefaultItems)\b/);
+  assert.doesNotMatch(contextMenu, /<ContextMenuConfigReference\b/);
   assert.match(contextMenu, /\*\*React — `src\/App\.tsx`\*\*/);
   assert.match(structured, /handleImageUpload/);
   assert.match(structured, /object URLs.*browser session/s);

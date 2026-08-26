@@ -1,5 +1,4 @@
-import { SuperDocEditor, type SuperDocEditorProps } from '@superdoc/react';
-import type { ContextMenuConfig } from 'superdoc';
+import { SuperDocEditor, type ContextMenuConfig, type SuperDocEditorProps } from '@superdoc/react';
 import '@superdoc/react/style.css';
 
 const contextMenu = {

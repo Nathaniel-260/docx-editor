@@ -87,6 +87,16 @@ const references: ReferenceDefinition[] = [
     excludeDeprecated: true,
     groups: [{ id: 'other', label: 'Options' }],
   },
+  {
+    typeName: 'ContextMenuConfig',
+    outputFile: 'context-menu-config-reference.json',
+    id: 'context-menu-config-source',
+    name: 'ContextMenuConfig',
+    root: 'contextMenu',
+    label: 'context menu configuration',
+    excludeDeprecated: true,
+    groups: [{ id: 'other', label: 'Options' }],
+  },
 ];
 
 for (const reference of references) await generateReference(reference);
