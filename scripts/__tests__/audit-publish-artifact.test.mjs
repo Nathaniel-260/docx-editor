@@ -112,6 +112,43 @@ test('SuperDoc package audit accepts an exact prerelease engine dependency and e
   });
 });
 
+test('SuperDoc package audit rejects rollup-plugin-copy as a published dependency', () => {
+  withTempDir((dir) => {
+    const packageDir = path.join(dir, 'package');
+    const distDir = path.join(packageDir, 'dist');
+    mkdirSync(distDir, { recursive: true });
+    writeFileSync(path.join(packageDir, 'LICENSE'), 'AGPL license');
+    writeFileSync(path.join(packageDir, 'NOTICE'), 'SuperDoc notice');
+    writeFileSync(path.join(packageDir, 'README.md'), '# superdoc');
+    writeFileSync(
+      path.join(packageDir, 'package.json'),
+      JSON.stringify({
+        name: 'superdoc',
+        version: '2.3.0-next.1',
+        license: 'AGPL-3.0',
+        dependencies: {
+          '@superdoc/docx-engine': '0.1.3-next.1',
+          'rollup-plugin-copy': '^3.5.0',
+        },
+      }),
+    );
+    writeFileSync(path.join(distDir, 'superdoc.es.js'), "import '@superdoc/docx-engine';");
+    writeFileSync(path.join(distDir, 'superdoc.cjs'), "require('@superdoc/docx-engine');");
+    writeFileSync(path.join(distDir, 'style.css'), '@import "@superdoc/docx-engine/style.css";');
+    const tarball = path.join(dir, 'superdoc.tgz');
+    execFileSync('tar', ['-czf', tarball, 'package'], { cwd: dir });
+
+    const result = auditSuperdocPackageArtifact(tarball);
+
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.violations.includes(
+        'package.json dependencies.rollup-plugin-copy is build-only and must not be published',
+      ),
+    );
+  });
+});
+
 test('SuperDoc package audit accepts engine imports in emitted chunks', () => {
   withTempDir((dir) => {
     writeFileSync(

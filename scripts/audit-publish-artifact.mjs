@@ -523,6 +523,11 @@ export function auditSuperdocPackageArtifact(target, opts = {}) {
       if (!EXACT_ENGINE_VERSION_RE.test(engineVersion ?? '')) {
         violations.push(`package.json dependencies.${DOCX_ENGINE_PACKAGE} must be an exact 0.x version`);
       }
+      for (const section of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
+        if (Object.prototype.hasOwnProperty.call(manifest[section] ?? {}, 'rollup-plugin-copy')) {
+          violations.push(`package.json ${section}.rollup-plugin-copy is build-only and must not be published`);
+        }
+      }
     }
   }
 
