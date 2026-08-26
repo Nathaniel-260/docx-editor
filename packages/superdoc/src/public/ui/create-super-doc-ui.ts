@@ -70,8 +70,9 @@ import type {
   SuperDocUIOptions,
   SuperDocUIScope,
   SuperDocUIState,
-  SearchHandle,
-  SearchSlice,
+  SearchController,
+  SearchQueryOptions,
+  SearchSnapshot,
   StylesHandle,
   StylesSlice,
   ActiveParagraphStyle,
@@ -10828,20 +10829,21 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   // host exposes no search facade the whole surface is `available: false` /
   // `search-unavailable` and never fabricates matches. Both the built-in
   // toolbar and custom UIs read/drive it.
-  const SEARCH_UNAVAILABLE_SLICE: SearchSlice = {
+  const SEARCH_UNAVAILABLE_SLICE: SearchSnapshot = {
     query: '',
     total: 0,
     activeIndex: -1,
     open: false,
     available: false,
     caseSensitive: false,
+    includeTrackedDeletions: false,
     includeDeletedText: false,
     regex: false,
     canReplace: false,
     reason: SUPERDOC_UI_REASONS.searchUnavailable,
   };
-  let searchState: SearchSlice = { ...SEARCH_UNAVAILABLE_SLICE };
-  const searchListeners = new Set<(slice: SearchSlice) => void>();
+  let searchState: SearchSnapshot = { ...SEARCH_UNAVAILABLE_SLICE };
+  const searchListeners = new Set<(slice: SearchSnapshot) => void>();
 
   const getHostSearch = (): LooseRecord | null => {
     const host = getHost();
@@ -10868,13 +10870,18 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       }
     }
   };
-  const setSearchState = (patch: Partial<SearchSlice>): SearchSlice => {
+  const setSearchState = (patch: Partial<SearchSnapshot>): SearchSnapshot => {
     searchState = { ...searchState, ...patch };
+    const includeTrackedDeletions = patch.includeTrackedDeletions ?? patch.includeDeletedText;
+    if (includeTrackedDeletions !== undefined) {
+      searchState.includeTrackedDeletions = includeTrackedDeletions;
+      searchState.includeDeletedText = includeTrackedDeletions;
+    }
     emitSearch();
     return searchState;
   };
   // Monotonic token for async fallback queries: a query result that resolves
-  // after a newer search() call (or after close()) is stale and must not be
+  // after a newer find() call (or after close()) is stale and must not be
   // applied over the newer session's state.
   let searchRequestGeneration = 0;
 
@@ -10976,7 +10983,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       total,
       activeIndex,
       canReplace: record.canReplace === true || fallbackCanReplace,
-      ...(record.includeDeletedText === true ? { includeDeletedText: true } : {}),
+      ...(typeof record.includeDeletedText === 'boolean' ? { includeDeletedText: record.includeDeletedText } : {}),
       ...(record.regex === true ? { regex: true } : {}),
       ...(readSearchQueryError(record) ? { invalidPattern: true } : {}),
     };
@@ -11004,7 +11011,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       reason: snapshot.invalidPattern ? SUPERDOC_UI_REASONS.searchInvalidPattern : undefined,
     });
   };
-  const syncSearchStateFromHost = (): SearchSlice => {
+  const syncSearchStateFromHost = (): SearchSnapshot => {
     const host = getHostSearch();
     if (host && typeof host.getState !== 'function') {
       searchState = {
@@ -11039,6 +11046,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
         ...SEARCH_UNAVAILABLE_SLICE,
         query: searchState.query,
         caseSensitive: searchState.caseSensitive,
+        includeTrackedDeletions: searchState.includeTrackedDeletions,
         includeDeletedText: searchState.includeDeletedText,
       };
       return searchState;
@@ -11052,6 +11060,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       activeIndex: snapshot.activeIndex,
       canReplace: snapshot.canReplace,
       ...(snapshot.includeDeletedText !== undefined ? { includeDeletedText: snapshot.includeDeletedText } : {}),
+      ...(snapshot.includeDeletedText !== undefined ? { includeTrackedDeletions: snapshot.includeDeletedText } : {}),
       ...(snapshot.regex !== undefined ? { regex: snapshot.regex } : {}),
       available: true,
       reason: snapshot.invalidPattern ? SUPERDOC_UI_REASONS.searchInvalidPattern : undefined,
@@ -11078,14 +11087,14 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     // receipt-failure, or an unrecognized shape all fail closed the same way.
     return { ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable };
   };
-  const searchSnap = snapshotHandle<SearchSlice>({
+  const searchSnap = snapshotHandle<SearchSnapshot>({
     get: () => syncSearchStateFromHost(),
     subscribe: (listener) => {
       searchListeners.add(listener);
       return () => searchListeners.delete(listener);
     },
   });
-  const search: SearchHandle = {
+  const search: SearchController = {
     get: searchSnap.get,
     getSnapshot: searchSnap.getSnapshot,
     subscribe: searchSnap.subscribe,
@@ -11109,7 +11118,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
         // once the active one has changed.
         releaseSearchSession();
       } else {
-        // Nothing captured, so no session was opened through `search()`; clear
+        // Nothing captured, so no session was opened through `find()`; clear
         // whatever the current editor exposes.
         const host = getHostSearch();
         if (host && typeof host.clear === 'function') {
@@ -11125,13 +11134,10 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       if (!searchState.available) searchState.reason = SUPERDOC_UI_REASONS.searchUnavailable;
       emitSearch();
     },
-    search: (
-      query: string,
-      options?: { caseSensitive?: boolean; includeDeletedText?: boolean; regex?: boolean },
-    ): SearchSlice => {
+    find: (query: string, options?: SearchQueryOptions): SearchSnapshot => {
       const host = getHostSearch();
       const caseSensitive = Boolean(options?.caseSensitive);
-      const includeDeletedText = options?.includeDeletedText === true;
+      const includeDeletedText = (options?.includeTrackedDeletions ?? options?.includeDeletedText) === true;
       const regex = options?.regex === true;
       const generation = ++searchRequestGeneration;
       if (!host || typeof host.setSession !== 'function') {
@@ -11254,6 +11260,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       }
       return searchState;
     },
+    search: (query: string, options?: SearchQueryOptions): SearchSnapshot => search.find(query, options),
     next: (): WorkflowActionResult => {
       const host = getHostSearch();
       if (!host || typeof host.next !== 'function') {

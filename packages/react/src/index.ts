@@ -6,6 +6,9 @@ export type {
   CommentsConfig,
   CommentsLayout,
   CommentsResponsiveConfig,
+  SearchConfig,
+  SearchFloatingConfig,
+  SearchStrings,
   ToolbarConfig,
 } from 'superdoc';
 

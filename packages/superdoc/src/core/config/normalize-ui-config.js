@@ -148,6 +148,52 @@ function normalizeContextMenuOptions(options) {
   return mergeDefined(normalized, { sections, defaultItems });
 }
 
+const SEARCH_STRING_KEYS = Object.freeze({
+  findPlaceholder: 'findPlaceholder',
+  findAriaLabel: 'findAriaLabel',
+  replacePlaceholder: 'replacePlaceholder',
+  replaceAriaLabel: 'replaceAriaLabel',
+  noResults: 'noResultsLabel',
+  previousMatchTitle: 'previousMatchLabel',
+  previousMatchAriaLabel: 'previousMatchAriaLabel',
+  nextMatchTitle: 'nextMatchLabel',
+  nextMatchAriaLabel: 'nextMatchAriaLabel',
+  closeTitle: 'closeLabel',
+  closeAriaLabel: 'closeAriaLabel',
+  replace: 'replaceLabel',
+  replaceAll: 'replaceAllLabel',
+  toggleReplaceTitle: 'toggleReplaceLabel',
+  toggleReplaceAriaLabel: 'toggleReplaceAriaLabel',
+  matchCase: 'matchCaseLabel',
+  matchCaseAriaLabel: 'matchCaseAriaLabel',
+  ignoreDiacritics: 'ignoreDiacriticsLabel',
+  ignoreDiacriticsAriaLabel: 'ignoreDiacriticsAriaLabel',
+  regex: 'regexLabel',
+  regexAriaLabel: 'regexAriaLabel',
+  invalidPattern: 'invalidPatternLabel',
+});
+
+function normalizeSearchStrings(strings) {
+  if (!isPlainObject(strings)) return {};
+  return Object.fromEntries(
+    Object.entries(strings)
+      .filter(([key, value]) => SEARCH_STRING_KEYS[key] !== undefined && value !== undefined)
+      .map(([key, value]) => [SEARCH_STRING_KEYS[key], value]),
+  );
+}
+
+function normalizeSearchOptions(options) {
+  const normalized = { ...options };
+  delete normalized.strings;
+  delete normalized.replaceControls;
+  delete normalized.includeTrackedDeletions;
+
+  return mergeDefined(normalized, normalizeSearchStrings(options.strings), {
+    replaceEnabled: firstDefined(options.replaceControls, options.replaceEnabled),
+    includeDeletedText: firstDefined(options.includeTrackedDeletions, options.includeDeletedText),
+  });
+}
+
 const TOOLBAR_ICON_ALIASES = Object.freeze({
   'text-color': 'color',
   'table-of-contents': 'tableOfContents',
@@ -471,7 +517,7 @@ export function normalizeUiConfig(config = {}) {
   const legacyContextMenuRaw = config.modules?.contextMenu ?? config.modules?.slashMenu;
   const legacyContextMenu = isPlainObject(legacyContextMenuRaw) ? legacyContextMenuRaw : {};
   const legacySearchRaw = config.modules?.surfaces?.findReplace;
-  const legacySearch = isPlainObject(legacySearchRaw) ? legacySearchRaw : {};
+  const legacySearch = normalizeSearchOptions(isPlainObject(legacySearchRaw) ? legacySearchRaw : {});
 
   // Composition and ordering are two settings with two shapes, and collapsing
   // them into one field is what broke the default toolbar. `groups` maps a
@@ -623,7 +669,7 @@ export function normalizeUiConfig(config = {}) {
       // `modules.surfaces.findReplace` is `true | object | undefined`, and the
       // `true` sentinel only ever meant "on with defaults", so it contributes
       // no options — `enabled` above already carries that decision.
-      options: allDisabled ? {} : mergeDefined(legacySearch, options('search')),
+      options: allDisabled ? {} : mergeDefined(legacySearch, normalizeSearchOptions(options('search'))),
     },
 
     linkPopover: {

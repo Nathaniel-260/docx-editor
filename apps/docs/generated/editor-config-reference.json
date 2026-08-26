@@ -124,7 +124,7 @@
     },
     {
       "name": "ui",
-      "type": "false | {\n  toolbar?: false | true | ToolbarConfig;\n  comments?: false | true | CommentsConfig;\n  contextMenu?: false | true | ContextMenuConfig;\n  loading?: boolean;\n  search?: false | true | FindReplaceConfig;\n  linkPopover?: false | true | LinkPopoverConfig;\n  ruler?: false | true | { container?: string | HTMLElement; };\n  contentControls?: false | true | ContentControlsConfig;\n}",
+      "type": "false | {\n  toolbar?: false | true | ToolbarConfig;\n  comments?: false | true | CommentsConfig;\n  contextMenu?: false | true | ContextMenuConfig;\n  loading?: boolean;\n  search?: false | true | SearchConfig;\n  linkPopover?: false | true | LinkPopoverConfig;\n  ruler?: false | true | { container?: string | HTMLElement; };\n  contentControls?: false | true | ContentControlsConfig;\n}",
       "typeName": "false | UIConfig",
       "required": false,
       "description": "Which built-in interface SuperDoc renders. Omit it to keep SuperDoc's historical rendering: comments, the context menu, content-control chrome, and mode-aware hyperlink activation are on; search and the ruler are opt-in; and the toolbar renders once it has somewhere to mount. That profile is not symmetrical, and omitting this field reproduces it exactly. Pass `false` when the application owns the interface. SuperDoc then renders no controls, chrome, dialogs, or popovers, while the document, the Document API, and `editor.ui` keep working — so a custom UI drives the same commands the built-in one would have. Pass an object to choose per surface. An omitted key keeps that surface's default rather than following its siblings, so `{ comments: false }` disables comments and changes nothing else.",

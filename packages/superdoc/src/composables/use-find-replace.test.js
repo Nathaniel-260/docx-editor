@@ -734,14 +734,21 @@ describe('useFindReplace', () => {
 
     /** Stateful `ui.search` stub mirroring the host search session contract. */
     function createV2SearchStub({ canReplace = true, available = true } = {}) {
-      const state = { query: '', total: 0, activeIndex: -1, canReplace, available, includeDeletedText: false };
+      const state = {
+        query: '',
+        total: 0,
+        activeIndex: -1,
+        canReplace,
+        available,
+        includeTrackedDeletions: false,
+      };
       return {
         getSnapshot: vi.fn(() => ({ ...state })),
-        search: vi.fn((query, options = {}) => {
+        find: vi.fn((query, options = {}) => {
           state.query = query;
           state.total = query ? 2 : 0;
           state.activeIndex = query ? 0 : -1;
-          state.includeDeletedText = options.includeDeletedText === true;
+          state.includeTrackedDeletions = options.includeTrackedDeletions === true;
           return { ...state };
         }),
         next: vi.fn(() => {
@@ -799,6 +806,34 @@ describe('useFindReplace', () => {
       expect(available.fr.wouldOpen()).toBe(true);
     });
 
+    it('keeps older ui.search handles working while preferring find()', async () => {
+      const v2Editor = createV2Editor();
+      const search = createV2SearchStub();
+      search.search = search.find;
+      delete search.find;
+      const fr = useFindReplace({
+        getSurfaceManager: () => manager,
+        getActiveEditor: () => v2Editor,
+        activeEditorRef: ref(v2Editor),
+        getFindReplaceConfig: () => ({ includeDeletedText: true }),
+        getSuperDocUI: () => ({ search }),
+      });
+
+      expect(fr.wouldOpen()).toBe(true);
+      await fr.open();
+      await vi.dynamicImportSettled();
+      const handle = manager.open.mock.calls.at(-1)[0].props.findReplace;
+      handle.findQuery.value = 'needle';
+      await new Promise((resolve) => setTimeout(resolve, 180));
+
+      expect(search.search).toHaveBeenCalledWith('needle', {
+        caseSensitive: false,
+        includeDeletedText: true,
+        regex: false,
+      });
+      fr.close();
+    });
+
     it('routes query and navigation through ui.search', async () => {
       const { fr, search } = makeV2();
       await fr.open();
@@ -807,9 +842,9 @@ describe('useFindReplace', () => {
 
       handle.findQuery.value = 'needle';
       await new Promise((resolve) => setTimeout(resolve, 180));
-      expect(search.search).toHaveBeenCalledWith('needle', {
+      expect(search.find).toHaveBeenCalledWith('needle', {
         caseSensitive: false,
-        includeDeletedText: false,
+        includeTrackedDeletions: false,
         regex: false,
       });
       expect(handle.matchCount.value).toBe(2);
@@ -829,13 +864,13 @@ describe('useFindReplace', () => {
     it('threads the regex toggle into ui.search and surfaces invalid-pattern errors (SD-3569)', async () => {
       const v2Editor = createV2Editor();
       const search = createV2SearchStub();
-      search.search = vi.fn((query, options = {}) => ({
+      search.find = vi.fn((query, options = {}) => ({
         query,
         total: options.regex && query === '(' ? 0 : 1,
         activeIndex: options.regex && query === '(' ? -1 : 0,
         canReplace: true,
         available: true,
-        includeDeletedText: false,
+        includeTrackedDeletions: false,
         regex: options.regex === true,
         reason: options.regex && query === '(' ? 'search-invalid-pattern' : undefined,
       }));
@@ -857,9 +892,9 @@ describe('useFindReplace', () => {
       handle.regex.value = true;
       handle.findQuery.value = 'nee(dle)';
       await new Promise((resolve) => setTimeout(resolve, 180));
-      expect(search.search).toHaveBeenCalledWith('nee(dle)', {
+      expect(search.find).toHaveBeenCalledWith('nee(dle)', {
         caseSensitive: false,
-        includeDeletedText: false,
+        includeTrackedDeletions: false,
         regex: true,
       });
       expect(handle.searchError.value).toBe(null);
@@ -878,7 +913,7 @@ describe('useFindReplace', () => {
       fr.close();
     });
 
-    it('passes includeDeletedText from config into ui.search on v2', async () => {
+    it('passes tracked deletions from config into ui.search on v2', async () => {
       const v2Editor = createV2Editor();
       const search = createV2SearchStub();
       const fr = useFindReplace({
@@ -895,9 +930,9 @@ describe('useFindReplace', () => {
 
       handle.findQuery.value = 'needle';
       await new Promise((resolve) => setTimeout(resolve, 180));
-      expect(search.search).toHaveBeenCalledWith('needle', {
+      expect(search.find).toHaveBeenCalledWith('needle', {
         caseSensitive: false,
-        includeDeletedText: true,
+        includeTrackedDeletions: true,
         regex: false,
       });
 

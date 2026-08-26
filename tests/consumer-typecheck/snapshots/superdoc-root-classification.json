@@ -970,11 +970,44 @@
       "inCjs": false
     },
     {
+      "name": "SearchConfig",
+      "bucket": "supported-root",
+      "rationale": "Canonical startup options for the built-in Search surface.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SearchFloatingConfig",
+      "bucket": "supported-root",
+      "rationale": "Position and focus options used by SearchConfig.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "SearchMatch",
       "bucket": "supported-root",
       "rationale": "Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities.",
       "confidence": "medium",
       "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SearchStrings",
+      "bucket": "supported-root",
+      "rationale": "Typed string overrides used by SearchConfig.",
+      "confidence": "high",
+      "source": "config-supported",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,

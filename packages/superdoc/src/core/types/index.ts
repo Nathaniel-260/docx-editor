@@ -1893,10 +1893,8 @@ export interface SurfacesModuleConfig {
     autoFocus?: boolean;
   };
   /**
-   * Built-in find/replace popover for editor-backed documents. Disabled by
-   * default. Set to `true` to intercept Cmd+F / Ctrl+F inside SuperDoc and
-   * open the built-in UI. When an object, allows text customization, custom
-   * components, resolvers, and replace-disabling.
+   * Older configuration for the built-in Search surface.
+   * @deprecated replaceWith=`ui.search` removeIn=v3.0
    */
   findReplace?: boolean | FindReplaceConfig;
   /**
@@ -2035,54 +2033,83 @@ export interface PasswordPromptConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Find/replace surface types
+// Search surface types
 // ---------------------------------------------------------------------------
 
-/** All customizable text strings for the find/replace surface, resolved with defaults. */
-export interface ResolvedFindReplaceTexts {
+/** String overrides for the built-in Search surface. */
+export interface SearchStrings {
   /** Input placeholder for the find field. */
-  findPlaceholder: string;
+  findPlaceholder?: string;
   /** Accessible label for the find input. */
-  findAriaLabel: string;
+  findAriaLabel?: string;
   /** Input placeholder for the replace field. */
-  replacePlaceholder: string;
+  replacePlaceholder?: string;
   /** Accessible label for the replace input. */
-  replaceAriaLabel: string;
+  replaceAriaLabel?: string;
   /** Text shown when there are no matches. */
-  noResultsLabel: string;
-  /** Button label / title for previous match. */
-  previousMatchLabel: string;
+  noResults?: string;
+  /** Tooltip for the previous-match button. */
+  previousMatchTitle?: string;
   /** Accessible label for previous match button. */
-  previousMatchAriaLabel: string;
-  /** Button label / title for next match. */
-  nextMatchLabel: string;
+  previousMatchAriaLabel?: string;
+  /** Tooltip for the next-match button. */
+  nextMatchTitle?: string;
   /** Accessible label for next match button. */
-  nextMatchAriaLabel: string;
-  /** Button label / title for close. */
-  closeLabel: string;
+  nextMatchAriaLabel?: string;
+  /** Tooltip for the close button. */
+  closeTitle?: string;
   /** Accessible label for close button. */
-  closeAriaLabel: string;
+  closeAriaLabel?: string;
   /** Replace button text. */
-  replaceLabel: string;
+  replace?: string;
   /** Replace-all button text. */
-  replaceAllLabel: string;
-  /** Toggle replace row label. */
-  toggleReplaceLabel: string;
+  replaceAll?: string;
+  /** Tooltip for the button that expands or collapses replace controls. */
+  toggleReplaceTitle?: string;
   /** Accessible label for toggle replace button. */
-  toggleReplaceAriaLabel: string;
+  toggleReplaceAriaLabel?: string;
   /** Match case toggle text. */
-  matchCaseLabel: string;
+  matchCase?: string;
   /** Accessible label for match case toggle. */
-  matchCaseAriaLabel: string;
+  matchCaseAriaLabel?: string;
   /** Ignore diacritics toggle text. */
-  ignoreDiacriticsLabel: string;
+  ignoreDiacritics?: string;
   /** Accessible label for ignore diacritics toggle. */
-  ignoreDiacriticsAriaLabel: string;
+  ignoreDiacriticsAriaLabel?: string;
   /** Regex toggle text. */
-  regexLabel: string;
+  regex?: string;
   /** Accessible label for the regex toggle. */
-  regexAriaLabel: string;
+  regexAriaLabel?: string;
   /** Inline error shown when the regex pattern is invalid or unsafe. */
+  invalidPattern?: string;
+}
+
+/**
+ * Resolved text for the older custom Search renderer.
+ * @deprecated replaceWith=`SearchStrings` for built-in copy or `editor.ui.search` for custom UI removeIn=v3.0
+ */
+export interface ResolvedFindReplaceTexts {
+  findPlaceholder: string;
+  findAriaLabel: string;
+  replacePlaceholder: string;
+  replaceAriaLabel: string;
+  noResultsLabel: string;
+  previousMatchLabel: string;
+  previousMatchAriaLabel: string;
+  nextMatchLabel: string;
+  nextMatchAriaLabel: string;
+  closeLabel: string;
+  closeAriaLabel: string;
+  replaceLabel: string;
+  replaceAllLabel: string;
+  toggleReplaceLabel: string;
+  toggleReplaceAriaLabel: string;
+  matchCaseLabel: string;
+  matchCaseAriaLabel: string;
+  ignoreDiacriticsLabel: string;
+  ignoreDiacriticsAriaLabel: string;
+  regexLabel: string;
+  regexAriaLabel: string;
   invalidPatternLabel: string;
 }
 
@@ -2137,8 +2164,8 @@ export interface SearchMatch {
 }
 
 /**
- * Handle object injected into find/replace UIs as the `findReplace`
- * prop/context field. Provides reactive search state and all action functions.
+ * Reactive handle injected into the older custom Search renderer.
+ * @deprecated replaceWith=`editor.ui.search` removeIn=v3.0
  */
 export interface FindReplaceHandle {
   /** Current search query. */
@@ -2207,9 +2234,8 @@ export interface FindReplaceHandle {
 }
 
 /**
- * Read-only context passed to a find/replace resolver to decide how to
- * render. Does NOT include action functions — the resolver decides, it does
- * not act.
+ * Read-only context passed to the older custom Search resolver.
+ * @deprecated replaceWith=`editor.ui.search` removeIn=v3.0
  */
 export interface FindReplaceContext {
   /** Resolved text strings. */
@@ -2219,8 +2245,8 @@ export interface FindReplaceContext {
 }
 
 /**
- * Context passed to an external (framework-agnostic) find/replace renderer.
- * Vue refs are unwrapped as getter/setter properties for framework neutrality.
+ * Context passed to the older framework-independent Search renderer.
+ * @deprecated replaceWith=`editor.ui.search` removeIn=v3.0
  */
 export interface FindReplaceRenderContext {
   /** Empty DOM container to render into. */
@@ -2237,7 +2263,10 @@ export interface FindReplaceRenderContext {
   mode: SurfaceMode;
 }
 
-/** Resolution returned by a find/replace resolver. */
+/**
+ * Result returned by the older custom Search resolver.
+ * @deprecated replaceWith=`editor.ui.search` removeIn=v3.0
+ */
 export type FindReplaceResolution =
   | { type: 'default' }
   | { type: 'none' }
@@ -2247,92 +2276,107 @@ export type FindReplaceResolution =
       render: (ctx: FindReplaceRenderContext) => { destroy?: () => void } | void;
     };
 
-/** Configuration for the find/replace surface. */
-export interface FindReplaceConfig {
-  /** Override find placeholder text. */
-  findPlaceholder?: string;
-  /** Override find input aria-label. */
-  findAriaLabel?: string;
-  /** Override replace placeholder text. */
-  replacePlaceholder?: string;
-  /** Override replace input aria-label. */
-  replaceAriaLabel?: string;
-  /** Override "No results" text. */
-  noResultsLabel?: string;
-  /** Override previous match button title. */
-  previousMatchLabel?: string;
-  /** Override previous match aria-label. */
-  previousMatchAriaLabel?: string;
-  /** Override next match button title. */
-  nextMatchLabel?: string;
-  /** Override next match aria-label. */
-  nextMatchAriaLabel?: string;
-  /** Override close button title. */
-  closeLabel?: string;
-  /** Override close button aria-label. */
-  closeAriaLabel?: string;
-  /** Override replace button text. */
-  replaceLabel?: string;
-  /** Override replace-all button text. */
-  replaceAllLabel?: string;
-  /** Override toggle replace button title. */
-  toggleReplaceLabel?: string;
-  /** Override toggle replace aria-label. */
-  toggleReplaceAriaLabel?: string;
-  /** Override match case toggle text. */
-  matchCaseLabel?: string;
-  /** Override match case aria-label. */
-  matchCaseAriaLabel?: string;
-  /** Override ignore diacritics toggle text. */
-  ignoreDiacriticsLabel?: string;
-  /** Override ignore diacritics aria-label. */
-  ignoreDiacriticsAriaLabel?: string;
-  /** Override regex toggle text. */
-  regexLabel?: string;
-  /** Override regex toggle aria-label. */
-  regexAriaLabel?: string;
-  /** Override the inline invalid-pattern error text. */
-  invalidPatternLabel?: string;
-  /** Whether replace is available (default: true). */
-  replaceEnabled?: boolean;
-  /** When true, search includes text from pending tracked deletions. Defaults to false. */
-  includeDeletedText?: boolean;
-  /** Vue component to render as custom find/replace content. Mutually exclusive with `render`. */
-  component?: unknown;
-  /** Extra props passed to the custom Vue component. */
-  props?: Record<string, unknown>;
-  /** External (framework-agnostic) renderer. Mutually exclusive with `component`. */
-  render?: (ctx: FindReplaceRenderContext) => { destroy?: () => void } | void;
-  /** Conditional resolver. Can coexist with `component`/`render`. */
-  resolver?: (ctx: FindReplaceContext) => FindReplaceResolution | null | undefined;
-  /**
-   * Where the floating find/replace bar is pinned, so it can be moved clear of
-   * the document. `placement` is a corner/edge preset; explicit insets
-   * (`top`/`right`/`bottom`/`left`, a px number or CSS length) override it.
-   * Defaults to `{ placement: 'top-right' }`.
-   */
-  floating?: {
-    placement?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'top-center' | 'bottom-center';
-    top?: number | string;
-    right?: number | string;
-    bottom?: number | string;
-    left?: number | string;
-    width?: number | string;
-    maxWidth?: number | string;
-    maxHeight?: number | string;
-    /**
-     * Focus the find input when the surface opens. Defaults to `true`; set
-     * `false` to leave focus wherever the user had it.
-     *
-     * Honored but undeclared until #1094: `useFindReplace` spreads this whole
-     * bag into the surface request, and `SurfaceManager` applies it last, over
-     * the `modules.surfaces.floating` defaults.
-     */
-    autoFocus?: boolean;
-    /** Close the surface on a pointer press outside it. Defaults to `false`. */
-    closeOnOutsidePointerDown?: boolean;
-  };
+/** Position and focus settings for the built-in Search surface. */
+export interface SearchFloatingConfig {
+  /** Position preset (default: `'top-right'`). Explicit insets override it. */
+  placement?: SurfaceFloatingPlacement;
+  /** Top inset in pixels or as a CSS length. */
+  top?: number | string;
+  /** Right inset in pixels or as a CSS length. */
+  right?: number | string;
+  /** Bottom inset in pixels or as a CSS length. */
+  bottom?: number | string;
+  /** Left inset in pixels or as a CSS length. */
+  left?: number | string;
+  /** Surface width in pixels or as a CSS length. */
+  width?: number | string;
+  /** Maximum surface width in pixels or as a CSS length. */
+  maxWidth?: number | string;
+  /** Maximum surface height in pixels or as a CSS length. */
+  maxHeight?: number | string;
+  /** Focus the find input when the surface opens (default: true). */
+  autoFocus?: boolean;
+  /** Close the surface when a pointer press occurs outside it (default: false). */
+  closeOnOutsidePointerDown?: boolean;
 }
+
+/** Startup options for the built-in Search surface rendered by `ui.search`. */
+export interface SearchConfig extends SearchLegacyConfig {
+  /**
+   * Show replace controls (default: true). This changes the built-in UI only;
+   * it does not authorize or disable `editor.ui.search.replace()`.
+   */
+  replaceControls?: boolean;
+  /** Include text from pending tracked deletions in each search (default: false). */
+  includeTrackedDeletions?: boolean;
+  /** String overrides for the built-in Search surface. */
+  strings?: SearchStrings;
+  /** Position and focus settings for the floating Search surface. */
+  floating?: SearchFloatingConfig;
+}
+
+/** Compatibility fields accepted by `SearchConfig` for the rest of v2. */
+interface SearchLegacyConfig {
+  /** @deprecated replaceWith=`ui.search.strings.findPlaceholder` removeIn=v3.0 */
+  findPlaceholder?: string;
+  /** @deprecated replaceWith=`ui.search.strings.findAriaLabel` removeIn=v3.0 */
+  findAriaLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.replacePlaceholder` removeIn=v3.0 */
+  replacePlaceholder?: string;
+  /** @deprecated replaceWith=`ui.search.strings.replaceAriaLabel` removeIn=v3.0 */
+  replaceAriaLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.noResults` removeIn=v3.0 */
+  noResultsLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.previousMatchTitle` removeIn=v3.0 */
+  previousMatchLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.previousMatchAriaLabel` removeIn=v3.0 */
+  previousMatchAriaLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.nextMatchTitle` removeIn=v3.0 */
+  nextMatchLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.nextMatchAriaLabel` removeIn=v3.0 */
+  nextMatchAriaLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.closeTitle` removeIn=v3.0 */
+  closeLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.closeAriaLabel` removeIn=v3.0 */
+  closeAriaLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.replace` removeIn=v3.0 */
+  replaceLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.replaceAll` removeIn=v3.0 */
+  replaceAllLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.toggleReplaceTitle` removeIn=v3.0 */
+  toggleReplaceLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.toggleReplaceAriaLabel` removeIn=v3.0 */
+  toggleReplaceAriaLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.matchCase` removeIn=v3.0 */
+  matchCaseLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.matchCaseAriaLabel` removeIn=v3.0 */
+  matchCaseAriaLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.ignoreDiacritics` removeIn=v3.0 */
+  ignoreDiacriticsLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.ignoreDiacriticsAriaLabel` removeIn=v3.0 */
+  ignoreDiacriticsAriaLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.regex` removeIn=v3.0 */
+  regexLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.regexAriaLabel` removeIn=v3.0 */
+  regexAriaLabel?: string;
+  /** @deprecated replaceWith=`ui.search.strings.invalidPattern` removeIn=v3.0 */
+  invalidPatternLabel?: string;
+  /** @deprecated replaceWith=`ui.search.replaceControls` removeIn=v3.0 */
+  replaceEnabled?: boolean;
+  /** @deprecated replaceWith=`ui.search.includeTrackedDeletions` removeIn=v3.0 */
+  includeDeletedText?: boolean;
+  /** @deprecated replaceWith=`editor.ui.search` removeIn=v3.0 */
+  component?: unknown;
+  /** @deprecated replaceWith=`editor.ui.search` removeIn=v3.0 */
+  props?: Record<string, unknown>;
+  /** @deprecated replaceWith=`editor.ui.search` removeIn=v3.0 */
+  render?: (ctx: FindReplaceRenderContext) => { destroy?: () => void } | void;
+  /** @deprecated replaceWith=`editor.ui.search` removeIn=v3.0 */
+  resolver?: (ctx: FindReplaceContext) => FindReplaceResolution | null | undefined;
+}
+
+/** @deprecated replaceWith=`SearchConfig` removeIn=v3.0 */
+export type FindReplaceConfig = SearchConfig;
 
 // ---------------------------------------------------------------------------
 // Modules
@@ -3857,11 +3901,11 @@ export interface UIConfig {
    */
   loading?: boolean;
   /**
-   * Built-in find/replace surface. Disabled by default. Enabling it lets
+   * Built-in Search surface. Disabled by default. Enabling it lets
    * SuperDoc intercept Cmd+F / Ctrl+F; `editor.ui.search` stays available to
    * custom UI either way.
    */
-  search?: boolean | FindReplaceConfig;
+  search?: boolean | SearchConfig;
   /**
    * Built-in popover shown when a link is clicked.
    * @deprecated replaceWith=`hyperlinks` removeIn=v3.0

@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-26T00:46:15.601Z
+Generated: 2026-08-26T10:23:58.622Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 240 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 240 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 243 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 243 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **240** |
+| **union** |  | **243** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 230
+- typed but no runtime export (phantom risk): 233
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -111,7 +111,10 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `ResolvedFindReplaceTexts`
 - `ResolvedPasswordPromptTexts`
 - `SdtRef`
+- `SearchConfig`
+- `SearchFloatingConfig`
 - `SearchMatch`
+- `SearchStrings`
 - `SelectionHandle`
 - `SelectionInfo`
 - `StoryLocator`
@@ -277,7 +280,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `CommentsLayout` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsResponsiveConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsType` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Config` | ✓ | ✓ |   |   | 21 |   | 7 | 3 | 0 |
+| `Config` | ✓ | ✓ |   |   | 22 |   | 7 | 3 | 0 |
 | `ContentControlActiveChangePayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContentControlClickPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContentControlsConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -309,7 +312,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `ExportType` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ExternalPopoverRenderContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ExternalSurfaceRenderContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `FindReplaceConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `FindReplaceConfig` | ✓ | ✓ |   |   | 3 |   | 0 | 0 | 0 |
 | `FindReplaceContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `FindReplaceHandle` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `FindReplaceRenderContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -350,7 +353,10 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `ResolvedFindReplaceTexts` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ResolvedPasswordPromptTexts` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SdtRef` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SearchConfig` | ✓ | ✓ |   |   | 3 |   | 0 | 0 | 0 |
+| `SearchFloatingConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SearchMatch` | ✓ | ✓ |   |   | 3 |   | 0 | 0 | 0 |
+| `SearchStrings` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SelectionHandle` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 2 | 0 | 0 |

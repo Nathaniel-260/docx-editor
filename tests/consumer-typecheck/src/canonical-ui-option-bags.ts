@@ -25,6 +25,7 @@ import type {
   ContentControlsConfig,
   Config,
   FindReplaceConfig,
+  SearchConfig,
 } from 'superdoc';
 
 // --- Accepted: every field the runtime actually reads ----------------------
@@ -50,11 +51,40 @@ const _typoComments: Config = {
   ui: { comments: { layuot: 'inline' } },
 };
 
-// `ui.search` options reach `useFindReplace` as its config, so the surface's
-// own type is the shape rather than a parallel one.
+// Search behavior and copy are grouped by purpose. `replaceControls` affects
+// the built-in UI; it is not an authorization setting.
 const _search: Config = {
   selector: '#editor',
-  ui: { search: { findPlaceholder: 'Search', closeLabel: 'Dismiss' } },
+  ui: {
+    search: {
+      replaceControls: false,
+      includeTrackedDeletions: true,
+      strings: {
+        findPlaceholder: 'Find',
+        findAriaLabel: 'Find text',
+        replacePlaceholder: 'Replace',
+        replaceAriaLabel: 'Replace text',
+        noResults: 'No matches',
+        previousMatchTitle: 'Previous result',
+        previousMatchAriaLabel: 'Previous result',
+        nextMatchTitle: 'Next result',
+        nextMatchAriaLabel: 'Next result',
+        closeTitle: 'Close search',
+        closeAriaLabel: 'Close search',
+        replace: 'Replace',
+        replaceAll: 'Replace all',
+        toggleReplaceTitle: 'Toggle replace',
+        toggleReplaceAriaLabel: 'Toggle replace',
+        matchCase: 'Aa',
+        matchCaseAriaLabel: 'Match case',
+        ignoreDiacritics: 'ä≡a',
+        ignoreDiacriticsAriaLabel: 'Ignore diacritics',
+        regex: '.*',
+        regexAriaLabel: 'Use regular expression',
+        invalidPattern: 'Invalid pattern',
+      },
+    },
+  },
 };
 
 // The whole `floating` bag is spread into the surface request and applied over
@@ -192,7 +222,8 @@ const _namedLayout: CommentsLayout = 'inline';
 const _namedResponsive: CommentsResponsiveConfig = { target: document.body, breakpoint: 900 };
 const _namedInteraction: CommentInteractionConfig = { level: 'write' };
 const _namedChrome: ContentControlsConfig = { chrome: 'default' };
-const _namedSearch: FindReplaceConfig = { findPlaceholder: 'Find' };
+const _namedSearch: SearchConfig = { strings: { findPlaceholder: 'Find' } };
+const _legacyNamedSearch: FindReplaceConfig = { findPlaceholder: 'Find' };
 
 export {
   _comments,
@@ -219,4 +250,5 @@ export {
   _namedInteraction,
   _namedChrome,
   _namedSearch,
+  _legacyNamedSearch,
 };

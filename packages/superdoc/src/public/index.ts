@@ -116,6 +116,7 @@ export type { TrackChangeHighlightColors } from '../core/types/index.js';
 export type { ContentControlsConfig } from '../core/types/index.js';
 export type { FontFamilyOption } from './ui/types.js';
 export type { ToolbarConfig } from '../core/types/index.js';
+export type { SearchConfig, SearchFloatingConfig, SearchStrings } from '../core/types/index.js';
 export type { ToolbarRegion } from '../core/types/index.js';
 export type { ToolbarItemId } from '../core/types/index.js';
 export type { ToolbarOptionalItemId } from '../core/types/index.js';

@@ -53,6 +53,9 @@ export type {
   CommandsHandle,
   ContextMenuItem,
   ContextMenuHandle,
+  SearchController,
+  SearchHandle,
+  SearchQueryOptions,
   // The argument a custom command receives. Exported so the callback can be
   // extracted into a named function or stored in a typed variable; without it
   // the only way to annotate one is to leave it inline and rely on contextual
@@ -93,6 +96,8 @@ export type {
   ZoomSlice,
   DocumentSlice,
   StylesSlice,
+  SearchSnapshot,
+  SearchSlice,
   // Style catalogue shapes (re-surfaced from @superdoc/document-api)
   StyleCatalogView,
   StyleCatalogItemType,

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-26T00:46:15.601Z",
+  "generatedAt": "2026-08-26T10:23:58.622Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -105,7 +105,10 @@
         "ResolvedFindReplaceTexts",
         "ResolvedPasswordPromptTexts",
         "SdtRef",
+        "SearchConfig",
+        "SearchFloatingConfig",
         "SearchMatch",
+        "SearchStrings",
         "SelectionHandle",
         "SelectionInfo",
         "StoryLocator",
@@ -351,7 +354,10 @@
         "ResolvedFindReplaceTexts",
         "ResolvedPasswordPromptTexts",
         "SdtRef",
+        "SearchConfig",
+        "SearchFloatingConfig",
         "SearchMatch",
+        "SearchStrings",
         "SelectionHandle",
         "SelectionInfo",
         "StoryLocator",
@@ -537,11 +543,11 @@
     }
   },
   "counts": {
-    "types.import": 240,
-    "types.require": 240,
+    "types.import": 243,
+    "types.require": 243,
     "import": 10,
     "require": 10,
-    "union": 240
+    "union": 243
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -641,7 +647,10 @@
         "ResolvedFindReplaceTexts",
         "ResolvedPasswordPromptTexts",
         "SdtRef",
+        "SearchConfig",
+        "SearchFloatingConfig",
         "SearchMatch",
+        "SearchStrings",
         "SelectionHandle",
         "SelectionInfo",
         "StoryLocator",

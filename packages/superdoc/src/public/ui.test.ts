@@ -12754,9 +12754,8 @@ describe('public ui — block / paragraph / list / link / create routing (row 74
 });
 
 // ---------------------------------------------------------------------------
-// Shared search/find surface (phase 2, WS3). Search navigation only in this
-// tranche; replace fails closed with `replace-unsupported`; the whole surface
-// fails closed with `search-unavailable` when the host exposes no search facade.
+// Shared search surface. Find, navigation, and replacement use one host-owned
+// session and fail closed when the active host cannot provide the operation.
 // ---------------------------------------------------------------------------
 
 describe('public ui — shared search surface (row 747 / search ownership)', () => {
@@ -12781,7 +12780,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
     const ui = createSuperDocUI({ superdoc: makeSearchSuperdoc() });
     expect(ui.search.getSnapshot()).toMatchObject({ available: false, reason: SUPERDOC_UI_REASONS.searchUnavailable });
     expect(ui.search.open()).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.searchUnavailable });
-    const slice = ui.search.search('hello');
+    const slice = ui.search.find('hello');
     expect(slice).toMatchObject({
       query: 'hello',
       total: 0,
@@ -12836,7 +12835,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
     const ui = createSuperDocUI({ superdoc: makeSearchSuperdoc({ editCommands }) });
 
     expect(ui.search.getSnapshot()).toMatchObject({ available: true, total: 0 });
-    const slice = ui.search.search('hello', { caseSensitive: true });
+    const slice = ui.search.find('hello', { caseSensitive: true });
     expect(editSearch.query).toHaveBeenCalledWith({
       query: 'hello',
       caseSensitive: true,
@@ -12890,8 +12889,8 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
     const emitted: Array<{ query?: string; total?: number }> = [];
     ui.search.subscribe(({ snapshot }) => emitted.push({ query: snapshot.query, total: snapshot.total }));
 
-    ui.search.search('ab');
-    ui.search.search('abc');
+    ui.search.find('ab');
+    ui.search.find('abc');
     await Promise.resolve();
     await Promise.resolve();
 
@@ -12964,7 +12963,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
       superdoc: makeSearchSuperdoc({ search: hostSearch, editCommands }),
     });
 
-    const slice = ui.search.search('hello');
+    const slice = ui.search.find('hello');
     expect(hostSearch.setSession).toHaveBeenCalledWith('hello', {
       caseSensitive: false,
       includeDeletedText: false,
@@ -13002,7 +13001,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
     const superdoc = makeSearchSuperdoc({ search });
     const ui = createSuperDocUI({ superdoc });
 
-    expect(ui.search.search('hello')).toMatchObject({ available: true, total: 1 });
+    expect(ui.search.find('hello')).toMatchObject({ available: true, total: 1 });
     delete (superdoc.activeEditor as { host?: unknown }).host;
 
     expect(ui.search.getSnapshot()).toMatchObject({
@@ -13029,7 +13028,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
         search: { setSession, next: vi.fn(), previous: vi.fn(), clear: vi.fn(), getState, replaceCurrent, replaceAll },
       }),
     });
-    ui.search.search('hello');
+    ui.search.find('hello');
     expect(ui.search.replace('x')).toEqual({ ok: true });
     expect(replaceCurrent).toHaveBeenCalledWith('x');
     expect(ui.search.replaceAll('y')).toEqual({ ok: true });
@@ -13051,7 +13050,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
         search: { setSession, next: vi.fn(), previous: vi.fn(), clear: vi.fn(), replaceCurrent, replaceAll },
       }),
     });
-    ui.search.search('hello');
+    ui.search.find('hello');
     expect(ui.search.replace('x')).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.documentReadonly });
     expect(ui.search.replaceAll('x')).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.documentReadonly });
   });
@@ -13062,7 +13061,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
     const ui = createSuperDocUI({
       superdoc: makeSearchSuperdoc({ search: { setSession, next: vi.fn(), previous: vi.fn(), clear: vi.fn() } }),
     });
-    ui.search.search('hello');
+    ui.search.find('hello');
     expect(ui.search.replace('x')).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable });
     expect(ui.search.replaceAll('x')).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable });
   });
@@ -13075,7 +13074,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
     const ui = createSuperDocUI({ superdoc: makeSearchSuperdoc({ search: { setSession, next, previous, clear } }) });
 
     expect(ui.search.open()).toEqual({ ok: true });
-    const slice = ui.search.search('term', { caseSensitive: true });
+    const slice = ui.search.find('term', { caseSensitive: true });
     expect(setSession).toHaveBeenCalledWith('term', {
       caseSensitive: true,
       includeDeletedText: false,
@@ -13101,7 +13100,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
     expect(ui.search.getSnapshot()).toMatchObject({ query: '', total: 0, activeIndex: -1 });
   });
 
-  it('passes includeDeletedText through ui.search into the host search session', async () => {
+  it('passes includeTrackedDeletions through ui.search into the host search session', async () => {
     const setSession = vi.fn(() => ({
       query: 'deleted',
       matches: [{ length: 1 }],
@@ -13116,7 +13115,7 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
       }),
     });
 
-    const slice = ui.search.search('deleted', { includeDeletedText: true });
+    const slice = ui.search.find('deleted', { includeTrackedDeletions: true });
     expect(setSession).toHaveBeenCalledWith('deleted', {
       caseSensitive: false,
       includeDeletedText: true,
@@ -13127,7 +13126,27 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
       total: 1,
       activeIndex: 0,
       available: true,
+      includeTrackedDeletions: true,
       includeDeletedText: true,
+    });
+  });
+
+  it('keeps search() as a compatibility alias for find()', () => {
+    const setSession = vi.fn(() => ({ query: 'term', matches: [{ length: 1 }], activeMatchIndex: 0 }));
+    const ui = createSuperDocUI({
+      superdoc: makeSearchSuperdoc({ search: { setSession, next: vi.fn(), previous: vi.fn(), clear: vi.fn() } }),
+    });
+
+    expect(ui.search.search('term', { includeDeletedText: true })).toMatchObject({
+      query: 'term',
+      total: 1,
+      includeTrackedDeletions: true,
+      includeDeletedText: true,
+    });
+    expect(setSession).toHaveBeenCalledWith('term', {
+      caseSensitive: false,
+      includeDeletedText: true,
+      highlight: true,
     });
   });
 
@@ -13156,6 +13175,39 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
       available: true,
     });
     expect(getState).toHaveBeenCalled();
+  });
+
+  it('clears tracked-deletion search state when the host disables it', () => {
+    let includeDeletedText = true;
+    const getState = vi.fn(() => ({
+      query: 'term',
+      matches: [{ length: 1 }],
+      activeMatchIndex: 0,
+      includeDeletedText,
+    }));
+    const ui = createSuperDocUI({
+      superdoc: makeSearchSuperdoc({
+        search: {
+          setSession: vi.fn(),
+          next: vi.fn(),
+          previous: vi.fn(),
+          clear: vi.fn(),
+          getState,
+        },
+      }),
+    });
+
+    expect(ui.search.getSnapshot()).toMatchObject({
+      includeTrackedDeletions: true,
+      includeDeletedText: true,
+    });
+
+    includeDeletedText = false;
+
+    expect(ui.search.getSnapshot()).toMatchObject({
+      includeTrackedDeletions: false,
+      includeDeletedText: false,
+    });
   });
 });
 

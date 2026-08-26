@@ -1321,21 +1321,12 @@ export interface TablesHandle {
 }
 
 // ---------------------------------------------------------------------------
-// Search / find surface (shared search facade)
+// Search surface
 // ---------------------------------------------------------------------------
 
 /**
- * Shared search/find state. This is the single surface the built-in toolbar
- * search control and custom UIs read and drive.
- *
- * Parity posture: full find/replace. `query`, match `total`, the `activeIndex`,
- * open/closed state, and `search` / `next` / `previous` / `clear` drive
- * navigation; `replace` / `replaceAll` mutate the document through the single
- * V2 host search session (`host.search`) and fail closed in viewing/read-only
- * mode (`document-readonly`) or when replace is unavailable
- * (`operation-unavailable`). When the host does not expose a search facade the
- * whole surface is `available: false` and every action fails closed with
- * `search-unavailable` rather than fabricating matches.
+ * Previously published Search snapshot.
+ * @deprecated replaceWith=`SearchSnapshot` removeIn=v3.0
  */
 export interface SearchSlice {
   /** Current query string. */
@@ -1350,7 +1341,10 @@ export interface SearchSlice {
   available: boolean;
   /** Whether the query is case-sensitive. */
   caseSensitive: boolean;
-  /** Whether the session includes pending tracked deletions in match discovery. */
+  /**
+   * Whether the session includes pending tracked deletions in match discovery.
+   * @deprecated replaceWith=`includeTrackedDeletions` removeIn=v3.0
+   */
   includeDeletedText: boolean;
   /** Whether the query is a regular expression (V2 runtime only). */
   regex: boolean;
@@ -1364,26 +1358,46 @@ export interface SearchSlice {
   reason?: SuperDocUIReason;
 }
 
-/** Search/find surface shared by the built-in toolbar and custom UIs. */
+/** State shared by the built-in Search surface and application-owned Search controls. */
+export interface SearchSnapshot extends SearchSlice {
+  /** Whether the session includes pending tracked deletions in match discovery. */
+  includeTrackedDeletions: boolean;
+}
+
+/** Options for `editor.ui.search.find()`. */
+export interface SearchQueryOptions {
+  /** Match uppercase and lowercase letters exactly (default: false). */
+  caseSensitive?: boolean;
+  /** Include text from pending tracked deletions (default: false). */
+  includeTrackedDeletions?: boolean;
+  /**
+   * Include text from pending tracked deletions (default: false).
+   * @deprecated replaceWith=`includeTrackedDeletions` removeIn=v3.0
+   */
+  includeDeletedText?: boolean;
+  /** Treat the query as a regular expression (default: false). */
+  regex?: boolean;
+}
+
+/**
+ * Previously published Search controller.
+ * @deprecated replaceWith=`SearchController` removeIn=v3.0
+ */
 export interface SearchHandle extends SnapshotSubscribable<SearchSlice> {
   /** Read the current search snapshot. */
   getSnapshot(): SearchSlice;
-  /** Open a search session. Fails closed when search is host-unavailable. */
+  /** Open a search session. Returns a failed result when the current Editor cannot search. */
   open(): WorkflowActionResult;
   /** Close the current search session and clear highlights. */
   close(): void;
   /**
-   * Run a search for `query`. Returns the updated snapshot (with `total` and
-   * `activeIndex`). Fails closed (`available: false`, `search-unavailable`) when
-   * the host does not expose search.
+   * Find `query` in the open document.
+   * @deprecated replaceWith=`find` removeIn=v3.0
    */
-  search(
-    query: string,
-    options?: { caseSensitive?: boolean; includeDeletedText?: boolean; regex?: boolean },
-  ): SearchSlice;
-  /** Move to the next match. Fails closed when search is unavailable / empty. */
+  search(query: string, options?: SearchQueryOptions): SearchSlice;
+  /** Move to the next match. Returns a failed result when Search is unavailable or has no matches. */
   next(): WorkflowActionResult;
-  /** Move to the previous match. Fails closed when search is unavailable / empty. */
+  /** Move to the previous match. Returns a failed result when Search is unavailable or has no matches. */
   previous(): WorkflowActionResult;
   /** Clear the current query and matches. */
   clear(): void;
@@ -1409,6 +1423,22 @@ export interface SearchHandle extends SnapshotSubscribable<SearchSlice> {
    * until it resolves.
    */
   replaceAll(replacement: string): WorkflowActionResult | Promise<WorkflowActionResult>;
+}
+
+/** Search controller shared by the built-in surface and custom UI. */
+export interface SearchController
+  extends Omit<SearchHandle, keyof SnapshotSubscribable<SearchSlice> | 'search'>, SnapshotSubscribable<SearchSnapshot> {
+  /**
+   * Find `query` in the open document. Returns the latest snapshot with the
+   * match total and active index. When a worker finishes later, `observe()`
+   * publishes the settled result.
+   */
+  find(query: string, options?: SearchQueryOptions): SearchSnapshot;
+  /**
+   * Find `query` in the open document.
+   * @deprecated replaceWith=`find` removeIn=v3.0
+   */
+  search(query: string, options?: SearchQueryOptions): SearchSnapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -1583,8 +1613,8 @@ export interface SuperDocUI {
   readonly metadata: MetadataHandle;
   /** Table-context surface (shared `table-*` routing truth). */
   readonly tables: TablesHandle;
-  /** Search / find surface (shared search truth). */
-  readonly search: SearchHandle;
+  /** Search surface. */
+  readonly search: SearchController;
   /** Built-in context menu runtime control. */
   readonly contextMenu: ContextMenuHandle;
   /** Styles surface (read-only catalogue + active paragraph style). */

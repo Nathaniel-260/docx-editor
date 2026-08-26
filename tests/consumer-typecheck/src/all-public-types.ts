@@ -133,7 +133,10 @@ import type {
   ResolvedPasswordPromptTexts,
   ResolveRangeOutput,
   SdtRef,
+  SearchConfig,
+  SearchFloatingConfig,
   SearchMatch,
+  SearchStrings,
   SelectionHandle,
   SelectionInfo,
   StoryLocator,
@@ -368,7 +371,10 @@ const _real_ResolvedFindReplaceTexts: AssertNotAny<ResolvedFindReplaceTexts> = t
 const _real_ResolvedPasswordPromptTexts: AssertNotAny<ResolvedPasswordPromptTexts> = true;
 const _real_ResolveRangeOutput: AssertNotAny<ResolveRangeOutput> = true;
 const _real_SdtRef: AssertNotAny<SdtRef> = true;
+const _real_SearchConfig: AssertNotAny<SearchConfig> = true;
+const _real_SearchFloatingConfig: AssertNotAny<SearchFloatingConfig> = true;
 const _real_SearchMatch: AssertNotAny<SearchMatch> = true;
+const _real_SearchStrings: AssertNotAny<SearchStrings> = true;
 const _real_SelectionHandle: AssertNotAny<SelectionHandle> = true;
 const _real_SelectionInfo: AssertNotAny<SelectionInfo> = true;
 const _real_StoryLocator: AssertNotAny<StoryLocator> = true;

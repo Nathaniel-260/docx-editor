@@ -507,7 +507,7 @@ describe('uiConfig reaches the runtime', () => {
           const ui = normalizeUiConfig(config);
           return ui.search.enabled ? ui.search.options : false;
         };
-        expect(resolved({ ui: { search: { replaceEnabled: false } } })).toEqual({ replaceEnabled: false });
+        expect(resolved({ ui: { search: { replaceControls: false } } })).toEqual({ replaceEnabled: false });
         expect(resolved({ modules: { surfaces: { findReplace: { replaceEnabled: false } } } })).toEqual({
           replaceEnabled: false,
         });

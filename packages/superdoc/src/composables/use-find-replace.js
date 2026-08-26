@@ -218,7 +218,7 @@ export function useFindReplace({
     try {
       const ui = typeof getSuperDocUI === 'function' ? getSuperDocUI() : null;
       const search = ui?.search;
-      return search && typeof search.search === 'function' ? search : null;
+      return search && (typeof search.find === 'function' || typeof search.search === 'function') ? search : null;
     } catch {
       return null;
     }
@@ -286,11 +286,15 @@ export function useFindReplace({
       return;
     }
     try {
-      const slice = search.search(findQuery.value, {
+      const commonOptions = {
         caseSensitive: caseSensitive.value,
-        includeDeletedText: resolveConfig().includeDeletedText === true,
         regex: regex.value,
-      });
+      };
+      const includeTrackedDeletions = resolveConfig().includeDeletedText === true;
+      const slice =
+        typeof search.find === 'function'
+          ? search.find(findQuery.value, { ...commonOptions, includeTrackedDeletions })
+          : search.search(findQuery.value, { ...commonOptions, includeDeletedText: includeTrackedDeletions });
       applyV2Slice(slice);
     } catch {
       /* host may be gone */
@@ -514,9 +518,7 @@ export function useFindReplace({
     const cfg = typeof raw === 'object' ? raw : {};
 
     if (cfg.component != null && typeof cfg.render === 'function') {
-      throw new Error(
-        'modules.surfaces.findReplace cannot provide both "component" and "render". Use one or the other.',
-      );
+      throw new Error('Search configuration cannot provide both "component" and "render". Use one or the other.');
     }
 
     /** @type {ResolvedFindReplaceTexts} */

@@ -548,6 +548,83 @@ describe('normalizeUiConfig', () => {
     });
   });
 
+  describe('canonical search options', () => {
+    it('maps canonical options to the existing Search runtime', () => {
+      const ui = normalizeUiConfig({
+        ui: {
+          search: {
+            replaceControls: false,
+            includeTrackedDeletions: true,
+            strings: {
+              findPlaceholder: 'Find in document',
+              noResults: 'No matches',
+              previousMatchTitle: 'Previous result',
+              replaceAll: 'Replace every match',
+            },
+            floating: { placement: 'bottom-right', autoFocus: false },
+          },
+        },
+      });
+
+      expect(ui.search.options).toEqual({
+        replaceEnabled: false,
+        includeDeletedText: true,
+        findPlaceholder: 'Find in document',
+        noResultsLabel: 'No matches',
+        previousMatchLabel: 'Previous result',
+        replaceAllLabel: 'Replace every match',
+        floating: { placement: 'bottom-right', autoFocus: false },
+      });
+    });
+
+    it('prefers canonical fields when both spellings are present', () => {
+      const ui = normalizeUiConfig({
+        ui: {
+          search: {
+            replaceControls: true,
+            replaceEnabled: false,
+            includeTrackedDeletions: false,
+            includeDeletedText: true,
+            strings: { noResults: 'No matches' },
+            noResultsLabel: 'Nothing found',
+          },
+        },
+      });
+
+      expect(ui.search.options).toEqual({
+        replaceEnabled: true,
+        includeDeletedText: false,
+        noResultsLabel: 'No matches',
+      });
+    });
+
+    it('keeps legacy fields working while canonical ui options win by key', () => {
+      const ui = normalizeUiConfig({
+        modules: {
+          surfaces: {
+            findReplace: {
+              replaceEnabled: false,
+              includeDeletedText: true,
+              noResultsLabel: 'Nothing found',
+            },
+          },
+        },
+        ui: {
+          search: {
+            replaceControls: true,
+            strings: { noResults: 'No matches' },
+          },
+        },
+      });
+
+      expect(ui.search.options).toEqual({
+        replaceEnabled: true,
+        includeDeletedText: true,
+        noResultsLabel: 'No matches',
+      });
+    });
+  });
+
   describe('precedence between ui and legacy input', () => {
     it('lets an explicit ui.search: false beat a leftover legacy field', () => {
       // The migration hazard: an application adds `ui.search: false` but has
