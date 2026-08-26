@@ -1,0 +1,85 @@
+{
+  "id": "toolbar-config-source",
+  "name": "ToolbarConfig",
+  "root": "toolbar",
+  "label": "toolbar config",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "container",
+      "type": "string | HTMLElement",
+      "required": false,
+      "description": "Where to render the toolbar: an element, an id selector (`#toolbar`), a class selector (`.toolbar`), or a bare element id. Other CSS selector syntax resolves to nothing.",
+      "group": "other"
+    },
+    {
+      "name": "items",
+      "type": "{\n  left?: readonly ToolbarItemId[];\n  center?: readonly ToolbarItemId[];\n  right?: readonly ToolbarItemId[];\n}",
+      "typeName": "Readonly<Partial<Record<ToolbarRegion, readonly ToolbarItemId[]>>>",
+      "required": false,
+      "description": "Built-in controls to render by region. Controls keep their built-in order. Omit to use the default toolbar.",
+      "group": "other"
+    },
+    {
+      "name": "excludeItems",
+      "type": "readonly (ToolbarItemId | ToolbarLegacyItemId | (string & {}))[]",
+      "required": false,
+      "description": "Controls to remove. Also accepts the id of a custom item.",
+      "group": "other"
+    },
+    {
+      "name": "icons",
+      "type": "Readonly<Partial<Record<ToolbarIconId, string>> & Record<string, unknown>>",
+      "required": false,
+      "description": "Trusted inline SVG overrides keyed by public icon id.",
+      "group": "other"
+    },
+    {
+      "name": "strings",
+      "type": "Readonly<Partial<Record<ToolbarStringId, string>>>",
+      "required": false,
+      "description": "Text overrides keyed by public string id.",
+      "group": "other"
+    },
+    {
+      "name": "overflow",
+      "type": "\"menu\" | \"visible\"",
+      "required": false,
+      "description": "How the toolbar handles controls that no longer fit (default: `'menu'`).",
+      "group": "other"
+    },
+    {
+      "name": "responsiveTo",
+      "type": "\"container\" | \"viewport\"",
+      "required": false,
+      "description": "Width source used to lay out the toolbar (default: `'viewport'`).",
+      "group": "other"
+    },
+    {
+      "name": "fontOptions",
+      "type": "readonly ToolbarFontFamilyOption[]",
+      "required": false,
+      "description": "Options shown in the font-family dropdown. Register loadable fonts through `fonts.families`.",
+      "group": "other"
+    },
+    {
+      "name": "customItems",
+      "type": "readonly ToolbarCustomItem[]",
+      "required": false,
+      "description": "Application-defined controls and separators to add.",
+      "group": "other"
+    },
+    {
+      "name": "includeItems",
+      "type": "readonly ToolbarOptionalItemId[]",
+      "required": false,
+      "description": "Additional opt-in controls. With `items`, each uses its built-in region unless already listed.",
+      "group": "other"
+    }
+  ]
+}

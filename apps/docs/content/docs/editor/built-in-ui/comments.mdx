@@ -38,34 +38,21 @@ Vanilla also needs separate toolbar and Editor mounts:
 
 <include>../../../../snippets/editor/built-in-comments.html</include>
 
-`layout: 'auto'` shows the comments sidebar when space is available and switches to inline threads when the Editor
-narrows. Use `'sidebar'` or `'inline'` when the layout should stay fixed.
-
 Select text and add a comment. The thread should show Alex Rivera as its author. Reply, resolve, and reopen actions are
 available by default.
 
-## Limit comment actions
+## Configure comments
 
-Add `interaction` beside `ui` in either example. Set the maximum comment action this Editor should allow:
+Choose a group, then choose a field. Each entry shows its type, default, and a configuration fragment you can copy.
 
-```ts
-const config = {
-  interaction: {
-    comments: {
-      level: 'write',
-    },
-  },
-};
-```
+<CommentsConfigReference />
 
-| Level       | Available actions                                        |
-| ----------- | -------------------------------------------------------- |
-| `'read'`    | Read threads                                             |
-| `'write'`   | Read, create, reply, edit, and delete                    |
-| `'resolve'` | Everything in `write`, plus resolve and reopen (default) |
+Use `layout: 'auto'` to switch between sidebar and inline threads according to the available width. Use
+`interaction.comments.level: 'write'` when people may participate in a thread but your application keeps the final
+resolve decision.
 
-The example lets people participate in a thread while your application keeps the final resolve decision. Comment
-capability does not control tracked-change decisions; configure those in [Track changes](/editor/track-changes).
+The comment level does not control tracked-change decisions. Configure those in
+[Track changes](/editor/track-changes).
 
 These options change browser interaction; they are not an authorization boundary. Enforce document access and comment
 permissions in a trusted backend.

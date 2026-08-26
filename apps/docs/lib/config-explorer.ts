@@ -35,6 +35,7 @@ export type ConfigField = {
 export type ConfigExplorerData = {
   id: string;
   name: string;
+  sources?: readonly string[];
   root: string;
   label: string;
   groups: ConfigFieldGroup[];
@@ -43,6 +44,10 @@ export type ConfigExplorerData = {
   path?: readonly string[];
   copyMode?: 'setup' | 'selected-field';
 };
+
+export function configSourceNames(data: ConfigExplorerData) {
+  return data.sources ?? [data.name];
+}
 
 export function configTemplate(data: ConfigExplorerData) {
   const setupFields = data.fields.filter(

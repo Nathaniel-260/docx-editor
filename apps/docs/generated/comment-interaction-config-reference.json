@@ -1,0 +1,21 @@
+{
+  "id": "comment-interaction-config-source",
+  "name": "CommentInteractionConfig",
+  "root": "comments",
+  "label": "comment interaction config",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "level",
+      "type": "\"read\" | \"write\" | \"resolve\"",
+      "required": false,
+      "description": "The highest comment interaction level this Editor allows (default: `resolve`). `read` allows reading threads only. `write` also allows create, reply, edit, and delete. `resolve` also allows resolve and reopen.",
+      "group": "other"
+    }
+  ]
+}

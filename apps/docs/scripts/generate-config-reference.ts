@@ -13,6 +13,7 @@ type ReferenceDefinition = Omit<ConfigExplorerData, 'fields'> & {
   typeName: string;
   outputFile: string;
   excludeDeprecated?: boolean;
+  excludeFields?: readonly string[];
 };
 
 const references: ReferenceDefinition[] = [
@@ -75,6 +76,46 @@ const references: ReferenceDefinition[] = [
     name: 'SearchStrings',
     root: 'strings',
     label: 'search text config',
+    groups: [{ id: 'other', label: 'Options' }],
+  },
+  {
+    typeName: 'ToolbarConfig',
+    outputFile: 'toolbar-config-reference.json',
+    id: 'toolbar-config-source',
+    name: 'ToolbarConfig',
+    root: 'toolbar',
+    label: 'toolbar config',
+    excludeDeprecated: true,
+    groups: [{ id: 'other', label: 'Options' }],
+  },
+  {
+    typeName: 'CommentsConfig',
+    outputFile: 'comments-config-reference.json',
+    id: 'comments-config-source',
+    name: 'CommentsConfig',
+    root: 'comments',
+    label: 'comments UI config',
+    excludeDeprecated: true,
+    excludeFields: ['readOnly', 'allowResolve', 'level', 'permissionResolver'],
+    groups: [{ id: 'other', label: 'Options' }],
+  },
+  {
+    typeName: 'CommentsResponsiveConfig',
+    outputFile: 'comments-responsive-config-reference.json',
+    id: 'comments-responsive-config-source',
+    name: 'CommentsResponsiveConfig',
+    root: 'responsive',
+    label: 'responsive comments config',
+    groups: [{ id: 'other', label: 'Options' }],
+  },
+  {
+    typeName: 'CommentInteractionConfig',
+    outputFile: 'comment-interaction-config-reference.json',
+    id: 'comment-interaction-config-source',
+    name: 'CommentInteractionConfig',
+    root: 'comments',
+    label: 'comment interaction config',
+    excludeDeprecated: true,
     groups: [{ id: 'other', label: 'Options' }],
   },
   {
@@ -181,10 +222,12 @@ async function generateReference(definition: ReferenceDefinition) {
 
   if (!document) throw new Error(`${definition.typeName} was not exported by ${sourcePath}`);
 
-  const { outputFile, typeName: _typeName, excludeDeprecated, ...metadata } = definition;
+  const { outputFile, typeName: _typeName, excludeDeprecated, excludeFields, ...metadata } = definition;
   const data: ConfigExplorerData = {
     ...metadata,
-    fields: document.entries.map(toField).filter((field) => !excludeDeprecated || !field.deprecated),
+    fields: document.entries
+      .map(toField)
+      .filter((field) => (!excludeDeprecated || !field.deprecated) && !excludeFields?.includes(field.name)),
   };
   const outputPath = resolve(appRoot, `generated/${outputFile}`);
   await mkdir(dirname(outputPath), { recursive: true });

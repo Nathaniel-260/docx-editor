@@ -12,6 +12,7 @@ import { EditorDemo } from '@/components/embeds/editor-demo';
 import { InterfaceOwnership } from '@/components/embeds/interface-ownership';
 import { DocsHome } from '@/components/docs-home';
 import { Callout } from '@/components/mdx/callout';
+import { CommentsConfigReference } from '@/components/mdx/comments-config-reference';
 import { ConfigReference } from '@/components/mdx/ConfigReference';
 import { ContextMenuConfigReference } from '@/components/mdx/context-menu-config-reference';
 import { FileDownload } from '@/components/mdx/file-download';
@@ -25,6 +26,7 @@ import { ProofingConfigReference } from '@/components/mdx/proofing-config-refere
 import { ReceiptBar } from '@/components/mdx/receipt-bar';
 import { RuntimeExample, RuntimeExampleTabs } from '@/components/mdx/runtime-example-tabs';
 import { SearchConfigReference } from '@/components/mdx/search-config-reference';
+import { ToolbarConfigReference } from '@/components/mdx/toolbar-config-reference';
 import {
   DocumentApiNamespace,
   DocumentApiOperation,
@@ -51,6 +53,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     ...defaultMdxComponents,
     Callout,
     BuiltInUiMap,
+    CommentsConfigReference,
     ConfigReference,
     ContextMenuConfigReference,
     CommandStateDemo,
@@ -77,6 +80,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     RuntimeExample,
     RuntimeExampleTabs,
     SearchConfigReference,
+    ToolbarConfigReference,
     img: DocsImage,
     ...components,
   };

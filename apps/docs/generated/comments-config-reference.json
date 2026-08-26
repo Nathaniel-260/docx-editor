@@ -1,0 +1,29 @@
+{
+  "id": "comments-config-source",
+  "name": "CommentsConfig",
+  "root": "comments",
+  "label": "comments UI config",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "layout",
+      "type": "\"auto\" | \"sidebar\" | \"inline\"",
+      "required": false,
+      "description": "Where comment threads render (default: `'sidebar'`). `auto` uses the available width to choose between sidebar and inline.",
+      "group": "other"
+    },
+    {
+      "name": "responsive",
+      "type": "{\n  target?: string | HTMLElement;\n  breakpoint?: number;\n}",
+      "typeName": "CommentsResponsiveConfig",
+      "required": false,
+      "description": "Optional width settings for the `auto` layout.",
+      "group": "other"
+    }
+  ]
+}

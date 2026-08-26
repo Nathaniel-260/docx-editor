@@ -9,6 +9,7 @@ import {
   configFieldIndent,
   configFieldTemplate,
   configOpeningLines,
+  configSourceNames,
   configTemplate,
   type ConfigExplorerData,
   type ConfigField,
@@ -122,6 +123,9 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
 
   if (!activeGroup || !selected) return null;
   const copyTarget = data.copyMode === 'selected-field' ? `${selected.name} example` : `${data.root} setup`;
+  const sourceNames = configSourceNames(data);
+  const onlySource = sourceNames[0];
+  const fieldCount = `${data.fields.length} ${data.fields.length === 1 ? 'field' : 'fields'}`;
 
   return (
     <div className='sd-config-explorer-wrap'>
@@ -206,9 +210,21 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
           <ConfigFieldDetail key={selected.name} field={selected} />
         </div>
       </div>
-      <p className='sd-config-explorer-caption'>
-        {data.fields.length} {data.fields.length === 1 ? 'field' : 'fields'} · generated from <code>{data.name}</code>
-      </p>
+      {sourceNames.length === 1 ? (
+        <p className='sd-config-explorer-caption'>
+          {fieldCount} · generated from <code>{onlySource}</code>
+        </p>
+      ) : (
+        <p className='sd-config-explorer-caption'>
+          {fieldCount} · generated from{' '}
+          {sourceNames.map((source, index) => (
+            <span key={source}>
+              {index > 0 ? ' + ' : null}
+              <code>{source}</code>
+            </span>
+          ))}
+        </p>
+      )}
     </div>
   );
 }

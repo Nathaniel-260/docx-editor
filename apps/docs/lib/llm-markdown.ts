@@ -10,9 +10,11 @@ import { hyperlinksConfigExplorer } from './hyperlinks-config-explorer';
 import { renderBuiltInUiMapMarkdown } from './built-in-ui-map';
 import { renderBuiltInEditorDemoMarkdown } from './built-in-editor-demos';
 import { renderLifecycleJourneyMarkdown } from './lifecycle-journey';
+import { commentsConfigExplorer } from './comments-config-explorer';
 import { editorConfigExplorer } from './editor-config-explorer';
 import { proofingConfigExplorer } from './proofing-config-explorer';
 import { searchConfigExplorer } from './search-config-explorer';
+import { toolbarConfigExplorer } from './toolbar-config-explorer';
 
 export const llmPlaceholderComponents = [
   'Callout',
@@ -20,6 +22,7 @@ export const llmPlaceholderComponents = [
   'Card',
   'Cards',
   'CommandStateDemo',
+  'CommentsConfigReference',
   'ConfigReference',
   'ContextMenuConfigReference',
   'CustomBoldDemo',
@@ -42,6 +45,7 @@ export const llmPlaceholderComponents = [
   'RuntimeExample',
   'RuntimeExampleTabs',
   'SearchConfigReference',
+  'ToolbarConfigReference',
   'MigrationExample',
   'MigrationExampleTabs',
   'img',
@@ -109,6 +113,9 @@ export function renderLLMMarkdown(markdown: string) {
         '> The sample selection is simulated. Normal text reports `enabled: true` and `active: false`. Bold text reports `enabled: true` and `active: true`. A locked heading reports `enabled: false`, `active: false`, and a disabled reason. In an application, the real `superdoc/ui` controller derives these values from the active Editor selection.',
         '',
       ].join('\n');
+    },
+    CommentsConfigReference() {
+      return renderConfigReferenceMarkdown(commentsConfigExplorer);
     },
     ConfigReference() {
       return renderConfigReferenceMarkdown(editorConfigExplorer);
@@ -271,6 +278,9 @@ export function renderLLMMarkdown(markdown: string) {
     },
     SearchConfigReference() {
       return renderConfigReferenceMarkdown(searchConfigExplorer);
+    },
+    ToolbarConfigReference() {
+      return renderConfigReferenceMarkdown(toolbarConfigExplorer);
     },
     ReceiptBar({ attributes }) {
       const operation = textAttribute(attributes, 'operation') ?? 'operation';

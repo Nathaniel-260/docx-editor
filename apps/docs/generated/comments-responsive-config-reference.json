@@ -1,0 +1,28 @@
+{
+  "id": "comments-responsive-config-source",
+  "name": "CommentsResponsiveConfig",
+  "root": "responsive",
+  "label": "responsive comments config",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "target",
+      "type": "string | HTMLElement",
+      "required": false,
+      "description": "Element whose width controls the layout. Pass an element or a CSS selector. Defaults to the nearest measurable Editor ancestor.",
+      "group": "other"
+    },
+    {
+      "name": "breakpoint",
+      "type": "number",
+      "required": false,
+      "description": "Switch from sidebar to inline below this width, in CSS pixels. When omitted, SuperDoc derives the threshold from the document and sidebar.",
+      "group": "other"
+    }
+  ]
+}

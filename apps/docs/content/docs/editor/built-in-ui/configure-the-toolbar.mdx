@@ -41,27 +41,29 @@ React's `SuperDocEditor` creates the toolbar mount for you. Add the focused conf
 Reload the application. The toolbar should contain eight controls across the three regions. Select text and choose
 **Bold** to confirm that the control follows the current selection.
 
-## Choose a strategy
+## Configure the toolbar
 
-Use `items` when your workflow needs a focused allowlist. Each key chooses a region; controls keep their built-in order
-within that region. Use `excludeItems` when the default toolbar already fits and only a few controls should be removed.
-Use `customItems` to add application actions. Use `command` for a built-in action that the control can call directly.
-Use `onSelect` for registered commands or workflows that need more input; its context includes `execute` and
-`executeAsync`.
+Choose a group, then choose a field. Each entry shows its type, default, and a configuration fragment you can copy.
+Leave `container` unset to let React's `SuperDocEditor` create the toolbar mount. Set it in either Vanilla or React when
+your application provides an external toolbar container.
 
-`ToolbarConfig` provides typed values for every region, built-in control, icon slot, string slot, and custom item. Use
-`satisfies ToolbarConfig`, as the examples do, to keep autocomplete without widening the configuration object.
+<ToolbarConfigReference />
 
-Use `includeItems` to add Formatting marks or Table of contents, which are not in the default toolbar. If `items` is
-present, SuperDoc places each added control in its built-in region unless `items` already places it elsewhere.
+Use `items` for a focused allowlist, `excludeItems` to remove a few controls from the default toolbar, and `customItems`
+to add application actions. Controls listed in `items` keep their built-in order within each region.
 
-Prefer one composition strategy. Avoid combining a long `items` allowlist with a long `excludeItems` list.
+For a custom item, use `command` when it can run one built-in action directly. Use `onSelect` for registered commands or
+workflows that need more input; its context includes `execute` and `executeAsync`.
+
+Keep `satisfies ToolbarConfig` from the examples. It checks control IDs, icon and string slots, font options, and custom
+item shapes without widening the object. Prefer one composition strategy instead of combining a long `items` allowlist
+with a long `excludeItems` list.
 
 ## Check the narrow layout
 
-`responsiveTo: 'container'` measures the toolbar mount instead of the browser window. With `overflow: 'menu'` (the
-default), controls that no longer fit move into the overflow menu. SuperDoc adds the trigger when it is needed; do not
-list it in `items`.
+`responsiveTo: 'container'` measures the toolbar mount instead of the browser window. With the default
+`overflow: 'menu'`, controls that no longer fit move into the overflow menu. SuperDoc adds its trigger when needed; do
+not list it in `items`.
 
 Resize the Editor to your narrowest supported width. Every required control should remain reachable, and the toolbar
 should not add horizontal page overflow. See [Layout](/editor/built-in-ui/responsive-layout) for document scaling,

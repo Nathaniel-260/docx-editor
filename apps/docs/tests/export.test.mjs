@@ -448,6 +448,12 @@ test('exports the focused built-in toolbar example as clean Markdown', async () 
   assert.match(article, /Document mode/);
   assert.match(article, /data-preset="toolbar"/);
   assert.match(article, /formatting-sample\.docx/);
+  assert.match(article, /id="toolbar-config"/);
+  assert.match(article, /data-config-explorer="true"/);
+  assert.match(
+    article,
+    /10(?:<!-- -->|\s)+fields(?:<!-- -->|\s)+· generated from <code>ToolbarConfig<\/code>/,
+  );
   assert.match(markdown, /const toolbar = \{[\s\S]*?\} satisfies ToolbarConfig/);
   assert.match(markdown, /<SuperDocEditor[\s\S]*?document='\/sample\.docx'/);
   assert.match(markdown, /export default function App/);
@@ -458,6 +464,9 @@ test('exports the focused built-in toolbar example as clean Markdown', async () 
   assert.match(markdown, /Add — `ui\.toolbar\.customItems`/);
   assert.match(markdown, /Review note:/);
   assert.match(markdown, /controls that no longer fit move into the overflow menu/);
+  assert.match(markdown, /\| `items` \|/);
+  assert.match(markdown, /\| `customItems` \|/);
+  assert.doesNotMatch(markdown, /<ToolbarConfigReference\b/);
   assert.doesNotMatch(markdown, /<EditorDemo\b/);
   assert.doesNotMatch(markdown, /<include>/);
 });
@@ -586,6 +595,8 @@ test('exports the comments workflow through each canonical surface', async () =>
 
   assert.match(builtInArticle, /data-preset="comments"/);
   assert.match(builtInArticle, /comments-sample\.docx/);
+  assert.match(builtInArticle, /id="comments-config"/);
+  assert.match(builtInArticle, /data-config-explorer="true"/);
   assert.match(builtIn, /\*\*Vanilla — `src\/main\.ts`\*\*/);
   assert.match(builtIn, /\*\*React — `src\/App\.tsx`\*\*/);
   assert.match(builtIn, /Comment configurations available in the interactive Editor/);
@@ -593,6 +604,8 @@ test('exports the comments workflow through each canonical surface', async () =>
   assert.match(builtIn, /Actions — `interaction\.comments\.level`/);
   assert.match(builtIn, /layout: 'auto'/);
   assert.match(builtIn, /level: 'write'/);
+  assert.match(builtIn, /\| `ui\.comments\.layout` \|/);
+  assert.match(builtIn, /\| `interaction\.comments\.level` \|/);
   assert.match(builtIn, /not an authorization boundary/);
   assert.match(builtIn, /comment\s+permissions in a trusted backend/);
   assert.doesNotMatch(builtIn, /\b(?:displayMode|readOnly|allowResolve)\b/);
@@ -604,6 +617,7 @@ test('exports the comments workflow through each canonical surface', async () =>
   assert.match(documentApi, /parentCommentId: createReceipt\.id/);
   assert.match(documentApi, /expectedRevision: afterReply\.evaluatedRevision/);
   assert.doesNotMatch(builtIn, /<include>/);
+  assert.doesNotMatch(builtIn, /<CommentsConfigReference\b/);
   assert.doesNotMatch(customUI, /<include>/);
   assert.doesNotMatch(documentApi, /<include>/);
 });

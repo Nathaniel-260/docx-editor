@@ -41,6 +41,16 @@ const generatedSearchFloatingConfigUrl = new URL('../generated/search-floating-c
 const generatedSearchStringsUrl = new URL('../generated/search-strings-reference.json', import.meta.url);
 const generatedHyperlinksConfigUrl = new URL('../generated/hyperlinks-config-reference.json', import.meta.url);
 const generatedContextMenuConfigUrl = new URL('../generated/context-menu-config-reference.json', import.meta.url);
+const generatedToolbarConfigUrl = new URL('../generated/toolbar-config-reference.json', import.meta.url);
+const generatedCommentsConfigUrl = new URL('../generated/comments-config-reference.json', import.meta.url);
+const generatedCommentsResponsiveConfigUrl = new URL(
+  '../generated/comments-responsive-config-reference.json',
+  import.meta.url,
+);
+const generatedCommentInteractionConfigUrl = new URL(
+  '../generated/comment-interaction-config-reference.json',
+  import.meta.url,
+);
 const superdocCoreTypesUrl = new URL('../../../packages/superdoc/src/core/types/index.ts', import.meta.url);
 const reviewHighlightsExampleUrl = new URL('../snippets/editor/review-highlights.ts', import.meta.url);
 const commentThreadExampleUrl = new URL('../snippets/document-api/comment-thread.ts', import.meta.url);
@@ -68,6 +78,7 @@ const registeredComponents = new Set([
   'Callout',
   'BuiltInUiMap',
   'CommandStateDemo',
+  'CommentsConfigReference',
   'ConfigReference',
   'ContextMenuConfigReference',
   'CustomBoldDemo',
@@ -93,6 +104,7 @@ const registeredComponents = new Set([
   'RuntimeExample',
   'RuntimeExampleTabs',
   'SearchConfigReference',
+  'ToolbarConfigReference',
 ]);
 const editorDemoPresets = new Set([
   'comments',
@@ -593,6 +605,120 @@ test('the Search configuration explorer renders valid nested examples', async ()
   assert.match(markdown, /\| `floating\.placement` \|/u);
   assert.match(markdown, /\| `strings\.findAriaLabel` \|/u);
   assert.doesNotMatch(markdown, /replaceEnabled|includeDeletedText|noResultsLabel/u);
+});
+
+test('the Toolbar configuration explorer covers every canonical option', async () => {
+  const generatedToolbarConfig = JSON.parse(await readFile(generatedToolbarConfigUrl, 'utf8'));
+  const { toolbarConfigExplorer } = await import('../lib/toolbar-config-explorer.ts');
+  const { configFieldTemplate, renderConfigReferenceMarkdown } = await import('../lib/config-explorer.ts');
+  const generatedNames = generatedToolbarConfig.fields.map((field) => field.name);
+  const names = toolbarConfigExplorer.fields.map((field) => field.name);
+  const field = (name) => toolbarConfigExplorer.fields.find((candidate) => candidate.name === name);
+  const group = (id) => toolbarConfigExplorer.groups.find((candidate) => candidate.id === id);
+
+  assert.deepEqual(generatedNames, [
+    'container',
+    'items',
+    'excludeItems',
+    'icons',
+    'strings',
+    'overflow',
+    'responsiveTo',
+    'fontOptions',
+    'customItems',
+    'includeItems',
+  ]);
+  assert.deepEqual([...names].sort(), [...generatedNames].sort());
+  assert.equal(new Set(names).size, names.length);
+  assert.ok(toolbarConfigExplorer.fields.every((candidate) => candidate.summary?.length));
+  assert.ok(generatedToolbarConfig.fields.every((candidate) => candidate.type && candidate.description && !candidate.deprecated));
+  assert.deepEqual(
+    toolbarConfigExplorer.groups.map((candidate) => candidate.id),
+    ['controls', 'layout', 'appearance'],
+  );
+  assert.equal(field('overflow')?.default, "'menu'");
+  assert.equal(field('responsiveTo')?.default, "'viewport'");
+  assert.match(field('container')?.summary ?? '', /Leave this unset to let React's SuperDocEditor/u);
+
+  const items = field('items');
+  const controls = group('controls');
+  assert.ok(items && controls);
+  assert.equal(
+    configFieldTemplate(toolbarConfigExplorer, controls, items),
+    [
+      'ui: {',
+      '  toolbar: {',
+      "    items: { left: ['undo', 'redo'], center: ['bold', 'italic'], right: ['document-mode'] }",
+      '  },',
+      '}',
+    ].join('\n'),
+  );
+
+  const markdown = renderConfigReferenceMarkdown(toolbarConfigExplorer);
+  assert.match(markdown, /\| `items` \|/u);
+  assert.match(markdown, /\| `customItems` \|/u);
+  assert.match(markdown, /\| `responsiveTo` \| `"container" \\| "viewport"` \| `'viewport'` \|/u);
+  assert.doesNotMatch(
+    markdown,
+    /\| `(?:groups|texts|hideButtons|responsiveToContainer|fonts|customButtons|showFormattingMarksButton|showTableOfContentsButton)` \|/u,
+  );
+});
+
+test('the Comments configuration explorer keeps layout and actions in their canonical namespaces', async () => {
+  const [generatedCommentsConfig, generatedCommentsResponsiveConfig, generatedCommentInteractionConfig] =
+    await Promise.all([
+      readFile(generatedCommentsConfigUrl, 'utf8').then(JSON.parse),
+      readFile(generatedCommentsResponsiveConfigUrl, 'utf8').then(JSON.parse),
+      readFile(generatedCommentInteractionConfigUrl, 'utf8').then(JSON.parse),
+    ]);
+  const { commentsConfigExplorer } = await import('../lib/comments-config-explorer.ts');
+  const { configFieldTemplate, renderConfigReferenceMarkdown } = await import('../lib/config-explorer.ts');
+  const field = (name) => commentsConfigExplorer.fields.find((candidate) => candidate.name === name);
+  const group = (id) => commentsConfigExplorer.groups.find((candidate) => candidate.id === id);
+
+  assert.deepEqual(
+    generatedCommentsConfig.fields.map((candidate) => candidate.name),
+    ['layout', 'responsive'],
+  );
+  assert.deepEqual(
+    generatedCommentsResponsiveConfig.fields.map((candidate) => candidate.name),
+    ['target', 'breakpoint'],
+  );
+  assert.deepEqual(
+    generatedCommentInteractionConfig.fields.map((candidate) => candidate.name),
+    ['level'],
+  );
+  assert.deepEqual(
+    commentsConfigExplorer.fields.map((candidate) => candidate.name),
+    [
+      'ui.comments.layout',
+      'ui.comments.responsive.target',
+      'ui.comments.responsive.breakpoint',
+      'interaction.comments.level',
+    ],
+  );
+  assert.ok(commentsConfigExplorer.fields.every((candidate) => candidate.summary?.length));
+  assert.deepEqual(commentsConfigExplorer.sources, [
+    'CommentsConfig',
+    'CommentsResponsiveConfig',
+    'CommentInteractionConfig',
+  ]);
+  assert.equal(field('ui.comments.layout')?.default, "'sidebar'");
+  assert.equal(field('interaction.comments.level')?.default, "'resolve'");
+
+  const level = field('interaction.comments.level');
+  const actions = group('actions');
+  assert.ok(level && actions);
+  assert.equal(
+    configFieldTemplate(commentsConfigExplorer, actions, level),
+    ['interaction: {', '  comments: {', "    level: 'write'", '  },', '}'].join('\n'),
+  );
+
+  const markdown = renderConfigReferenceMarkdown(commentsConfigExplorer);
+  assert.match(markdown, /\| `ui\.comments\.layout` \|/u);
+  assert.match(markdown, /\| `ui\.comments\.responsive\.breakpoint` \|/u);
+  assert.match(markdown, /\| `interaction\.comments\.level` \|/u);
+  assert.doesNotMatch(markdown, /\b(?:displayMode|readOnly|allowResolve|compactBreakpointPx)\b/u);
 });
 
 test('the Editor configuration reference starts with concise essential fields', async () => {
