@@ -18,9 +18,10 @@
  * comments fixture has one short thread because that thread is the behavior the
  * page asks the reader to inspect. The search fixture follows the same rule:
  * three large-type paragraphs across three short pages, with enough repeated
- * terms to show the real search surface moving between results. The hyperlinks
- * fixture contains one real external hyperlink. The context-menu fixture keeps
- * one selectable instruction sentence in view.
+ * terms to show the real search surface moving between results and one pending
+ * deletion for the tracked-deletion search option. The hyperlinks fixture
+ * contains one real external hyperlink. The context-menu fixture keeps one
+ * selectable instruction sentence in view.
  *
  * Written as a minimal OOXML package rather than through a library so the bytes
  * are stable: no timestamps, no generated ids, no zip metadata that changes
@@ -97,6 +98,9 @@ const escapeXml = (text) =>
 
 const paragraph = (text) => `<w:p><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
 
+const trackedDeletion = (text) =>
+  `<w:del w:id="0" w:author="SuperDoc Test User" w:date="2025-01-15T00:00:00Z"><w:r><w:delText xml:space="preserve">${escapeXml(text)}</w:delText></w:r></w:del>`;
+
 const pageBreak = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
 
 /**
@@ -127,9 +131,16 @@ const SEARCH_PARAGRAPHS = [
   'When the Client owner finishes, the Client sponsor reads the final document and confirms that the Client workspace is ready.',
 ];
 
+const searchParagraph = (text, index) => {
+  if (index !== 1) return paragraph(text);
+
+  const [before, after] = text.split(' client request');
+  return `<w:p><w:r><w:t xml:space="preserve">${escapeXml(before)}</w:t></w:r>${trackedDeletion(' Legacy')}<w:r><w:t xml:space="preserve"> client request${escapeXml(after)}</w:t></w:r></w:p>`;
+};
+
 const SEARCH_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${SEARCH_PARAGRAPHS.map(
-  (text, index) => `${index === 0 ? '' : pageBreak}${paragraph(text)}`,
+  (text, index) => `${index === 0 ? '' : pageBreak}${searchParagraph(text, index)}`,
 ).join('')}<w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
 
 const HYPERLINKS_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

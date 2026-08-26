@@ -235,6 +235,9 @@ test('the comments fixture keeps one focused review thread', async () => {
 test('the search fixture provides three short pages with deliberate query results', async () => {
   const { bytes, zip, document, styles, core, app } = await openFixture('search-sample.docx');
   const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');
+  const deletedText = [...document.matchAll(/<w:delText[^>]*>(.*?)<\/w:delText>/g)]
+    .map((match) => match[1])
+    .join(' ');
 
   assert.equal(firstArchiveEntry(bytes), '[Content_Types].xml');
   assert.ok(zip.file('word/document.xml'), 'must contain a main document part');
@@ -245,6 +248,11 @@ test('the search fixture provides three short pages with deliberate query result
   assert.equal(visibleText.match(/\bclient\b/g)?.length, 1, 'must contain one lowercase client match');
   assert.equal(visibleText.match(/\bclient\b/gi)?.length, 8, 'must contain eight case-insensitive client matches');
   assert.doesNotMatch(visibleText, /Customer/);
+  assert.equal(deletedText.trim(), 'Legacy', 'must contain one unique pending deletion for the Search demo');
+  assert.match(
+    document,
+    /<w:del w:id="0" w:author="SuperDoc Test User" w:date="2025-01-15T00:00:00Z"><w:r><w:delText xml:space="preserve"> Legacy<\/w:delText><\/w:r><\/w:del>/,
+  );
   assert.match(styles, /<w:sz w:val="36"\/>/);
   assert.match(core, /<dc:creator><\/dc:creator>/);
   assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
@@ -252,9 +260,10 @@ test('the search fixture provides three short pages with deliberate query result
   assert.match(app, /<Manager><\/Manager>/);
   assert.equal(zip.file('word/comments.xml'), null, 'must not ship comments');
 
-  for (const element of REVISION_ELEMENTS) {
+  for (const element of REVISION_ELEMENTS.filter((element) => element !== 'w:del')) {
     assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
   }
+  assert.equal(document.match(/<w:del\b/g)?.length, 1, 'must contain exactly one tracked deletion');
 });
 
 test('the hyperlinks fixture keeps one real external hyperlink', async () => {

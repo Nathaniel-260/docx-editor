@@ -12,6 +12,7 @@ const generator = createGenerator({ tsconfigPath: resolve(appRoot, 'tsconfig.jso
 type ReferenceDefinition = Omit<ConfigExplorerData, 'fields'> & {
   typeName: string;
   outputFile: string;
+  excludeDeprecated?: boolean;
 };
 
 const references: ReferenceDefinition[] = [
@@ -47,6 +48,34 @@ const references: ReferenceDefinition[] = [
       { id: 'reserved', label: 'Reserved' },
       { id: 'other', label: 'Other options' },
     ],
+  },
+  {
+    typeName: 'SearchConfig',
+    outputFile: 'search-config-reference.json',
+    id: 'search-config-source',
+    name: 'SearchConfig',
+    root: 'search',
+    label: 'search config',
+    excludeDeprecated: true,
+    groups: [{ id: 'other', label: 'Options' }],
+  },
+  {
+    typeName: 'SearchFloatingConfig',
+    outputFile: 'search-floating-config-reference.json',
+    id: 'search-floating-config-source',
+    name: 'SearchFloatingConfig',
+    root: 'floating',
+    label: 'search position and focus config',
+    groups: [{ id: 'other', label: 'Options' }],
+  },
+  {
+    typeName: 'SearchStrings',
+    outputFile: 'search-strings-reference.json',
+    id: 'search-strings-source',
+    name: 'SearchStrings',
+    root: 'strings',
+    label: 'search text config',
+    groups: [{ id: 'other', label: 'Options' }],
   },
 ];
 
@@ -132,10 +161,10 @@ async function generateReference(definition: ReferenceDefinition) {
 
   if (!document) throw new Error(`${definition.typeName} was not exported by ${sourcePath}`);
 
-  const { outputFile, typeName: _typeName, ...metadata } = definition;
+  const { outputFile, typeName: _typeName, excludeDeprecated, ...metadata } = definition;
   const data: ConfigExplorerData = {
     ...metadata,
-    fields: document.entries.map(toField),
+    fields: document.entries.map(toField).filter((field) => !excludeDeprecated || !field.deprecated),
   };
   const outputPath = resolve(appRoot, `generated/${outputFile}`);
   await mkdir(dirname(outputPath), { recursive: true });

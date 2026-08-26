@@ -1,6 +1,7 @@
 export type ConfigFieldGroup = {
   id: string;
   label: string;
+  path?: readonly string[];
 };
 
 export type ConfigFieldExample = {
@@ -15,6 +16,7 @@ export type ConfigFieldGuide = {
 
 export type ConfigField = {
   name: string;
+  key?: string;
   type: string;
   typeName?: string;
   required: boolean;
@@ -38,6 +40,8 @@ export type ConfigExplorerData = {
   groups: ConfigFieldGroup[];
   fields: ConfigField[];
   syntax?: 'nested-property' | 'typed-variable';
+  path?: readonly string[];
+  copyMode?: 'setup' | 'selected-field';
 };
 
 export function configTemplate(data: ConfigExplorerData) {
@@ -53,6 +57,35 @@ export function configTemplate(data: ConfigExplorerData) {
     })
     .join('\n');
   return `${configOpening(data)}\n${fields}\n${configClosing(data)}`;
+}
+
+export function configFieldTemplate(data: ConfigExplorerData, group: ConfigFieldGroup, field: ConfigField) {
+  const code = field.example?.code ?? `${field.key ?? field.name}: ${codeValue(field)}`;
+  const indent = configFieldIndent(data, group);
+  return [
+    ...configOpeningLines(data, group),
+    ...code.split('\n').map((line) => `${indent}${line}`),
+    ...configClosingLines(data, group),
+  ].join('\n');
+}
+
+export function configOpeningLines(data: ConfigExplorerData, group: ConfigFieldGroup) {
+  if (data.syntax === 'typed-variable') return [`const ${data.root} = {`];
+  const path = configPath(data, group);
+  if (!path) return [`${data.root}: {`];
+  return path.map((segment, index) => `${lineIndent(index)}${segment}: {`);
+}
+
+export function configClosingLines(data: ConfigExplorerData, group: ConfigFieldGroup) {
+  if (data.syntax === 'typed-variable') return [`} satisfies ${data.name};`];
+  const path = configPath(data, group);
+  if (!path) return ['}'];
+  return path.map((_, index) => `${lineIndent(path.length - index - 1)}}${index === path.length - 1 ? '' : ','}`);
+}
+
+export function configFieldIndent(data: ConfigExplorerData, group: ConfigFieldGroup) {
+  const path = configPath(data, group);
+  return lineIndent(path?.length ?? 1);
 }
 
 export function configOpening(data: ConfigExplorerData) {
@@ -117,4 +150,13 @@ function indent(value: string, spaces: number) {
     .split('\n')
     .map((line) => `${prefix}${line}`)
     .join('\n');
+}
+
+function configPath(data: ConfigExplorerData, group: ConfigFieldGroup) {
+  if (!data.path) return null;
+  return [...data.path, ...(group.path ?? [])];
+}
+
+function lineIndent(level: number) {
+  return '  '.repeat(level);
 }

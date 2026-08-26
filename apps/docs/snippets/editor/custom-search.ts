@@ -47,7 +47,7 @@ const superdoc = new SuperDoc({
         return;
       }
 
-      render(ui.search.search(query.value, { caseSensitive: matchCase.checked }));
+      render(ui.search.find(query.value, { caseSensitive: matchCase.checked }));
     };
 
     const reportAction = (result: WorkflowActionResult) => {

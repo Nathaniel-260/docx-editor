@@ -4,9 +4,11 @@ navTitle: Search
 description: Drive the Editor's visual search session from application-owned controls.
 ---
 
-Use `ui.search` when your application owns the find interface but still needs SuperDoc to highlight, reveal, navigate, and replace matches in the open Editor.
+Use `editor.ui.search` when your application owns the find interface but still needs SuperDoc to highlight, reveal,
+navigate, and replace matches in the open Editor.
 
-This is an Editor search session. For programmatic content discovery and durable mutation targets, use [Document API queries](/document-api/query-content).
+This is an Editor search session. For programmatic content discovery and durable mutation targets, use
+[Document API queries](/document-api/query-content).
 
 ## Add the controls
 
@@ -14,11 +16,13 @@ Create a query field, navigation controls, replacement actions, status output, a
 
 <include>../../../../snippets/editor/custom-search.html</include>
 
-Copy the [tracked-changes fixture](/fixtures/tracked-changes.docx) to your app's public directory as `contract.docx`, or use another DOCX.
+Copy the [Search fixture](/fixtures/search-sample.docx) to your app's public directory as `contract.docx`, or use another
+DOCX. The sample includes one pending deletion containing `Legacy`.
 
 ## Bind the search handle
 
-Read the Editor's controller, `superdoc.ui`, after readiness, then observe `ui.search` as the source of match and availability state.
+Read the Editor's controller, `superdoc.ui`, after readiness. Observe `superdoc.ui.search` as the source of match and
+availability state.
 
 <include>../../../../snippets/editor/custom-search.ts</include>
 
@@ -31,15 +35,28 @@ The snapshot provides the state needed by a focused search interface:
 
 ## Observe after starting a search
 
-`search()` returns the best-known snapshot immediately. A worker-backed search can settle later, so keep the interface subscribed with `observe()` instead of treating the first return value as final.
+`find()` returns the best-known snapshot immediately. A worker-backed search can settle later, so keep the interface
+subscribed with `observe()` instead of treating the first return value as final.
 
-`next()` and `previous()` update the active match and reveal it in the document. Check their `ok` result before announcing navigation.
+Pass `caseSensitive`, `regex`, or `includeTrackedDeletions` to `find()` when the query needs them. Pending tracked
+deletions are excluded by default.
+
+Include them for a review search:
+
+<include>../../../../snippets/editor/custom-search-tracked-deletions.ts</include>
+
+This finds the pending `Legacy` deletion in the sample. It does not restore, accept, or reject the change.
+
+`next()` and `previous()` update the active match and reveal it in the document. Check their `ok` result before
+announcing navigation.
 
 ## Await replacements
 
 `replace()` and `replaceAll()` can settle asynchronously. Await them before saving the document or starting dependent work.
 
-A failed result includes a stable reason such as an unavailable search host, a read-only document, or an operation the current session cannot perform. Keep replace controls synchronized with `canReplace` and still inspect the returned result.
+A failed result includes a stable reason such as an unavailable search host, a read-only document, or an operation the
+current session cannot perform. Keep replace controls synchronized with `canReplace` and still inspect the returned
+result.
 
 Call `clear()` when the query becomes empty. Call `close()` when the application dismisses the search experience and should remove its highlights.
 

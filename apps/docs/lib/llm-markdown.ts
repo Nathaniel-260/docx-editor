@@ -10,6 +10,7 @@ import { renderBuiltInEditorDemoMarkdown } from './built-in-editor-demos';
 import { renderLifecycleJourneyMarkdown } from './lifecycle-journey';
 import { editorConfigExplorer } from './editor-config-explorer';
 import { proofingConfigExplorer } from './proofing-config-explorer';
+import { searchConfigExplorer } from './search-config-explorer';
 
 export const llmPlaceholderComponents = [
   'Callout',
@@ -36,6 +37,7 @@ export const llmPlaceholderComponents = [
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
+  'SearchConfigReference',
   'MigrationExample',
   'MigrationExampleTabs',
   'img',
@@ -256,6 +258,9 @@ export function renderLLMMarkdown(markdown: string) {
     },
     ProofingConfigReference() {
       return renderConfigReferenceMarkdown(proofingConfigExplorer);
+    },
+    SearchConfigReference() {
+      return renderConfigReferenceMarkdown(searchConfigExplorer);
     },
     ReceiptBar({ attributes }) {
       const operation = textAttribute(attributes, 'operation') ?? 'operation';

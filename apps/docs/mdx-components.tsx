@@ -22,6 +22,7 @@ import { MigrationExample, MigrationExampleTabs } from '@/components/mdx/migrati
 import { ProofingConfigReference } from '@/components/mdx/proofing-config-reference';
 import { ReceiptBar } from '@/components/mdx/receipt-bar';
 import { RuntimeExample, RuntimeExampleTabs } from '@/components/mdx/runtime-example-tabs';
+import { SearchConfigReference } from '@/components/mdx/search-config-reference';
 import {
   DocumentApiNamespace,
   DocumentApiOperation,
@@ -71,6 +72,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     ReceiptBar,
     RuntimeExample,
     RuntimeExampleTabs,
+    SearchConfigReference,
     img: DocsImage,
     ...components,
   };

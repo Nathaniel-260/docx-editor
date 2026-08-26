@@ -100,8 +100,9 @@ export function renderBuiltInEditorDemoMarkdown(
     'Search configurations available in the interactive Editor:',
     '',
     '- **Mode — `documentMode`:** Editing allows replacement. Search remains available in Viewing, but replace controls are hidden.',
-    '- **Replacement — `ui.search.replaceEnabled`:** choose On or Off. Off removes replacement in every document mode.',
+    '- **Replace controls — `ui.search.replaceControls`:** choose Show or Hide. Hide removes the built-in replacement row in every document mode.',
+    '- **Tracked deletions — `ui.search.includeTrackedDeletions`:** choose Exclude or Include. The sample has one pending deletion containing `Legacy`.',
     '',
-    'The three-page fixture has eight case-insensitive `Client` matches and seven case-sensitive matches. Moving between results scrolls the Editor to each match. Changing replacement recreates the Editor from its current DOCX. Document edits and document mode remain; the active search resets.',
+    'The three-page fixture has eight case-insensitive `Client` matches and seven case-sensitive matches. `Legacy` has zero matches when tracked deletions are excluded and one when they are included. Moving between results scrolls the Editor to each match. Changing a Search startup option recreates the Editor from its current DOCX. Document edits and document mode remain; the active search resets.',
   ].join('\n');
 }

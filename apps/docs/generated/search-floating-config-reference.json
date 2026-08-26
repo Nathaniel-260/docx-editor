@@ -1,0 +1,84 @@
+{
+  "id": "search-floating-config-source",
+  "name": "SearchFloatingConfig",
+  "root": "floating",
+  "label": "search position and focus config",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "placement",
+      "type": "\"top-right\" | \"top-left\" | \"bottom-right\" | \"bottom-left\" | \"top-center\" | \"bottom-center\"",
+      "required": false,
+      "description": "Position preset (default: `'top-right'`). Explicit insets override it.",
+      "group": "other"
+    },
+    {
+      "name": "top",
+      "type": "string | number",
+      "required": false,
+      "description": "Top inset in pixels or as a CSS length.",
+      "group": "other"
+    },
+    {
+      "name": "right",
+      "type": "string | number",
+      "required": false,
+      "description": "Right inset in pixels or as a CSS length.",
+      "group": "other"
+    },
+    {
+      "name": "bottom",
+      "type": "string | number",
+      "required": false,
+      "description": "Bottom inset in pixels or as a CSS length.",
+      "group": "other"
+    },
+    {
+      "name": "left",
+      "type": "string | number",
+      "required": false,
+      "description": "Left inset in pixels or as a CSS length.",
+      "group": "other"
+    },
+    {
+      "name": "width",
+      "type": "string | number",
+      "required": false,
+      "description": "Surface width in pixels or as a CSS length.",
+      "group": "other"
+    },
+    {
+      "name": "maxWidth",
+      "type": "string | number",
+      "required": false,
+      "description": "Maximum surface width in pixels or as a CSS length.",
+      "group": "other"
+    },
+    {
+      "name": "maxHeight",
+      "type": "string | number",
+      "required": false,
+      "description": "Maximum surface height in pixels or as a CSS length.",
+      "group": "other"
+    },
+    {
+      "name": "autoFocus",
+      "type": "boolean",
+      "required": false,
+      "description": "Focus the find input when the surface opens (default: true).",
+      "group": "other"
+    },
+    {
+      "name": "closeOnOutsidePointerDown",
+      "type": "boolean",
+      "required": false,
+      "description": "Close the surface when a pointer press occurs outside it (default: false).",
+      "group": "other"
+    }
+  ]
+}

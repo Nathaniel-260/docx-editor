@@ -27,11 +27,18 @@ const builtInEditorDemoDataUrl = new URL('../lib/built-in-editor-demos.ts', impo
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
 const reactBuiltInSearchExampleUrl = new URL('../snippets/editor/react-built-in-find-replace.tsx', import.meta.url);
+const customSearchTrackedDeletionsUrl = new URL(
+  '../snippets/editor/custom-search-tracked-deletions.ts',
+  import.meta.url,
+);
 const reactBuiltInHyperlinksExampleUrl = new URL('../snippets/editor/react-built-in-hyperlinks.tsx', import.meta.url);
 const builtInContextMenuExampleUrl = new URL('../snippets/editor/built-in-context-menu.ts', import.meta.url);
 const reactBuiltInContextMenuExampleUrl = new URL('../snippets/editor/react-built-in-context-menu.tsx', import.meta.url);
 const documentApiReferenceModelUrl = new URL('../generated/document-api-reference.json', import.meta.url);
 const generatedProofingConfigUrl = new URL('../generated/proofing-config-reference.json', import.meta.url);
+const generatedSearchConfigUrl = new URL('../generated/search-config-reference.json', import.meta.url);
+const generatedSearchFloatingConfigUrl = new URL('../generated/search-floating-config-reference.json', import.meta.url);
+const generatedSearchStringsUrl = new URL('../generated/search-strings-reference.json', import.meta.url);
 const superdocCoreTypesUrl = new URL('../../../packages/superdoc/src/core/types/index.ts', import.meta.url);
 const reviewHighlightsExampleUrl = new URL('../snippets/editor/review-highlights.ts', import.meta.url);
 const commentThreadExampleUrl = new URL('../snippets/document-api/comment-thread.ts', import.meta.url);
@@ -81,6 +88,7 @@ const registeredComponents = new Set([
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
+  'SearchConfigReference',
 ]);
 const editorDemoPresets = new Set([
   'comments',
@@ -304,6 +312,14 @@ test('the React search example enables the built-in search surface with stable c
   assert.doesNotMatch(example, /\bui=\{\{/u);
 });
 
+test('the custom Search example can include tracked deletions per query', async () => {
+  const example = await readFile(customSearchTrackedDeletionsUrl, 'utf8');
+
+  assert.match(example, /editor\.ui\.search\.find\('Legacy',/u);
+  assert.match(example, /includeTrackedDeletions: true/u);
+  assert.doesNotMatch(example, /\bincludeDeletedText\b/u);
+});
+
 test('the React hyperlinks example keeps restart-sensitive config identities stable', async () => {
   const example = await readFile(reactBuiltInHyperlinksExampleUrl, 'utf8');
 
@@ -328,7 +344,10 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   const demo = await readFile(editorDemoUrl, 'utf8');
 
   assert.match(demo, /getPinnedFocusedToolbarOptions\(builtInToolbar!, \{ left: \['search'\] \}\)/u);
-  assert.match(demo, /search: \{ replaceEnabled: initialReplaceEnabled \}/u);
+  assert.match(
+    demo,
+    /search:\s*\{\s*replaceEnabled: initialReplaceControls,\s*includeDeletedText: initialIncludeTrackedDeletions,/u,
+  );
   assert.match(demo, /toolbar: getPinnedToolbarOptions\(initialToolbarStrategy, builtInToolbar!\)/u);
   assert.match(
     demo,
@@ -342,7 +361,7 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /setState\(replacedEditor \|\| !hadMountedEditor \? 'error' : 'ready'\)/u);
   assert.match(
     demo,
-    /commentsLayout,\s+commentsLevel,\s+contextMenuStrategy,\s+documentMode: currentDocumentMode,\s+hyperlinkBehavior,\s+replaceEnabled,\s+toolbarStrategy,/u,
+    /commentsLayout,\s+commentsLevel,\s+contextMenuStrategy,\s+documentMode: currentDocumentMode,\s+hyperlinkBehavior,\s+includeTrackedDeletions,\s+replaceControls,\s+toolbarStrategy,/u,
   );
   assert.match(
     demo,
@@ -363,7 +382,8 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /label='Actions'[\s\S]*options=\{commentsDemoLevels\}/u);
   assert.match(demo, /label='Menu'[\s\S]*options=\{contextMenuDemoStrategies\}/u);
   assert.match(demo, /label='Activation'[\s\S]*options=\{hyperlinkDemoBehaviors\}/u);
-  assert.match(demo, /label='Replacement'/u);
+  assert.match(demo, /label='Replace controls'/u);
+  assert.match(demo, /label='Tracked deletions'/u);
   assert.equal([...demo.matchAll(/<DemoViewControls\b/gu)].length, 2);
 });
 
@@ -439,6 +459,73 @@ test('the generated proofing reference mirrors the exported fields', async () =>
   assert.equal(providerField.typeName, providerTypeName);
   assert.deepEqual(documentedProviderFields, providerFields);
   assert.ok(providerCheck && providerField.type.includes(`check: ${providerCheck};`));
+});
+
+test('the generated Search reference mirrors every canonical nested field', async () => {
+  const [generatedSearchConfig, generatedSearchFloatingConfig, generatedSearchStrings, superdocTypes] =
+    await Promise.all([
+      readFile(generatedSearchConfigUrl, 'utf8').then(JSON.parse),
+      readFile(generatedSearchFloatingConfigUrl, 'utf8').then(JSON.parse),
+      readFile(generatedSearchStringsUrl, 'utf8').then(JSON.parse),
+      readFile(superdocCoreTypesUrl, 'utf8'),
+    ]);
+
+  const sourceFields = (typeName) => {
+    const body = superdocTypes.match(new RegExp(`export interface ${typeName}(?: extends [^{]+)? \\{([\\s\\S]*?)\\n\\}`, 'u'))?.[1] ?? '';
+    return [...body.matchAll(/^\s{2}(\w+)\??:/gmu)].map((match) => match[1]);
+  };
+  const generatedFields = (reference) => reference.fields.map((field) => field.name);
+
+  assert.deepEqual(generatedFields(generatedSearchConfig), sourceFields('SearchConfig'));
+  assert.deepEqual(generatedFields(generatedSearchFloatingConfig), sourceFields('SearchFloatingConfig'));
+  assert.deepEqual(generatedFields(generatedSearchStrings), sourceFields('SearchStrings'));
+  assert.ok(
+    [generatedSearchConfig, generatedSearchFloatingConfig, generatedSearchStrings].every((reference) =>
+      reference.fields.every((field) => field.type && field.description && !field.deprecated),
+    ),
+  );
+});
+
+test('the Search configuration explorer renders valid nested examples', async () => {
+  const { searchConfigExplorer } = await import('../lib/search-config-explorer.ts');
+  const { configFieldTemplate, renderConfigReferenceMarkdown } = await import('../lib/config-explorer.ts');
+  const names = searchConfigExplorer.fields.map((field) => field.name);
+  const field = (name) => searchConfigExplorer.fields.find((candidate) => candidate.name === name);
+  const group = (id) => searchConfigExplorer.groups.find((candidate) => candidate.id === id);
+
+  assert.equal(names.length, 34);
+  assert.equal(new Set(names).size, names.length);
+  assert.ok(searchConfigExplorer.fields.every((candidate) => candidate.summary?.length));
+  assert.deepEqual(
+    searchConfigExplorer.groups.map((candidate) => candidate.id),
+    ['behavior', 'position', 'focus', 'text', 'accessibility'],
+  );
+  assert.equal(field('replaceControls')?.default, 'true');
+  assert.equal(field('floating.placement')?.default, "'top-right'");
+  assert.equal(field('strings.noResults')?.default, "'No results'");
+
+  const positionExample = configFieldTemplate(searchConfigExplorer, group('position'), field('floating.placement'));
+  assert.equal(
+    positionExample,
+    [
+      'ui: {',
+      '  search: {',
+      '    floating: {',
+      "      placement: 'bottom-right'",
+      '    },',
+      '  },',
+      '}',
+    ].join('\n'),
+  );
+  const textExample = configFieldTemplate(searchConfigExplorer, group('text'), field('strings.noResults'));
+  assert.match(textExample, /strings: \{\n\s+noResults: 'No matches'/u);
+  assert.doesNotMatch(textExample, /noResultsLabel/u);
+
+  const markdown = renderConfigReferenceMarkdown(searchConfigExplorer);
+  assert.match(markdown, /\| `replaceControls` \| `boolean` \| `true` \|/u);
+  assert.match(markdown, /\| `floating\.placement` \|/u);
+  assert.match(markdown, /\| `strings\.findAriaLabel` \|/u);
+  assert.doesNotMatch(markdown, /replaceEnabled|includeDeletedText|noResultsLabel/u);
 });
 
 test('the Editor configuration reference starts with concise essential fields', async () => {

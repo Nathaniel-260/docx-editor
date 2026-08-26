@@ -3,7 +3,17 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
 import { Check, CircleX, Clipboard } from 'lucide-react';
-import { codeValue, configTemplate, type ConfigExplorerData, type ConfigField } from '@/lib/config-explorer';
+import {
+  codeValue,
+  configClosingLines,
+  configFieldIndent,
+  configFieldTemplate,
+  configOpeningLines,
+  configTemplate,
+  type ConfigExplorerData,
+  type ConfigField,
+  type ConfigFieldGroup,
+} from '@/lib/config-explorer';
 
 type ConfigExplorerProps = {
   data: ConfigExplorerData;
@@ -73,7 +83,9 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
   async function copyConfig() {
     if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
     try {
-      await navigator.clipboard.writeText(configTemplate(data));
+      const code =
+        data.copyMode === 'selected-field' ? configFieldTemplate(data, activeGroup, selected) : configTemplate(data);
+      await navigator.clipboard.writeText(code);
       setCopyStatus('copied');
     } catch {
       setCopyStatus('failed');
@@ -109,6 +121,7 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
   }
 
   if (!activeGroup || !selected) return null;
+  const copyTarget = data.copyMode === 'selected-field' ? `${selected.name} example` : `${data.root} setup`;
 
   return (
     <div className='sd-config-explorer-wrap'>
@@ -150,10 +163,10 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
             type='button'
             onClick={() => void copyConfig()}
             aria-label={
-              copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : `Copy ${data.root} setup`
+              copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : `Copy ${copyTarget}`
             }
             aria-live='polite'
-            title={copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy setup'}
+            title={copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : `Copy ${copyTarget}`}
           >
             {copyStatus === 'copied' ? (
               <Check aria-hidden='true' />
@@ -171,7 +184,7 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
           aria-labelledby={`${data.id}-${activeGroup.id}-tab`}
         >
           <div className='sd-config-explorer-code'>
-            <ConfigOpeningLine data={data} />
+            <ConfigOpeningLine data={data} group={activeGroup} />
             {activeGroup.fields.map((field) => (
               <button
                 key={field.name}
@@ -181,14 +194,14 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
                 aria-pressed={field.name === selected.name}
                 onClick={() => setSelectedName(field.name)}
               >
-                <span>{'  '}</span>
-                <span className='sd-config-explorer-field-name'>{field.name}</span>
+                <span>{configFieldIndent(data, activeGroup)}</span>
+                <span className='sd-config-explorer-field-name'>{field.key ?? field.name}</span>
                 <span>: </span>
                 <ConfigValue value={codeValue(field)} />
                 <span>,</span>
               </button>
             ))}
-            <ConfigClosingLine data={data} />
+            <ConfigClosingLine data={data} group={activeGroup} />
           </div>
           <ConfigFieldDetail key={selected.name} field={selected} />
         </div>
@@ -200,34 +213,52 @@ export function ConfigExplorer({ data, initialField }: ConfigExplorerProps) {
   );
 }
 
-function ConfigOpeningLine({ data }: { data: ConfigExplorerData }) {
-  if (data.syntax === 'typed-variable') {
-    return (
-      <div className='sd-config-explorer-line'>
-        <span className='sd-config-explorer-token-keyword'>const</span>{' '}
-        <span className='sd-config-explorer-token-type'>{data.root}</span> = {'{'}
-      </div>
-    );
-  }
-
-  return (
-    <div className='sd-config-explorer-line'>
-      <span className='sd-config-explorer-field-name'>{data.root}</span>: {'{'}
+function ConfigOpeningLine({ data, group }: { data: ConfigExplorerData; group: ConfigFieldGroup }) {
+  return configOpeningLines(data, group).map((line, index) => (
+    <div className='sd-config-explorer-line' key={`${group.id}-opening-${index}`}>
+      <ConfigLine line={line} typedVariable={data.syntax === 'typed-variable'} />
     </div>
-  );
+  ));
 }
 
-function ConfigClosingLine({ data }: { data: ConfigExplorerData }) {
-  if (data.syntax === 'typed-variable') {
+function ConfigClosingLine({ data, group }: { data: ConfigExplorerData; group: ConfigFieldGroup }) {
+  return configClosingLines(data, group).map((line, index) => (
+    <div className='sd-config-explorer-line' key={`${group.id}-closing-${index}`}>
+      <ConfigLine line={line} typedVariable={data.syntax === 'typed-variable'} />
+    </div>
+  ));
+}
+
+function ConfigLine({ line, typedVariable }: { line: string; typedVariable: boolean }) {
+  const property = line.match(/^(\s*)(\w+): \{$/u);
+  if (property) {
     return (
-      <div className='sd-config-explorer-line'>
-        {'}'} <span className='sd-config-explorer-token-keyword'>satisfies</span>{' '}
-        <span className='sd-config-explorer-token-type'>{data.name}</span>;
-      </div>
+      <>
+        {property[1]}
+        <span className='sd-config-explorer-field-name'>{property[2]}</span>: {'{'}
+      </>
     );
   }
-
-  return <div className='sd-config-explorer-line'>{'}'}</div>;
+  if (!typedVariable) return line;
+  const opening = line.match(/^const (\w+) = \{$/u);
+  if (opening) {
+    return (
+      <>
+        <span className='sd-config-explorer-token-keyword'>const</span>{' '}
+        <span className='sd-config-explorer-token-type'>{opening[1]}</span> = {'{'}
+      </>
+    );
+  }
+  const closing = line.match(/^\} satisfies (\w+);$/u);
+  if (closing) {
+    return (
+      <>
+        {'}'} <span className='sd-config-explorer-token-keyword'>satisfies</span>{' '}
+        <span className='sd-config-explorer-token-type'>{closing[1]}</span>;
+      </>
+    );
+  }
+  return line;
 }
 
 const configValueToken = /\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|[A-Za-z_$][\w$]*(?=\s*:)|=>/gu;

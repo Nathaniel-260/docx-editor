@@ -623,22 +623,35 @@ test('exports the custom selection and viewport workflow as clean Markdown', asy
 });
 
 test('exports built-in and custom search without duplicating Document API queries', async () => {
-  const builtIn = await readFile(
-    new URL('../out/md/editor/built-in-ui/search-and-replace.md', import.meta.url),
-    'utf8',
-  );
+  const [article, builtIn] = await Promise.all([
+    readFile(new URL('../out/editor/built-in-ui/search-and-replace/index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../out/md/editor/built-in-ui/search-and-replace.md', import.meta.url), 'utf8'),
+  ]);
   const customUI = await readFile(new URL('../out/md/editor/custom-ui/search.md', import.meta.url), 'utf8');
 
+  assert.match(article, /id="search-config"/);
+  assert.match(article, /data-config-explorer="true"/);
+  assert.match(article, /Position &amp; size/);
+  assert.match(article, /Accessibility/);
+  assert.match(article, /34<!-- --> fields · generated from <code>SearchConfig<\/code>/);
   assert.match(builtIn, /search: true/);
   assert.match(builtIn, /browser keeps its native page search shortcut/);
   assert.match(builtIn, /\*\*React — `src\/App\.tsx`\*\*/);
   assert.match(builtIn, /Search remains available in Viewing, but replace controls are hidden/);
   assert.match(builtIn, /Mode — `documentMode`/);
-  assert.match(builtIn, /Replacement — `ui\.search\.replaceEnabled`/);
+  assert.match(builtIn, /Replace controls — `ui\.search\.replaceControls`/);
+  assert.match(builtIn, /Tracked deletions — `ui\.search\.includeTrackedDeletions`/);
   assert.match(builtIn, /eight case-insensitive `Client` matches/);
   assert.match(builtIn, /seven case-sensitive matches/);
-  assert.match(builtIn, /Changing replacement recreates the Editor from its current DOCX/);
-  assert.match(builtIn, /replaceEnabled: false/);
+  assert.match(builtIn, /`Legacy` has zero matches when tracked deletions are excluded and one when they are included/);
+  assert.match(builtIn, /Changing a Search startup option recreates the Editor from its current DOCX/);
+  assert.match(builtIn, /\| `replaceControls` \| `boolean` \| `true` \|/);
+  assert.match(builtIn, /\| `floating\.closeOnOutsidePointerDown` \|/);
+  assert.match(builtIn, /\| `strings\.invalidPattern` \|/);
+  assert.doesNotMatch(builtIn, /\b(?:replaceEnabled|includeDeletedText)\b/);
+  assert.doesNotMatch(builtIn, /<SearchConfigReference\b/);
+  assert.match(customUI, /ui\.search\.find\(query\.value/);
+  assert.match(customUI, /editor\.ui\.search\.find\('Legacy'/);
   assert.match(customUI, /ui\.search\.observe\(render\)/);
   assert.match(customUI, /await ui\.search\.replaceAll\(replacement\.value\)/);
   assert.match(customUI, /\[Document API queries\]\(\/document-api\/query-content\)/);

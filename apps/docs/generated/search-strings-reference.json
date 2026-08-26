@@ -1,0 +1,168 @@
+{
+  "id": "search-strings-source",
+  "name": "SearchStrings",
+  "root": "strings",
+  "label": "search text config",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "findPlaceholder",
+      "type": "string",
+      "required": false,
+      "description": "Input placeholder for the find field.",
+      "group": "other"
+    },
+    {
+      "name": "findAriaLabel",
+      "type": "string",
+      "required": false,
+      "description": "Accessible label for the find input.",
+      "group": "other"
+    },
+    {
+      "name": "replacePlaceholder",
+      "type": "string",
+      "required": false,
+      "description": "Input placeholder for the replace field.",
+      "group": "other"
+    },
+    {
+      "name": "replaceAriaLabel",
+      "type": "string",
+      "required": false,
+      "description": "Accessible label for the replace input.",
+      "group": "other"
+    },
+    {
+      "name": "noResults",
+      "type": "string",
+      "required": false,
+      "description": "Text shown when there are no matches.",
+      "group": "other"
+    },
+    {
+      "name": "previousMatchTitle",
+      "type": "string",
+      "required": false,
+      "description": "Tooltip for the previous-match button.",
+      "group": "other"
+    },
+    {
+      "name": "previousMatchAriaLabel",
+      "type": "string",
+      "required": false,
+      "description": "Accessible label for previous match button.",
+      "group": "other"
+    },
+    {
+      "name": "nextMatchTitle",
+      "type": "string",
+      "required": false,
+      "description": "Tooltip for the next-match button.",
+      "group": "other"
+    },
+    {
+      "name": "nextMatchAriaLabel",
+      "type": "string",
+      "required": false,
+      "description": "Accessible label for next match button.",
+      "group": "other"
+    },
+    {
+      "name": "closeTitle",
+      "type": "string",
+      "required": false,
+      "description": "Tooltip for the close button.",
+      "group": "other"
+    },
+    {
+      "name": "closeAriaLabel",
+      "type": "string",
+      "required": false,
+      "description": "Accessible label for close button.",
+      "group": "other"
+    },
+    {
+      "name": "replace",
+      "type": "string",
+      "required": false,
+      "description": "Replace button text.",
+      "group": "other"
+    },
+    {
+      "name": "replaceAll",
+      "type": "string",
+      "required": false,
+      "description": "Replace-all button text.",
+      "group": "other"
+    },
+    {
+      "name": "toggleReplaceTitle",
+      "type": "string",
+      "required": false,
+      "description": "Tooltip for the button that expands or collapses replace controls.",
+      "group": "other"
+    },
+    {
+      "name": "toggleReplaceAriaLabel",
+      "type": "string",
+      "required": false,
+      "description": "Accessible label for toggle replace button.",
+      "group": "other"
+    },
+    {
+      "name": "matchCase",
+      "type": "string",
+      "required": false,
+      "description": "Match case toggle text.",
+      "group": "other"
+    },
+    {
+      "name": "matchCaseAriaLabel",
+      "type": "string",
+      "required": false,
+      "description": "Accessible label for match case toggle.",
+      "group": "other"
+    },
+    {
+      "name": "ignoreDiacritics",
+      "type": "string",
+      "required": false,
+      "description": "Ignore diacritics toggle text.",
+      "group": "other"
+    },
+    {
+      "name": "ignoreDiacriticsAriaLabel",
+      "type": "string",
+      "required": false,
+      "description": "Accessible label for ignore diacritics toggle.",
+      "group": "other"
+    },
+    {
+      "name": "regex",
+      "type": "string",
+      "required": false,
+      "description": "Regex toggle text.",
+      "group": "other"
+    },
+    {
+      "name": "regexAriaLabel",
+      "type": "string",
+      "required": false,
+      "description": "Accessible label for the regex toggle.",
+      "group": "other"
+    },
+    {
+      "name": "invalidPattern",
+      "type": "string",
+      "required": false,
+      "description": "Inline error shown when the regex pattern is invalid or unsafe.",
+      "group": "other"
+    }
+  ]
+}

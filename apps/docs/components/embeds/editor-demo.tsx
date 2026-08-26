@@ -50,7 +50,8 @@ type MountDocumentOptions = {
   contextMenuStrategy?: ContextMenuDemoStrategy;
   documentMode?: DocumentMode;
   hyperlinkBehavior?: HyperlinkDemoBehavior;
-  replaceEnabled?: boolean;
+  includeTrackedDeletions?: boolean;
+  replaceControls?: boolean;
   toolbarStrategy?: ToolbarDemoStrategy;
 };
 
@@ -323,8 +324,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const [contextMenuActionStatus, setContextMenuActionStatus] = useState<string | null>(null);
   const [contextMenuStrategy, setContextMenuStrategy] = useState<ContextMenuDemoStrategy>('custom');
   const [hyperlinkBehavior, setHyperlinkBehavior] = useState<HyperlinkDemoBehavior>('default');
+  const [includeTrackedDeletions, setIncludeTrackedDeletions] = useState(false);
   const [modeResetBusy, setModeResetBusy] = useState(false);
-  const [replaceEnabled, setReplaceEnabled] = useState(true);
+  const [replaceControls, setReplaceControls] = useState(true);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [state, setState] = useState<DemoState>('idle');
   const [toolbarStrategy, setToolbarStrategy] = useState<ToolbarDemoStrategy>('items');
@@ -497,7 +499,8 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     const initialContextMenuStrategy = options.contextMenuStrategy ?? 'custom';
     const initialDocumentMode = options.documentMode ?? (preset === 'tracked-review' ? 'suggesting' : 'editing');
     const initialHyperlinkBehavior = options.hyperlinkBehavior ?? 'default';
-    const initialReplaceEnabled = options.replaceEnabled ?? true;
+    const initialIncludeTrackedDeletions = options.includeTrackedDeletions ?? false;
+    const initialReplaceControls = options.replaceControls ?? true;
     const initialToolbarStrategy = options.toolbarStrategy ?? 'items';
     setDemoInteractionBlocked(true);
     setConfigurationError(null);
@@ -531,10 +534,11 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       setContextMenuActionStatus(null);
       setContextMenuStrategy(initialContextMenuStrategy);
       setHyperlinkBehavior(initialHyperlinkBehavior);
+      setIncludeTrackedDeletions(initialIncludeTrackedDeletions);
       fitActiveRef.current = true;
       setFitActive(true);
       setModeResetBusy(false);
-      setReplaceEnabled(initialReplaceEnabled);
+      setReplaceControls(initialReplaceControls);
       setReviewBusy(false);
       setToolbarStrategy(initialToolbarStrategy);
       setTrackedChangeCount(0);
@@ -553,7 +557,14 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           loading: false,
           ...(preset === 'search'
             ? {
-                search: { replaceEnabled: initialReplaceEnabled },
+                // AIDEV-NOTE: The embed runs the exact stable release in
+                // config/editor-demo-runtime.json. Keep these older fields
+                // inside this adapter until that pin includes the canonical
+                // SearchConfig names used by the published examples.
+                search: {
+                  replaceEnabled: initialReplaceControls,
+                  includeDeletedText: initialIncludeTrackedDeletions,
+                },
                 toolbar: getPinnedFocusedToolbarOptions(builtInToolbar!, { left: ['search'] }),
               }
             : {}),
@@ -717,7 +728,8 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           contextMenuStrategy,
           documentMode: currentDocumentMode,
           hyperlinkBehavior,
-          replaceEnabled,
+          includeTrackedDeletions,
+          replaceControls,
           toolbarStrategy,
           ...options,
         },
@@ -760,10 +772,16 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     void reconfigureDemo({ hyperlinkBehavior: behavior });
   }
 
-  function changeSearchReplacement(value: 'on' | 'off') {
-    const nextReplaceEnabled = value === 'on';
-    if (nextReplaceEnabled === replaceEnabled) return;
-    void reconfigureDemo({ replaceEnabled: nextReplaceEnabled });
+  function changeSearchReplaceControls(value: 'show' | 'hide') {
+    const nextReplaceControls = value === 'show';
+    if (nextReplaceControls === replaceControls) return;
+    void reconfigureDemo({ replaceControls: nextReplaceControls });
+  }
+
+  function changeSearchTrackedDeletions(value: 'exclude' | 'include') {
+    const nextIncludeTrackedDeletions = value === 'include';
+    if (nextIncludeTrackedDeletions === includeTrackedDeletions) return;
+    void reconfigureDemo({ includeTrackedDeletions: nextIncludeTrackedDeletions });
   }
 
   async function resetModesDemo() {
@@ -872,7 +890,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                       : preset === 'hyperlinks'
                         ? 'Click the hyperlink to try the selected activation behavior.'
                         : preset === 'search'
-                          ? 'Search for “Client”, then replace one result with “Customer”.'
+                          ? 'Search for “Client”, or include tracked deletions and search for “Legacy”.'
                           : preset === 'toolbar'
                             ? 'Switch strategies, then try the rendered controls in the document.'
                             : 'Loads the sample DOCX in suggesting mode.'}
@@ -968,13 +986,23 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               />
               <DemoConfigGroup
                 disabled={state !== 'ready' || configurationBusy}
-                label='Replacement'
-                onChange={changeSearchReplacement}
+                label='Replace controls'
+                onChange={changeSearchReplaceControls}
                 options={[
-                  { id: 'on', label: 'On' },
-                  { id: 'off', label: 'Off' },
+                  { id: 'show', label: 'Show' },
+                  { id: 'hide', label: 'Hide' },
                 ]}
-                value={replaceEnabled ? 'on' : 'off'}
+                value={replaceControls ? 'show' : 'hide'}
+              />
+              <DemoConfigGroup
+                disabled={state !== 'ready' || configurationBusy}
+                label='Tracked deletions'
+                onChange={changeSearchTrackedDeletions}
+                options={[
+                  { id: 'exclude', label: 'Exclude' },
+                  { id: 'include', label: 'Include' },
+                ]}
+                value={includeTrackedDeletions ? 'include' : 'exclude'}
               />
             </>
           ) : null}

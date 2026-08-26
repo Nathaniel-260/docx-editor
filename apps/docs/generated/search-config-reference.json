@@ -1,0 +1,43 @@
+{
+  "id": "search-config-source",
+  "name": "SearchConfig",
+  "root": "search",
+  "label": "search config",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "replaceControls",
+      "type": "boolean",
+      "required": false,
+      "description": "Show replace controls (default: true). This changes the built-in UI only; it does not authorize or disable `editor.ui.search.replace()`.",
+      "group": "other"
+    },
+    {
+      "name": "includeTrackedDeletions",
+      "type": "boolean",
+      "required": false,
+      "description": "Include text from pending tracked deletions in each search (default: false).",
+      "group": "other"
+    },
+    {
+      "name": "strings",
+      "type": "SearchStrings",
+      "required": false,
+      "description": "String overrides for the built-in Search surface.",
+      "group": "other"
+    },
+    {
+      "name": "floating",
+      "type": "{\n  placement?: \"top-right\" | \"top-left\" | \"bottom-right\" | \"bottom-left\" | \"top-center\" | \"bottom-center\";\n  top?: string | number;\n  right?: string | number;\n  bottom?: string | number;\n  left?: string | number;\n  width?: string | number;\n  maxWidth?: string | number;\n  maxHeight?: string | number;\n  autoFocus?: boolean;\n  closeOnOutsidePointerDown?: boolean;\n}",
+      "typeName": "SearchFloatingConfig",
+      "required": false,
+      "description": "Position and focus settings for the floating Search surface.",
+      "group": "other"
+    }
+  ]
+}
