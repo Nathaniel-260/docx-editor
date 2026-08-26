@@ -61,6 +61,16 @@ import { createV2SessionShortcutRoutes } from './core/editor-runtime/v2/v2-sessi
 import { markRuntimeRoot, unmarkRuntimeRoot } from './core/editor-runtime/root-marker.js';
 import { resolveV2Integration } from './core/v2-integration/v2-integration.js';
 import { resolveV2CollaborationTarget } from './core/collaboration/resolve-v2-collaboration-target.js';
+import {
+  translateUnzipDiagnostic,
+  translateRenderReadinessDiagnostic,
+  translateBootFailureReason,
+} from './internal/diagnostics/translate-diagnostic.js';
+import {
+  getV2DiagnosticGeneration,
+  createV2DiagnosticDedupe,
+  isBootDiagnosticRedundant,
+} from './internal/diagnostics/diagnostic-dedupe.js';
 import SurfaceHost from './components/surfaces/SurfaceHost.vue';
 import {
   DEFAULT_COMMENTS_LAYOUT,
@@ -668,6 +678,18 @@ const v2ReviewWindowController = resolvedEditorIntegration.createReviewWindowCon
 // owned by the V2 browser shell overlay; this store lets shell chrome read the
 // last typed failure (reason + content-safe detail) without re-deriving it.
 const v2EditorFailures = ref({});
+
+// SuperDoc Diagnostics MVP: dedupe/generation logic lives in
+// internal/diagnostics/diagnostic-dedupe.js (unit-tested there) so it's
+// testable without mounting this whole component. `generation` is a
+// per-attempt number the v2 shell stamps on `v2-editor-failed` /
+// `v2-open-diagnostics` / `v2-render-readiness` payloads (bumped at the
+// START of every `boot()` / `replaceFile()` / `collaboration:document-replaced`
+// attempt in `V2SuperEditor.vue`) -- it must come from the shell, not be
+// inferred here from `onV2EditorReady` timing: that event only fires on
+// success, fires AFTER the diagnostics events on the success path, and
+// never fires at all for a failed attempt.
+const v2DiagnosticDedupe = createV2DiagnosticDedupe();
 
 // A missing-author rejection is non-terminal: keep one content-safe status per
 // mounted document, and re-arm that document after a successful mutation or a
@@ -2025,6 +2047,65 @@ const onV2EditorFailed = (payload) => {
     ...(documentId ? { documentId } : {}),
     editor: null,
   });
+  // SuperDoc Diagnostics MVP: additive, structured diagnostics alongside the legacy payload above.
+  // A single boot failure can produce 1 legacy payload + 0..N diagnostic
+  // payloads (one per in-scope SDDiagnosticRecord the host returned), never
+  // a synthetic aggregate.
+  const bootErrorName = typeof payload?.bootErrorName === 'string' ? payload.bootErrorName : undefined;
+  const bootDiagnostic = translateBootFailureReason(reason, detail, { documentId, editor: null, bootErrorName });
+  const openDiagnostics = Array.isArray(payload?.diagnostics) ? payload.diagnostics : [];
+  const generation = getV2DiagnosticGeneration(payload);
+  const translatedRecords = openDiagnostics
+    .map((record) => ({ record, diagnostic: translateUnzipDiagnostic(record, { documentId, editor: null }) }))
+    .filter((entry) => entry.diagnostic);
+  // `bootDiagnostic.internalCode === reason` means it came from the generic
+  // reason-string branch (e.g. `source-load-failed`), which is always a
+  // proxy for a package-integrity failure that already has its own specific
+  // `SDDiagnosticRecord` (confirmed by tracing `readiness.readiness ===
+  // 'blocked'` — never anything else). Emitting both would produce two
+  // PARSE_ERROR callbacks for one root cause, one strictly less specific
+  // than the other. A `bootErrorName`-classified diagnostic is a distinct
+  // render-pipeline signal, not redundant with package diagnostics, and is
+  // always emitted regardless of `translatedRecords`.
+  const bootDiagnosticIsRedundant = isBootDiagnosticRedundant(bootDiagnostic, reason, translatedRecords);
+  if (bootDiagnostic && !bootDiagnosticIsRedundant) proxy.$superdoc.emit('exception', bootDiagnostic);
+  for (const { diagnostic } of translatedRecords) {
+    if (!v2DiagnosticDedupe.shouldEmit(documentId, generation, diagnostic.internalCode)) continue;
+    proxy.$superdoc.emit('exception', diagnostic);
+  }
+};
+
+// SuperDoc Diagnostics MVP: the v2 shell already emits `v2-render-readiness`
+// on every render-readiness transition (debug-only console forwarding
+// exists internally), but nothing here listened for it. Mid-session
+// render/layout diagnostics reach `onException` through this handler.
+const onV2RenderReadiness = (doc, payload) => {
+  const documentId = doc?.id ?? null;
+  const diagnostics = payload?.snapshot?.diagnostics;
+  if (!Array.isArray(diagnostics) || diagnostics.length === 0) return;
+  const generation = getV2DiagnosticGeneration(payload);
+  for (const diag of diagnostics) {
+    const diagnostic = translateRenderReadinessDiagnostic(diag, { documentId, editor: null });
+    if (!diagnostic) continue;
+    if (!v2DiagnosticDedupe.shouldEmit(documentId, generation, diagnostic.internalCode)) continue;
+    proxy.$superdoc.emit('exception', diagnostic);
+  }
+};
+
+// SuperDoc Diagnostics MVP: non-fatal open/replacement diagnostics
+// (`v2-open-diagnostics`, emitted only on success — failed opens route
+// through `onV2EditorFailed` instead so one incident never produces both).
+const onV2OpenDiagnostics = (doc, payload) => {
+  const documentId = doc?.id ?? (typeof payload?.documentId === 'string' ? payload.documentId : null);
+  const diagnostics = payload?.diagnostics;
+  if (!Array.isArray(diagnostics) || diagnostics.length === 0) return;
+  const generation = getV2DiagnosticGeneration(payload);
+  for (const record of diagnostics) {
+    const diagnostic = translateUnzipDiagnostic(record, { documentId, editor: null });
+    if (!diagnostic) continue;
+    if (!v2DiagnosticDedupe.shouldEmit(documentId, generation, diagnostic.internalCode)) continue;
+    proxy.$superdoc.emit('exception', diagnostic);
+  }
 };
 
 // Shell-owned product DOM hit capture. Real focus/pointer hits inside a marked
@@ -3540,6 +3621,8 @@ const whiteboardInteractive = computed(() => whiteboardEnabled.value);
             @v2-link-click="onV2LinkClick"
             @v2-comment-created="onV2CommentCreated"
             @v2-page-metrics="onV2PageMetrics"
+            @v2-render-readiness="(payload) => onV2RenderReadiness(doc, payload)"
+            @v2-open-diagnostics="(payload) => onV2OpenDiagnostics(doc, payload)"
           />
 
           <!-- omitting field props -->

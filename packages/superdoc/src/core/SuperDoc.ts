@@ -624,8 +624,9 @@ interface SuperDocEventMap {
 }
 // Notes on the event map above:
 //
-// `exception` carries a union of producer-specific payloads. Consumers narrow
-// it by `stage`, `code`, `itemName`, or `source` before reading other fields.
+// `exception` is typed as `SuperDocExceptionPayload`, a union of
+// producer-specific payloads. Consumers narrow by `stage`, `code`,
+// `itemName`, `source`, or `diagnosticCode` before reading other fields.
 //
 // `fonts-resolved` uses a listener-transport pattern: SuperDoc never
 // emits it directly. `SuperDoc.vue:719` reads

@@ -8,7 +8,12 @@
  * `originalError`, which `SuperDocExceptionPayload` did not describe, so
  * reading either required an unsafe cast (#1098 review).
  */
-import type { Config, SuperDocExceptionPayload, SuperDocExceptionToolbarPayload } from 'superdoc';
+import type {
+  Config,
+  SuperDocExceptionDiagnosticPayload,
+  SuperDocExceptionPayload,
+  SuperDocExceptionToolbarPayload,
+} from 'superdoc';
 
 // Narrowing by `'itemName' in payload`, the rule the union documents.
 const _onException: Config = {
@@ -21,6 +26,17 @@ const _onException: Config = {
       const message: string = payload.error.message;
       return [name, original, message];
     }
+    // `diagnosticCode` is this member's own discriminant -- it deliberately
+    // does not reuse `stage` (see `SuperDocExceptionDiagnosticPayload`'s doc
+    // comment), so this check has no ordering dependency relative to the
+    // `'stage' in payload` check below.
+    if ('diagnosticCode' in payload) {
+      const diagnosticCode: string = payload.diagnosticCode;
+      const diagnosticStage: string = payload.diagnosticStage;
+      const severity: 'warn' | 'error' = payload.severity;
+      const internalCode: string = payload.internalCode;
+      return [diagnosticCode, diagnosticStage, severity, internalCode];
+    }
     // The other variants still narrow the way they always did.
     if ('code' in payload) return payload.code;
     if ('stage' in payload) return payload.stage;
@@ -31,4 +47,7 @@ const _onException: Config = {
 // Reachable by name too, so an application can type its own handler.
 const _handler = (payload: SuperDocExceptionToolbarPayload): string | null => payload.itemName;
 
-export { _onException, _handler };
+// Same for the structured diagnostic payload.
+const _diagnosticHandler = (payload: SuperDocExceptionDiagnosticPayload): string => payload.diagnosticCode;
+
+export { _onException, _handler, _diagnosticHandler };

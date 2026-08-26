@@ -160,8 +160,11 @@ import type {
   SuperDocDecorationContext,
   SuperDocDecorationData,
   SuperDocDecorationProvider,
+  SuperDocDiagnosticCode,
+  SuperDocDiagnosticStage,
   SuperDocDisposableBag,
   SuperDocEditorPayload,
+  SuperDocExceptionDiagnosticPayload,
   SuperDocExceptionEditorPayload,
   SuperDocExceptionHyperlinkPayload,
   SuperDocExceptionToolbarPayload,
@@ -398,8 +401,11 @@ const _real_SuperDocDecorationApi: AssertNotAny<SuperDocDecorationApi> = true;
 const _real_SuperDocDecorationContext: AssertNotAny<SuperDocDecorationContext> = true;
 const _real_SuperDocDecorationData: AssertNotAny<SuperDocDecorationData> = true;
 const _real_SuperDocDecorationProvider: AssertNotAny<SuperDocDecorationProvider> = true;
+const _real_SuperDocDiagnosticCode: AssertNotAny<SuperDocDiagnosticCode> = true;
+const _real_SuperDocDiagnosticStage: AssertNotAny<SuperDocDiagnosticStage> = true;
 const _real_SuperDocDisposableBag: AssertNotAny<SuperDocDisposableBag> = true;
 const _real_SuperDocEditorPayload: AssertNotAny<SuperDocEditorPayload> = true;
+const _real_SuperDocExceptionDiagnosticPayload: AssertNotAny<SuperDocExceptionDiagnosticPayload> = true;
 const _real_SuperDocExceptionEditorPayload: AssertNotAny<SuperDocExceptionEditorPayload> = true;
 const _real_SuperDocExceptionHyperlinkPayload: AssertNotAny<SuperDocExceptionHyperlinkPayload> = true;
 const _real_SuperDocExceptionToolbarPayload: AssertNotAny<SuperDocExceptionToolbarPayload> = true;

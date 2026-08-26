@@ -843,6 +843,24 @@ const init = async () => {
   superdoc.value = new SuperDoc(config);
   superdoc.value?.on('exception', (error) => {
     if (handleCollaborationException(error)) return;
+    // SuperDoc Diagnostics MVP: the structured diagnostic payload is emitted IN ADDITION to whatever
+    // legacy `exception` payload a given failure already produces, so this
+    // handler fires once for each. Narrow with 'diagnosticCode in error' to
+    // tell them apart -- upload a corrupt/non-DOCX file (e.g. a .docx that
+    // isn't actually a zip) to see a PARSE_ERROR/unzip diagnostic here.
+    if (error && typeof error === 'object' && 'diagnosticCode' in error) {
+      console.warn(`[SuperDoc Diagnostics] ${error.diagnosticCode}`, {
+        diagnosticCode: error.diagnosticCode,
+        diagnosticStage: error.diagnosticStage,
+        severity: error.severity,
+        internalCode: error.internalCode,
+        message: error.message,
+        documentId: error.documentId ?? null,
+        editor: error.editor ?? null,
+        error: error.error,
+      });
+      return;
+    }
     console.error('SuperDoc exception:', error);
   });
 

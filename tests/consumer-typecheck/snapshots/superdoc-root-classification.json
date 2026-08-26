@@ -1,14 +1,14 @@
 {
   "generatedAt": "2026-06-23T01:53:02.997Z",
   "summary": {
-    "total": 234,
+    "total": 242,
     "byBucket": {
-      "legacy-root": 3,
-      "supported-root": 231
+      "supported-root": 239,
+      "legacy-root": 3
     },
     "byConfidence": {
-      "high": 183,
-      "medium": 48
+      "medium": 48,
+      "high": 194
     }
   },
   "rows": [
@@ -1278,6 +1278,28 @@
       "inCjs": false
     },
     {
+      "name": "SuperDocDiagnosticCode",
+      "bucket": "supported-root",
+      "rationale": "Stable public diagnostic taxonomy code carried on SuperDocExceptionDiagnosticPayload.diagnosticCode. SuperDoc Diagnostics MVP.",
+      "confidence": "high",
+      "source": "diagnostics",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SuperDocDiagnosticStage",
+      "bucket": "supported-root",
+      "rationale": "Document-processing pipeline stage a diagnostic was raised from, carried on SuperDocExceptionDiagnosticPayload.diagnosticStage. SuperDoc Diagnostics MVP.",
+      "confidence": "high",
+      "source": "diagnostics",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "SuperDocDisposableBag",
       "bucket": "supported-root",
       "rationale": "v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet.",
@@ -1294,6 +1316,17 @@
       "rationale": "Wrapper payload emitted with editorBeforeCreate / editorCreate / collaboration-ready events; promoted to a named public type so callback signatures match the runtime wrapper instead of a bare Editor.",
       "confidence": "high",
       "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SuperDocExceptionDiagnosticPayload",
+      "bucket": "supported-root",
+      "rationale": "Member of the SuperDocExceptionPayload union; structured diagnostic translated from an internal v2-kernel diagnostic. Narrowed by 'diagnosticCode' in payload. SuperDoc Diagnostics MVP.",
+      "confidence": "high",
+      "source": "diagnostics",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,

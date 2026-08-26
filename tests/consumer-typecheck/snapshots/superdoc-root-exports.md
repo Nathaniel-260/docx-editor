@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-26T10:23:58.622Z
+Generated: 2026-08-26T14:47:06.997Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 243 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 243 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 246 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 246 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **243** |
+| **union** |  | **246** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 233
+- typed but no runtime export (phantom risk): 236
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -138,8 +138,11 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `SuperDocDecorationContext`
 - `SuperDocDecorationData`
 - `SuperDocDecorationProvider`
+- `SuperDocDiagnosticCode`
+- `SuperDocDiagnosticStage`
 - `SuperDocDisposableBag`
 - `SuperDocEditorPayload`
+- `SuperDocExceptionDiagnosticPayload`
 - `SuperDocExceptionEditorPayload`
 - `SuperDocExceptionHyperlinkPayload`
 - `SuperDocExceptionPayload`
@@ -300,7 +303,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `DiffApplyReviewItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DirectSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DocRange` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Document` | ✓ | ✓ |   |   | 2 |   | 93 | 6 | 0 |
+| `Document` | ✓ | ✓ |   |   | 2 |   | 94 | 6 | 0 |
 | `DocumentApi` | ✓ | ✓ |   |   | 3 |   | 2 | 0 | 0 |
 | `DocumentMode` | ✓ | ✓ |   |   | 3 |   | 1 | 2 | 0 |
 | `DocumentProtectionState` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -360,7 +363,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SelectionHandle` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 2 | 0 | 0 |
-| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 23 |   | 243 | 35 | 0 |
+| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 23 |   | 244 | 37 | 0 |
 | `SuperDocActiveEditorExtensions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsCommands` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsDiagnostics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -381,8 +384,11 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SuperDocDecorationContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocDecorationData` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocDecorationProvider` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocDiagnosticCode` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocDiagnosticStage` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocDisposableBag` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocEditorPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocExceptionDiagnosticPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocExceptionEditorPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocExceptionHyperlinkPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocExceptionPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -458,7 +464,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SurfacesModuleConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `TextAddress` | ✓ | ✓ |   |   | 1 |   | 7 | 0 | 0 |
 | `TextSegment` | ✓ | ✓ |   |   | 1 |   | 1 | 0 | 0 |
-| `TextTarget` | ✓ | ✓ |   |   | 1 |   | 4 | 0 | 0 |
+| `TextTarget` | ✓ | ✓ |   |   | 1 |   | 11 | 0 | 0 |
 | `ToolbarCommandId` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ToolbarConfig` | ✓ | ✓ |   |   | 3 |   | 2 | 0 | 0 |
 | `ToolbarCustomButton` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |

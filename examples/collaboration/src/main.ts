@@ -33,9 +33,19 @@ const superdoc = new SuperDoc({
     exportButton.disabled = false;
     status.textContent = 'Connected.';
   },
-  onException: ({ error }) => {
+  onException: (payload) => {
+    // SuperDoc Diagnostics MVP: a structured diagnostic payload is emitted
+    // in addition to (and sometimes instead of) a real connection failure --
+    // it can also fire on its own for non-fatal mid-session issues (e.g. a
+    // render-readiness hiccup during a remote collaboration change) that
+    // never affected the connection. Narrow it out before treating every
+    // exception as "Connection failed."
+    if ('diagnosticCode' in payload) {
+      console.warn('[SuperDoc diagnostic]', payload.diagnosticCode, payload.message);
+      return;
+    }
     status.textContent = 'Connection failed.';
-    console.error(error);
+    console.error(payload.error);
   },
 });
 

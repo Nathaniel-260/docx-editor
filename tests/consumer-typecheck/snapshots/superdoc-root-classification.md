@@ -1,22 +1,22 @@
 # SD-3212 A1 — root classification
 
 Generated: derived from superdoc-root-classification.json (aligned with current root export inventory)
-Input: tests/consumer-typecheck/snapshots/superdoc-root-exports.json (176 names)
+Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (242 names)
 
 ## Summary
 
 | Bucket | Count |
 |---|---|
-| supported-root | 170 |
-| legacy-root | 6 |
+| supported-root | 239 |
+| legacy-root | 3 |
 | move-to-subpath | 0 |
 | internal-candidate | 0 |
 | NEEDS-REVIEW | 0 |
-| **total** | **176** |
+| **total** | **242** |
 
-Confidence: high=124, medium=52, low=0, needs-review=0.
+Confidence: high=194, medium=48, low=0, needs-review=0.
 
-## supported-root (170)
+## supported-root (239)
 
 | Name | Confidence | Source | Rationale |
 |---|---|---|---|
@@ -26,13 +26,29 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `BlocksListResult` | high | doc-api | Document API result type returned by activeEditor.doc.blocks.list(); useful for consumers typing block-listing workflows from the root package. |
 | `BookmarkAddress` | high | doc-api | Document API navigation/address/selection type. Promoted into the root facade by SD-3185. |
 | `BookmarkInfo` | high | doc-api | Document API result type returned by activeEditor.doc.bookmarks.get(); useful for consumers typing bookmark workflows from the root package. |
+| `BuiltInCommandId` | high | toolbar-config | Exact ids for commands built into the SuperDoc UI controller. Gives consumers autocomplete and a closed type when they do not use registered application commands. |
 | `CanPerformPermissionParams` | high | config-supported | Configuration type for a supported feature. Input shape for SuperDoc#canPerformPermission, promoted from an anonymous inline parameter to a named public type so consumers get IDE help and the contract is stable across migrations. |
 | `CollaborationConfig` | medium | config-supported | Configuration type for a supported feature. |
 | `CommentAddress` | high | doc-api | Document API navigation/address/selection type. Promoted into the root facade by SD-3185. |
+| `CommentInteractionConfig` | high | config-supported | Named client-side comment action policy accepted by InteractionConfig.comments. |
+| `CommentInteractionLevel` | high | config-supported | Canonical comment-interaction policy level used by InteractionConfig.comments and exported for consumers configuring custom comment UI. |
+| `CommentsConfig` | high | config-supported | Canonical comments presentation config type. Public extension surface for ui.comments; interaction policy lives on interaction.comments. |
+| `CommentsLayout` | high | config-supported | Layout values accepted by the built-in comments UI configuration. |
+| `CommentsResponsiveConfig` | high | config-supported | Named width-source and breakpoint options used by the automatic comments layout. |
 | `CommentsType` | medium | comments-track | Comments/track-changes type used by Document API consumers. |
 | `Config` | medium | config-supported | Configuration type for a supported feature. |
 | `ContentControlActiveChangePayload` | high | config-supported | Payload for Config.onContentControlActiveChange. Customer-facing content-control callback type exported from src/public/index.ts. |
 | `ContentControlClickPayload` | high | config-supported | Payload for Config.onContentControlClick. Customer-facing content-control callback type exported from src/public/index.ts. |
+| `ContentControlsConfig` | high | config-supported | Canonical content-control chrome config type. Public extension surface for ui.contentControls. |
+| `ContextMenuConfig` | high | context-menu | Canonical configuration for the built-in context menu, including application sections, visibility and availability predicates, and final-section transforms. |
+| `ContextMenuItem` | high | context-menu | Canonical application item definition accepted by ContextMenuConfig.sections. |
+| `ContextMenuOpenContext` | high | context-menu | Runtime-truthful editor snapshot passed to context-menu visibility, availability, and final-section callbacks. |
+| `ContextMenuResolvedItem` | high | context-menu | Resolved menu item supplied to ContextMenuConfig.menuProvider after SuperDoc evaluates availability. |
+| `ContextMenuResolvedSection` | high | context-menu | Resolved menu section accepted and returned by ContextMenuConfig.menuProvider. |
+| `ContextMenuSection` | high | context-menu | Canonical section definition accepted by ContextMenuConfig.sections. |
+| `ContextMenuSelectContext` | high | context-menu | The menu context handed to ContextMenuItem.onSelect. Supported root: part of the documented v2 replacement for the deprecated action callback. |
+| `ContextMenuSelectPayload` | high | context-menu | Argument type of ContextMenuItem.onSelect. Supported root: a consumer extracting the handler into a typed function needs it by name. |
+| `ContextMenuSelectReadiness` | high | context-menu | Repaint coordination carried on the onSelect document result. Supported root: reachable from ContextMenuSelectPayload. |
 | `DOCX` | high | locked | Content-format constant. Heavily documented (133 doc mentions). Customer-facing. |
 | `DirectSurfaceRequest` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
 | `DocRange` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
@@ -46,7 +62,7 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `EntityAddress` | high | doc-api | Document API entity navigation/address type for comments and tracked changes; used by receipts, navigation, and superdoc/ui viewport surfaces. |
 | `ExportParams` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 | `ExportType` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
-| `ExternalPopoverRenderContext` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
+| `ExternalPopoverRenderContext` | high | hyperlinks | Deprecated alias retained for v2 source compatibility; use HyperlinkRenderContext. |
 | `ExternalSurfaceRenderContext` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
 | `FindReplaceContext` | medium | find-replace | FindReplace surface API type. Public. |
 | `FindReplaceHandle` | medium | find-replace | FindReplace surface API type. Public. |
@@ -54,18 +70,26 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `FindReplaceResolution` | medium | find-replace | FindReplace surface API type. Public. |
 | `FlowBlock` | high | layout-engine | Current shared layout-engine input contract exported from @superdoc/contracts and consumed by the v2 layout adapter, v2 host, layout bridge, and layout-engine tests. Useful for consumers typing custom layout projections and layout-engine integrations. |
 | `FlowMode` | high | layout-engine | Current layout flow-mode union exported from @superdoc/contracts and used by Config.layoutEngineOptions.flowMode and the v2 layout runtime to select paginated versus semantic flow. |
+| `FontFamilyOption` | high | font-system | Typed row accepted by ui.toolbar.fontOptions and returned by superdoc.fonts.getFontFamilyOptions(). |
 | `HTML` | high | locked | Content-format constant. Heavily used (85 docs, 204 demos). Customer-facing. |
+| `HyperlinkActivationContext` | high | hyperlinks | Context for the canonical top-level hyperlink activation handler. |
+| `HyperlinkActivationHandler` | high | hyperlinks | Canonical callback for controlling hyperlink activation behavior. |
+| `HyperlinkActivationResult` | high | hyperlinks | Canonical result union for default, suppressed, and application-owned hyperlink behavior. |
+| `HyperlinkRenderContext` | high | hyperlinks | Framework-agnostic render context for application-owned hyperlink UI. |
+| `HyperlinkTarget` | high | doc-api | Canonical Document API address returned by hyperlink activation and accepted by hyperlink read and write operations. |
+| `HyperlinksConfig` | high | hyperlinks | Canonical top-level configuration for hyperlink activation behavior. |
 | `IntentSurfaceRequest` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
+| `InteractionConfig` | high | config | Top-level configuration type split out of modules. Customer-facing. |
 | `Layout` | high | layout-engine | Current shared layout output contract exported from @superdoc/contracts and consumed by the v2 render surface, layout bridge, painter, and layout-engine tests. Useful for consumers typing layout inspection and render integrations. |
 | `LayoutEngineOptions` | high | layout-engine | Backwards-compatible public type alias to the current v2 SuperDocLayoutEngineOptions contract for Config.layoutEngineOptions. This preserves the useful customer-facing name without restoring the old PresentationEditor implementation. |
 | `LayoutFragment` | high | layout-engine | Public alias of the current @superdoc/contracts Fragment layout contract. v2 layout and hit-testing code use this fragment shape for page render geometry and text mapping. |
-| `InteractionConfig` | high | config | Interaction policy type split out of modules. Customer-facing. |
 | `LayoutMetrics` | high | layout-bridge | Current layout-bridge instrumentation metrics contract with timing fields for measurement, pagination, token resolution, and header/footer layout. Useful for consumers typing layout performance diagnostics. |
 | `LayoutMode` | high | layout-painter | Current @superdoc/painter-dom layout display mode union (vertical, horizontal, book). This remains part of the page rendering/display layer used by v2. |
 | `LayoutPage` | high | layout-engine | Public alias of the current @superdoc/contracts Page layout contract. v2 layout output and render surfaces use this page shape for pagination, geometry, and hit-testing workflows. |
-| `LinkPopoverContext` | high | link-popover | Custom link popover resolver context type. Public extension surface for modules.links.popoverResolver integrations. |
-| `LinkPopoverResolution` | high | link-popover | Custom link popover resolver return type. Public extension surface for modules.links.popoverResolver integrations. |
-| `LinkPopoverResolver` | high | link-popover | Custom link popover resolver callback type. Public extension surface for modules.links.popoverResolver integrations. |
+| `LinkPopoverConfig` | high | link-popover | Deprecated alias retained for v2 source compatibility; use HyperlinksConfig. |
+| `LinkPopoverContext` | high | link-popover | Deprecated alias retained for v2 source compatibility; use HyperlinkActivationContext. |
+| `LinkPopoverResolution` | high | link-popover | Deprecated alias retained for v2 source compatibility; use HyperlinkActivationResult. |
+| `LinkPopoverResolver` | high | link-popover | Deprecated alias retained for v2 source compatibility; use HyperlinkActivationHandler. |
 | `Modules` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 | `NavigableAddress` | high | doc-api | Document API navigation/address/selection type. Promoted into the root facade by SD-3185. |
 | `PDF` | high | locked | Content-format constant. Customer-facing import/export selector. |
@@ -80,7 +104,10 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `ResolvedFindReplaceTexts` | medium | find-replace | FindReplace surface API type. Public. |
 | `ResolvedPasswordPromptTexts` | medium | password-prompt | PasswordPrompt surface API type. Public. |
 | `SdtRef` | high | config-supported | Structured document tag reference used by public content-control callback payloads. |
+| `SearchConfig` | high | config-supported | Canonical startup options for the built-in Search surface. |
+| `SearchFloatingConfig` | high | config-supported | Position and focus options used by SearchConfig. |
 | `SearchMatch` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
+| `SearchStrings` | high | config-supported | Typed string overrides used by SearchConfig. |
 | `SelectionHandle` | high | ui-controller | v2-native superdoc/ui selection handle type with current/capture/restore/anchor-rect methods; the supported migration path for deferred selection UI flows. |
 | `SelectionInfo` | high | doc-api | Document API selection result returned by doc.selection.current(); v2 host and adapter expose the shape for selection-aware custom UI, comments, and extension workflows. |
 | `StoryLocator` | high | doc-api | Document API navigation/address/selection type. Promoted into the root facade by SD-3185. |
@@ -105,12 +132,17 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `SuperDocDecorationContext` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocDecorationData` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocDecorationProvider` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
+| `SuperDocDiagnosticCode` | high | diagnostics | Stable public diagnostic taxonomy code carried on SuperDocExceptionDiagnosticPayload.diagnosticCode. SuperDoc Diagnostics MVP. |
+| `SuperDocDiagnosticStage` | high | diagnostics | Document-processing pipeline stage a diagnostic was raised from, carried on SuperDocExceptionDiagnosticPayload.diagnosticStage. SuperDoc Diagnostics MVP. |
 | `SuperDocDisposableBag` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocEditorPayload` | high | core | Wrapper payload emitted with editorBeforeCreate / editorCreate / collaboration-ready events; promoted to a named public type so callback signatures match the runtime wrapper instead of a bare Editor. |
+| `SuperDocExceptionDiagnosticPayload` | high | diagnostics | Member of the SuperDocExceptionPayload union; structured diagnostic translated from an internal v2-kernel diagnostic. Narrowed by 'diagnosticCode' in payload. SuperDoc Diagnostics MVP. |
 | `SuperDocExceptionEditorPayload` | high | locked | Member of the SuperDocExceptionPayload union; named so consumers can discriminate the editor-lifecycle shape. SD-673 Phase 4D. |
-| `SuperDocExceptionPayload` | high | locked | Public Config.onException callback parameter. Union of the three runtime emit shapes. SD-673 Phase 4D. |
+| `SuperDocExceptionHyperlinkPayload` | high | hyperlinks | Exception payload for application hyperlink activation and rendering failures, narrowed by source. |
+| `SuperDocExceptionPayload` | high | locked | Public Config.onException callback parameter. Consumers narrow the runtime producer by stage, code, itemName, or source. |
 | `SuperDocExceptionRestorePayload` | high | locked | Member of the SuperDocExceptionPayload union; named so consumers can discriminate the restore-failure shape. SD-673 Phase 4D. |
 | `SuperDocExceptionStorePayload` | high | locked | Member of the SuperDocExceptionPayload union; named so consumers can discriminate the store-init shape via `'stage' in payload`. SD-673 Phase 4D. |
+| `SuperDocExceptionToolbarPayload` | high | core | Exception payload raised by the built-in toolbar, including a custom entry that could not be built. Narrowed by 'itemName' in payload. |
 | `SuperDocExtension` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocExtensionActivateReturn` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocExtensionCapabilities` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
@@ -135,6 +167,8 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `SuperDocGuardedDocSelection` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocLayoutEngineOptions` | high | locked | Types Config.layoutEngineOptions at core/types/index.ts:1350,1505. Documented Config field. |
 | `SuperDocLockedPayload` | high | core | Payload emitted with the locked event and passed to Config.onLocked; promoted to a named public type so the lockedBy: User | null contract is consumer-typable. |
+| `SuperDocMeasurementUnit` | high | core | Measurement unit for rulers and measurement fields ('in' | 'cm'). Consumer-facing: typed on Config.measurementUnit and on the getMeasurementUnit() / setMeasurementUnit() public methods. |
+| `SuperDocMeasurementUnitChangePayload` | high | core | Payload emitted with the measurement-unit-change event when setMeasurementUnit() runs; promoted to a named public type for consistency with the other event payloads (e.g. SuperDocZoomPayload). |
 | `SuperDocMutationAffect` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocMutationEvent` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocMutationFilter` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
@@ -146,19 +180,22 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `SuperDocSelectionEvent` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocSelectionPoint` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocSelectionTarget` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
-| `SurfacesConfig` | high | config | Surface infrastructure type split out of modules. Customer-facing. |
 | `SuperDocState` | high | core | Public return shape of the SuperDoc#state getter; introduced to replace an inline anonymous return that leaked the internal RuntimeDocument type. Exposes `documents` as Document[] (the public view). |
 | `SuperDocStoryLocator` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocTelemetryConfig` | high | locked | Backs Config.telemetry (enabled/endpoint/metadata/licenseKey). |
 | `SuperDocTextAddress` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocTextTarget` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
+| `SuperDocUI` | high | ui-controller | Type of the `SuperDoc.ui` instance property: the SuperDoc-owned UI controller. Promoted to the root facade so `editor.ui` resolves from the root entry alone; the factory and the rest of the controller type graph stay on the `superdoc/ui` subpath. |
 | `SuperDocViewportChangePayload` | high | core | Payload emitted with the viewport-change event and passed to Config.onViewportChange; named so custom fit-to-width consumers can type handlers. |
 | `SuperDocViewportMetrics` | high | core | Return type of getViewportMetrics(); alias of the viewport-change payload so reads and events share one shape. |
+| `SuperDocVisibleRange` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
+| `SuperDocInlineBoxAppearance` | high | extensions | Paint-only appearance tokens accepted by ctx.visuals.inlineBox(). Public extension-authoring type defined in core/extensions/types.ts. |
+| `SuperDocInlineBoxLayout` | high | extensions | Layout-affecting integer geometry accepted by ctx.visuals.inlineBox(). Public extension-authoring type defined in core/extensions/types.ts. |
+| `SuperDocInlineBoxOptions` | high | extensions | Options for the layout-aware ctx.visuals.inlineBox() API. Public extension-authoring type defined in core/extensions/types.ts. |
 | `SuperDocVisualApi` | high | extensions | Easy visual authoring layer exposed as ctx.visuals on the v2 extension context (highlight/decorate). Public extension-authoring type defined in core/extensions/types.ts. |
 | `SuperDocVisualHandle` | high | extensions | Handle returned by ctx.visuals.highlight/decorate (replace/add/clear/invalidate/dispose). Public extension-authoring type defined in core/extensions/types.ts. |
 | `SuperDocVisualOptions` | high | extensions | Options for ctx.visuals.highlight/decorate (className/data/scope). Public extension-authoring type defined in core/extensions/types.ts. |
 | `SuperDocVisualTarget` | high | extensions | Target accepted by SuperDocVisualHandle.replace/add (anchor, Document API target, or per-target override). Public extension-authoring type defined in core/extensions/types.ts. |
-| `SuperDocVisibleRange` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocZoomConfig` | high | core | Config.zoom domain object (initial + fitToContainer); named so consumers can build zoom configuration values with a public type. |
 | `SuperDocZoomMode` | high | core | Closed zoom mode union (manual | fit-width) used by Config.zoom.mode, setZoomMode, and the zoomChange payload. |
 | `SuperDocZoomPayload` | high | core | Payload emitted with the zoomChange event and passed to Config.onZoomChange; promoted from an internal interface when the config callback made it consumer-facing. |
@@ -171,22 +208,51 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `SurfaceRequest` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
 | `SurfaceResolution` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
 | `SurfaceResolver` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
+| `SurfacesConfig` | high | config | Top-level configuration type split out of modules. Customer-facing. |
 | `SurfacesModuleConfig` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
 | `TextAddress` | high | doc-api | Document API text target accepted by v2 comments, formatting, insertion, and replace-style operations; resolved and validated by the v2 Document API adapter. |
 | `TextSegment` | high | doc-api | Document API text-range segment used inside TextTarget.segments; needed for consumers typing multi-segment text targets from the root package. |
 | `TextTarget` | high | doc-api | Document API range target used by v2 comments, tracked-change decisions, fields, and selection flows; resolved by the v2 Document API adapter. |
+| `ToolbarCommandId` | high | toolbar-config | Command id accepted by the runtime toolbar handle, including application ids registered through ui.commands.register(). |
+| `ToolbarConfig` | high | toolbar-config | Named startup configuration for the built-in toolbar under ui.toolbar. Lets consumers assemble and validate a readonly toolbar config outside the root Config object. |
+| `ToolbarCustomButton` | high | toolbar-custom-buttons | Deprecated union accepted by ui.toolbar.customButtons. Kept for existing v2 integrations; use ToolbarCustomItem. |
+| `ToolbarCustomButtonCommand` | high | toolbar-custom-buttons | Deprecated action type accepted by ui.toolbar.customButtons. Kept for existing v2 integrations. |
+| `ToolbarCustomButtonCommandId` | high | toolbar-config | Payload-free built-in commands accepted by canonical custom toolbar buttons. |
+| `ToolbarCustomButtonConfig` | high | toolbar-config | Canonical custom toolbar button definition using id, region, size, and either command or onSelect. |
+| `ToolbarCustomButtonContext` | high | toolbar-custom-buttons | Deprecated callback context for ui.toolbar.customButtons. Kept for existing v2 integrations. |
+| `ToolbarCustomButtonItem` | high | toolbar-custom-buttons | Deprecated button shape accepted by ui.toolbar.customButtons. Kept for existing v2 integrations. |
+| `ToolbarCustomDropdownConfig` | high | toolbar-config | Canonical custom toolbar dropdown definition with typed options and selection behavior. |
+| `ToolbarCustomDropdownCommandId` | high | toolbar-config | Built-in commands accepted by canonical custom toolbar dropdowns with string or number values. |
+| `ToolbarCustomDropdownItem` | high | toolbar-custom-buttons | Deprecated dropdown shape accepted by ui.toolbar.customButtons. Kept for existing v2 integrations. |
+| `ToolbarCustomDropdownOption` | high | toolbar-custom-buttons | Deprecated dropdown row accepted by ui.toolbar.customButtons. Kept for existing v2 integrations. |
+| `ToolbarCustomItem` | high | toolbar-config | Canonical union accepted by ui.toolbar.customItems for buttons, dropdowns, and separators. |
+| `ToolbarCustomItemSelectContext` | high | toolbar-config | Public context passed to a canonical custom toolbar item's onSelect callback without exposing the internal reactive item. |
+| `ToolbarCustomItemSelectHandler` | high | toolbar-config | Named callback type for canonical custom toolbar selection behavior. |
+| `ToolbarCustomOption` | high | toolbar-config | Canonical option definition for a custom toolbar dropdown, with stable id, label, and optional value. |
+| `ToolbarCustomSeparatorConfig` | high | toolbar-config | Canonical custom toolbar separator definition. |
+| `ToolbarCustomSeparatorItem` | high | toolbar-custom-buttons | Deprecated separator shape accepted by ui.toolbar.customButtons. Kept for existing v2 integrations. |
+| `ToolbarDropdownOption` | high | toolbar-custom-buttons | Deprecated dropdown row passed to callbacks from ui.toolbar.customButtons. Kept for existing v2 integrations. |
+| `ToolbarFontOption` | high | toolbar-config | Deprecated row accepted by ui.toolbar.fonts. Kept for existing v2 integrations; use FontFamilyOption. |
+| `ToolbarIconId` | high | toolbar-config | Exact public keys accepted by ui.toolbar.icons. |
+| `ToolbarItemId` | high | toolbar-config | Exact built-in control ids accepted by ui.toolbar.items, with canonical kebab-case names. |
+| `ToolbarOptionalItemId` | high | toolbar-config | Exact opt-in control ids accepted by ui.toolbar.includeItems. |
+| `ToolbarRegion` | high | toolbar-config | The left, center, and right regions rendered by the built-in toolbar. |
+| `ToolbarStringId` | high | toolbar-config | Exact public keys accepted by ui.toolbar.strings. |
 | `TrackChangeAuthor` | high | locked | Structured author identity passed to modules.trackChanges.authorColors.resolve. |
+| `TrackChangeHighlightColors` | high | config-supported | Tracked-change highlight color shape, referenced by CommentsConfig for both the base and active states. |
 | `TrackChangesAuthorColorsConfig` | high | locked | Module config for per-author tracked-change colors (modules.trackChanges.authorColors). Documented at the module-config layer. |
 | `TrackChangesModuleConfig` | high | locked | Module config for track-changes (modules.trackChanges). Documented at the module-config layer. |
 | `TrackChangesSemanticColorsConfig` | high | locked | Module config for semantic tracked-change colors (modules.trackChanges.semanticColors). Documented at the module-config layer. |
 | `TrackedChangeAddress` | high | doc-api | Document API navigation/address/selection type. Promoted into the root facade by SD-3185. |
 | `TrackedChangeSemanticColorKey` | high | locked | Semantic key union used by modules.trackChanges.semanticColors overrides and resolver input. Named so consumers can type supported tracked-change color keys. |
 | `TrackedChangeSemanticColorResolverInput` | high | locked | Resolver input passed to modules.trackChanges.semanticColors.resolve. Named so consumers can type semantic color resolver callbacks. |
-| `UIConfig` | high | config | Built-in UI configuration type for Config.ui. Names which built-in surfaces SuperDoc renders. |
+| `UIConfig` | high | config | Built-in UI configuration type for Config.ui. Customer-facing: names which built-in surfaces SuperDoc renders. |
 | `UpgradeToCollaborationOptions` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 | `User` | high | config-supported | Customer-facing user identity type used by v2 config, collaboration/awareness, shared-user management, and locking methods. |
 | `V2CollaborationConfig` | medium | config-supported | Configuration type for SuperDoc v2's document-level single-doc y-websocket collaboration handoff. |
 | `ViewOptions` | high | config-supported | Customer-facing view configuration type; Config.viewOptions.layout drives v2 print/web layout behavior. |
+| `ViewingOptions` | high | config-supported | Canonical viewing-mode display options used by Config.viewing and SuperDoc#setViewingOptions(). |
+| `ViewingTrackedChangesMode` | high | config-supported | Public original, markup, and final projection choices used by ViewingOptions.trackedChanges. |
 | `ViewingVisibilityConfig` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 | `buildTheme` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 | `compareVersions` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
@@ -194,16 +260,28 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `defineSuperDocExtension` | high | core | v2 SuperDoc extension factory/validation helper. Documented runtime export used to author extensions passed to Config.extensions. |
 | `getFileObject` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 
-## legacy-root (6)
+## legacy-root (3)
 
 | Name | Confidence | Source | Rationale |
 |---|---|---|---|
 | `BlankDOCX` | high | locked | Runtime-exported empty-DOCX builder. Used internally and possibly in demos; not a supported public concept. |
-| `ContextMenuConfig` | medium | config-legacy | Configuration type for a feature with legacy surface (paired with a legacy component or older API). |
 | `ContextMenuContext` | medium | context-menu | ContextMenu component-side type. Paired with the ContextMenu component (legacy-root). |
-| `ContextMenuItem` | medium | context-menu | ContextMenu component-side type. Paired with the ContextMenu component (legacy-root). |
-| `ContextMenuSection` | medium | context-menu | ContextMenu component-side type. Paired with the ContextMenu component (legacy-root). |
 | `FindReplaceConfig` | medium | config-legacy | Configuration type for a feature with legacy surface (paired with a legacy component or older API). |
+
+## move-to-subpath (0)
+
+| Name | Confidence | Source | Rationale |
+|---|---|---|---|
+
+## internal-candidate (0)
+
+| Name | Confidence | Source | Rationale |
+|---|---|---|---|
+
+## NEEDS-REVIEW (0)
+
+| Name | Confidence | Source | Rationale |
+|---|---|---|---|
 
 ## Presence matrix
 
@@ -216,17 +294,30 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `BlocksListResult` | ✓ | ✓ |   |   |
 | `BookmarkAddress` | ✓ | ✓ |   |   |
 | `BookmarkInfo` | ✓ | ✓ |   |   |
+| `BuiltInCommandId` | ✓ | ✓ |   |   |
 | `CanPerformPermissionParams` | ✓ | ✓ |   |   |
 | `CollaborationConfig` | ✓ | ✓ |   |   |
 | `CommentAddress` | ✓ | ✓ |   |   |
+| `CommentInteractionConfig` | ✓ | ✓ |   |   |
+| `CommentInteractionLevel` | ✓ | ✓ |   |   |
+| `CommentsConfig` | ✓ | ✓ |   |   |
+| `CommentsLayout` | ✓ | ✓ |   |   |
+| `CommentsResponsiveConfig` | ✓ | ✓ |   |   |
 | `CommentsType` | ✓ | ✓ |   |   |
 | `Config` | ✓ | ✓ |   |   |
 | `ContentControlActiveChangePayload` | ✓ | ✓ |   |   |
 | `ContentControlClickPayload` | ✓ | ✓ |   |   |
+| `ContentControlsConfig` | ✓ | ✓ |   |   |
 | `ContextMenuConfig` | ✓ | ✓ |   |   |
 | `ContextMenuContext` | ✓ | ✓ |   |   |
 | `ContextMenuItem` | ✓ | ✓ |   |   |
+| `ContextMenuOpenContext` | ✓ | ✓ |   |   |
+| `ContextMenuResolvedItem` | ✓ | ✓ |   |   |
+| `ContextMenuResolvedSection` | ✓ | ✓ |   |   |
 | `ContextMenuSection` | ✓ | ✓ |   |   |
+| `ContextMenuSelectContext` | ✓ | ✓ |   |   |
+| `ContextMenuSelectPayload` | ✓ | ✓ |   |   |
+| `ContextMenuSelectReadiness` | ✓ | ✓ |   |   |
 | `DOCX` | ✓ | ✓ | ✓ | ✓ |
 | `DirectSurfaceRequest` | ✓ | ✓ |   |   |
 | `DocRange` | ✓ | ✓ |   |   |
@@ -249,14 +340,23 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `FindReplaceResolution` | ✓ | ✓ |   |   |
 | `FlowBlock` | ✓ | ✓ |   |   |
 | `FlowMode` | ✓ | ✓ |   |   |
+| `FontFamilyOption` | ✓ | ✓ |   |   |
 | `HTML` | ✓ | ✓ | ✓ | ✓ |
+| `HyperlinkActivationContext` | ✓ | ✓ |   |   |
+| `HyperlinkActivationHandler` | ✓ | ✓ |   |   |
+| `HyperlinkActivationResult` | ✓ | ✓ |   |   |
+| `HyperlinkRenderContext` | ✓ | ✓ |   |   |
+| `HyperlinkTarget` | ✓ | ✓ |   |   |
+| `HyperlinksConfig` | ✓ | ✓ |   |   |
 | `IntentSurfaceRequest` | ✓ | ✓ |   |   |
+| `InteractionConfig` | ✓ | ✓ |   |   |
 | `Layout` | ✓ | ✓ |   |   |
 | `LayoutEngineOptions` | ✓ | ✓ |   |   |
 | `LayoutFragment` | ✓ | ✓ |   |   |
 | `LayoutMetrics` | ✓ | ✓ |   |   |
 | `LayoutMode` | ✓ | ✓ |   |   |
 | `LayoutPage` | ✓ | ✓ |   |   |
+| `LinkPopoverConfig` | ✓ | ✓ |   |   |
 | `LinkPopoverContext` | ✓ | ✓ |   |   |
 | `LinkPopoverResolution` | ✓ | ✓ |   |   |
 | `LinkPopoverResolver` | ✓ | ✓ |   |   |
@@ -274,7 +374,10 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `ResolvedFindReplaceTexts` | ✓ | ✓ |   |   |
 | `ResolvedPasswordPromptTexts` | ✓ | ✓ |   |   |
 | `SdtRef` | ✓ | ✓ |   |   |
+| `SearchConfig` | ✓ | ✓ |   |   |
+| `SearchFloatingConfig` | ✓ | ✓ |   |   |
 | `SearchMatch` | ✓ | ✓ |   |   |
+| `SearchStrings` | ✓ | ✓ |   |   |
 | `SelectionHandle` | ✓ | ✓ |   |   |
 | `SelectionInfo` | ✓ | ✓ |   |   |
 | `StoryLocator` | ✓ | ✓ |   |   |
@@ -299,12 +402,17 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `SuperDocDecorationContext` | ✓ | ✓ |   |   |
 | `SuperDocDecorationData` | ✓ | ✓ |   |   |
 | `SuperDocDecorationProvider` | ✓ | ✓ |   |   |
+| `SuperDocDiagnosticCode` | ✓ | ✓ |   |   |
+| `SuperDocDiagnosticStage` | ✓ | ✓ |   |   |
 | `SuperDocDisposableBag` | ✓ | ✓ |   |   |
 | `SuperDocEditorPayload` | ✓ | ✓ |   |   |
+| `SuperDocExceptionDiagnosticPayload` | ✓ | ✓ |   |   |
 | `SuperDocExceptionEditorPayload` | ✓ | ✓ |   |   |
+| `SuperDocExceptionHyperlinkPayload` | ✓ | ✓ |   |   |
 | `SuperDocExceptionPayload` | ✓ | ✓ |   |   |
 | `SuperDocExceptionRestorePayload` | ✓ | ✓ |   |   |
 | `SuperDocExceptionStorePayload` | ✓ | ✓ |   |   |
+| `SuperDocExceptionToolbarPayload` | ✓ | ✓ |   |   |
 | `SuperDocExtension` | ✓ | ✓ |   |   |
 | `SuperDocExtensionActivateReturn` | ✓ | ✓ |   |   |
 | `SuperDocExtensionCapabilities` | ✓ | ✓ |   |   |
@@ -329,6 +437,8 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `SuperDocGuardedDocSelection` | ✓ | ✓ |   |   |
 | `SuperDocLayoutEngineOptions` | ✓ | ✓ |   |   |
 | `SuperDocLockedPayload` | ✓ | ✓ |   |   |
+| `SuperDocMeasurementUnit` | ✓ | ✓ |   |   |
+| `SuperDocMeasurementUnitChangePayload` | ✓ | ✓ |   |   |
 | `SuperDocMutationAffect` | ✓ | ✓ |   |   |
 | `SuperDocMutationEvent` | ✓ | ✓ |   |   |
 | `SuperDocMutationFilter` | ✓ | ✓ |   |   |
@@ -345,13 +455,17 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `SuperDocTelemetryConfig` | ✓ | ✓ |   |   |
 | `SuperDocTextAddress` | ✓ | ✓ |   |   |
 | `SuperDocTextTarget` | ✓ | ✓ |   |   |
+| `SuperDocUI` | ✓ | ✓ |   |   |
 | `SuperDocViewportChangePayload` | ✓ | ✓ |   |   |
 | `SuperDocViewportMetrics` | ✓ | ✓ |   |   |
+| `SuperDocVisibleRange` | ✓ | ✓ |   |   |
+| `SuperDocInlineBoxAppearance` | ✓ | ✓ |   |   |
+| `SuperDocInlineBoxLayout` | ✓ | ✓ |   |   |
+| `SuperDocInlineBoxOptions` | ✓ | ✓ |   |   |
 | `SuperDocVisualApi` | ✓ | ✓ |   |   |
 | `SuperDocVisualHandle` | ✓ | ✓ |   |   |
 | `SuperDocVisualOptions` | ✓ | ✓ |   |   |
 | `SuperDocVisualTarget` | ✓ | ✓ |   |   |
-| `SuperDocVisibleRange` | ✓ | ✓ |   |   |
 | `SuperDocZoomConfig` | ✓ | ✓ |   |   |
 | `SuperDocZoomMode` | ✓ | ✓ |   |   |
 | `SuperDocZoomPayload` | ✓ | ✓ |   |   |
@@ -364,24 +478,51 @@ Confidence: high=124, medium=52, low=0, needs-review=0.
 | `SurfaceRequest` | ✓ | ✓ |   |   |
 | `SurfaceResolution` | ✓ | ✓ |   |   |
 | `SurfaceResolver` | ✓ | ✓ |   |   |
+| `SurfacesConfig` | ✓ | ✓ |   |   |
 | `SurfacesModuleConfig` | ✓ | ✓ |   |   |
 | `TextAddress` | ✓ | ✓ |   |   |
 | `TextSegment` | ✓ | ✓ |   |   |
 | `TextTarget` | ✓ | ✓ |   |   |
+| `ToolbarCommandId` | ✓ | ✓ |   |   |
+| `ToolbarConfig` | ✓ | ✓ |   |   |
+| `ToolbarCustomButton` | ✓ | ✓ |   |   |
+| `ToolbarCustomButtonCommand` | ✓ | ✓ |   |   |
+| `ToolbarCustomButtonCommandId` | ✓ | ✓ |   |   |
+| `ToolbarCustomButtonConfig` | ✓ | ✓ |   |   |
+| `ToolbarCustomButtonContext` | ✓ | ✓ |   |   |
+| `ToolbarCustomButtonItem` | ✓ | ✓ |   |   |
+| `ToolbarCustomDropdownConfig` | ✓ | ✓ |   |   |
+| `ToolbarCustomDropdownCommandId` | ✓ | ✓ |   |   |
+| `ToolbarCustomDropdownItem` | ✓ | ✓ |   |   |
+| `ToolbarCustomDropdownOption` | ✓ | ✓ |   |   |
+| `ToolbarCustomItem` | ✓ | ✓ |   |   |
+| `ToolbarCustomItemSelectContext` | ✓ | ✓ |   |   |
+| `ToolbarCustomItemSelectHandler` | ✓ | ✓ |   |   |
+| `ToolbarCustomOption` | ✓ | ✓ |   |   |
+| `ToolbarCustomSeparatorConfig` | ✓ | ✓ |   |   |
+| `ToolbarCustomSeparatorItem` | ✓ | ✓ |   |   |
+| `ToolbarDropdownOption` | ✓ | ✓ |   |   |
+| `ToolbarFontOption` | ✓ | ✓ |   |   |
+| `ToolbarIconId` | ✓ | ✓ |   |   |
+| `ToolbarItemId` | ✓ | ✓ |   |   |
+| `ToolbarOptionalItemId` | ✓ | ✓ |   |   |
+| `ToolbarRegion` | ✓ | ✓ |   |   |
+| `ToolbarStringId` | ✓ | ✓ |   |   |
 | `TrackChangeAuthor` | ✓ | ✓ |   |   |
+| `TrackChangeHighlightColors` | ✓ | ✓ |   |   |
 | `TrackChangesAuthorColorsConfig` | ✓ | ✓ |   |   |
 | `TrackChangesModuleConfig` | ✓ | ✓ |   |   |
 | `TrackChangesSemanticColorsConfig` | ✓ | ✓ |   |   |
 | `TrackedChangeAddress` | ✓ | ✓ |   |   |
 | `TrackedChangeSemanticColorKey` | ✓ | ✓ |   |   |
 | `TrackedChangeSemanticColorResolverInput` | ✓ | ✓ |   |   |
-| `InteractionConfig` | ✓ | ✓ |   |   |
-| `SurfacesConfig` | ✓ | ✓ |   |   |
 | `UIConfig` | ✓ | ✓ |   |   |
 | `UpgradeToCollaborationOptions` | ✓ | ✓ |   |   |
 | `User` | ✓ | ✓ |   |   |
 | `V2CollaborationConfig` | ✓ | ✓ |   |   |
 | `ViewOptions` | ✓ | ✓ |   |   |
+| `ViewingOptions` | ✓ | ✓ |   |   |
+| `ViewingTrackedChangesMode` | ✓ | ✓ |   |   |
 | `ViewingVisibilityConfig` | ✓ | ✓ |   |   |
 | `buildTheme` | ✓ | ✓ | ✓ | ✓ |
 | `compareVersions` | ✓ | ✓ | ✓ | ✓ |

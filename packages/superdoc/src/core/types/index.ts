@@ -3308,16 +3308,68 @@ export interface SuperDocExceptionHyperlinkPayload {
 }
 
 /**
+ * Stable, public diagnostic taxonomy code. Additive: new members may be
+ * appended in a minor release, so consumers should not assume this list is
+ * exhaustive.
+ */
+export type SuperDocDiagnosticCode = 'PARSE_ERROR' | 'RENDER_ERROR' | 'UNSUPPORTED_FEATURE' | 'PERFORMANCE_ERROR';
+
+/**
+ * Document-processing pipeline stage a diagnostic was raised from. `parse`
+ * and `layout` are reserved for future use; only `unzip` and `render` are
+ * emitted today.
+ */
+export type SuperDocDiagnosticStage = 'unzip' | 'parse' | 'layout' | 'render';
+
+/**
+ * Exception payload carrying a structured diagnostic translated from an
+ * internal v2-kernel diagnostic (package-open, render-readiness, or a boot
+ * failure). Emitted in addition to, not instead of, the legacy payload a
+ * given failure already produces (e.g. `SuperDocExceptionEditorPayload` for
+ * boot failures) — a single incident may raise both.
+ *
+ * `internalCode` is the raw, ungoverned internal code string (e.g.
+ * `'PKG-payload-zip-entries-exceeded'`, `'render.scheduler-degraded'`) kept
+ * for debugging; it is not part of the stable taxonomy and may change
+ * between versions without notice.
+ *
+ * The pipeline stage is named `diagnosticStage`, not `stage` --
+ * `SuperDocExceptionStorePayload` already uses `stage: 'document-init'` as
+ * its narrowing discriminant, and reusing the same property name here (even
+ * with a disjoint value type) would make `'stage' in payload` match this
+ * member too, silently misclassifying diagnostic payloads as store-init
+ * failures for any consumer written before this member existed.
+ */
+export interface SuperDocExceptionDiagnosticPayload {
+  error: unknown;
+  diagnosticCode: SuperDocDiagnosticCode;
+  diagnosticStage: SuperDocDiagnosticStage;
+  severity: 'warn' | 'error';
+  internalCode: string;
+  documentId?: string | null;
+  editor?: Editor | null;
+  message: string;
+}
+
+/**
  * Union of all `exception` event payloads SuperDoc emits at runtime.
- * Narrow with the `stage`, `code`, `itemName`, or `source` field before
- * reading fields that belong to one producer.
+ * Consumers can narrow with `'stage' in payload` (store init),
+ * `'code' in payload` (editor lifecycle), `'itemName' in payload`
+ * (built-in toolbar), `'source' in payload` (hyperlink activation),
+ * or `'diagnosticCode' in payload` (structured diagnostic).
+ *
+ * The union exists today because multiple independent emit sites pre-date a
+ * shared error contract. Normalizing them to a single payload shape is a
+ * separate follow-up; consumers can narrow with the `in` checks above in the
+ * meantime.
  */
 export type SuperDocExceptionPayload =
   | SuperDocExceptionStorePayload
   | SuperDocExceptionRestorePayload
   | SuperDocExceptionEditorPayload
   | SuperDocExceptionToolbarPayload
-  | SuperDocExceptionHyperlinkPayload;
+  | SuperDocExceptionHyperlinkPayload
+  | SuperDocExceptionDiagnosticPayload;
 
 /**
  * Zoom mode. `manual` holds whatever value was last set; `fit-width`
@@ -4267,8 +4319,22 @@ export interface Config {
   /** Callback after an Accept All or Reject All tracked-change decision. */
   onTrackedChangesBulkDecision?: (params: SuperDocTrackedChangesBulkDecisionPayload) => void;
   /**
-   * Callback when SuperDoc emits an `exception` event. Check for `stage`,
-   * `code`, `itemName`, or `source` before reading producer-specific fields.
+   * Callback when SuperDoc emits an `exception` event. The payload is a
+   * union of runtime shapes (store init, restore failure, editor lifecycle,
+   * built-in toolbar, hyperlink activation, structured diagnostic). Narrow
+   * with `'stage' in params` (store init), `'code' in params` (editor),
+   * `'itemName' in params` (toolbar), `'source' in params` (hyperlink), or
+   * `'diagnosticCode' in params` (structured diagnostic) before reading
+   * shape-specific fields.
+   *
+   * A structured diagnostic (`SuperDocExceptionDiagnosticPayload`,
+   * `diagnosticCode` one of `PARSE_ERROR` | `RENDER_ERROR` |
+   * `UNSUPPORTED_FEATURE` | `PERFORMANCE_ERROR`) is emitted in addition to,
+   * not instead of, whatever legacy payload a given failure already
+   * produces — a single incident can raise both, and an open failure can
+   * raise 0..N diagnostics (one per underlying internal record). Only the
+   * `unzip` and `render` stages are populated today; `parse` and `layout`
+   * are reserved for future coverage.
    */
   onException?: (params: SuperDocExceptionPayload) => void;
   /** Callback when the comments list is rendered. */

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-26T10:23:58.622Z",
+  "generatedAt": "2026-08-26T14:47:06.997Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -133,8 +133,11 @@
         "SuperDocDecorationContext",
         "SuperDocDecorationData",
         "SuperDocDecorationProvider",
+        "SuperDocDiagnosticCode",
+        "SuperDocDiagnosticStage",
         "SuperDocDisposableBag",
         "SuperDocEditorPayload",
+        "SuperDocExceptionDiagnosticPayload",
         "SuperDocExceptionEditorPayload",
         "SuperDocExceptionHyperlinkPayload",
         "SuperDocExceptionPayload",
@@ -382,8 +385,11 @@
         "SuperDocDecorationContext",
         "SuperDocDecorationData",
         "SuperDocDecorationProvider",
+        "SuperDocDiagnosticCode",
+        "SuperDocDiagnosticStage",
         "SuperDocDisposableBag",
         "SuperDocEditorPayload",
+        "SuperDocExceptionDiagnosticPayload",
         "SuperDocExceptionEditorPayload",
         "SuperDocExceptionHyperlinkPayload",
         "SuperDocExceptionPayload",
@@ -543,11 +549,11 @@
     }
   },
   "counts": {
-    "types.import": 243,
-    "types.require": 243,
+    "types.import": 246,
+    "types.require": 246,
     "import": 10,
     "require": 10,
-    "union": 243
+    "union": 246
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -674,8 +680,11 @@
         "SuperDocDecorationContext",
         "SuperDocDecorationData",
         "SuperDocDecorationProvider",
+        "SuperDocDiagnosticCode",
+        "SuperDocDiagnosticStage",
         "SuperDocDisposableBag",
         "SuperDocEditorPayload",
+        "SuperDocExceptionDiagnosticPayload",
         "SuperDocExceptionEditorPayload",
         "SuperDocExceptionHyperlinkPayload",
         "SuperDocExceptionPayload",
