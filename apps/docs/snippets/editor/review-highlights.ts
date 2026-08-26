@@ -1,6 +1,6 @@
 import { defineSuperDocExtension, SuperDoc } from 'superdoc';
 import type { SuperDocVisualTarget } from 'superdoc';
-import type { SelectionTarget } from 'superdoc/ui';
+import type { SelectionTarget, TextTarget } from 'superdoc/ui';
 import 'superdoc/style.css';
 import './review-highlights.css';
 
@@ -108,12 +108,28 @@ const refreshHighlights = async () => {
       rows.flatMap((row) => {
         if (row.resolved === null) return [];
         // Map to the visual layer's own address shape rather than handing it a
-        // Document API `SelectionTarget`. The two are structurally similar but
-        // not interchangeable, and the paint path reads a single block range.
+        // Document API target. The two are structurally similar but not
+        // interchangeable.
+        //
+        // `resolved.target` is a `SelectionTarget` for a single-paragraph
+        // anchor (this snippet never creates any other kind — see
+        // `isAttachableTarget` below — but `list({ within })`'s overlap check
+        // above can still encounter a multi-paragraph anchor created by some
+        // other caller), or a `TextTarget` for one spanning multiple
+        // paragraphs. Fan out to one visual entry per segment either way,
+        // rather than assuming a single start/end pair.
         //
         // `SelectionPoint` is a union, so narrow to its text variant: a
         // node-edge endpoint carries no offset and cannot be painted.
-        const { start, end } = row.resolved.target;
+        const target: SelectionTarget | TextTarget = row.resolved.target;
+        if (target.kind === 'text') {
+          return target.segments.map((segment) => ({
+            kind: 'text' as const,
+            blockId: segment.blockId,
+            range: { start: segment.range.start, end: segment.range.end },
+          }));
+        }
+        const { start, end } = target;
         if (start.kind !== 'text' || end.kind !== 'text') return [];
         return [{ kind: 'text' as const, blockId: start.blockId, range: { start: start.offset, end: end.offset } }];
       }),
@@ -227,13 +243,17 @@ const reviewHighlightExtension = defineSuperDocExtension({
   },
 });
 
-// `attach()` accepts only a non-empty text range inside one body paragraph.
-// nodeEdge endpoints and cross-paragraph spans cannot be represented as the
-// hidden inline SDT that carries the anchor, and the adapter resolves the
-// paragraph against document.xml, so a header, footer, note, or textbox block
-// id is not found and the call fails with TARGET_NOT_FOUND. `capture()` still
-// returns a `selectionTarget` in every one of those cases, so enabling on its
-// presence alone offers an action that predictably fails.
+// `attach()` also accepts a multi-paragraph `TextTarget` (see the Application
+// Data guide), but this example deliberately keeps findings scoped to a
+// single paragraph — a review finding here is meant to flag one clause, not
+// an arbitrary passage, and `capture().selectionTarget` (rather than
+// `capture().target`) is exactly the collapsed single-range shape that fits
+// that scope. nodeEdge endpoints and cross-paragraph spans cannot be
+// represented by a `SelectionTarget`, and the adapter resolves the paragraph
+// against document.xml, so a header, footer, note, or textbox block id is not
+// found and the call fails with TARGET_NOT_FOUND. `capture()` still returns a
+// `selectionTarget` in every one of those cases, so enabling on its presence
+// alone offers an action that predictably fails.
 const isAttachableTarget = (target: SelectionTarget | null | undefined): target is SelectionTarget => {
   if (!target) return false;
   if (target.start.kind !== 'text' || target.end.kind !== 'text') return false;

@@ -28,37 +28,44 @@ async function attachFinding() {
   // `capture()` reports readiness; `current()` does not. A worker-backed read is
   // `pending` or `stale` while it settles and still carries the previous range,
   // so writing from it anchors the record to the user's earlier selection.
-  const capture = superdoc.ui.selection.capture();
-  const target = capture?.status === 'ready' ? capture.selectionTarget : null;
-
-  // Anchoring is a single non-empty text range inside one **body** paragraph.
-  // Check every part of that before writing, rather than handling rejections:
   //
-  // - `SelectionPoint` is a union; a `nodeEdge` endpoint has no blockId or offset.
-  // - Two paragraphs cannot share one hidden inline SDT.
-  // - The adapter resolves the paragraph against the main document part, so a
-  //   header, footer, footnote, or endnote paragraph is not found.
+  // Read `target`, not `selectionTarget`: `target` is always a `TextTarget`
+  // (one segment per paragraph the selection touches), which is what lets a
+  // selection spanning multiple paragraphs attach as one record.
+  // `selectionTarget` collapses a multi-paragraph selection to its first/last
+  // endpoints and cannot express that.
+  const capture = superdoc.ui.selection.capture();
+  const target = capture?.status === 'ready' ? capture.target : null;
+
+  // Anchoring is one or more non-empty text ranges — one segment per
+  // paragraph — in the main document **body**. Check every part of that
+  // before writing, rather than handling rejections:
+  //
+  // - Every segment must be non-empty.
+  // - `story` is per-target: a non-body target (header, footer, footnote,
+  //   endnote, textbox) is rejected outright, since the adapter resolves
+  //   paragraphs against the main document part only.
   // - A selection crossing deleted tracked text reports `coordinateSpace:
-  //   'tracked'`, and the anchor rewrite searches visible `w:t` runs only, so the
-  //   same offsets address different characters.
+  //   'tracked'`, and the anchor rewrite searches visible `w:t` runs only, so
+  //   the same offsets address different characters.
   //
   // These guards are necessary but not sufficient. A selection crossing two
   // `w:t` runs, which is what a bold or italic boundary produces, passes all of
-  // them and still throws: the rewrite requires both offsets inside one run.
-  // Nothing in the public selection shape reports run boundaries, so the catch
-  // below is the only place that case can be handled.
+  // them and still throws: the rewrite requires both offsets inside one run
+  // per segment. Nothing in the public selection shape reports run boundaries,
+  // so the catch below is the only place that case can be handled — the same
+  // is true of a selection crossing a table-cell or section boundary.
   if (!doc || !target) return;
   if (target.coordinateSpace === 'tracked') return;
-  if (target.start.kind !== 'text' || target.end.kind !== 'text') return;
-  if (target.start.blockId !== target.end.blockId) return;
-  if (target.start.offset === target.end.offset) return;
-  const story = target.story ?? target.start.story;
-  if (story !== undefined && story.storyType !== 'body') return;
+  if (target.segments.length === 0) return;
+  if (target.segments.some((segment) => segment.range.start === segment.range.end)) return;
+  if (target.story !== undefined && target.story.storyType !== 'body') return;
 
   // `attach()` throws for several ordinary cases instead of returning an
   // unsuccessful receipt: when the id already exists (including the second time
-  // this action runs), when the range crosses two `w:t` runs, and when the
-  // paragraph is not in the main document part.
+  // this action runs), when a segment crosses two `w:t` runs, when segments
+  // are not contiguous paragraphs (or cross a table-cell/section boundary),
+  // and when a paragraph is not in the main document part.
   //
   // Use try/catch rather than `.catch()`. This facade is typed `MaybePromise`, so
   // on a synchronous host `attach()` returns the receipt itself and has no
@@ -88,10 +95,10 @@ async function attachFinding() {
 
 Metadata persists with the DOCX but does not add visible styling. Add a render-only extension visual when people need to see the anchored range.
 
-The anchor is painted as a content control. A viewport hit carries the metadata ID in `tag`, while `id` identifies the underlying content control. A record with that ID existing is not proof the click landed on its anchor: nothing stops an ordinary content control from carrying a tag that matches a record anchored elsewhere, including elsewhere in the same paragraph. Comparing the clicked control's full range with where the record resolves rules out that case, though not every case, as the note after the example explains:
+The anchor is painted as a content control — one per paragraph it spans, all sharing the same tag when the anchor covers multiple paragraphs. A viewport hit carries the metadata ID in `tag`, while `id` identifies the underlying content control. A record with that ID existing is not proof the click landed on its anchor: nothing stops an ordinary content control from carrying a tag that matches a record anchored elsewhere, including elsewhere in the same paragraph. Comparing the clicked control's full range with where the record resolves rules out that case, though not every case, as the note after the example explains:
 
 ```ts
-import type { SelectionTarget } from 'superdoc/ui';
+import type { SelectionTarget, TextTarget } from 'superdoc/ui';
 
 // Both endpoints must be `text` to compare positions at all: a `nodeEdge`
 // endpoint carries a node reference rather than a block and offset.
@@ -118,15 +125,28 @@ const storyKey = (story: SelectionTarget['story']) => {
   }
 };
 
-const sameTarget = (a: SelectionTarget, b: SelectionTarget) => {
-  if (a.start.kind !== 'text' || a.end.kind !== 'text') return false;
-  if (b.start.kind !== 'text' || b.end.kind !== 'text') return false;
+// `anchor.target` is a plain `SelectionTarget` for a single-paragraph anchor
+// (unchanged since v1), or a `TextTarget` for one spanning multiple
+// paragraphs — one control per segment, all sharing the clicked tag. A single
+// clicked control is always confined to one paragraph, so match its range
+// against ANY ONE of the anchor's segments rather than the whole anchor's
+// start-to-end span.
+const controlMatchesAnchor = (anchor: SelectionTarget | TextTarget, control: SelectionTarget) => {
+  if (control.start.kind !== 'text' || control.end.kind !== 'text') return false;
+  if (control.start.blockId !== control.end.blockId) return false;
+  if (storyKey(anchor.story) !== storyKey(control.story)) return false;
+  const controlBlockId = control.start.blockId;
+  const controlStart = control.start.offset;
+  const controlEnd = control.end.offset;
+  if (anchor.kind === 'text') {
+    return anchor.segments.some(
+      (segment) =>
+        segment.blockId === controlBlockId && segment.range.start === controlStart && segment.range.end === controlEnd,
+    );
+  }
+  if (anchor.start.kind !== 'text' || anchor.end.kind !== 'text') return false;
   return (
-    a.start.blockId === b.start.blockId &&
-    a.end.blockId === b.end.blockId &&
-    a.start.offset === b.start.offset &&
-    a.end.offset === b.end.offset &&
-    storyKey(a.story) === storyKey(b.story)
+    anchor.start.blockId === controlBlockId && anchor.start.offset === controlStart && anchor.end.offset === controlEnd
   );
 };
 
@@ -182,7 +202,7 @@ editorShell.addEventListener('pointerdown', async (event) => {
       continue;
     }
     if (!anchor || !control?.selectionTarget) continue;
-    if (!sameTarget(anchor.target, control.selectionTarget)) continue;
+    if (!controlMatchesAnchor(anchor.target, control.selectionTarget)) continue;
 
     const record = await doc.metadata.get({ id: hit.tag });
     if (record) openApplicationRecord(record);
@@ -194,18 +214,19 @@ editorShell.addEventListener('pointerdown', async (event) => {
 <Callout variant='warning' title='The range comparison narrows the risk without closing it'>
   The adapter treats the public `w:alias` value `Anchored metadata` as proof on its own that a control is an anchor,
   without checking the rest of the anchor shape. That alias is the **Title** field in Word's content-control properties
-  dialog, so any author or any other tool can set it. Anchors are then matched by document position, first match wins,
-  so a control carrying that alias and a colliding tag earlier in the document resolves *instead of* the real anchor.
-  The comparison above still succeeds, because both sides describe the same wrong control. Treat an anchored record as a
+  dialog, so any author or any other tool can set it. Same-tag controls are grouped by document position into the
+  anchor's segments, so a control carrying that alias and a colliding tag near the real anchor can be absorbed as an
+  extra segment (or, if it breaks the contiguous run, excluded and resolved as a separate, wrong match) — either way,
+  the comparison above still succeeds, because both sides describe the same wrong control. Treat an anchored record as a
   hint from document content rather than as an authenticated identity, and keep anything security-relevant in your own
   backend, keyed by the record ID.
 </Callout>
 
-Anchored metadata currently requires a non-empty text range within one body paragraph, in visible coordinates, and within a single run. The adapter resolves the paragraph against the main document part, so a header, footer, or note paragraph is not found, and the anchor rewrite searches visible `w:t` runs, so a selection crossing deleted tracked text addresses different characters than its offsets suggest. Resolve the record again with `doc.metadata.resolve({ id })` after document edits instead of keeping an old range.
+Anchored metadata requires one or more non-empty text ranges, in visible coordinates and each within a single run, anchored in the main document **body**. A single-paragraph target is a `SelectionTarget`, unchanged since v1. A target spanning multiple paragraphs is a `TextTarget` with one segment per paragraph: the segments must be contiguous paragraphs in document order, and none of the boundary they cross may be a table cell, a block-level content control, or a section — a target that crosses any of those is rejected. The adapter resolves every paragraph against the main document part, so a header, footer, or note paragraph is not found, and the anchor rewrite searches visible `w:t` runs, so a selection crossing deleted tracked text addresses different characters than its offsets suggest. Resolve the record again with `doc.metadata.resolve({ id })` after document edits instead of keeping an old range — it returns the same `SelectionTarget | TextTarget` union, narrowing to `TextTarget` only when the anchor spans more than one paragraph.
 
 The read path carries the same body-only restriction, and gives you nothing to check it with. `contentControls.get()` and `metadata.resolve()` both read the main document part, while painted content-control ids are unique only within that part. A control in a header, footer, note, or textbox that reuses a body anchor's id and tag therefore resolves the body record, and every comparison the example makes succeeds against it. Nothing lets you tell the two apart: `context.position` is always `null` in this release, and `hit.story` is populated only for tracked-change hits, so neither reports the story of a content control.
 
-The single-run requirement is the one that surfaces most often, because a bold or italic word splits a paragraph into several runs and a selection across that boundary throws even though it looks like ordinary text in one paragraph.
+The single-run requirement is the one that surfaces most often, because a bold or italic word splits a paragraph into several runs and a selection across that boundary throws even though it looks like ordinary text in one paragraph — this applies per segment, so it surfaces just as often inside a multi-paragraph target.
 
 Plain unformatted text is not a safe case either. The rewrite marks the text before the anchor with `xml:space="preserve"` and does not mark the text after it, so anchoring a word that ends right before a space can lose that space when the document is saved and reopened, turning `foo bar` into `foobar`. That is document text changing, not just formatting. Until it is fixed, prefer ranges that do not end next to a space, and check exported files if you anchor at word boundaries.
 

@@ -20,7 +20,7 @@
  */
 import type { AdapterMutationFailure } from '../types/adapter-result.js';
 import type { DiscoveryOutput } from '../types/discovery.js';
-import type { SelectionTarget } from '../types/address.js';
+import type { SelectionTarget, TextTarget } from '../types/address.js';
 
 // ---------------------------------------------------------------------------
 // Stable identity
@@ -42,24 +42,26 @@ export type AnchoredMetadataId = string;
 // ---------------------------------------------------------------------------
 
 /**
- * Where to place a new anchored-metadata entry in the document. v1
- * supports a single paragraph text range only — the adapter wraps that
- * range in a hidden inline SDT whose `w:tag` carries the id.
+ * Where to place a new anchored-metadata entry in the document. The
+ * adapter wraps each contiguous paragraph segment of the target in a
+ * hidden inline SDT whose `w:tag` carries the id; a multi-paragraph
+ * target produces one SDT per paragraph, all sharing that tag.
  *
- * v1 constraints (enforced at the contract layer):
- *   - both `start` and `end` must be `{ kind: 'text' }` — `nodeEdge`
- *     endpoints are not accepted.
- *   - both endpoints must share the same `blockId` — cross-paragraph
- *     spans are not accepted.
+ * Two accepted shapes:
+ *   - `SelectionTarget` with both endpoints `{ kind: 'text' }` and the
+ *     same `blockId` — a single-paragraph text range (unchanged since v1).
+ *   - `TextTarget` with one segment per paragraph, in document order —
+ *     for a range spanning multiple paragraphs. Segments must be
+ *     ordinal-adjacent paragraphs in the main document body: no
+ *     table-cell crossing, no section-boundary crossing, and no
+ *     header/footer/footnote/endnote/textbox stories. `nodeEdge`
+ *     endpoints are never accepted.
  *
- * Block-level, image, and table-cell anchors are out of scope for v1.
+ * Block-level, image, and table-cell anchors are out of scope.
  * Consumers who need them can fall back to the underlying primitives
  * (`contentControls.*` + `customXml.parts.*`).
- *
- * Type alias of `SelectionTarget` — kept distinct for documentation; the
- * resolver path is shared with the rest of the Document API.
  */
-export type MetadataTarget = SelectionTarget;
+export type MetadataTarget = SelectionTarget | TextTarget;
 
 // ---------------------------------------------------------------------------
 // Payload (JSON)
@@ -84,8 +86,9 @@ export type AnchoredMetadataPayload = unknown;
 
 export interface AnchoredMetadataAttachInput {
   /**
-   * Text range to anchor the metadata to. v1: same-paragraph text range
-   * (see {@link MetadataTarget} constraints).
+   * Text range to anchor the metadata to — a single-paragraph
+   * `SelectionTarget`, or a multi-paragraph `TextTarget` (see
+   * {@link MetadataTarget} constraints).
    */
   target: MetadataTarget;
   /**
@@ -122,10 +125,11 @@ export interface AnchoredMetadataListInput {
    * for "what metadata is on this paragraph / selection" queries that would
    * otherwise require listing every entry and resolving it.
    *
-   * Mirrors the `hyperlinks.list({ within })` precedent. Same v1 target
-   * constraints as {@link MetadataTarget}: text-range only.
+   * Mirrors the `hyperlinks.list({ within })` precedent. Same target
+   * constraints as {@link MetadataTarget}: text-range only, single- or
+   * multi-paragraph.
    */
-  within?: SelectionTarget;
+  within?: MetadataTarget;
   /**
    * When true, include only entries whose SDT anchor currently resolves
    * in the document body.
@@ -186,13 +190,15 @@ export type AnchoredMetadataInfo = AnchoredMetadataSummary & {
 
 /**
  * Where an entry's anchor currently lives in the document. Returned by
- * `resolve()`. `target` is the SelectionTarget that spans the anchor's
- * content — consumers can pass it to other read or mutation operations
- * (selection, comment.add, etc.).
+ * `resolve()`. `target` spans the anchor's content: a `SelectionTarget`
+ * when the anchor is a single paragraph (unchanged from v1), or a
+ * `TextTarget` with one segment per paragraph when it spans multiple —
+ * consumers can pass either shape to other read or mutation operations
+ * that accept it (selection, comment.add, etc.).
  */
 export interface AnchoredMetadataResolveInfo {
   id: AnchoredMetadataId;
-  target: SelectionTarget;
+  target: SelectionTarget | TextTarget;
 }
 
 // ---------------------------------------------------------------------------

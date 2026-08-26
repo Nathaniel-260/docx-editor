@@ -2458,6 +2458,47 @@ describe('public ui — viewport + metadata geometry', () => {
     expect(scrollTargetIntoView).not.toHaveBeenCalled();
   });
 
+  // A multi-paragraph metadata anchor resolves to a `TextTarget` (one segment
+  // per paragraph) rather than the single-range `SelectionTarget` above.
+  // `metadata.getRect`/`scrollIntoView` never branch on the resolved target's
+  // shape — they forward whatever `doc.metadata.resolve` returns straight to
+  // the host geometry surface — so this proves that pass-through actually
+  // carries a multi-segment target through unmodified, not just a
+  // single-range one.
+  const MULTI_SEGMENT_META_TARGET = {
+    kind: 'text',
+    segments: [
+      { blockId: 'P1', range: { start: 6, end: 11 } },
+      { blockId: 'P2', range: { start: 0, end: 4 } },
+    ],
+  };
+
+  it('metadata.getRect forwards a multi-segment TextTarget resolve result to host geometry unmodified', async () => {
+    const { superdoc, resolve, getTargetRects } = makeGeometrySuperdoc({
+      resolve: (input) => ({ id: input.id, target: MULTI_SEGMENT_META_TARGET }),
+    });
+    const ui = createSuperDocUI({ superdoc });
+    const result = ui.metadata.getRect({ id: 'cite-multi' });
+    expect(resolve).toHaveBeenCalledWith({ id: 'cite-multi' });
+    expect(getTargetRects).toHaveBeenCalledWith({ target: MULTI_SEGMENT_META_TARGET });
+    expect(result.success).toBe(true);
+  });
+
+  it('metadata.scrollIntoView forwards a multi-segment TextTarget resolve result to host geometry unmodified', async () => {
+    const { superdoc, resolve, scrollTargetIntoView } = makeGeometrySuperdoc({
+      resolve: (input) => ({ id: input.id, target: MULTI_SEGMENT_META_TARGET }),
+    });
+    const ui = createSuperDocUI({ superdoc });
+    const result = await ui.metadata.scrollIntoView({ id: 'cite-multi', block: 'center' });
+    expect(result).toEqual({ success: true });
+    expect(resolve).toHaveBeenCalledWith({ id: 'cite-multi' });
+    expect(scrollTargetIntoView).toHaveBeenCalledWith({
+      target: MULTI_SEGMENT_META_TARGET,
+      block: 'center',
+      behavior: 'smooth',
+    });
+  });
+
   it('viewport.observe subscribes to host geometry invalidation and fires the listener (coalesced)', async () => {
     const { superdoc, observeGeometry, fireGeometry } = makeGeometrySuperdoc();
     const ui = createSuperDocUI({ superdoc });

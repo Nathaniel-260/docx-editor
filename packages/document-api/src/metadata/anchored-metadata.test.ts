@@ -9,7 +9,7 @@ import {
   executeAnchoredMetadataUpdate,
   type AnchoredMetadataAdapter,
 } from './anchored-metadata.js';
-import type { SelectionTarget } from '../types/address.js';
+import type { SelectionTarget, TextTarget } from '../types/address.js';
 
 function makeAdapter(): AnchoredMetadataAdapter {
   return {
@@ -46,6 +46,14 @@ const NODE_EDGE_TARGET: SelectionTarget = {
   kind: 'selection',
   start: { kind: 'nodeEdge', node: { kind: 'block', nodeType: 'paragraph', nodeId: 'b-1' }, edge: 'before' },
   end: { kind: 'nodeEdge', node: { kind: 'block', nodeType: 'paragraph', nodeId: 'b-1' }, edge: 'after' },
+};
+
+const MULTI_SEGMENT_TARGET: TextTarget = {
+  kind: 'text',
+  segments: [
+    { blockId: 'b-1', range: { start: 5, end: 10 } },
+    { blockId: 'b-2', range: { start: 0, end: 5 } },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -112,7 +120,7 @@ describe('metadata.attach validation', () => {
     ).toThrow(DocumentApiValidationError);
   });
 
-  it('rejects cross-paragraph spans', () => {
+  it('rejects a cross-paragraph SelectionTarget (must use TextTarget instead)', () => {
     const adapter = makeAdapter();
     expect(() =>
       executeAnchoredMetadataAttach(adapter, {
@@ -121,6 +129,18 @@ describe('metadata.attach validation', () => {
         payload: VALID_PAYLOAD,
       }),
     ).toThrow(DocumentApiValidationError);
+  });
+
+  it('accepts a multi-segment TextTarget spanning multiple paragraphs', () => {
+    const adapter = makeAdapter();
+    expect(() =>
+      executeAnchoredMetadataAttach(adapter, {
+        target: MULTI_SEGMENT_TARGET,
+        namespace: VALID_NAMESPACE,
+        payload: VALID_PAYLOAD,
+      }),
+    ).not.toThrow();
+    expect(adapter.attach).toHaveBeenCalled();
   });
 
   it('rejects empty namespace', () => {
@@ -223,11 +243,16 @@ describe('metadata.list validation', () => {
     );
   });
 
-  it('rejects cross-block within', () => {
+  it('rejects a cross-block SelectionTarget within (must use TextTarget instead)', () => {
     const adapter = makeAdapter();
     expect(() => executeAnchoredMetadataList(adapter, { within: CROSS_BLOCK_TARGET })).toThrow(
       DocumentApiValidationError,
     );
+  });
+
+  it('accepts a multi-segment TextTarget within filter', () => {
+    const adapter = makeAdapter();
+    expect(() => executeAnchoredMetadataList(adapter, { within: MULTI_SEGMENT_TARGET })).not.toThrow();
   });
 
   it('rejects nodeEdge within', () => {

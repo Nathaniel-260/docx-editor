@@ -2,6 +2,7 @@ import type { MutationOptions } from '../write/write.js';
 import { normalizeMutationOptions } from '../write/write.js';
 import { DocumentApiValidationError } from '../errors.js';
 import { isSelectionTarget } from '../validation/selection-target-validator.js';
+import { isTextTarget } from '../validation-primitives.js';
 import type {
   AnchoredMetadataAttachInput,
   AnchoredMetadataAttachResult,
@@ -95,46 +96,50 @@ function validatePayload(payload: unknown, operationName: string): void {
 }
 
 /**
- * v1 anchor target: SelectionTarget with both endpoints `kind: 'text'` and
- * the same `blockId`. Rejects nodeEdge endpoints and cross-paragraph spans
- * because a hidden inline SDT can only wrap a single-paragraph run.
+ * Anchor target: either a same-paragraph `SelectionTarget` (both endpoints
+ * `kind: 'text'`, same `blockId` — the original v1 shape) or a multi-segment
+ * `TextTarget` (one segment per paragraph, in document order) for a range
+ * that spans multiple paragraphs. Rejects nodeEdge endpoints. Deeper
+ * structural checks (contiguity, table-cell/section boundaries) happen in
+ * the adapter, which has access to the document structure.
  */
 function validateAnchorTarget(target: unknown, operationName: string): void {
+  if (isTextTarget(target)) return;
   if (!isSelectionTarget(target)) {
     throw new DocumentApiValidationError(
       'INVALID_TARGET',
-      `${operationName} requires a 'target' SelectionTarget describing the anchor range.`,
+      `${operationName} requires a 'target' SelectionTarget or TextTarget describing the anchor range.`,
       { target },
     );
   }
   if (target.start.kind !== 'text' || target.end.kind !== 'text') {
     throw new DocumentApiValidationError(
       'INVALID_TARGET',
-      `${operationName} requires a text-range target. v1 does not support nodeEdge anchors.`,
+      `${operationName} requires a text-range target. nodeEdge anchors are not supported.`,
       { startKind: target.start.kind, endKind: target.end.kind },
     );
   }
   if (target.start.blockId !== target.end.blockId) {
     throw new DocumentApiValidationError(
       'INVALID_TARGET',
-      `${operationName} target must stay within a single paragraph. ` +
-        `v1 anchors are hidden inline SDTs and cannot span block boundaries.`,
+      `${operationName} target spans multiple paragraphs but was given as a SelectionTarget. ` +
+        `Pass a TextTarget with one segment per paragraph instead.`,
       { startBlockId: target.start.blockId, endBlockId: target.end.blockId },
     );
   }
 }
 
 /**
- * `within` shares the same text-range constraints as the anchor target.
- * Accepted shapes: SelectionTarget with two text-kind endpoints in the
- * same block. Cross-block / nodeEdge `within` is rejected — adapters
- * would have to invent overlap semantics across blocks, which v1 declines.
+ * `within` shares the same target shapes as the anchor target: a
+ * same-paragraph `SelectionTarget`, or a multi-segment `TextTarget` for a
+ * multi-paragraph filter range. nodeEdge endpoints are rejected.
  */
 function validateWithin(within: unknown, operationName: string): void {
+  if (isTextTarget(within)) return;
   if (!isSelectionTarget(within)) {
     throw new DocumentApiValidationError(
       'INVALID_INPUT',
-      `${operationName} 'within' must be a SelectionTarget when provided.`,
+      `${operationName} 'within' must be a SelectionTarget or TextTarget when provided.`,
       { within },
     );
   }
@@ -148,7 +153,8 @@ function validateWithin(within: unknown, operationName: string): void {
   if (within.start.blockId !== within.end.blockId) {
     throw new DocumentApiValidationError(
       'INVALID_INPUT',
-      `${operationName} 'within' must stay within a single paragraph in v1.`,
+      `${operationName} 'within' spans multiple paragraphs but was given as a SelectionTarget. ` +
+        `Pass a TextTarget with one segment per paragraph instead.`,
       { startBlockId: within.start.blockId, endBlockId: within.end.blockId },
     );
   }
