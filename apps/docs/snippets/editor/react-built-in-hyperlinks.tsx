@@ -7,7 +7,7 @@ const editorConfig = {
     onActivate: handleHyperlinkActivation,
   },
   ui: {
-    toolbar: { groups: { center: ['link'] } },
+    toolbar: { items: { center: ['link'] } },
   },
 } satisfies Pick<SuperDocEditorProps, 'hyperlinks' | 'ui'>;
 

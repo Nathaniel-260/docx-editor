@@ -128,6 +128,263 @@ describe('normalizeUiConfig', () => {
     });
   });
 
+  describe('canonical toolbar options', () => {
+    it('maps the public names to the existing toolbar runtime', () => {
+      const onSelect = () => 'saved';
+      const options = normalizeUiConfig({
+        ui: {
+          toolbar: {
+            items: {
+              left: ['undo', 'redo'],
+              center: ['font-family', 'bold', 'document-mode', 'table-of-contents'],
+            },
+            excludeItems: ['table-actions'],
+            includeItems: ['formatting-marks'],
+            icons: { 'text-color': '<svg />' },
+            strings: { 'document-mode-editing': 'Write' },
+            overflow: 'visible',
+            responsiveTo: 'container',
+            fontOptions: [{ value: 'Inter', label: 'Inter', previewFamily: 'Inter, sans-serif' }],
+            customItems: [
+              {
+                type: 'button',
+                id: 'save',
+                label: 'Save',
+                region: 'right',
+                size: 'compact',
+                onSelect,
+              },
+            ],
+          },
+        },
+      }).toolbar.options;
+
+      expect(options.groups).toEqual({
+        left: ['undo', 'redo'],
+        center: ['fontFamily', 'bold', 'documentMode', 'tableOfContents'],
+        right: ['formattingMarks'],
+      });
+      expect(options.excludeItems).toEqual(['tableActions']);
+      expect(options.icons).toEqual({ color: '<svg />' });
+      expect(options.texts).toEqual({ documentEditingMode: 'Write' });
+      expect(options.hideButtons).toBe(false);
+      expect(options.responsiveToContainer).toBe(true);
+      expect(options.fonts).toEqual([
+        { key: 'Inter', value: 'Inter', label: 'Inter', props: { style: { fontFamily: 'Inter, sans-serif' } } },
+      ]);
+      expect(options.showFormattingMarksButton).toBe(true);
+      expect(options.showTableOfContentsButton).toBe(true);
+      expect(options.customButtons[0]).toMatchObject({
+        type: 'button',
+        name: 'save',
+        label: 'Save',
+        defaultLabel: 'Save',
+        group: 'right',
+        isNarrow: true,
+        isWide: false,
+        layoutWidth: 32,
+        style: { width: '30px' },
+      });
+      expect(options.customButtons[0]).not.toHaveProperty('id');
+      expect(options.customButtons[0]).not.toHaveProperty('onSelect');
+
+      const context = { item: {}, argument: 42, option: { id: 'row' }, documentMode: 'editing' };
+      expect(options.customButtons[0].command(context)).toBe('saved');
+    });
+
+    it('keeps font labels separate from the values written to the document', () => {
+      const options = normalizeUiConfig({
+        ui: {
+          toolbar: {
+            fontOptions: [{ value: 'Arial', label: 'Corporate Sans', previewFamily: 'Arial, sans-serif' }],
+          },
+        },
+      }).toolbar.options;
+
+      expect(options.fonts).toEqual([
+        {
+          key: 'Arial',
+          value: 'Arial',
+          label: 'Corporate Sans',
+          props: { style: { fontFamily: 'Arial, sans-serif' } },
+        },
+      ]);
+    });
+
+    it('places included controls in their built-in regions for an explicit item layout', () => {
+      const options = normalizeUiConfig({
+        ui: {
+          toolbar: {
+            items: { left: ['undo'], center: ['table-of-contents'] },
+            includeItems: ['table-of-contents', 'formatting-marks'],
+          },
+        },
+      }).toolbar.options;
+
+      expect(options.groups).toEqual({
+        left: ['undo'],
+        center: ['tableOfContents'],
+        right: ['formattingMarks'],
+      });
+      expect(options.showFormattingMarksButton).toBe(true);
+      expect(options.showTableOfContentsButton).toBe(true);
+    });
+
+    it('applies canonical additions to a legacy item layout during migration', () => {
+      const options = normalizeUiConfig({
+        ui: {
+          toolbar: {
+            includeItems: ['table-of-contents'],
+            customItems: [{ type: 'button', id: 'save', label: 'Save', region: 'right', onSelect: () => {} }],
+          },
+        },
+        modules: { toolbar: { groups: { left: ['undo'], center: ['tableOfContents'] } } },
+      }).toolbar.options;
+
+      expect(options.groups).toEqual({
+        left: ['undo'],
+        center: ['tableOfContents'],
+        right: [],
+      });
+      expect(options.customButtons[0]).toMatchObject({ name: 'save', group: 'right' });
+    });
+
+    it('lets canonical items replace deprecated group selection', () => {
+      const options = normalizeUiConfig({
+        ui: { toolbar: { items: { center: ['bold'], right: ['document-mode'] } } },
+        modules: { toolbar: { groups: ['left'] } },
+        toolbarGroups: ['left'],
+      }).toolbar.options;
+
+      expect(options.groups).toEqual({ center: ['bold'], right: ['documentMode'] });
+      expect(options.toolbarGroups).toEqual(['center', 'right']);
+    });
+
+    it('treats an empty items map as an empty allowlist', () => {
+      const options = normalizeUiConfig({ ui: { toolbar: { items: {} } } }).toolbar.options;
+
+      expect(options.groups).toEqual({ center: [] });
+      expect(options.toolbarGroups).toEqual(['center']);
+    });
+
+    it('maps dropdown values into the current selection contract', () => {
+      const onSelect = (context) => context;
+      const [item] = normalizeUiConfig({
+        ui: {
+          toolbar: {
+            customItems: [
+              {
+                type: 'dropdown',
+                id: 'status',
+                label: 'Status',
+                options: [
+                  { id: 'draft', label: 'Draft' },
+                  { id: 'approved', label: 'Approved', value: 2 },
+                ],
+                onSelect,
+              },
+            ],
+          },
+        },
+      }).toolbar.options.customButtons;
+
+      expect(item).toMatchObject({
+        name: 'status',
+        defaultLabel: 'Status',
+        dropdownValueKey: 'value',
+        options: [
+          { id: 'draft', label: 'Draft', key: 'draft', value: 'draft' },
+          { id: 'approved', label: 'Approved', key: 2, value: 2 },
+        ],
+      });
+
+      expect(item.command({ item: {}, argument: 2, option: item.options[1], documentMode: 'editing' })).toMatchObject({
+        value: 2,
+        option: { id: 'approved' },
+        documentMode: 'editing',
+      });
+      expect(item.attributes.ariaLabel).toBe('Status');
+    });
+
+    it('keeps an explicit custom-item accessible name', () => {
+      const [item] = normalizeUiConfig({
+        ui: {
+          toolbar: {
+            customItems: [
+              {
+                type: 'dropdown',
+                id: 'status',
+                label: 'Status',
+                attributes: { ariaLabel: 'Review status' },
+                options: [{ id: 'draft', label: 'Draft' }],
+                onSelect: () => {},
+              },
+            ],
+          },
+        },
+      }).toolbar.options.customButtons;
+
+      expect(item.attributes.ariaLabel).toBe('Review status');
+    });
+
+    it('prefers canonical names when deprecated names are also present', () => {
+      const options = normalizeUiConfig({
+        ui: {
+          toolbar: {
+            items: { center: ['bold'] },
+            groups: { center: ['italic'] },
+            icons: { color: 'deprecated', 'text-color': 'canonical' },
+            strings: { bold: 'Strong' },
+            texts: { bold: 'Legacy' },
+            overflow: 'menu',
+            hideButtons: false,
+            responsiveTo: 'viewport',
+            responsiveToContainer: true,
+            includeItems: [],
+            showFormattingMarksButton: true,
+            showTableOfContentsButton: true,
+          },
+        },
+      }).toolbar.options;
+
+      expect(options.groups).toEqual({ center: ['bold'] });
+      expect(options.icons.color).toBe('canonical');
+      expect(options.texts.bold).toBe('Strong');
+      expect(options.hideButtons).toBe(true);
+      expect(options.responsiveToContainer).toBe(false);
+      expect(options.showFormattingMarksButton).toBe(false);
+      expect(options.showTableOfContentsButton).toBe(false);
+    });
+
+    it('keeps deprecated toolbar names operational', () => {
+      const options = normalizeUiConfig({
+        ui: {
+          toolbar: {
+            groups: { center: ['fontFamily'] },
+            texts: { documentEditingMode: 'Write' },
+            hideButtons: false,
+            responsiveToContainer: true,
+            fonts: [{ key: 'Inter', label: 'Inter' }],
+            customButtons: [{ type: 'button', name: 'save', icon: '<svg />' }],
+            showFormattingMarksButton: true,
+            showTableOfContentsButton: true,
+          },
+        },
+      }).toolbar.options;
+
+      expect(options).toMatchObject({
+        groups: { center: ['fontFamily'] },
+        texts: { documentEditingMode: 'Write' },
+        hideButtons: false,
+        responsiveToContainer: true,
+        fonts: [{ key: 'Inter', label: 'Inter' }],
+        customButtons: [{ type: 'button', name: 'save', icon: '<svg />' }],
+        showFormattingMarksButton: true,
+        showTableOfContentsButton: true,
+      });
+    });
+  });
+
   describe('legacy input', () => {
     it('honors modules.comments: false', () => {
       expect(normalizeUiConfig({ modules: { comments: false } }).comments.enabled).toBe(false);

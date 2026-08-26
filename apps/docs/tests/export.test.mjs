@@ -444,20 +444,20 @@ test('exports the focused built-in toolbar example as clean Markdown', async () 
     'utf8',
   );
 
-  assert.match(article, /responsiveToContainer/);
-  assert.match(article, /documentMode/);
+  assert.match(article, /responsiveTo/);
+  assert.match(article, /Document mode/);
   assert.match(article, /data-preset="toolbar"/);
   assert.match(article, /formatting-sample\.docx/);
-  assert.match(markdown, /const toolbar: ToolbarConfig/);
+  assert.match(markdown, /const toolbar = \{[\s\S]*?\} satisfies ToolbarConfig/);
   assert.match(markdown, /<SuperDocEditor[\s\S]*?document='\/sample\.docx'/);
   assert.match(markdown, /export default function App/);
-  assert.match(markdown, /groups: \{/);
+  assert.match(markdown, /items: \{/);
   assert.match(markdown, /Toolbar configurations available in the interactive Editor/);
-  assert.match(markdown, /Group — `ui\.toolbar\.groups`/);
+  assert.match(markdown, /Focus — `ui\.toolbar\.items`/);
   assert.match(markdown, /Remove — `ui\.toolbar\.excludeItems`/);
-  assert.match(markdown, /Add — `ui\.toolbar\.customButtons`/);
+  assert.match(markdown, /Add — `ui\.toolbar\.customItems`/);
   assert.match(markdown, /Review note:/);
-  assert.match(markdown, /does not apply the exclusion after a control moves\s+into overflow/);
+  assert.match(markdown, /controls that no longer fit move into the overflow menu/);
   assert.doesNotMatch(markdown, /<EditorDemo\b/);
   assert.doesNotMatch(markdown, /<include>/);
 });

@@ -35,7 +35,7 @@ export const useToolbarItem = (options) => {
   const allowWithoutEditor = ref(options.allowWithoutEditor);
   const attributes = ref(options.attributes || {});
 
-  const initiallyDisabled = options.disabled || false;
+  const initiallyDisabled = Boolean(options.disabled);
   const disabled = ref(options.disabled);
   const active = ref(false);
   const expand = ref(false);
@@ -45,6 +45,7 @@ export const useToolbarItem = (options) => {
   const isNarrow = ref(options.isNarrow);
   const isWide = ref(options.isWide);
   const minWidth = ref(options.minWidth);
+  const layoutWidth = ref(options.layoutWidth);
   const suppressActiveHighlight = ref(options.suppressActiveHighlight || false);
 
   const argument = ref(options.argument);
@@ -173,6 +174,7 @@ export const useToolbarItem = (options) => {
     isNarrow,
     isWide,
     minWidth,
+    layoutWidth,
     argument,
     parentItem,
     iconColor,
@@ -200,6 +202,7 @@ export const useToolbarItem = (options) => {
 
   return {
     ...refs,
+    initiallyDisabled,
     unref,
     activate,
     deactivate,

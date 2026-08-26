@@ -32,7 +32,7 @@
 import { SUPERDOC_UI_REASONS, type SuperDocUIReason } from './reasons.js';
 
 /**
- * The 14 canonical v2-native command ids. These are the historically stable
+ * The original v2-native command ids. These are the historically stable
  * `superdoc/ui` built-ins; the broader catalog below adds v1 headless-toolbar
  * coverage. Kept as a named export because it is part of the public `superdoc/ui`
  * surface (`verify-public-facade-emit.cjs`, consumer typechecks).
@@ -58,8 +58,8 @@ export const BUILT_IN_COMMAND_IDS = {
   numberedList: 'numbered-list',
 } as const;
 
-/** Union of built-in command ids. */
-export type BuiltInCommandId = (typeof BUILT_IN_COMMAND_IDS)[keyof typeof BUILT_IN_COMMAND_IDS];
+/** Every command id built into SuperDoc's UI controller. */
+export type BuiltInCommandId = (typeof COMMAND_CATALOG)[number]['id'];
 
 /**
  * How a catalog command is (or is not) backed by a public surface.
@@ -409,7 +409,7 @@ const TABLE_CONTEXT = SUPERDOC_UI_REASONS.tableContextUnavailable;
  * zoom / document-mode ids are newly routed in this unit, and the remaining v1
  * workflows are deferred or marked product-unsupported with a stable reason.
  */
-export const COMMAND_CATALOG: readonly CommandDescriptor[] = [
+export const COMMAND_CATALOG = [
   // --- inline marks (routed; selection-target) -----------------------------
   {
     id: 'bold',
@@ -863,14 +863,14 @@ export const COMMAND_CATALOG: readonly CommandDescriptor[] = [
   // `command-unsupported` reason.
   { id: 'copy-format', family: 'formatting', disposition: 'routed', mutates: false },
   { id: 'table-fix', family: 'tables', disposition: 'unsupported', mutates: true, reason: UNSUPPORTED },
-];
+] as const satisfies readonly CommandDescriptor[];
 
 const CATALOG_BY_ID: ReadonlyMap<string, CommandDescriptor> = new Map(
   COMMAND_CATALOG.map((descriptor) => [descriptor.id, descriptor]),
 );
 
 /** All built-in command ids known to the controller (routed + deferred + unsupported). */
-export const ALL_BUILT_IN_COMMAND_IDS: readonly string[] = COMMAND_CATALOG.map((d) => d.id);
+export const ALL_BUILT_IN_COMMAND_IDS: readonly BuiltInCommandId[] = COMMAND_CATALOG.map((d) => d.id);
 
 /** Resolve a command descriptor by id, or `null` when the id is unknown. */
 export function getCommandDescriptor(id: string): CommandDescriptor | null {

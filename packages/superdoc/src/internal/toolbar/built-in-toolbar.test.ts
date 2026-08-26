@@ -7,6 +7,7 @@ import { BuiltInToolbar } from './built-in-toolbar.js';
 import { useToolbarItem } from './built-in/use-toolbar-item.js';
 import { createSuperDocUI } from '../../public/ui/create-super-doc-ui.js';
 import type { SuperDocLike, SuperDocUI } from '../../public/ui/types.js';
+import { normalizeUiConfig } from '../../core/config/normalize-ui-config.js';
 
 /**
  * Controllers created by `makeHost`. The toolbar is a pure consumer of
@@ -140,9 +141,498 @@ describe('BuiltInToolbar', () => {
           command: 'clear-formatting',
         },
       ],
+      hideButtons: false,
     });
 
     expect(toolbar.getToolbarItemByGroup('center').map((item) => item.name.value)).toContain('clear');
+    toolbar.destroy();
+  });
+
+  it('renders and runs canonical custom items through the public callback context', async () => {
+    const toolbarContainer = document.createElement('div');
+    document.body.append(toolbarContainer);
+    const host = makeHost();
+    const onSelect = vi.fn();
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          container: toolbarContainer,
+          items: { center: ['bold', 'table-of-contents'] },
+          includeItems: ['formatting-marks'],
+          overflow: 'visible',
+          customItems: [{ type: 'button', id: 'save', label: 'Save', region: 'right', onSelect }],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({
+      superdoc: host,
+      selector: normalized.container,
+      ...normalized.options,
+    });
+
+    await nextTick();
+    expect(toolbarContainer.querySelector('[data-item="btn-tableOfContents"]')).not.toBeNull();
+    expect(toolbarContainer.querySelector('[data-item="btn-formattingMarks"]')).not.toBeNull();
+    const save = toolbarContainer.querySelector<HTMLElement>('[data-item="btn-save"]');
+    expect(save?.textContent).toContain('Save');
+
+    save?.click();
+    expect(onSelect).toHaveBeenCalledOnce();
+    const context = onSelect.mock.calls[0][0] as Record<string, unknown>;
+    expect(context.superdoc).toBe(host);
+    expect(context.documentMode).toBe('editing');
+    expect(context).not.toHaveProperty('item');
+    expect(context).not.toHaveProperty('argument');
+    expect(context).not.toHaveProperty('payload');
+    toolbar.destroy();
+  });
+
+  it('moves canonical custom items into the overflow menu', () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 50 });
+    document.body.append(toolbarContainer);
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          container: toolbarContainer,
+          items: {},
+          responsiveTo: 'container',
+          customItems: [{ type: 'button', id: 'save', label: 'Save', onSelect: () => {} }],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: normalized.container,
+      ...normalized.options,
+    });
+
+    expect(toolbar.overflowItems.map((item) => item.name.value)).toContain('save');
+    expect(toolbarContainer.querySelector('[aria-label="Overflow items"]')).not.toBeNull();
+    toolbar.destroy();
+  });
+
+  it('uses a canonical custom item size when deciding whether it fits', () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 120 });
+    document.body.append(toolbarContainer);
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          container: toolbarContainer,
+          items: {},
+          responsiveTo: 'container',
+          customItems: [
+            { type: 'button', id: 'review-workflow', label: 'Review workflow', size: 'wide', onSelect: () => {} },
+          ],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: normalized.container,
+      ...normalized.options,
+    });
+
+    expect(toolbar.toolbarItems.map((item) => item.name.value)).not.toContain('review-workflow');
+    expect(toolbar.overflowItems.map((item) => item.name.value)).toContain('review-workflow');
+    toolbar.destroy();
+  });
+
+  it('uses the rendered separator width when deciding whether custom items fit', () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 1045 });
+    document.body.append(toolbarContainer);
+    const wideItems = Array.from({ length: 8 }, (_, index) => ({
+      type: 'button' as const,
+      id: `action-${index}`,
+      label: `Action ${index}`,
+      size: 'wide' as const,
+      onSelect: () => {},
+    }));
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          container: toolbarContainer,
+          items: {},
+          responsiveTo: 'container',
+          customItems: [
+            ...wideItems,
+            { type: 'separator', id: 'workflow-divider' },
+            { type: 'button', id: 'save', label: 'Save', size: 'compact', onSelect: () => {} },
+          ],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: normalized.container,
+      ...normalized.options,
+    });
+
+    expect(toolbar.toolbarItems.map((item) => item.name.value)).toHaveLength(10);
+    expect(toolbar.toolbarItems.map((item) => item.name.value)).toEqual(
+      expect.arrayContaining(['workflow-divider', 'save']),
+    );
+    expect(toolbar.overflowItems).toEqual([]);
+    toolbar.destroy();
+  });
+
+  it('renders canonical dropdown option SVG markup', async () => {
+    const toolbarContainer = document.createElement('div');
+    document.body.append(toolbarContainer);
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          container: toolbarContainer,
+          overflow: 'visible',
+          customItems: [
+            {
+              type: 'dropdown',
+              id: 'status',
+              label: 'Status',
+              options: [{ id: 'draft', label: 'Draft', icon: '<svg data-status-icon="draft"></svg>' }],
+              onSelect: () => {},
+            },
+          ],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: normalized.container,
+      ...normalized.options,
+    });
+
+    toolbarContainer.querySelector<HTMLElement>('[data-item="btn-status"]')?.click();
+    await nextTick();
+    expect(document.querySelector('svg[data-status-icon="draft"]')).not.toBeNull();
+    expect(document.querySelector('.toolbar-dropdown-option__icon')?.textContent).not.toContain('<svg');
+    expect(document.querySelector('.toolbar-dropdown-option')?.getAttribute('aria-label')).toBe('Status - Draft');
+    toolbar.destroy();
+  });
+
+  it('restores the captured selection before an overflow dropdown action runs', async () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 50 });
+    document.body.append(toolbarContainer);
+    const calls: string[] = [];
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          container: toolbarContainer,
+          items: {},
+          responsiveTo: 'container',
+          customItems: [
+            {
+              type: 'dropdown',
+              id: 'status',
+              label: 'Status',
+              options: [{ id: 'draft', label: 'Draft' }],
+              onSelect: () => calls.push('select'),
+            },
+          ],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: normalized.container,
+      ...normalized.options,
+    });
+    toolbar.pendingSelectionCapture = { target: { kind: 'document' } };
+    vi.spyOn(toolbar.ui.selection, 'restore').mockImplementation(() => {
+      calls.push('restore');
+      return { ok: true, success: true };
+    });
+
+    toolbarContainer.querySelector<HTMLElement>('[aria-label="Overflow items"]')?.click();
+    await nextTick();
+    const status = document.querySelector<HTMLElement>('[data-item="btn-status"]');
+    expect(status).toBeTruthy();
+    status?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    status?.click();
+    await nextTick();
+    await nextTick();
+    const option = [...document.querySelectorAll<HTMLElement>('.toolbar-dropdown-option')].find((element) =>
+      element.textContent?.includes('Draft'),
+    );
+    expect(option).toBeTruthy();
+    expect(toolbarContainer.contains(option ?? null)).toBe(false);
+
+    option?.click();
+    await nextTick();
+
+    expect(calls).toEqual(['restore', 'select']);
+    toolbar.destroy();
+  });
+
+  it('keeps a custom dropdown selection when responsive layout rebuilds the toolbar', () => {
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          customItems: [
+            {
+              type: 'dropdown',
+              id: 'status',
+              label: 'Status',
+              selectedValue: 'draft',
+              options: [
+                { id: 'draft', label: 'Draft' },
+                { id: 'approved', label: 'Approved' },
+              ],
+              onSelect: () => {},
+            },
+          ],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({ superdoc: makeHost(), ...normalized.options });
+    const status = toolbar.getToolbarItemByName('status');
+
+    status.selectedValue.value = 'approved';
+    toolbar.onToolbarResize();
+
+    expect(toolbar.getToolbarItemByName('status')?.selectedValue.value).toBe('approved');
+    toolbar.destroy();
+  });
+
+  it.each([
+    ['rejects', () => Promise.reject(new Error('save failed'))],
+    [
+      'throws synchronously',
+      () => {
+        throw new Error('save failed');
+      },
+    ],
+  ])('reports when a canonical onSelect callback %s', async (_case, onSelect) => {
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          customItems: [{ type: 'button', id: 'save', label: 'Save', onSelect }],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({ superdoc: makeHost(), ...normalized.options });
+    const exceptions: Array<{ error: Error; itemName: string | null }> = [];
+    toolbar.on('exception', (payload) => exceptions.push(payload));
+
+    toolbar.emitCommand({ item: toolbar.getToolbarItemByName('save') });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(exceptions).toHaveLength(1);
+    expect(exceptions[0].itemName).toBe('save');
+    expect(exceptions[0].error.message).toBe('save failed');
+    toolbar.destroy();
+  });
+
+  it('reports a rejected callback when command registration is unavailable', async () => {
+    const host = makeHost();
+    const ui = (host as { ui: SuperDocUI }).ui;
+    Object.defineProperty(ui.commands, 'register', { configurable: true, value: undefined });
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          customItems: [
+            {
+              type: 'button',
+              id: 'save',
+              label: 'Save',
+              onSelect: () => Promise.reject(new Error('save failed')),
+            },
+          ],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({ superdoc: host, ...normalized.options });
+    const exceptions: Array<{ error: Error; itemName: string | null }> = [];
+    toolbar.on('exception', (payload) => exceptions.push(payload));
+
+    toolbar.emitCommand({ item: toolbar.getToolbarItemByName('save') });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(exceptions).toHaveLength(1);
+    expect(exceptions[0].itemName).toBe('save');
+    expect(exceptions[0].error.message).toBe('save failed');
+    toolbar.destroy();
+  });
+
+  it('reports when a direct custom-item command cannot run', async () => {
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          customItems: [{ type: 'button', id: 'insert-table', label: 'Insert table', command: 'table-insert' }],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({ superdoc: makeHost(), ...normalized.options });
+    const exceptions: Array<{ error: Error; itemName: string | null }> = [];
+    toolbar.on('exception', (payload) => exceptions.push(payload));
+
+    toolbar.emitCommand({ item: toolbar.getToolbarItemByName('insert-table') });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(exceptions).toHaveLength(1);
+    expect(exceptions[0].itemName).toBe('insert-table');
+    expect(exceptions[0].error.message).toBe(
+      '[superdoc toolbar] Command "table-insert" did not run. Check that it is enabled and has the required input.',
+    );
+    toolbar.destroy();
+  });
+
+  it('reflects direct custom-item command state', () => {
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          customItems: [{ type: 'button', id: 'emphasis', label: 'Emphasis', command: 'bold' }],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({ superdoc: makeHost(), ...normalized.options });
+    const item = toolbar.getToolbarItemByName('emphasis');
+
+    toolbar.snapshot = {
+      commands: { bold: { enabled: false, disabled: true, active: false, supported: true } },
+    };
+    toolbar.updateToolbarState();
+
+    expect(item?.disabled.value).toBe(true);
+    toolbar.destroy();
+  });
+
+  it('keeps a viewing-safe custom command enabled in viewing mode', () => {
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          customItems: [
+            {
+              type: 'dropdown',
+              id: 'mode',
+              label: 'Mode',
+              command: 'document-mode',
+              options: [{ id: 'editing', label: 'Editing' }],
+            },
+          ],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({ superdoc: makeHost(), ...normalized.options });
+    const item = toolbar.getToolbarItemByName('mode');
+
+    toolbar.snapshot = {
+      commands: {
+        'document-mode': { enabled: true, disabled: false, active: false, supported: true, value: 'viewing' },
+      },
+    };
+    toolbar.updateToolbarState();
+
+    expect(item?.disabled.value).toBe(false);
+    toolbar.destroy();
+  });
+
+  it('keeps an explicitly disabled custom command disabled', () => {
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          customItems: [{ type: 'button', id: 'emphasis', label: 'Emphasis', command: 'bold', disabled: true }],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({ superdoc: makeHost(), ...normalized.options });
+    const item = toolbar.getToolbarItemByName('emphasis');
+
+    toolbar.snapshot = {
+      commands: { bold: { enabled: true, disabled: false, active: false, supported: true } },
+    };
+    toolbar.updateToolbarState();
+
+    expect(item?.disabled.value).toBe(true);
+    toolbar.destroy();
+  });
+
+  it('shows a font option label while matching the document font by value', () => {
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          fontOptions: [{ value: 'Arial', label: 'Corporate Sans', previewFamily: 'Arial, sans-serif' }],
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({ superdoc: makeHost(), ...normalized.options });
+    const fontFamily = toolbar.getToolbarItemByName('fontFamily');
+
+    toolbar.snapshot = {
+      commands: {
+        'font-family': { enabled: true, disabled: false, active: false, supported: true, value: 'Arial' },
+      },
+    };
+    toolbar.updateToolbarState();
+
+    expect(fontFamily?.label.value).toBe('Corporate Sans');
+    expect(fontFamily?.selectedValue.value).toBe('Arial');
+    toolbar.destroy();
+  });
+
+  it('renders no built-in controls for an empty canonical items allowlist', async () => {
+    const toolbarContainer = document.createElement('div');
+    document.body.append(toolbarContainer);
+    const normalized = normalizeUiConfig({
+      ui: { toolbar: { container: toolbarContainer, items: {}, overflow: 'visible' } },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: normalized.container,
+      ...normalized.options,
+    });
+
+    await nextTick();
+    expect(toolbar.toolbarItems).toEqual([]);
+    expect(toolbarContainer.querySelector('[data-item^="btn-"]')).toBeNull();
+    toolbar.destroy();
+  });
+
+  it('measures only configured controls before deciding what overflows', () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 300 });
+    document.body.append(toolbarContainer);
+
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: toolbarContainer,
+      groups: { center: ['bold'] },
+      responsiveToContainer: true,
+    });
+
+    expect(toolbar.toolbarItems.map((item) => item.name.value)).toContain('bold');
+    expect(toolbar.overflowItems).toEqual([]);
+    expect(toolbarContainer.querySelector('[aria-label="Overflow items"]')).toBeNull();
+    toolbar.destroy();
+  });
+
+  it('counts sticky controls once when sizing a focused toolbar', () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 100 });
+    document.body.append(toolbarContainer);
+    const normalized = normalizeUiConfig({
+      ui: {
+        toolbar: {
+          container: toolbarContainer,
+          items: { center: ['undo', 'bold'] },
+          responsiveTo: 'container',
+        },
+      },
+    }).toolbar;
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: normalized.container,
+      ...normalized.options,
+    });
+
+    expect(toolbar.toolbarItems.map((item) => item.name.value)).toEqual(expect.arrayContaining(['undo', 'bold']));
+    expect(toolbar.overflowItems).toEqual([]);
     toolbar.destroy();
   });
 
@@ -162,6 +652,23 @@ describe('BuiltInToolbar', () => {
     });
 
     expect(toolbar.overflowItems.map((item) => item.name.value)).toContain('zoom');
+    expect(toolbarContainer.querySelector('[aria-label="Overflow items"]')).not.toBeNull();
+    toolbar.destroy();
+  });
+
+  it('keeps a focused linked-styles control reachable from overflow', () => {
+    const toolbarContainer = document.createElement('div');
+    Object.defineProperty(toolbarContainer, 'offsetWidth', { configurable: true, value: 1200 });
+    document.body.append(toolbarContainer);
+
+    const toolbar = new BuiltInToolbar({
+      superdoc: makeHost(),
+      selector: toolbarContainer,
+      groups: { center: ['linkedStyles'] },
+      responsiveToContainer: true,
+    });
+
+    expect(toolbar.overflowItems.map((item) => item.name.value)).toContain('linkedStyles');
     expect(toolbarContainer.querySelector('[aria-label="Overflow items"]')).not.toBeNull();
     toolbar.destroy();
   });
@@ -938,6 +1445,33 @@ describe('BuiltInToolbar', () => {
       expect(bolds).toHaveLength(1);
       // The surviving one is the built-in, not the replacement.
       expect(bolds[0].isCustomToolbarItem).toBeFalsy();
+      toolbar.destroy();
+    });
+
+    it.each(['search', 'font-family'])('reserves the omitted built-in name %s', (reservedName) => {
+      const emitted: Array<{ itemName: string | null }> = [];
+      const spy = vi.spyOn(BuiltInToolbar.prototype, 'emit').mockImplementation(function (
+        this: unknown,
+        event: string,
+        payload: unknown,
+      ) {
+        if (event === 'exception') emitted.push(payload as { itemName: string | null });
+        return true;
+      });
+      const normalized = normalizeUiConfig({
+        ui: {
+          toolbar: {
+            items: { center: ['bold'] },
+            customItems: [{ type: 'button', id: reservedName, label: 'Custom', onSelect: () => {} }],
+          },
+        },
+      }).toolbar;
+      const toolbar = new BuiltInToolbar({ superdoc: makeHost(), ...normalized.options });
+      spy.mockRestore();
+
+      expect(toolbar.getToolbarItemByName(reservedName)).toBeFalsy();
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0].itemName).toBe(reservedName);
       toolbar.destroy();
     });
   });

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, useSlots, watch } from 'vue';
+import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, ref, useSlots, watch } from 'vue';
 
 const props = defineProps({
   options: {
@@ -266,7 +266,10 @@ const OptionIcon = defineComponent({
     },
   },
   setup(componentProps) {
-    return () => renderIcon(componentProps.option);
+    return () => {
+      const icon = renderIcon(componentProps.option);
+      return typeof icon === 'string' ? h('span', { innerHTML: icon }) : icon;
+    };
   },
 });
 

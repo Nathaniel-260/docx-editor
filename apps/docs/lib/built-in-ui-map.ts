@@ -91,7 +91,7 @@ export const builtInUiSurfaces = [
     href: '/editor/built-in-ui/responsive-layout',
     initialBehavior: [
       { kind: 'text', value: 'The toolbar responds to viewport width by default. Use ' },
-      { kind: 'code', value: 'responsiveToContainer: true' },
+      { kind: 'code', value: "responsiveTo: 'container'" },
       { kind: 'text', value: ' to measure its mount instead.' },
     ],
     description: 'Fit the document to its container, adapt built-in chrome, and refit after fullscreen changes.',

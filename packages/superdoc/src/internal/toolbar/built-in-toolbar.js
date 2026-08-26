@@ -26,7 +26,12 @@ import { EventEmitter } from 'eventemitter3';
 import { createApp } from 'vue';
 import { vClickOutside } from '@superdoc/common';
 
-import { resolveToolbarCommandId, getBuiltInToolbarItem } from './compatibility-catalog.js';
+import {
+  ALL_BUILT_IN_TOOLBAR_ITEM_NAMES,
+  resolveToolbarCommandId,
+  getBuiltInToolbarItem,
+} from './compatibility-catalog.js';
+import { TOOLBAR_ITEM_ALIASES } from './toolbar-item-aliases.js';
 import { createImageFilePicker, resolveImageSrc } from './image-upload.js';
 
 import Toolbar from './built-in/Toolbar.vue';
@@ -62,14 +67,28 @@ function executeCommand(ui, commandId, argument, options = {}) {
   if (typeof execute !== 'function') return false;
   const result =
     argument === undefined ? execute.call(ui.commands, commandId) : execute.call(ui.commands, commandId, argument);
+  const reportFailure = (settled) => {
+    if (!options.reportUnhandled || settled !== false) return;
+    options.onError?.(
+      new Error(
+        `[superdoc toolbar] Command "${commandId}" did not run. Check that it is enabled and has the required input.`,
+      ),
+    );
+  };
   if (result && typeof result.then === 'function') {
     void Promise.resolve(result).then(
-      () => options.onSettled?.(),
+      (settled) => {
+        reportFailure(settled);
+        options.onSettled?.();
+      },
       (error) => {
         options.onError?.(error);
         options.onSettled?.();
       },
     );
+  } else {
+    reportFailure(result);
+    options.onSettled?.();
   }
   return true;
 }
@@ -119,6 +138,14 @@ function isToolbarSurface(target) {
 function isSelectionKey(e) {
   return ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key);
 }
+
+const RESERVED_TOOLBAR_ITEM_NAMES = new Set([
+  ...ALL_BUILT_IN_TOOLBAR_ITEM_NAMES,
+  ...Object.keys(TOOLBAR_ITEM_ALIASES),
+  'ai',
+  'overflow',
+  'tableOfContents',
+]);
 
 /**
  * The rendered built-in toolbar. Shape-compatible with the historical
@@ -364,19 +391,17 @@ export class BuiltInToolbar extends EventEmitter {
 
   #makeToolbarItems() {
     const availableWidth = this.getAvailableWidth();
+    const selectedCustomOptions = new Map(
+      this.#getAllToolbarItems()
+        .filter((item) => item.isCustomToolbarItem && item.type === 'dropdown')
+        .map((item) => [item.name.value, item.selectedValue.value]),
+    );
     const hasExplicitGroupComposition =
       this.config.groups && !Array.isArray(this.config.groups) && Object.keys(this.config.groups).length > 0;
-
-    const { defaultItems, overflowItems } = makeDefaultItems({
-      superToolbar: this,
-      toolbarIcons: this.config.icons,
-      toolbarTexts: this.config.texts,
-      toolbarFonts: this.#resolveToolbarFonts(this.config.fonts),
-      hideButtons: this.config.hideButtons,
-      availableWidth,
-      role: this.role,
-      isDev: this.isDev,
-    });
+    const configuredItemNames = hasExplicitGroupComposition
+      ? new Set(Object.values(this.config.groups).flatMap((items) => items))
+      : null;
+    const excludedItemNames = new Set(this.config.excludeItems);
 
     const customItems = this.config.customButtons || [];
     // `useToolbarItem` throws on a missing name, an unknown type, and a button
@@ -389,11 +414,10 @@ export class BuiltInToolbar extends EventEmitter {
     // control under the same `data-item` and neither one responds -- the
     // toolbar looks configured and is not. The type cannot express uniqueness,
     // so it is checked here alongside the shapes `useToolbarItem` rejects.
-    // Both lists, not just the visible one. `hideButtons` moves built-ins into
-    // the overflow menu below a width threshold, so seeding from `defaultItems`
-    // alone let a custom entry collide with an overflowed built-in and made
-    // uniqueness depend on the viewport.
-    const takenNames = new Set([...defaultItems, ...overflowItems].map((item) => item.name?.value).filter(Boolean));
+    // Built-in names stay reserved even when a focused composition omits them.
+    // Reusing one can enter the built-in's name-based command path instead of
+    // the custom callback.
+    const takenNames = new Set(RESERVED_TOOLBAR_ITEM_NAMES);
     const customToolbarItems = customItems
       .map((item, index) => {
         try {
@@ -403,6 +427,9 @@ export class BuiltInToolbar extends EventEmitter {
             );
           }
           const prepared = this.#prepareCustomButton(item);
+          if (selectedCustomOptions.has(prepared.name.value)) {
+            prepared.selectedValue.value = selectedCustomOptions.get(prepared.name.value);
+          }
           takenNames.add(prepared.name?.value);
           return prepared;
         } catch (error) {
@@ -422,9 +449,24 @@ export class BuiltInToolbar extends EventEmitter {
         }
       })
       .filter(Boolean);
-    if (customToolbarItems.length) {
-      defaultItems.push(...customToolbarItems);
-    }
+    const configuredGroups = hasExplicitGroupComposition ? new Set(Object.keys(this.config.groups)) : null;
+    const layoutCustomItems = configuredGroups
+      ? customToolbarItems.filter((item) => configuredGroups.has(item.group?.value || 'center'))
+      : customToolbarItems;
+
+    const { defaultItems, overflowItems } = makeDefaultItems({
+      superToolbar: this,
+      toolbarIcons: this.config.icons,
+      toolbarTexts: this.config.texts,
+      toolbarFonts: this.#resolveToolbarFonts(this.config.fonts),
+      hideButtons: this.config.hideButtons,
+      availableWidth,
+      role: this.role,
+      isDev: this.isDev,
+      configuredItemNames,
+      excludedItemNames,
+      additionalItems: layoutCustomItems,
+    });
 
     let allConfigItems = [
       ...defaultItems.map((item) => item.name.value),
@@ -432,14 +474,12 @@ export class BuiltInToolbar extends EventEmitter {
     ];
     if (hasExplicitGroupComposition) {
       const groupedItems = Object.values(this.config.groups).flatMap((item) => item);
-      const configuredGroups = new Set(Object.keys(this.config.groups));
       const groupedCustomItems = customToolbarItems
         .filter((item) => configuredGroups.has(item.group?.value || 'center'))
         .map((item) => item.name.value);
       allConfigItems = [...new Set([...groupedItems, ...groupedCustomItems])];
     }
 
-    const excludedItemNames = new Set(this.config.excludeItems);
     const configuredOverflowItems = overflowItems.filter(
       (item) => allConfigItems.includes(item.name.value) && !excludedItemNames.has(item.name.value),
     );
@@ -481,7 +521,19 @@ export class BuiltInToolbar extends EventEmitter {
           id,
           execute: (context) => {
             const payload = context?.payload && typeof context.payload === 'object' ? context.payload : {};
-            return callback({ ...context, item, argument: payload.argument, option: payload.option });
+            try {
+              const result = callback({ ...context, item, argument: payload.argument, option: payload.option });
+              if (result && typeof result.then === 'function') {
+                return Promise.resolve(result).catch((error) => {
+                  this.#emitCommandException(error, config.name);
+                  return false;
+                });
+              }
+              return result;
+            } catch (error) {
+              this.#emitCommandException(error, config.name);
+              return false;
+            }
           },
         });
         this._customCommandRegs.set(id, reg);
@@ -643,6 +695,14 @@ export class BuiltInToolbar extends EventEmitter {
   #applyHeadlessState(item) {
     const name = item.name.value;
 
+    if (item.isCustomToolbarItem && typeof item.command === 'string') {
+      const commandState = this.snapshot?.commands?.[item.command];
+      item.setDisabled(item.initiallyDisabled || !commandState || Boolean(commandState.disabled));
+      if (commandState?.active) item.activate();
+      else item.deactivate();
+      return true;
+    }
+
     if (name === 'tableActions') {
       const tableActionStates = TABLE_ACTION_COMMAND_IDS.map((commandId) => this.snapshot?.commands?.[commandId]);
       const hasAnyEnabled = tableActionStates.some((state) => state && !state.disabled);
@@ -775,7 +835,8 @@ export class BuiltInToolbar extends EventEmitter {
     if (!ready || currentMode === 'viewing') {
       this.#deactivateAll();
       this.#getAllToolbarItems().forEach((item) => {
-        if (item.allowWithoutEditor?.value) this.#applyHeadlessState(item);
+        const usesDirectCommand = item.isCustomToolbarItem && typeof item.command === 'string';
+        if (item.allowWithoutEditor?.value || usesDirectCommand) this.#applyHeadlessState(item);
       });
     } else {
       this.#getAllToolbarItems().forEach((item) => {
@@ -1014,7 +1075,10 @@ export class BuiltInToolbar extends EventEmitter {
           this.ui.commands.execute(id, { argument, option });
         } else {
           // Fallback for a command function that was never registered.
-          command({ item, argument, option, ui: this.ui, superdoc: this.superdoc });
+          const result = command({ item, argument, option, ui: this.ui, superdoc: this.superdoc });
+          if (result && typeof result.then === 'function') {
+            void Promise.resolve(result).catch((error) => this.#emitCommandException(error, name));
+          }
         }
         this.updateToolbarState();
         return;
@@ -1025,6 +1089,7 @@ export class BuiltInToolbar extends EventEmitter {
         const handled = executeCommand(this.ui, command, argument, {
           onSettled: () => this.updateToolbarState(),
           onError: (error) => this.#emitCommandException(error, name),
+          reportUnhandled: true,
         });
         if (!handled) throw new Error(`[superdoc toolbar] Command not handled: ${String(command)}`);
         this.updateToolbarState();

@@ -277,7 +277,7 @@ const emitFontCommand = (label, option) => {
 
 const applyOption = (option) => {
   if (!option) return;
-  emitFontCommand(option.label, option);
+  emitFontCommand(option.value ?? option.label, option);
   isEditing.value = false;
   query.value = '';
   inputDisplay.value = option.label;

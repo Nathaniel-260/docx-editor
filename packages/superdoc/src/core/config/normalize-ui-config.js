@@ -30,6 +30,7 @@
 
 import { firstDefined, mergeDefined } from './merge-defined.js';
 import { normalizeCommentsUiPolicy } from '../../helpers/comment-small-screen.js';
+import { TOOLBAR_ITEM_ALIASES } from '../../internal/toolbar/toolbar-item-aliases.js';
 
 /** Surfaces that render when the consumer says nothing at all. */
 const HISTORICAL_DEFAULTS = Object.freeze({
@@ -57,6 +58,11 @@ const HISTORICAL_DEFAULTS = Object.freeze({
  * group and survives filtering.
  */
 const DEFAULT_TOOLBAR_GROUP_IDS = Object.freeze(['left', 'center', 'right']);
+
+// Includes the two horizontal margin pixels on `ToolbarButton`. The rendered
+// width is derived from this same value below, so responsive layout never has
+// to guess from a custom label.
+const CUSTOM_TOOLBAR_ITEM_WIDTHS = Object.freeze({ compact: 32, default: 80, wide: 120 });
 
 /** Every built-in surface `ui: false` turns off. */
 const BUILT_IN_SURFACES = Object.freeze(Object.keys(HISTORICAL_DEFAULTS));
@@ -142,6 +148,267 @@ function normalizeContextMenuOptions(options) {
   return mergeDefined(normalized, { sections, defaultItems });
 }
 
+const TOOLBAR_ICON_ALIASES = Object.freeze({
+  'text-color': 'color',
+  'table-of-contents': 'tableOfContents',
+  'align-left': 'alignLeft',
+  'align-right': 'alignRight',
+  'align-center': 'alignCenter',
+  'align-justify': 'alignJustify',
+  'bullet-list': 'bulletList',
+  'numbered-list': 'numberedList',
+  'indent-decrease': 'indentLeft',
+  'indent-increase': 'indentRight',
+  'copy-format': 'copyFormat',
+  'clear-formatting': 'clearFormatting',
+  'track-changes-accept-selection': 'trackChangesAccept',
+  'track-changes-reject-selection': 'trackChangesReject',
+  'document-mode': 'documentMode',
+  'document-mode-editing': 'documentEditingMode',
+  'document-mode-suggesting': 'documentSuggestingMode',
+  'document-mode-viewing': 'documentViewingMode',
+  'highlight-color': 'highlight',
+  'linked-style': 'paintbrush',
+  'table-actions': 'tableActions',
+  'split-cell': 'splitCell',
+  'merge-cells': 'mergeCells',
+  'insert-row-before': 'addRowBefore',
+  'insert-row-after': 'addRowAfter',
+  'insert-column-before': 'addColumnBefore',
+  'insert-column-after': 'addColumnAfter',
+  'delete-row': 'deleteRow',
+  'delete-column': 'deleteColumn',
+  'delete-table': 'deleteTable',
+  'remove-borders': 'deleteBorders',
+  'fix-tables': 'fixTables',
+  'line-height': 'lineHeight',
+  'formatting-marks': 'formattingMarks',
+});
+
+const TOOLBAR_STRING_ALIASES = Object.freeze({
+  'font-family': 'fontFamily',
+  'font-size': 'fontSize',
+  'highlight-color': 'highlight',
+  'text-color': 'color',
+  'table-of-contents': 'tableOfContents',
+  'table-actions': 'tableActions',
+  'insert-row-before': 'addRowBefore',
+  'insert-row-after': 'addRowAfter',
+  'insert-column-before': 'addColumnBefore',
+  'insert-column-after': 'addColumnAfter',
+  'delete-row': 'deleteRow',
+  'delete-column': 'deleteColumn',
+  'delete-table': 'deleteTable',
+  'remove-borders': 'removeBorders',
+  'merge-cells': 'mergeCells',
+  'split-cell': 'splitCell',
+  'fix-tables': 'fixTables',
+  'text-align': 'textAlign',
+  'bullet-list': 'bulletList',
+  'numbered-list': 'numberedList',
+  'indent-decrease': 'indentLeft',
+  'indent-increase': 'indentRight',
+  'measurement-unit': 'measurementUnit',
+  'track-changes-accept-selection': 'trackChangesAccept',
+  'track-changes-reject-selection': 'trackChangesReject',
+  'clear-formatting': 'clearFormatting',
+  'copy-format': 'copyFormat',
+  'line-height': 'lineHeight',
+  'linked-style-label': 'formatText',
+  'formatting-marks': 'formattingMarks',
+  'document-mode-editing': 'documentEditingMode',
+  'document-mode-suggesting': 'documentSuggestingMode',
+  'document-mode-viewing': 'documentViewingMode',
+  'document-mode-editing-description': 'documentEditingModeDescription',
+  'document-mode-suggesting-description': 'documentSuggestingModeDescription',
+  'document-mode-viewing-description': 'documentViewingModeDescription',
+  'linked-style': 'linkedStyles',
+});
+
+function mapToolbarKey(key, aliases) {
+  return aliases[key] ?? key;
+}
+
+function mapToolbarRecord(record, aliases) {
+  if (!isPlainObject(record)) return undefined;
+  const entries = Object.entries(record);
+  const passthroughEntries = entries.filter(([key]) => aliases[key] === undefined);
+  const aliasedEntries = entries.filter(([key]) => aliases[key] !== undefined);
+  return Object.fromEntries(
+    [...passthroughEntries, ...aliasedEntries].map(([key, value]) => [mapToolbarKey(key, aliases), value]),
+  );
+}
+
+function mapToolbarItems(items) {
+  if (!Array.isArray(items)) return items;
+  return items.map((item) => mapToolbarKey(item, TOOLBAR_ITEM_ALIASES));
+}
+
+function mapToolbarRegions(regions) {
+  if (!isPlainObject(regions)) return regions;
+  return Object.fromEntries(Object.entries(regions).map(([region, items]) => [region, mapToolbarItems(items)]));
+}
+
+function addCustomItemRegions(regions, customItems) {
+  if (!isPlainObject(regions) || !Array.isArray(customItems)) return regions;
+  const result = { ...regions };
+  for (const item of customItems) {
+    if (!isPlainObject(item)) continue;
+    const region = item.region ?? 'center';
+    if (result[region] === undefined) result[region] = [];
+  }
+  return result;
+}
+
+const TOOLBAR_OPTIONAL_ITEM_REGIONS = Object.freeze({
+  'formatting-marks': 'right',
+  'table-of-contents': 'center',
+});
+
+function addIncludedToolbarItems(regions, includeItems) {
+  if (!isPlainObject(regions) || !Array.isArray(includeItems)) return regions;
+
+  const result = Object.fromEntries(
+    Object.entries(regions).map(([region, items]) => [region, Array.isArray(items) ? [...items] : items]),
+  );
+  const configuredItems = new Set(
+    Object.values(result)
+      .flatMap((items) => (Array.isArray(items) ? items : []))
+      .map((item) => mapToolbarKey(item, TOOLBAR_ITEM_ALIASES)),
+  );
+
+  for (const item of includeItems) {
+    const mappedItem = mapToolbarKey(item, TOOLBAR_ITEM_ALIASES);
+    if (configuredItems.has(mappedItem)) continue;
+    const region = TOOLBAR_OPTIONAL_ITEM_REGIONS[item];
+    if (!region) continue;
+    if (!Array.isArray(result[region])) result[region] = [];
+    result[region].push(item);
+    configuredItems.add(mappedItem);
+  }
+
+  return result;
+}
+
+function extendToolbarRegions(regions, options) {
+  return addCustomItemRegions(addIncludedToolbarItems(regions, options.includeItems), options.customItems);
+}
+
+function mapToolbarFontOptions(options) {
+  if (!Array.isArray(options)) return options;
+  return options.map((option) => {
+    if (!isPlainObject(option)) return option;
+    const { value, label, previewFamily } = option;
+    return {
+      key: value,
+      value,
+      label,
+      ...(previewFamily ? { props: { style: { fontFamily: previewFamily } } } : {}),
+    };
+  });
+}
+
+function mapToolbarCustomItems(items) {
+  if (!Array.isArray(items)) return items;
+  return items.map((item) => {
+    if (!isPlainObject(item) || typeof item.id !== 'string') return item;
+
+    const size = item.size ?? 'default';
+    const layoutWidth = item.type === 'separator' ? undefined : CUSTOM_TOOLBAR_ITEM_WIDTHS[size];
+    const mapped = {
+      ...item,
+      name: item.id,
+      group: item.region,
+      isNarrow: size === 'compact',
+      isWide: size === 'wide',
+      ...(layoutWidth
+        ? {
+            layoutWidth,
+            style: { ...item.style, width: `${layoutWidth - 2}px` },
+          }
+        : {}),
+    };
+
+    if (item.label) {
+      if (mapped.defaultLabel === undefined) mapped.defaultLabel = item.label;
+      mapped.attributes = {
+        ...item.attributes,
+        ariaLabel: item.attributes?.ariaLabel ?? item.label,
+      };
+    }
+
+    if (item.type === 'dropdown' && Array.isArray(item.options)) {
+      mapped.options = item.options.map((option) => {
+        if (!isPlainObject(option)) return option;
+        return {
+          ...option,
+          key: option.value ?? option.id,
+          value: option.value ?? option.id,
+        };
+      });
+      mapped.dropdownValueKey = 'value';
+    }
+
+    if (typeof item.onSelect === 'function') {
+      mapped.command = ({ item: _item, argument, payload: _payload, ...context }) =>
+        item.onSelect({ ...context, value: argument });
+    }
+
+    delete mapped.id;
+    delete mapped.region;
+    delete mapped.size;
+    delete mapped.onSelect;
+    return mapped;
+  });
+}
+
+function normalizeToolbarOptions(options) {
+  const normalized = { ...options };
+  const configuredItems = firstDefined(options.items, isPlainObject(options.groups) ? options.groups : undefined);
+  const items =
+    isPlainObject(options.items) && Object.keys(options.items).length === 0 ? { center: [] } : configuredItems;
+  const groupedItems = extendToolbarRegions(items, options);
+  const groups = groupedItems === undefined ? options.groups : mapToolbarRegions(groupedItems);
+  const icons = mapToolbarRecord(options.icons, TOOLBAR_ICON_ALIASES);
+  const texts = mergeDefined(
+    mapToolbarRecord(options.texts, {}),
+    mapToolbarRecord(options.strings, TOOLBAR_STRING_ALIASES),
+  );
+  const includeItems = Array.isArray(options.includeItems) ? new Set(options.includeItems) : null;
+  const itemIds = isPlainObject(items)
+    ? new Set(Object.values(items).flatMap((regionItems) => (Array.isArray(regionItems) ? regionItems : [])))
+    : new Set();
+
+  delete normalized.items;
+  delete normalized.includeItems;
+  delete normalized.overflow;
+  delete normalized.responsiveTo;
+  delete normalized.fontOptions;
+  delete normalized.customItems;
+  delete normalized.strings;
+
+  return mergeDefined(normalized, {
+    groups,
+    excludeItems: mapToolbarItems(options.excludeItems),
+    icons,
+    texts,
+    hideButtons: options.overflow === undefined ? options.hideButtons : options.overflow === 'menu',
+    responsiveToContainer:
+      options.responsiveTo === undefined ? options.responsiveToContainer : options.responsiveTo === 'container',
+    fonts: options.fontOptions === undefined ? options.fonts : mapToolbarFontOptions(options.fontOptions),
+    customButtons:
+      options.customItems === undefined ? options.customButtons : mapToolbarCustomItems(options.customItems),
+    showFormattingMarksButton:
+      includeItems === null && !itemIds.has('formatting-marks')
+        ? options.showFormattingMarksButton
+        : itemIds.has('formatting-marks') || includeItems?.has('formatting-marks'),
+    showTableOfContentsButton:
+      includeItems === null && !itemIds.has('table-of-contents')
+        ? options.showTableOfContentsButton
+        : itemIds.has('table-of-contents') || includeItems?.has('table-of-contents'),
+  });
+}
+
 /**
  * Collapse a consumer config into the effective built-in UI profile.
  *
@@ -192,7 +459,9 @@ export function normalizeUiConfig(config = {}) {
   // leftover legacy value outrank an explicit `ui.contentControls` opt-in.
   const legacyContentControlsChrome =
     config.modules?.contentControls?.chrome === 'none' ? undefined : config.modules?.contentControls?.chrome;
-  const toolbarOptions = options('toolbar');
+  const rawToolbarOptions = options('toolbar');
+  const toolbarOptions = normalizeToolbarOptions(rawToolbarOptions);
+  const hasCanonicalToolbarItems = isPlainObject(rawToolbarOptions.items);
   const legacyToolbar = config.modules?.toolbar;
   const legacyToolbarOptions = isPlainObject(legacyToolbar) ? legacyToolbar : {};
   // `modules.slashMenu` is the older spelling of `modules.contextMenu`; the
@@ -221,12 +490,20 @@ export function normalizeUiConfig(config = {}) {
   // source for both. Mid-migration a config can set ordering in the new
   // spelling while its composition map is still in the legacy block, and
   // taking the first `groups` value for both meanings drops whichever one lost.
-  const groupCandidates = [toolbarOptions.groups, legacyToolbarOptions.groups];
+  // Canonical additions extend a legacy composition map during a gradual
+  // migration. Without this merge, the later legacy fallback restores the map
+  // but silently drops the added controls and custom-item regions.
+  const legacyToolbarGroups = isPlainObject(legacyToolbarOptions.groups)
+    ? mapToolbarRegions(extendToolbarRegions(legacyToolbarOptions.groups, rawToolbarOptions))
+    : legacyToolbarOptions.groups;
+  const groupCandidates = [toolbarOptions.groups, legacyToolbarGroups];
   const composedGroups = groupCandidates.find(isPlainObject);
   const orderedGroups = groupCandidates.find(Array.isArray);
 
   // Every spelling of the selection, including the top-level alias.
-  const selectedGroups = firstDefined(orderedGroups, legacyToolbarOptions.toolbarGroups, config.toolbarGroups);
+  const selectedGroups = hasCanonicalToolbarItems
+    ? Object.keys(toolbarOptions.groups ?? {})
+    : firstDefined(orderedGroups, legacyToolbarOptions.toolbarGroups, config.toolbarGroups);
   const selection = Array.isArray(selectedGroups) ? selectedGroups : null;
 
   // `BuiltInToolbar.#initToolbarGroups()` rebuilds the group list from

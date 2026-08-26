@@ -42,10 +42,6 @@ const vanillaQuickstartExampleUrl = new URL('../../../examples/vanilla/src/main.
 const reactQuickstartExampleUrl = new URL('../../../examples/react/src/App.tsx', import.meta.url);
 const pythonSdkExampleUrl = new URL('../snippets/headless/python-accept-changes.py', import.meta.url);
 const cliExampleUrl = new URL('../snippets/headless/cli-accept-changes.sh', import.meta.url);
-const toolbarCatalogUrl = new URL(
-  '../../../packages/superdoc/src/internal/toolbar/compatibility-catalog.ts',
-  import.meta.url,
-);
 const commandCatalogUrl = new URL('../../../packages/superdoc/src/public/ui/commands.ts', import.meta.url);
 const superdocPackageUrl = new URL('../../../packages/superdoc/package.json', import.meta.url);
 // The Document API operation inventory, taken from the canonical contract rather
@@ -244,30 +240,33 @@ test('the editor demo runtime uses exact stable packages', async () => {
   assert.equal(runtimeConfig.uiModulePath, superdocPackage.exports?.['./ui']?.import?.slice(1));
 });
 
-test('the built-in toolbar example uses item names from the v2 toolbar catalog', async () => {
+test('the built-in toolbar examples use canonical public item ids', async () => {
   const examples = await Promise.all(
     [focusedToolbarExampleUrl, focusedReactToolbarExampleUrl].map((url) => readFile(url, 'utf8')),
   );
-  const catalog = await readFile(toolbarCatalogUrl, 'utf8');
+  const publicTypes = await readFile(superdocCoreTypesUrl, 'utf8');
   const demoData = await readFile(builtInEditorDemoDataUrl, 'utf8');
-  const catalogItems = new Set([...catalog.matchAll(/\bname:\s*'([^']+)'/gu)].map((match) => match[1]));
+  const itemType = publicTypes.match(/export type ToolbarItemId =([\s\S]*?);/u)?.[1];
+
+  assert.ok(itemType, 'ToolbarItemId must remain a named public union.');
+  const publicItems = new Set([...itemType.matchAll(/'([^']+)'/gu)].map((match) => match[1]));
 
   for (const example of examples) {
-    const groups = example.match(/groups:\s*\{([\s\S]*?)\n\s*\},/u)?.[1];
+    const items = example.match(/items:\s*\{([\s\S]*?)\n\s*\},/u)?.[1];
 
-    assert.ok(groups, 'The focused toolbar example must define an explicit groups allowlist.');
+    assert.ok(items, 'The focused toolbar example must define an explicit items allowlist.');
 
-    const configuredItems = [...groups.matchAll(/'([^']+)'/gu)].map((match) => match[1]);
-    const unknownItems = configuredItems.filter((item) => !catalogItems.has(item));
+    const configuredItems = [...items.matchAll(/'([^']+)'/gu)].map((match) => match[1]);
+    const unknownItems = configuredItems.filter((item) => !publicItems.has(item));
 
     assert.deepEqual(unknownItems, []);
-    assert.ok(!configuredItems.includes('overflow'), 'Grouped toolbars should list controls, not overflow chrome.');
+    assert.ok(!configuredItems.includes('overflow'), 'Focused toolbars should list controls, not overflow chrome.');
   }
 
-  const demoGroups = demoData.match(/toolbarDemoGroups = \{([\s\S]*?)\n\} as const/u)?.[1];
-  assert.ok(demoGroups, 'The toolbar demo must define the grouped toolbar it renders.');
-  const demoItems = new Set([...demoGroups.matchAll(/'([^']+)'/gu)].map((match) => match[1]));
-  const unknownDemoItems = [...demoItems].filter((item) => !catalogItems.has(item));
+  const demoConfig = demoData.match(/toolbarDemoItems = \{([\s\S]*?)\n\} as const/u)?.[1];
+  assert.ok(demoConfig, 'The toolbar demo must define the focused toolbar it renders.');
+  const demoItems = new Set([...demoConfig.matchAll(/'([^']+)'/gu)].map((match) => match[1]));
+  const unknownDemoItems = [...demoItems].filter((item) => !publicItems.has(item));
 
   assert.deepEqual(unknownDemoItems, []);
   assert.ok(!demoItems.has('overflow'), 'The toolbar demo data should not expose overflow chrome.');
@@ -328,9 +327,9 @@ test('the context menu examples use the canonical composition fields', async () 
 test('the built-in Editor demos keep focused controls and restart-safe configuration changes', async () => {
   const demo = await readFile(editorDemoUrl, 'utf8');
 
-  assert.match(demo, /groups: \{ left: \['search'\] \}/u);
+  assert.match(demo, /getPinnedFocusedToolbarOptions\(builtInToolbar!, \{ left: \['search'\] \}\)/u);
   assert.match(demo, /search: \{ replaceEnabled: initialReplaceEnabled \}/u);
-  assert.match(demo, /toolbar: getToolbarOptions\(initialToolbarStrategy, builtInToolbar!\)/u);
+  assert.match(demo, /toolbar: getPinnedToolbarOptions\(initialToolbarStrategy, builtInToolbar!\)/u);
   assert.match(
     demo,
     /interaction:\s+preset === 'comments' \? \{ comments: getCommentsInteractionOptions\(initialCommentsLevel\) \} : undefined/u,

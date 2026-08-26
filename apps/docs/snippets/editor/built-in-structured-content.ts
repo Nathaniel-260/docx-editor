@@ -10,8 +10,8 @@ const superdoc = new SuperDoc({
     toolbar: {
       // A toolbar renders only once it has somewhere to mount.
       container: '#toolbar',
-      groups: {
-        center: ['link', 'image', 'table', 'tableActions'],
+      items: {
+        center: ['link', 'image', 'table', 'table-actions'],
       },
     },
     contentControls: { chrome: 'default' },

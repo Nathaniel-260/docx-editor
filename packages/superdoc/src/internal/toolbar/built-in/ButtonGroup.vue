@@ -281,7 +281,7 @@ const dropdownOptions = (item) => {
 const getDropdownAttributes = (option, item) => {
   return {
     role: 'menuitem',
-    ariaLabel: `${item.attributes.value.ariaLabel} - ${option.label}`,
+    'aria-label': `${item.attributes.value.ariaLabel} - ${option.label}`,
   };
 };
 
@@ -583,6 +583,7 @@ onBeforeUnmount(() => {
         @buttonClick="handleToolbarButtonClick(item)"
         :overflow-items="overflowItems"
         @close="closeDropdowns"
+        @command="emit('command', $event)"
       />
     </div>
   </div>

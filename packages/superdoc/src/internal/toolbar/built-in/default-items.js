@@ -23,6 +23,13 @@ const closeDropdown = (dropdown) => {
   dropdown.expand.value = false;
 };
 
+const getToolbarItemWidth = (item, controlSizes) => {
+  const configuredWidth = item.layoutWidth?.value;
+  if (Number.isFinite(configuredWidth) && configuredWidth > 0) return configuredWidth;
+  if (item.type === 'separator') return controlSizes.get('separator');
+  return controlSizes.get(item.name.value) || controlSizes.get('default');
+};
+
 /**
  * Set or clear the link item's `href` without disturbing the rest of its
  * attributes. The static configuration (`ariaLabel`, and anything added later)
@@ -92,6 +99,9 @@ export const makeDefaultItems = ({
   availableWidth,
   role,
   isDev = false,
+  configuredItemNames,
+  excludedItemNames,
+  additionalItems = [],
 } = {}) => {
   // bold
   const bold = useToolbarItem({
@@ -136,23 +146,26 @@ export const makeDefaultItems = ({
 
       if (!fontFamily) return;
       fontFamily = fontFamily.split(',')[0]; // in case of fonts with fallbacks
-      fontButton.label.value = fontFamily;
-
-      const defaultFont = fontOptions.find((i) => i.label === fontButton.defaultLabel.value);
-      const foundFont = fontOptions.find((i) => i.label === fontFamily);
+      const optionValue = (option) => option.value ?? option.label;
+      const defaultFont = fontOptions.find((option) => optionValue(option) === fontButton.defaultLabel.value);
+      const foundFont = fontOptions.find((option) => optionValue(option) === fontFamily);
       if (foundFont) {
+        fontButton.label.value = foundFont.label;
         fontButton.selectedValue.value = foundFont.key;
       } else if (defaultFont) {
+        fontButton.label.value = fontFamily;
         fontButton.selectedValue.value = defaultFont.key;
       } else {
+        fontButton.label.value = fontFamily;
         fontButton.selectedValue.value = '';
       }
     },
     onDeactivate: () => {
-      fontButton.label.value = fontButton.defaultLabel.value;
-      const defaultFont = fontOptions.find((i) => i.label === fontButton.defaultLabel.value);
-      if (defaultFont) fontButton.selectedValue.value = defaultFont.key;
-      else fontButton.selectedValue.value = '';
+      const defaultFont = fontOptions.find(
+        (option) => (option.value ?? option.label) === fontButton.defaultLabel.value,
+      );
+      fontButton.label.value = defaultFont?.label ?? fontButton.defaultLabel.value;
+      fontButton.selectedValue.value = defaultFont?.key ?? '';
     },
   });
 
@@ -1209,11 +1222,6 @@ export const makeDefaultItems = ({
   // Extra headroom to prevent toolbar jitter at the XL edge.
   const XL_OVERFLOW_SAFETY_BUFFER = 20;
   const toolbarPadding = 32;
-  const stickyItemsWidth = stickyItemNames.reduce(
-    (total, itemName) => total + (controlSizes.get(itemName) || controlSizes.get('default')),
-    0,
-  );
-
   const itemsToHideXL = ['linkedStyles', 'clearFormatting', 'copyFormat', 'formattingMarks'];
   const itemsToHideSM = ['zoom', 'fontFamily', 'fontSize', 'redo'];
   const shouldUseLgCompactStyles = availableWidth <= RESPONSIVE_BREAKPOINTS.lg;
@@ -1276,6 +1284,7 @@ export const makeDefaultItems = ({
     ...(hasAiModule(superToolbar) ? [aiButton] : []),
     overflow,
     documentMode,
+    ...additionalItems,
   ];
 
   // Hide separators on small screens
@@ -1301,49 +1310,89 @@ export const makeDefaultItems = ({
     toolbarItems = toolbarItems.filter((item) => !devItems.includes(item));
   }
 
-  // always visible items
+  // Composition and exclusions decide which controls exist before width
+  // decides where they fit. Keep the overflow trigger available; its final
+  // visibility is resolved after the configured controls are partitioned.
+  if (configuredItemNames) {
+    toolbarItems = toolbarItems.filter(
+      (item) => item.name.value === 'overflow' || item.isCustomToolbarItem || configuredItemNames.has(item.name.value),
+    );
+  }
+  if (excludedItemNames?.size) {
+    toolbarItems = toolbarItems.filter((item) => !excludedItemNames.has(item.name.value));
+  }
+
+  // Always-visible items. The overflow trigger is reserved only after the
+  // first pass proves that another control needs it; otherwise a focused
+  // toolbar can overflow solely because space was held for a menu it did not
+  // need.
   const isStickyItem = (item) => stickyItemNames.includes(item.name.value);
+  const overflowTrigger = toolbarItems.find((item) => item.name.value === 'overflow');
+  const layoutItems = toolbarItems.filter((item) => item !== overflowTrigger);
+  const partitionItems = (reserveOverflowTrigger) => {
+    const overflowItems = [];
+    const visibleItems = [];
+    const stickyItemsWidth = layoutItems
+      .filter(isStickyItem)
+      .reduce((total, item) => total + getToolbarItemWidth(item, controlSizes), 0);
+    let totalWidth =
+      toolbarPadding +
+      stickyItemsWidth +
+      (reserveOverflowTrigger && overflowTrigger ? getToolbarItemWidth(overflowTrigger, controlSizes) : 0);
 
-  const overflowItems = [];
-  const visibleItems = [];
+    layoutItems.forEach((item, index) => {
+      const itemWidth = getToolbarItemWidth(item, controlSizes);
 
-  // initial width with padding
-  let totalWidth = toolbarPadding + stickyItemsWidth;
-
-  toolbarItems.forEach((item) => {
-    const itemWidth = controlSizes.get(item.name.value) || controlSizes.get('default');
-
-    if (
-      availableWidth < RESPONSIVE_BREAKPOINTS.xl + XL_OVERFLOW_SAFETY_BUFFER &&
-      itemsToHideXL.includes(item.name.value) &&
-      hideButtons
-    ) {
-      overflowItems.push(item);
-      if (item.name.value === 'linkedStyles') {
-        const linkedStylesIdx = toolbarItems.findIndex((item) => item.name.value === 'linkedStyles');
-        toolbarItems.splice(linkedStylesIdx + 1, 1);
+      // `linkedStyles` is moved as one visual unit with its trailing divider.
+      // Leaving that divider visible would start the next group with an orphan
+      // separator whenever the style picker is forced into overflow.
+      if (
+        item.type === 'separator' &&
+        layoutItems[index - 1]?.name.value === 'linkedStyles' &&
+        overflowItems.includes(layoutItems[index - 1])
+      ) {
+        overflowItems.push(item);
+        return;
       }
-      return;
-    }
 
-    if (availableWidth < RESPONSIVE_BREAKPOINTS.sm && itemsToHideSM.includes(item.name.value) && hideButtons) {
-      overflowItems.push(item);
-      return;
-    }
+      if (
+        availableWidth < RESPONSIVE_BREAKPOINTS.xl + XL_OVERFLOW_SAFETY_BUFFER &&
+        itemsToHideXL.includes(item.name.value) &&
+        hideButtons
+      ) {
+        overflowItems.push(item);
+        return;
+      }
 
-    if (isStickyItem(item)) {
-      visibleItems.push(item);
-      totalWidth += itemWidth;
-      return;
-    }
+      if (availableWidth < RESPONSIVE_BREAKPOINTS.sm && itemsToHideSM.includes(item.name.value) && hideButtons) {
+        overflowItems.push(item);
+        return;
+      }
 
-    if (totalWidth < availableWidth || !hideButtons) {
-      visibleItems.push(item);
-      totalWidth += itemWidth;
-    } else {
-      overflowItems.push(item);
-    }
-  });
+      if (isStickyItem(item)) {
+        visibleItems.push(item);
+        return;
+      }
+
+      if (totalWidth + itemWidth <= availableWidth || !hideButtons) {
+        visibleItems.push(item);
+        totalWidth += itemWidth;
+      } else {
+        overflowItems.push(item);
+      }
+    });
+
+    return { visibleItems, overflowItems };
+  };
+
+  let { visibleItems, overflowItems } = partitionItems(false);
+  if (hideButtons && overflowTrigger && overflowItems.some((item) => item.type !== 'separator')) {
+    ({ visibleItems, overflowItems } = partitionItems(true));
+    const triggerIndex = toolbarItems.indexOf(overflowTrigger);
+    const insertAt = visibleItems.findIndex((item) => toolbarItems.indexOf(item) > triggerIndex);
+    if (insertAt === -1) visibleItems.push(overflowTrigger);
+    else visibleItems.splice(insertAt, 0, overflowTrigger);
+  }
 
   return {
     defaultItems: visibleItems,

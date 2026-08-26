@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
-import { refocusEditorSurface } from './toolbar-focus-helpers.js';
+import { preventEditorFocusTransfer, refocusEditorSurface } from './toolbar-focus-helpers.js';
+
+describe('preventEditorFocusTransfer', () => {
+  it('keeps native focus behavior for text inputs', () => {
+    const input = document.createElement('input');
+    const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    input.addEventListener('mousedown', preventEditorFocusTransfer);
+
+    expect(input.dispatchEvent(mouseDown)).toBe(true);
+    expect(mouseDown.defaultPrevented).toBe(false);
+  });
+});
 
 describe('refocusEditorSurface', () => {
   let popoverControl;

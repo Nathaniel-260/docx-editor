@@ -182,6 +182,34 @@ describe('FontFamilyCombobox', () => {
     expect(wrapper.emitted('editor-handoff')).toHaveLength(1);
   });
 
+  it('shows an option label but applies its font-family value', async () => {
+    mockScrollIntoView();
+    const item = makeItem({
+      label: ref('Corporate Sans'),
+      selectedValue: ref('Arial'),
+      nestedOptions: ref([
+        {
+          key: 'Arial',
+          value: 'Arial',
+          label: 'Corporate Sans',
+          props: { style: { fontFamily: 'Arial, sans-serif' }, 'data-item': 'btn-fontFamily-option' },
+        },
+      ]),
+    });
+    const { input } = mountCombobox(item);
+
+    expect(input.element.value).toBe('Corporate Sans');
+    await openViaChevron();
+    const option = document.body.querySelector('[role="option"]');
+    dispatchKey(option, 'Enter');
+    await nextTick();
+
+    expect(wrapper.emitted('command')?.[0]?.[0]).toMatchObject({
+      argument: 'Arial',
+      option: { value: 'Arial', label: 'Corporate Sans' },
+    });
+  });
+
   it('shows a blank field for a mixed (multi-font) selection', () => {
     const item = makeItem({ label: ref(''), selectedValue: ref('') });
     const { input } = mountCombobox(item);

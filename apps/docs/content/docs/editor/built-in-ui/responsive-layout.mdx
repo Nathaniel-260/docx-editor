@@ -20,7 +20,9 @@ Configure fit-to-width and container-aware chrome, then refit after the browser 
 
 `zoom.mode: 'fit-width'` continuously follows the available document width. The `min`, `max`, and `padding` values constrain that policy. Calling `setZoom()` switches to manual mode; call `setZoomMode('fit-width')` to resume automatic fitting.
 
-`responsiveToContainer` measures the toolbar's container rather than the browser window. Lower-priority controls leave the visible row when space becomes tight, which is the default and needs no setting. `comments.displayMode: 'auto'` lets the review UI move between the sidebar and a compact inline presentation.
+`responsiveTo: 'container'` measures the toolbar mount instead of the browser window. Lower-priority controls move into
+the overflow menu when space becomes tight. `comments.displayMode: 'auto'` lets the review UI move between the sidebar
+and a compact inline presentation.
 
 ## Reflow document content
 

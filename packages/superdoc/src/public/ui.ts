@@ -68,6 +68,8 @@ export type {
   // Handles
   SelectionHandle,
   ToolbarHandle,
+  BuiltInCommandId,
+  ToolbarCommandId,
   CommentsHandle,
   TrackChangesHandle,
   ContentControlsHandle,

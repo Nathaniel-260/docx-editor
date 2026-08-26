@@ -1,12 +1,11 @@
 <script setup>
-import { getCurrentInstance, ref, computed } from 'vue';
+import { ref, computed } from 'vue';
 import ToolbarButton from './ToolbarButton.vue';
 import ButtonGroup from './ButtonGroup.vue';
 import ToolbarDropdown from './ToolbarDropdown.vue';
+import { preventEditorFocusTransfer } from './toolbar-focus-helpers.js';
 
-const { proxy } = getCurrentInstance();
-
-const emit = defineEmits(['buttonClick', 'close']);
+const emit = defineEmits(['buttonClick', 'close', 'command']);
 
 const props = defineProps({
   toolbarItem: {
@@ -40,8 +39,8 @@ const setOverflowMenuOpen = (open) => {
   emit('close');
 };
 
-const handleCommand = ({ item, argument }) => {
-  proxy.$toolbar.emitCommand({ item, argument });
+const handleCommand = ({ item, argument, option }) => {
+  emit('command', { item, argument, option });
 };
 </script>
 
@@ -66,6 +65,7 @@ const handleCommand = ({ item, argument }) => {
         :toolbar-items="overflowItems"
         :ui-font-family="props.uiFontFamily"
         from-overflow
+        @mousedown="preventEditorFocusTransfer"
         @command="handleCommand"
         @dropdown-update-show="hasOpenDropdown = $event"
       />

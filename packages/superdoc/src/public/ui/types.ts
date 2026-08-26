@@ -103,10 +103,12 @@ import type {
 import type { PartialBrowserDocumentApi } from '../browser-document-api.js';
 
 import type { SuperDocUIReason } from './reasons.js';
+import type { BuiltInCommandId } from './commands.js';
 
 // Stable public reason taxonomy. Re-exported here so `superdoc/ui` consumers
 // can import the reason type alongside the handle/slice types it annotates.
 export type { SuperDocUIReason } from './reasons.js';
+export type { BuiltInCommandId } from './commands.js';
 
 // ---------------------------------------------------------------------------
 // Reactive substrate
@@ -1205,14 +1207,17 @@ export interface FontsHandle extends SnapshotSubscribable<FontsSlice> {
   getSizeOptions(): readonly FontSizeOption[];
 }
 
+/** A built-in command id, or an id registered through `ui.commands.register()`. */
+export type ToolbarCommandId = BuiltInCommandId | (string & {});
+
 /** Toolbar handle. */
 export interface ToolbarHandle extends SnapshotSubscribable<ToolbarSnapshotSlice> {
   /** Read the current toolbar snapshot. */
   getSnapshot(): ToolbarSnapshotSlice;
   /** Execute a toolbar command by id. */
-  execute(id: string, payload?: unknown): CommandExecutionResult;
+  execute(id: ToolbarCommandId, payload?: unknown): CommandExecutionResult;
   /** Execute a toolbar command by id and await its settled result. */
-  executeAsync(id: string, payload?: unknown): Promise<CommandExecutionResult>;
+  executeAsync(id: ToolbarCommandId, payload?: unknown): Promise<CommandExecutionResult>;
 }
 
 /** Zoom handle. */

@@ -2,6 +2,7 @@
 import { ref, getCurrentInstance, onMounted, onActivated, onDeactivated, onBeforeUnmount, computed } from 'vue';
 import { throttle } from './helpers.js';
 import ButtonGroup from './ButtonGroup.vue';
+import { preventEditorFocusTransfer } from './toolbar-focus-helpers.js';
 import { RESPONSIVE_BREAKPOINTS } from './constants.js';
 
 /**
@@ -134,20 +135,9 @@ const restoreSelection = () => {
   editor.commands?.restoreSelection?.();
 };
 
-/**
- * Prevents the browser's default focus-transfer behavior when clicking toolbar buttons.
- *
- * Without this, clicking a toolbar button moves focus from the hidden ProseMirror editor
- * to the toolbar button element. The subsequent refocus of the PM editor can trigger
- * browser-native scroll adjustments that jump the page to the top — especially when
- * the window (not a div) is the scroll container.
- *
- * Input elements are excluded so they still receive native focus and cursor placement.
- */
 const handleToolbarMousedown = (e) => {
   captureSelection();
-  if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
-  e.preventDefault();
+  preventEditorFocusTransfer(e);
 };
 </script>
 

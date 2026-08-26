@@ -4,22 +4,22 @@ navTitle: Toolbar
 description: Show only the controls your workflow needs and keep them reachable as the Editor narrows.
 ---
 
-Compare three ways to shape the built-in toolbar, then add the focused version to the `/sample.docx` project from the
+Compare three ways to shape the built-in toolbar, then add a focused version to the `/sample.docx` project from the
 [Quickstart](/editor/quickstart).
 
 ## Try the toolbar configurations
 
 Expand the Editor and switch between the three configurations:
 
-1. **Group** shows only the controls named in `groups`, placed in the left, center, and right regions.
+1. **Focus** shows only the controls named in `items`, placed in the left, center, and right regions.
 2. **Remove** starts with the default toolbar and removes Bold and Italic with `excludeItems`.
-3. **Add** keeps the grouped toolbar and appends an **Add note** action with `customButtons`. Place the caret in the
+3. **Add** keeps the focused toolbar and appends an **Add note** action with `customItems`. Place the caret in the
    document, then run it to insert `Review note: `.
 
 <EditorDemo fixture='/fixtures/formatting-sample.docx' preset='toolbar' title='Shape the built-in toolbar' />
 
-Switching configurations reloads the current DOCX because toolbar composition is a startup option. Edits and document
-mode remain; the current selection resets.
+Switching configurations recreates the Editor from its current DOCX state because toolbar composition is a startup
+option. Edits and document mode remain; the current selection resets.
 
 ## Build the focused toolbar
 
@@ -38,25 +38,30 @@ React's `SuperDocEditor` creates the toolbar mount for you. Add the focused conf
   </FrameworkExample>
 </FrameworkExampleTabs>
 
-Reload the application. The toolbar should contain eight configured controls across left, center, and right regions. Select text and
-choose **Bold** to confirm that the control follows the current selection.
+Reload the application. The toolbar should contain eight controls across the three regions. Select text and choose
+**Bold** to confirm that the control follows the current selection.
 
 ## Choose a strategy
 
-Use `groups` when your workflow needs a focused allowlist. Use `excludeItems` when the default toolbar already fits and
-only a few controls should be removed. Use `customButtons` to add application actions that run through SuperDoc's command
-context.
+Use `items` when your workflow needs a focused allowlist. Each key chooses a region; controls keep their built-in order
+within that region. Use `excludeItems` when the default toolbar already fits and only a few controls should be removed.
+Use `customItems` to add application actions. Use `command` for a built-in action that the control can call directly.
+Use `onSelect` for registered commands or workflows that need more input; its context includes `execute` and
+`executeAsync`.
 
-Keep the result predictable. Avoid combining a long `groups` allowlist with a long `excludeItems` list.
+`ToolbarConfig` provides typed values for every region, built-in control, icon slot, string slot, and custom item. Use
+`satisfies ToolbarConfig`, as the examples do, to keep autocomplete without widening the configuration object.
+
+Use `includeItems` to add Formatting marks or Table of contents, which are not in the default toolbar. If `items` is
+present, SuperDoc places each added control in its built-in region unless `items` already places it elsewhere.
+
+Prefer one composition strategy. Avoid combining a long `items` allowlist with a long `excludeItems` list.
 
 ## Check the narrow layout
 
-`responsiveToContainer: true` measures the toolbar mount instead of the browser window. When space runs out, controls
-move into the overflow menu. SuperDoc adds the overflow trigger when a configured control moves there; `groups` only
-needs to list the controls your application uses.
-
-`excludeItems` applies to the full-width row, but the current runtime does not apply the exclusion after a control moves
-into overflow. Use `groups` when a control must stay hidden at every supported width.
+`responsiveTo: 'container'` measures the toolbar mount instead of the browser window. With `overflow: 'menu'` (the
+default), controls that no longer fit move into the overflow menu. SuperDoc adds the trigger when it is needed; do not
+list it in `items`.
 
 Resize the Editor to your narrowest supported width. Every required control should remain reachable, and the toolbar
 should not add horizontal page overflow. See [Layout](/editor/built-in-ui/responsive-layout) for document scaling,

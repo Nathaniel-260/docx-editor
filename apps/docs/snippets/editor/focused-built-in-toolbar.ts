@@ -1,17 +1,15 @@
-import { SuperDoc, type Config } from 'superdoc';
+import { SuperDoc, type ToolbarConfig } from 'superdoc';
 import 'superdoc/style.css';
 
-type ToolbarConfig = Exclude<NonNullable<Extract<Config['ui'], object>['toolbar']>, boolean>;
-
-const toolbar: ToolbarConfig = {
+const toolbar = {
   container: '#toolbar',
-  groups: {
+  items: {
     left: ['undo', 'redo'],
     center: ['bold', 'italic', 'underline', 'link'],
-    right: ['documentMode', 'zoom'],
+    right: ['document-mode', 'zoom'],
   },
-  responsiveToContainer: true,
-};
+  responsiveTo: 'container',
+} satisfies ToolbarConfig;
 
 const superdoc = new SuperDoc({
   selector: '#editor',

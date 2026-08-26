@@ -70,6 +70,7 @@ import type {
   FindReplaceResolution,
   FlowBlock,
   FlowMode,
+  FontFamilyOption,
   HyperlinkActivationContext,
   HyperlinkActivationHandler,
   HyperlinkActivationResult,
@@ -85,7 +86,23 @@ import type {
   LayoutPage,
   CommentsConfig,
   ToolbarCustomButton,
+  ToolbarCustomButtonCommandId,
   ToolbarConfig,
+  ToolbarRegion,
+  ToolbarItemId,
+  ToolbarOptionalItemId,
+  ToolbarIconId,
+  ToolbarStringId,
+  ToolbarCustomItem,
+  ToolbarCustomButtonConfig,
+  ToolbarCustomDropdownConfig,
+  ToolbarCustomDropdownCommandId,
+  ToolbarCustomSeparatorConfig,
+  ToolbarCustomOption,
+  ToolbarCustomItemSelectContext,
+  ToolbarCustomItemSelectHandler,
+  BuiltInCommandId,
+  ToolbarCommandId,
   ToolbarCustomButtonContext,
   ToolbarCustomButtonCommand,
   ToolbarCustomButtonItem,
@@ -285,6 +302,7 @@ const _real_FindReplaceRenderContext: AssertNotAny<FindReplaceRenderContext> = t
 const _real_FindReplaceResolution: AssertNotAny<FindReplaceResolution> = true;
 const _real_FlowBlock: AssertNotAny<FlowBlock> = true;
 const _real_FlowMode: AssertNotAny<FlowMode> = true;
+const _real_FontFamilyOption: AssertNotAny<FontFamilyOption> = true;
 const _real_HyperlinkActivationContext: AssertNotAny<HyperlinkActivationContext> = true;
 const _real_HyperlinkActivationHandler: AssertNotAny<HyperlinkActivationHandler> = true;
 const _real_HyperlinkActivationResult: AssertNotAny<HyperlinkActivationResult> = true;
@@ -300,7 +318,23 @@ const _real_LayoutMode: AssertNotAny<LayoutMode> = true;
 const _real_LayoutPage: AssertNotAny<LayoutPage> = true;
 const _real_CommentsConfig: AssertNotAny<CommentsConfig> = true;
 const _real_ToolbarCustomButton: AssertNotAny<ToolbarCustomButton> = true;
+const _real_ToolbarCustomButtonCommandId: AssertNotAny<ToolbarCustomButtonCommandId> = true;
 const _real_ToolbarConfig: AssertNotAny<ToolbarConfig> = true;
+const _real_ToolbarRegion: AssertNotAny<ToolbarRegion> = true;
+const _real_ToolbarItemId: AssertNotAny<ToolbarItemId> = true;
+const _real_ToolbarOptionalItemId: AssertNotAny<ToolbarOptionalItemId> = true;
+const _real_ToolbarIconId: AssertNotAny<ToolbarIconId> = true;
+const _real_ToolbarStringId: AssertNotAny<ToolbarStringId> = true;
+const _real_ToolbarCustomItem: AssertNotAny<ToolbarCustomItem> = true;
+const _real_ToolbarCustomButtonConfig: AssertNotAny<ToolbarCustomButtonConfig> = true;
+const _real_ToolbarCustomDropdownConfig: AssertNotAny<ToolbarCustomDropdownConfig> = true;
+const _real_ToolbarCustomDropdownCommandId: AssertNotAny<ToolbarCustomDropdownCommandId> = true;
+const _real_ToolbarCustomSeparatorConfig: AssertNotAny<ToolbarCustomSeparatorConfig> = true;
+const _real_ToolbarCustomOption: AssertNotAny<ToolbarCustomOption> = true;
+const _real_ToolbarCustomItemSelectContext: AssertNotAny<ToolbarCustomItemSelectContext> = true;
+const _real_ToolbarCustomItemSelectHandler: AssertNotAny<ToolbarCustomItemSelectHandler> = true;
+const _real_BuiltInCommandId: AssertNotAny<BuiltInCommandId> = true;
+const _real_ToolbarCommandId: AssertNotAny<ToolbarCommandId> = true;
 const _real_ToolbarCustomButtonContext: AssertNotAny<ToolbarCustomButtonContext> = true;
 const _real_ToolbarCustomButtonCommand: AssertNotAny<ToolbarCustomButtonCommand> = true;
 const _real_ToolbarCustomButtonItem: AssertNotAny<ToolbarCustomButtonItem> = true;

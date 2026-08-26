@@ -1,17 +1,15 @@
 import { useRef, useState } from 'react';
-import { SuperDocEditor, type SuperDocEditorProps, type SuperDocRef } from '@superdoc/react';
+import { SuperDocEditor, type SuperDocRef, type ToolbarConfig } from '@superdoc/react';
 import '@superdoc/react/style.css';
 
-type ToolbarConfig = Exclude<NonNullable<Extract<SuperDocEditorProps['ui'], object>['toolbar']>, boolean>;
-
-const toolbar: ToolbarConfig = {
-  groups: {
+const toolbar = {
+  items: {
     left: ['undo', 'redo'],
     center: ['bold', 'italic', 'underline', 'link'],
-    right: ['documentMode', 'zoom'],
+    right: ['document-mode', 'zoom'],
   },
-  responsiveToContainer: true,
-};
+  responsiveTo: 'container',
+} satisfies ToolbarConfig;
 
 export default function App() {
   const editorRef = useRef<SuperDocRef>(null);

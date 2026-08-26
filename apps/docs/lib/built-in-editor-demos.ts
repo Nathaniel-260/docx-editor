@@ -1,4 +1,4 @@
-export type ToolbarDemoStrategy = 'groups' | 'excludeItems' | 'customButtons';
+export type ToolbarDemoStrategy = 'items' | 'excludeItems' | 'customItems';
 export type CommentsDemoLayout = 'auto' | 'sidebar' | 'inline';
 export type CommentsDemoLevel = 'read' | 'write' | 'resolve';
 export type ContextMenuDemoStrategy = 'default' | 'custom';
@@ -9,18 +9,18 @@ export type BuiltInDemoChoice<T extends string> = {
   label: string;
 };
 
-export const toolbarDemoGroups = {
+export const toolbarDemoItems = {
   left: ['undo', 'redo'],
   center: ['bold', 'italic', 'underline', 'link'],
-  right: ['documentMode', 'zoom'],
+  right: ['document-mode', 'zoom'],
 } as const;
 
 export const toolbarDemoExcludedItems = ['bold', 'italic'] as const;
 
 export const toolbarDemoStrategies = [
-  { id: 'groups', label: 'Group' },
+  { id: 'items', label: 'Focus' },
   { id: 'excludeItems', label: 'Remove' },
-  { id: 'customButtons', label: 'Add' },
+  { id: 'customItems', label: 'Add' },
 ] as const satisfies readonly BuiltInDemoChoice<ToolbarDemoStrategy>[];
 
 export const commentsDemoLayouts = [
@@ -53,9 +53,9 @@ export function renderBuiltInEditorDemoMarkdown(
     return [
       'Toolbar configurations available in the interactive Editor:',
       '',
-      `- **Group — \`ui.toolbar.groups\`:** show only ${Object.values(toolbarDemoGroups).flat().join(', ')} across the left, center, and right regions.`,
+      `- **Focus — \`ui.toolbar.items\`:** show only ${Object.values(toolbarDemoItems).flat().join(', ')} across the left, center, and right regions.`,
       `- **Remove — \`ui.toolbar.excludeItems\`:** start with the default toolbar and remove ${toolbarDemoExcludedItems.join(' and ')}.`,
-      '- **Add — `ui.toolbar.customButtons`:** add an **Add note** action to the grouped toolbar. Place the caret in the document and run it to insert `Review note: `.',
+      '- **Add — `ui.toolbar.customItems`:** add an **Add note** action to the focused toolbar. Place the caret in the document and run it to insert `Review note: `.',
       '',
       'Changing a toolbar configuration recreates the Editor from its current DOCX. Document edits and document mode remain; transient selection and toolbar state reset.',
     ].join('\n');

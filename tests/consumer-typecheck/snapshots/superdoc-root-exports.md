@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-25T15:10:56.397Z
+Generated: 2026-08-25T21:12:02.168Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 220 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 220 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 237 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 237 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **220** |
+| **union** |  | **237** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 210
+- typed but no runtime export (phantom risk): 227
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -31,6 +31,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `BookmarkAddress`
 - `BookmarkInfo`
 - `BorrowedSuperDocUI`
+- `BuiltInCommandId`
 - `CanPerformPermissionParams`
 - `CollaborationConfig`
 - `CommentAddress`
@@ -75,6 +76,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `FindReplaceResolution`
 - `FlowBlock`
 - `FlowMode`
+- `FontFamilyOption`
 - `HyperlinkActivationContext`
 - `HyperlinkActivationHandler`
 - `HyperlinkActivationResult`
@@ -208,16 +210,31 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `TextAddress`
 - `TextSegment`
 - `TextTarget`
+- `ToolbarCommandId`
 - `ToolbarConfig`
 - `ToolbarCustomButton`
 - `ToolbarCustomButtonCommand`
+- `ToolbarCustomButtonCommandId`
+- `ToolbarCustomButtonConfig`
 - `ToolbarCustomButtonContext`
 - `ToolbarCustomButtonItem`
+- `ToolbarCustomDropdownCommandId`
+- `ToolbarCustomDropdownConfig`
 - `ToolbarCustomDropdownItem`
 - `ToolbarCustomDropdownOption`
+- `ToolbarCustomItem`
+- `ToolbarCustomItemSelectContext`
+- `ToolbarCustomItemSelectHandler`
+- `ToolbarCustomOption`
+- `ToolbarCustomSeparatorConfig`
 - `ToolbarCustomSeparatorItem`
 - `ToolbarDropdownOption`
 - `ToolbarFontOption`
+- `ToolbarIconId`
+- `ToolbarItemId`
+- `ToolbarOptionalItemId`
+- `ToolbarRegion`
+- `ToolbarStringId`
 - `TrackChangeAuthor`
 - `TrackChangeHighlightColors`
 - `TrackChangesAuthorColorsConfig`
@@ -247,13 +264,14 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `BookmarkAddress` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `BookmarkInfo` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `BorrowedSuperDocUI` | ✓ | ✓ |   |   | 1 |   | 3 | 0 | 0 |
+| `BuiltInCommandId` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CanPerformPermissionParams` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CollaborationConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `CommentAddress` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `CommentInteractionLevel` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsType` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Config` | ✓ | ✓ |   |   | 20 |   | 7 | 3 | 0 |
+| `Config` | ✓ | ✓ |   |   | 21 |   | 7 | 3 | 0 |
 | `ContentControlActiveChangePayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContentControlClickPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContentControlsConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -267,13 +285,13 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `ContextMenuSelectContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuSelectPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContextMenuSelectReadiness` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 270 | 43 | 0 |
+| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 276 | 43 | 0 |
 | `DiffApplyOperationReceipt` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DiffApplyResult` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DiffApplyReviewItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DirectSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DocRange` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Document` | ✓ | ✓ |   |   | 2 |   | 93 | 6 | 0 |
+| `Document` | ✓ | ✓ |   |   | 2 |   | 97 | 6 | 0 |
 | `DocumentApi` | ✓ | ✓ |   |   | 2 |   | 2 | 0 | 0 |
 | `DocumentMode` | ✓ | ✓ |   |   | 3 |   | 1 | 2 | 0 |
 | `DocumentProtectionState` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -292,7 +310,8 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `FindReplaceResolution` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `FlowBlock` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `FlowMode` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `HTML` | ✓ | ✓ | ✓ | ✓ | 1 |   | 45 | 0 | 0 |
+| `FontFamilyOption` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `HTML` | ✓ | ✓ | ✓ | ✓ | 1 |   | 50 | 0 | 0 |
 | `HyperlinkActivationContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkActivationHandler` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkActivationResult` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -327,9 +346,9 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SdtRef` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SearchMatch` | ✓ | ✓ |   |   | 3 |   | 0 | 0 | 0 |
 | `SelectionHandle` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 2 | 0 | 0 |
-| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 23 |   | 243 | 35 | 0 |
+| `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 1 | 0 | 0 |
+| `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 4 | 0 | 0 |
+| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 23 |   | 244 | 35 | 0 |
 | `SuperDocActiveEditorExtensions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsCommands` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsDiagnostics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -425,19 +444,34 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SurfaceResolver` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SurfacesConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SurfacesModuleConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `TextAddress` | ✓ | ✓ |   |   | 1 |   | 7 | 0 | 0 |
+| `TextAddress` | ✓ | ✓ |   |   | 1 |   | 9 | 0 | 0 |
 | `TextSegment` | ✓ | ✓ |   |   | 1 |   | 1 | 0 | 0 |
-| `TextTarget` | ✓ | ✓ |   |   | 1 |   | 4 | 0 | 0 |
-| `ToolbarConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `TextTarget` | ✓ | ✓ |   |   | 1 |   | 6 | 0 | 0 |
+| `ToolbarCommandId` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarConfig` | ✓ | ✓ |   |   | 3 |   | 2 | 0 | 0 |
 | `ToolbarCustomButton` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ToolbarCustomButtonCommand` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarCustomButtonCommandId` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ToolbarCustomButtonConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarCustomButtonContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarCustomButtonItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ToolbarCustomDropdownCommandId` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ToolbarCustomDropdownConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarCustomDropdownItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarCustomDropdownOption` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ToolbarCustomItem` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarCustomItemSelectContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarCustomItemSelectHandler` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ToolbarCustomOption` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ToolbarCustomSeparatorConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarCustomSeparatorItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ToolbarDropdownOption` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ToolbarFontOption` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarIconId` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarItemId` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarOptionalItemId` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `ToolbarRegion` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ToolbarStringId` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `TrackChangeAuthor` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `TrackChangeHighlightColors` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `TrackChangesAuthorColorsConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |

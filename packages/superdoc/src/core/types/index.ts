@@ -51,7 +51,7 @@ export type SuperDoc = SuperDocClass;
 import type { BrowserDocumentApi } from '../../public/browser-document-api.js';
 export type { BrowserDocumentApi } from '../../public/browser-document-api.js';
 
-import type { CustomCommandContext } from '../../public/ui/types.js';
+import type { CustomCommandContext, FontFamilyOption as ToolbarFontFamilyOption } from '../../public/ui/types.js';
 
 /**
  * A row in a custom dropdown's option list, and the value handed back to the
@@ -65,6 +65,8 @@ import type { CustomCommandContext } from '../../public/ui/types.js';
  * entry is a custom-rendered row that the selection path explicitly skips
  * (`ButtonGroup.vue:268`), so it carries neither. The index signature keeps
  * the rest of the row open.
+ *
+ * @deprecated replaceWith=`ToolbarCustomOption` removeIn=v3.0
  */
 export interface ToolbarDropdownOption {
   /** Row text, and the default command argument when the row is chosen. */
@@ -96,6 +98,8 @@ export interface ToolbarDropdownOption {
  * `useToolbarItem` returns — a bag of `ref`s whose shape is an implementation
  * detail. Typing it would publish that internal and freeze it; see #1098 for
  * the public toolbar-item contract that would replace it.
+ *
+ * @deprecated replaceWith=`ToolbarCustomItemSelectContext` removeIn=v3.0
  */
 export interface ToolbarCustomButtonContext extends CustomCommandContext {
   /** The live toolbar item handle. Internal shape; see #1098. */
@@ -118,6 +122,8 @@ export interface ToolbarCustomButtonContext extends CustomCommandContext {
  * accepted at compile time and then reported through the toolbar's
  * `exception` event as "Command not handled" -- so the string form stays
  * unnarrowed, but a typo is diagnosed at runtime rather than ignored.
+ *
+ * @deprecated replaceWith=`ToolbarCommandId|ToolbarCustomItemSelectHandler` removeIn=v3.0
  */
 export type ToolbarCustomButtonCommand = string | ((context: ToolbarCustomButtonContext) => unknown);
 
@@ -207,6 +213,8 @@ interface ToolbarCustomEntryBase {
  * `use-toolbar-item.js` treats it as an affordance and `ToolbarButton.vue`
  * never draws it. Widening this type to accept `defaultLabel` alone requires
  * fixing that render first, or it re-admits invisible buttons (#1098).
+ *
+ * @deprecated replaceWith=`ToolbarCustomButtonConfig` removeIn=v3.0
  */
 export interface ToolbarCustomButtonItem extends ToolbarCustomEntryBase {
   type: 'button';
@@ -282,6 +290,8 @@ interface ToolbarCustomDropdownOptionBase {
  * than one interface. `ToolbarDropdown` routes those to its `RenderOption`
  * branch and never reads `label` for them, so requiring it would reject rows
  * the runtime supports -- which the first version of this type did.
+ *
+ * @deprecated replaceWith=`ToolbarCustomOption` removeIn=v3.0
  */
 export type ToolbarCustomDropdownOption =
   | (ToolbarCustomDropdownOptionBase & {
@@ -419,13 +429,18 @@ interface ToolbarCustomDropdownBase extends ToolbarCustomEntryBase {
  * Splitting the variant is what makes at-least-one enforceable rather than
  * advisory. Pair a caret-only trigger with `attributes.ariaLabel`, since
  * there is no text for a screen reader to announce.
+ *
+ * @deprecated replaceWith=`ToolbarCustomDropdownConfig` removeIn=v3.0
  */
 export type ToolbarCustomDropdownItem =
   | (ToolbarCustomDropdownBase & { icon: string; label?: string; hasCaret?: boolean })
   | (ToolbarCustomDropdownBase & { label: string; icon?: string; hasCaret?: boolean })
   | (ToolbarCustomDropdownBase & { hasCaret: true; icon?: string; label?: string });
 
-/** A visual divider. Renders on its own and has nothing to run. */
+/**
+ * A visual divider. Renders on its own and has nothing to run.
+ * @deprecated replaceWith=`ToolbarCustomSeparatorConfig` removeIn=v3.0
+ */
 export interface ToolbarCustomSeparatorItem extends ToolbarCustomEntryBase {
   type: 'separator';
 }
@@ -453,6 +468,8 @@ export interface ToolbarCustomSeparatorItem extends ToolbarCustomEntryBase {
  * Derived from a rendered-behavior survey rather than from the constructor
  * (#1098): construction succeeding proves only that nothing threw, which for
  * this surface was never the same question as whether a control appeared.
+ *
+ * @deprecated replaceWith=`ToolbarCustomItem` removeIn=v3.0
  */
 export type ToolbarCustomButton = ToolbarCustomButtonItem | ToolbarCustomDropdownItem | ToolbarCustomSeparatorItem;
 
@@ -755,6 +772,8 @@ export type FontConfig = FontFamilyConfig;
  * selection identity and the rendered list key. An entry missing either one
  * produces a blank row or an undefined command value rather than a
  * degraded-but-working option.
+ *
+ * @deprecated replaceWith=`FontFamilyOption` removeIn=v3.0
  */
 export interface ToolbarFontOption {
   /**
@@ -2520,7 +2539,7 @@ export interface Modules {
          * alongside dropdown rows. This spelling was typed `FontConfig[]`,
          * whose index signature let `{ family, label, key }` compile and work,
          * so narrowing it to rows alone would break installs mid-2.x.
-         * Replaced by `ui.toolbar.fonts`, which takes rows only.
+         * Replaced by `ui.toolbar.fontOptions`, which takes rows only.
          * Earliest removal: v3.0 (#853).
          *
          * The runtime uses the list verbatim and reads `label` and `key` off
@@ -2537,7 +2556,7 @@ export interface Modules {
          * AIDEV-NOTE: legacy-public - stays an open record. This spelling was
          * typed `Array<Record<string, unknown>>`, so narrowing it now would
          * reject entries that compile and work today. Replaced by
-         * `ui.toolbar.customButtons`. Earliest removal: v3.0 (#853).
+         * `ui.toolbar.customItems`. Earliest removal: v3.0 (#853).
          */
         customButtons?: Array<Record<string, unknown>>;
         /**
@@ -3326,6 +3345,346 @@ export interface SuperDocZoomConfig {
   fitWidth?: SuperDocFitWidthOptions;
 }
 
+/** The three regions rendered by the built-in toolbar. */
+export type ToolbarRegion = 'left' | 'center' | 'right';
+
+/** Built-in controls accepted by `ui.toolbar.items` and `excludeItems`. */
+export type ToolbarItemId =
+  | 'undo'
+  | 'redo'
+  | 'track-changes-accept-selection'
+  | 'track-changes-reject-selection'
+  | 'search'
+  | 'zoom'
+  | 'font-family'
+  | 'font-size'
+  | 'bold'
+  | 'italic'
+  | 'underline'
+  | 'strikethrough'
+  | 'text-color'
+  | 'highlight-color'
+  | 'link'
+  | 'image'
+  | 'table-of-contents'
+  | 'table'
+  | 'table-actions'
+  | 'text-align'
+  | 'bullet-list'
+  | 'numbered-list'
+  | 'indent-decrease'
+  | 'indent-increase'
+  | 'line-height'
+  | 'linked-style'
+  | 'ruler'
+  | 'measurement-unit'
+  | 'formatting-marks'
+  | 'copy-format'
+  | 'clear-formatting'
+  | 'ai'
+  | 'document-mode';
+
+/** Controls that `includeItems` can add to the default toolbar. */
+export type ToolbarOptionalItemId = 'formatting-marks' | 'table-of-contents';
+
+/** Slots whose built-in toolbar icon can be replaced. */
+export type ToolbarIconId =
+  | 'undo'
+  | 'redo'
+  | 'bold'
+  | 'italic'
+  | 'underline'
+  | 'strikethrough'
+  | 'text-color'
+  | 'link'
+  | 'image'
+  | 'table-of-contents'
+  | 'align-left'
+  | 'align-right'
+  | 'align-center'
+  | 'align-justify'
+  | 'bullet-list'
+  | 'numbered-list'
+  | 'indent-decrease'
+  | 'indent-increase'
+  | 'track-changes-accept-selection'
+  | 'track-changes-reject-selection'
+  | 'document-mode'
+  | 'document-mode-editing'
+  | 'document-mode-suggesting'
+  | 'document-mode-viewing'
+  | 'overflow'
+  | 'ruler'
+  | 'linked-style'
+  | 'highlight-color'
+  | 'ai'
+  | 'table'
+  | 'table-actions'
+  | 'split-cell'
+  | 'merge-cells'
+  | 'insert-row-before'
+  | 'insert-row-after'
+  | 'insert-column-before'
+  | 'insert-column-after'
+  | 'delete-row'
+  | 'delete-column'
+  | 'delete-table'
+  | 'remove-borders'
+  | 'fix-tables'
+  | 'line-height'
+  | 'search'
+  | 'formatting-marks'
+  | 'copy-format'
+  | 'clear-formatting';
+
+/** Text slots whose built-in label or tooltip can be replaced. */
+export type ToolbarStringId =
+  | 'bold'
+  | 'font-family'
+  | 'ai'
+  | 'font-size'
+  | 'italic'
+  | 'underline'
+  | 'highlight-color'
+  | 'strikethrough'
+  | 'text-color'
+  | 'search'
+  | 'link'
+  | 'image'
+  | 'table-of-contents'
+  | 'table'
+  | 'table-actions'
+  | 'insert-row-before'
+  | 'insert-row-after'
+  | 'insert-column-before'
+  | 'insert-column-after'
+  | 'delete-row'
+  | 'delete-column'
+  | 'delete-table'
+  | 'remove-borders'
+  | 'merge-cells'
+  | 'split-cell'
+  | 'fix-tables'
+  | 'text-align'
+  | 'bullet-list'
+  | 'numbered-list'
+  | 'indent-decrease'
+  | 'indent-increase'
+  | 'zoom'
+  | 'measurement-unit'
+  | 'undo'
+  | 'redo'
+  | 'track-changes-accept-selection'
+  | 'track-changes-reject-selection'
+  | 'clear-formatting'
+  | 'copy-format'
+  | 'line-height'
+  | 'linked-style-label'
+  | 'ruler'
+  | 'formatting-marks'
+  | 'linked-style'
+  | 'document-mode-editing'
+  | 'document-mode-suggesting'
+  | 'document-mode-viewing'
+  | 'document-mode-editing-description'
+  | 'document-mode-suggesting-description'
+  | 'document-mode-viewing-description';
+
+/** One selectable option in a custom toolbar dropdown. */
+export interface ToolbarCustomOption {
+  /** Stable option identity. Also used as the selected value when `value` is omitted. */
+  id: string;
+  /** Text shown in the dropdown. */
+  label: string;
+  /** Value passed to the item's action. Defaults to `id`. */
+  value?: string | number;
+  /** Trusted inline SVG markup shown beside the label. */
+  icon?: string;
+  /** Prevent this option from being selected. */
+  disabled?: boolean;
+}
+
+/** Context passed to a custom toolbar item's `onSelect` callback. */
+export interface ToolbarCustomItemSelectContext extends Omit<CustomCommandContext, 'payload'> {
+  /** The selected dropdown value, or `undefined` for a button. */
+  value?: string | number;
+  /** The selected dropdown option, or `undefined` for a button. */
+  option?: ToolbarCustomOption;
+}
+
+/** A callback invoked when a custom toolbar item is selected. */
+export type ToolbarCustomItemSelectHandler = (context: ToolbarCustomItemSelectContext) => unknown;
+
+interface ToolbarCustomItemAttributes {
+  /** Class added to the rendered control. */
+  className?: string;
+  /** Accessible name for the rendered control. */
+  ariaLabel?: string;
+}
+
+interface ToolbarCustomItemBase {
+  /** Unique id that must not match a built-in control or another custom item. */
+  id: string;
+  /** Toolbar region. Defaults to `center`. */
+  region?: ToolbarRegion;
+  /** Tooltip text. */
+  tooltip?: string;
+  /** Disable the control. */
+  disabled?: boolean;
+  /**
+   * Width preset used by both rendering and responsive overflow.
+   * Defaults to `default`.
+   */
+  size?: 'compact' | 'default' | 'wide';
+  /** DOM hooks for styling and accessible naming. */
+  attributes?: ToolbarCustomItemAttributes;
+}
+
+/** Built-in commands a custom button can run without a payload. */
+export type ToolbarCustomButtonCommandId =
+  | 'bold'
+  | 'italic'
+  | 'underline'
+  | 'strikethrough'
+  | 'undo'
+  | 'redo'
+  | 'acceptChange'
+  | 'rejectChange'
+  | 'acceptAllChanges'
+  | 'rejectAllChanges'
+  | 'track-changes-accept-selection'
+  | 'track-changes-reject-selection'
+  | 'zoom-fit-width'
+  | 'bullet-list'
+  | 'numbered-list'
+  | 'indent-increase'
+  | 'indent-decrease'
+  | 'direction-ltr'
+  | 'direction-rtl'
+  | 'clear-formatting'
+  | 'table-of-contents-insert'
+  | 'table-add-row-before'
+  | 'table-add-row-after'
+  | 'table-delete-row'
+  | 'table-add-column-before'
+  | 'table-add-column-after'
+  | 'table-delete-column'
+  | 'table-delete'
+  | 'table-merge-cells'
+  | 'table-split-cell'
+  | 'table-remove-borders'
+  | 'ruler'
+  | 'formatting-marks'
+  | 'copy-format';
+
+/** Built-in commands a custom dropdown can run with a string or number value. */
+export type ToolbarCustomDropdownCommandId =
+  | 'font-family'
+  | 'font-size'
+  | 'zoom'
+  | 'document-mode'
+  | 'measurement-unit'
+  | 'text-color'
+  | 'highlight-color'
+  | 'link'
+  | 'text-align'
+  | 'line-height'
+  | 'linked-style'
+  | 'acceptChange'
+  | 'rejectChange'
+  | 'track-changes-accept-selection'
+  | 'track-changes-reject-selection';
+
+type ToolbarCustomButtonAction =
+  | {
+      /** Built-in command that needs no payload. */
+      command: ToolbarCustomButtonCommandId;
+      onSelect?: never;
+    }
+  | {
+      command?: never;
+      /** Callback to run when selected. */
+      onSelect: ToolbarCustomItemSelectHandler;
+    };
+
+type ToolbarCustomDropdownAction =
+  | {
+      /** Built-in command that accepts the selected string or number value. */
+      command: ToolbarCustomDropdownCommandId;
+      onSelect?: never;
+    }
+  | {
+      command?: never;
+      /** Callback for registered commands and workflows that need a structured payload. */
+      onSelect: ToolbarCustomItemSelectHandler;
+    };
+
+type ToolbarCustomItemTrigger =
+  | {
+      /** Text shown in the control. */
+      label: string;
+      /** Trusted inline SVG markup shown beside the label. */
+      icon?: string;
+    }
+  | {
+      label?: never;
+      /** Trusted inline SVG markup shown in the control. */
+      icon: string;
+      /** An icon-only control needs an accessible name. */
+      attributes: ToolbarCustomItemAttributes & { ariaLabel: string };
+    };
+
+/** A custom action button in the built-in toolbar. */
+export type ToolbarCustomButtonConfig = ToolbarCustomItemBase &
+  ToolbarCustomItemTrigger &
+  ToolbarCustomButtonAction & {
+    type: 'button';
+  };
+
+/** A custom dropdown in the built-in toolbar. */
+export type ToolbarCustomDropdownConfig = ToolbarCustomItemBase &
+  ToolbarCustomItemTrigger &
+  ToolbarCustomDropdownAction & {
+    type: 'dropdown';
+    /** Options shown when the dropdown opens. */
+    options: readonly ToolbarCustomOption[];
+    /** Draw a caret beside the trigger. */
+    hasCaret?: boolean;
+    /** Initial option value. Uses the option's `id` when its `value` is omitted. */
+    selectedValue?: string | number;
+  };
+
+/** A visual divider between toolbar controls. */
+export interface ToolbarCustomSeparatorConfig extends Pick<ToolbarCustomItemBase, 'id' | 'region'> {
+  type: 'separator';
+}
+
+/** An application-defined entry rendered in the built-in toolbar. */
+export type ToolbarCustomItem = ToolbarCustomButtonConfig | ToolbarCustomDropdownConfig | ToolbarCustomSeparatorConfig;
+
+type ToolbarLegacyItemId =
+  | 'fontFamily'
+  | 'fontSize'
+  | 'strike'
+  | 'highlight'
+  | 'color'
+  | 'tableOfContents'
+  | 'tableActions'
+  | 'textAlign'
+  | 'list'
+  | 'numberedlist'
+  | 'indentleft'
+  | 'indentright'
+  | 'lineHeight'
+  | 'linkedStyles'
+  | 'measurementUnit'
+  | 'formattingMarks'
+  | 'copyFormat'
+  | 'clearFormatting'
+  | 'documentMode'
+  | 'acceptTrackedChangeBySelection'
+  | 'rejectTrackedChangeOnSelection';
+
 /** Startup options for the built-in toolbar rendered by `ui.toolbar`. */
 export interface ToolbarConfig {
   /**
@@ -3334,6 +3693,8 @@ export interface ToolbarConfig {
    * syntax resolves to nothing.
    */
   container?: string | HTMLElement;
+  /** Built-in controls to render by region. Controls keep their built-in order. Omit to use the default toolbar. */
+  items?: Readonly<Partial<Record<ToolbarRegion, readonly ToolbarItemId[]>>>;
   /**
    * Which groups render, or which items they contain.
    *
@@ -3342,31 +3703,61 @@ export interface ToolbarConfig {
    *
    * An object maps each group to its toolbar item ids. Its keys choose the
    * regions and its values form a grouped allowlist.
+   * @deprecated replaceWith=`ui.toolbar.items` removeIn=v3.0
    */
   groups?: readonly string[] | Readonly<Record<string, readonly string[]>>;
-  /** Toolbar item ids to remove from the default set. */
-  excludeItems?: readonly string[];
-  /** Icon overrides keyed by toolbar item id. */
-  icons?: Readonly<Record<string, unknown>>;
-  /** Text overrides keyed by toolbar item id. */
+  /** Controls to remove. Also accepts the id of a custom item. */
+  excludeItems?: readonly (ToolbarItemId | ToolbarLegacyItemId | (string & {}))[];
+  /** Trusted inline SVG overrides keyed by public icon id. */
+  icons?: Readonly<Partial<Record<ToolbarIconId, string>> & Record<string, unknown>>;
+  /** Text overrides keyed by public string id. */
+  strings?: Readonly<Partial<Record<ToolbarStringId, string>>>;
+  /**
+   * Text overrides keyed by the internal toolbar id.
+   * @deprecated replaceWith=`ui.toolbar.strings` removeIn=v3.0
+   */
   texts?: Readonly<Record<string, unknown>>;
-  /** Move controls that do not fit into the overflow menu (default: true). */
+  /** How the toolbar handles controls that no longer fit (default: `'menu'`). */
+  overflow?: 'menu' | 'visible';
+  /**
+   * Move controls that do not fit into the overflow menu.
+   * @deprecated replaceWith=`ui.toolbar.overflow` removeIn=v3.0
+   */
   hideButtons?: boolean;
-  /** Measure available width from the toolbar container instead of the viewport (default: false). */
+  /** Width source used to lay out the toolbar (default: `'viewport'`). */
+  responsiveTo?: 'container' | 'viewport';
+  /**
+   * Measure available width from the toolbar container instead of the viewport.
+   * @deprecated replaceWith=`ui.toolbar.responsiveTo` removeIn=v3.0
+   */
   responsiveToContainer?: boolean;
+  /** Options shown in the font-family dropdown. Register loadable fonts through `fonts.families`. */
+  fontOptions?: readonly ToolbarFontFamilyOption[];
   /**
    * Rows for the font-family dropdown. Register loadable font families through
    * `fonts.families` instead.
+   * @deprecated replaceWith=`ui.toolbar.fontOptions` removeIn=v3.0
    */
   fonts?: readonly ToolbarFontOption[];
-  /** Custom entries appended to the built-in item set. */
+  /** Application-defined controls and separators to add. */
+  customItems?: readonly ToolbarCustomItem[];
+  /**
+   * Application-defined entries appended to the built-in controls.
+   * @deprecated replaceWith=`ui.toolbar.customItems` removeIn=v3.0
+   */
   customButtons?: readonly ToolbarCustomButton[];
+  /** Additional opt-in controls. With `items`, each uses its built-in region unless already listed. */
+  includeItems?: readonly ToolbarOptionalItemId[];
   /**
    * Show the formatting-marks button (default: false). This does not decide
    * whether formatting marks are visible in the document.
+   * @deprecated replaceWith=`ui.toolbar.includeItems` removeIn=v3.0
    */
   showFormattingMarksButton?: boolean;
-  /** Show the table-of-contents button (default: false). */
+  /**
+   * Show the table-of-contents button (default: false).
+   * @deprecated replaceWith=`ui.toolbar.includeItems` removeIn=v3.0
+   */
   showTableOfContentsButton?: boolean;
 }
 
@@ -3659,7 +4050,7 @@ export interface Config {
   toolbar?: string | HTMLElement;
   /**
    * Toolbar groups to show.
-   * @deprecated replaceWith=`ui.toolbar.groups` removeIn=v3.0
+   * @deprecated replaceWith=`ui.toolbar.items` removeIn=v3.0
    */
   toolbarGroups?: string[];
   /**
@@ -3669,7 +4060,7 @@ export interface Config {
   toolbarIcons?: object;
   /**
    * Texts to override in the toolbar.
-   * @deprecated replaceWith=`ui.toolbar.texts` removeIn=v3.0
+   * @deprecated replaceWith=`ui.toolbar.strings` removeIn=v3.0
    */
   toolbarTexts?: object;
   /**

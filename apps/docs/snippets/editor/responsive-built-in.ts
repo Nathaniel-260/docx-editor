@@ -17,7 +17,7 @@ const superdoc = new SuperDoc({
   ui: {
     toolbar: {
       container: '#toolbar',
-      responsiveToContainer: true,
+      responsiveTo: 'container',
     },
     comments: { displayMode: 'auto' },
   },

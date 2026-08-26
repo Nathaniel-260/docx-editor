@@ -1,13 +1,13 @@
 {
   "generatedAt": "2026-06-23T01:53:02.997Z",
   "summary": {
-    "total": 216,
+    "total": 231,
     "byBucket": {
       "legacy-root": 3,
-      "supported-root": 213
+      "supported-root": 228
     },
     "byConfidence": {
-      "high": 168,
+      "high": 183,
       "medium": 48
     }
   },
@@ -84,6 +84,17 @@
       "rationale": "Document API result type returned by activeEditor.doc.bookmarks.get(); useful for consumers typing bookmark workflows from the root package.",
       "confidence": "high",
       "source": "doc-api",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "BuiltInCommandId",
+      "bucket": "supported-root",
+      "rationale": "Exact ids for commands built into the SuperDoc UI controller. Gives consumers autocomplete and a closed type when they do not use registered application commands.",
+      "confidence": "high",
+      "source": "toolbar-config",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,
@@ -546,6 +557,17 @@
       "rationale": "Current layout flow-mode union exported from @superdoc/contracts and used by Config.layoutEngineOptions.flowMode and the v2 layout runtime to select paginated versus semantic flow.",
       "confidence": "high",
       "source": "layout-engine",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "FontFamilyOption",
+      "bucket": "supported-root",
+      "rationale": "Typed row accepted by ui.toolbar.fontOptions and returned by superdoc.fonts.getFontFamilyOptions().",
+      "confidence": "high",
+      "source": "font-system",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,
@@ -2048,6 +2070,17 @@
       "inCjs": false
     },
     {
+      "name": "ToolbarCommandId",
+      "bucket": "supported-root",
+      "rationale": "Command id accepted by the runtime toolbar handle, including application ids registered through ui.commands.register().",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "ToolbarConfig",
       "bucket": "supported-root",
       "rationale": "Named startup configuration for the built-in toolbar under ui.toolbar. Lets consumers assemble and validate a readonly toolbar config outside the root Config object.",
@@ -2061,7 +2094,7 @@
     {
       "name": "ToolbarCustomButton",
       "bucket": "supported-root",
-      "rationale": "Canonical union of the ui.toolbar.customButtons entry shapes. Public extension surface, and the name a consumer annotates with when assembling entries outside the config object.",
+      "rationale": "Deprecated union accepted by ui.toolbar.customButtons. Kept for existing v2 integrations; use ToolbarCustomItem.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
       "inDts": true,
@@ -2072,7 +2105,7 @@
     {
       "name": "ToolbarCustomButtonCommand",
       "bucket": "supported-root",
-      "rationale": "Command value accepted by a custom toolbar button: a canonical command id or a callback receiving ToolbarCustomButtonContext.",
+      "rationale": "Deprecated action type accepted by ui.toolbar.customButtons. Kept for existing v2 integrations.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
       "inDts": true,
@@ -2081,9 +2114,31 @@
       "inCjs": false
     },
     {
+      "name": "ToolbarCustomButtonCommandId",
+      "bucket": "supported-root",
+      "rationale": "Payload-free built-in commands accepted by canonical custom toolbar buttons.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarCustomButtonConfig",
+      "bucket": "supported-root",
+      "rationale": "Canonical custom toolbar button definition using id, region, size, and either command or onSelect.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "ToolbarCustomButtonContext",
       "bucket": "supported-root",
-      "rationale": "Context passed to a custom toolbar command, including the selected dropdown row on 'option'.",
+      "rationale": "Deprecated callback context for ui.toolbar.customButtons. Kept for existing v2 integrations.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
       "inDts": true,
@@ -2094,7 +2149,7 @@
     {
       "name": "ToolbarCustomButtonItem",
       "bucket": "supported-root",
-      "rationale": "Button member of the ToolbarCustomButton union. Requires 'icon': 'defaultLabel' satisfies the affordance check and then renders nothing.",
+      "rationale": "Deprecated button shape accepted by ui.toolbar.customButtons. Kept for existing v2 integrations.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
       "inDts": true,
@@ -2103,9 +2158,31 @@
       "inCjs": false
     },
     {
+      "name": "ToolbarCustomDropdownConfig",
+      "bucket": "supported-root",
+      "rationale": "Canonical custom toolbar dropdown definition with typed options and selection behavior.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarCustomDropdownCommandId",
+      "bucket": "supported-root",
+      "rationale": "Built-in commands accepted by canonical custom toolbar dropdowns with string or number values.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "ToolbarCustomDropdownItem",
       "bucket": "supported-root",
-      "rationale": "Dropdown member of the ToolbarCustomButton union. Requires a visible trigger, which is 'icon', 'label', or 'hasCaret'.",
+      "rationale": "Deprecated dropdown shape accepted by ui.toolbar.customButtons. Kept for existing v2 integrations.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
       "inDts": true,
@@ -2116,7 +2193,7 @@
     {
       "name": "ToolbarCustomDropdownOption",
       "bucket": "supported-root",
-      "rationale": "Row shape for a custom dropdown. Carries the member 'dropdownValueKey' names and the key that reaches the command.",
+      "rationale": "Deprecated dropdown row accepted by ui.toolbar.customButtons. Kept for existing v2 integrations.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
       "inDts": true,
@@ -2125,9 +2202,64 @@
       "inCjs": false
     },
     {
+      "name": "ToolbarCustomItem",
+      "bucket": "supported-root",
+      "rationale": "Canonical union accepted by ui.toolbar.customItems for buttons, dropdowns, and separators.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarCustomItemSelectContext",
+      "bucket": "supported-root",
+      "rationale": "Public context passed to a canonical custom toolbar item's onSelect callback without exposing the internal reactive item.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarCustomItemSelectHandler",
+      "bucket": "supported-root",
+      "rationale": "Named callback type for canonical custom toolbar selection behavior.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarCustomOption",
+      "bucket": "supported-root",
+      "rationale": "Canonical option definition for a custom toolbar dropdown, with stable id, label, and optional value.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarCustomSeparatorConfig",
+      "bucket": "supported-root",
+      "rationale": "Canonical custom toolbar separator definition.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "ToolbarCustomSeparatorItem",
       "bucket": "supported-root",
-      "rationale": "Separator member of the ToolbarCustomButton union. Renders on its own and has nothing to run, so it carries no command.",
+      "rationale": "Deprecated separator shape accepted by ui.toolbar.customButtons. Kept for existing v2 integrations.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
       "inDts": true,
@@ -2138,7 +2270,7 @@
     {
       "name": "ToolbarDropdownOption",
       "bucket": "supported-root",
-      "rationale": "Runtime dropdown row passed to a custom toolbar command through ToolbarCustomButtonContext.option.",
+      "rationale": "Deprecated dropdown row passed to callbacks from ui.toolbar.customButtons. Kept for existing v2 integrations.",
       "confidence": "high",
       "source": "toolbar-custom-buttons",
       "inDts": true,
@@ -2149,7 +2281,62 @@
     {
       "name": "ToolbarFontOption",
       "bucket": "supported-root",
-      "rationale": "Named row shape accepted by ui.toolbar.fonts for the built-in font-family dropdown.",
+      "rationale": "Deprecated row accepted by ui.toolbar.fonts. Kept for existing v2 integrations; use FontFamilyOption.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarIconId",
+      "bucket": "supported-root",
+      "rationale": "Exact public keys accepted by ui.toolbar.icons.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarItemId",
+      "bucket": "supported-root",
+      "rationale": "Exact built-in control ids accepted by ui.toolbar.items, with canonical kebab-case names.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarOptionalItemId",
+      "bucket": "supported-root",
+      "rationale": "Exact opt-in control ids accepted by ui.toolbar.includeItems.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarRegion",
+      "bucket": "supported-root",
+      "rationale": "The left, center, and right regions rendered by the built-in toolbar.",
+      "confidence": "high",
+      "source": "toolbar-config",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "ToolbarStringId",
+      "bucket": "supported-root",
+      "rationale": "Exact public keys accepted by ui.toolbar.strings.",
       "confidence": "high",
       "source": "toolbar-config",
       "inDts": true,

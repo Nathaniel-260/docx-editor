@@ -1,5 +1,6 @@
 // Main component
 export { SuperDocEditor, default } from './SuperDocEditor';
+export type { ToolbarConfig } from 'superdoc';
 
 // Types - extracted from superdoc package for convenience
 export type {

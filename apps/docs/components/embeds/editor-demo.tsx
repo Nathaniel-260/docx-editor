@@ -10,7 +10,7 @@ import {
   contextMenuDemoStrategies,
   hyperlinkDemoBehaviors,
   toolbarDemoExcludedItems,
-  toolbarDemoGroups,
+  toolbarDemoItems,
   toolbarDemoStrategies,
   type BuiltInDemoChoice,
   type CommentsDemoLayout,
@@ -62,11 +62,12 @@ type RetryMount = {
 type UiConfig = Exclude<NonNullable<Config['ui']>, false>;
 type ToolbarUiConfig = Exclude<NonNullable<UiConfig['toolbar']>, boolean>;
 
-const focusedToolbarGroups = {
-  left: [...toolbarDemoGroups.left],
-  center: [...toolbarDemoGroups.center],
-  // The pinned 2.8 demo runtime still requires its overflow trigger in grouped toolbars.
-  right: [...toolbarDemoGroups.right, 'overflow'],
+const pinnedToolbarItems = {
+  left: [...toolbarDemoItems.left],
+  center: [...toolbarDemoItems.center],
+  // The embed runs the stable 2.8 release. Translate the public item id and
+  // include the overflow trigger that release still requires in a focused toolbar.
+  right: ['documentMode', 'zoom', 'overflow'],
 };
 
 const addNoteIcon = [
@@ -75,17 +76,30 @@ const addNoteIcon = [
   '</svg>',
 ].join('');
 
-function getToolbarOptions(strategy: ToolbarDemoStrategy, container: HTMLDivElement): ToolbarUiConfig {
-  const shared = { container, responsiveToContainer: true };
+function getPinnedToolbarBaseOptions(container: HTMLDivElement): ToolbarUiConfig {
+  // The docs app runs the exact stable release pinned in editor-demo-runtime.json.
+  // Keep its older field names inside these adapters; published examples
+  // and agent Markdown teach the current ToolbarConfig.
+  return { container, responsiveToContainer: true };
+}
+
+function getPinnedFocusedToolbarOptions(
+  container: HTMLDivElement,
+  items: Readonly<Record<string, readonly string[]>>,
+): ToolbarUiConfig {
+  return { ...getPinnedToolbarBaseOptions(container), groups: items };
+}
+
+function getPinnedToolbarOptions(strategy: ToolbarDemoStrategy, container: HTMLDivElement): ToolbarUiConfig {
+  const shared = getPinnedToolbarBaseOptions(container);
 
   if (strategy === 'excludeItems') {
     return { ...shared, excludeItems: [...toolbarDemoExcludedItems] };
   }
 
-  if (strategy === 'customButtons') {
+  if (strategy === 'customItems') {
     return {
-      ...shared,
-      groups: focusedToolbarGroups,
+      ...getPinnedFocusedToolbarOptions(container, pinnedToolbarItems),
       customButtons: [
         {
           type: 'button',
@@ -100,7 +114,7 @@ function getToolbarOptions(strategy: ToolbarDemoStrategy, container: HTMLDivElem
     };
   }
 
-  return { ...shared, groups: focusedToolbarGroups };
+  return getPinnedFocusedToolbarOptions(container, pinnedToolbarItems);
 }
 
 function getCommentsInteractionOptions(level: CommentsDemoLevel) {
@@ -315,7 +329,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const [replaceEnabled, setReplaceEnabled] = useState(true);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [state, setState] = useState<DemoState>('idle');
-  const [toolbarStrategy, setToolbarStrategy] = useState<ToolbarDemoStrategy>('groups');
+  const [toolbarStrategy, setToolbarStrategy] = useState<ToolbarDemoStrategy>('items');
   const [trackedChangeCount, setTrackedChangeCount] = useState(0);
   const [viewingTrackedChanges, setViewingTrackedChanges] = useState<ViewingTrackedChangesMode>('original');
   const [zoom, setZoom] = useState<ZoomSlice>(initialZoom);
@@ -486,7 +500,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     const initialDocumentMode = options.documentMode ?? (preset === 'tracked-review' ? 'suggesting' : 'editing');
     const initialHyperlinkBehavior = options.hyperlinkBehavior ?? 'default';
     const initialReplaceEnabled = options.replaceEnabled ?? true;
-    const initialToolbarStrategy = options.toolbarStrategy ?? 'groups';
+    const initialToolbarStrategy = options.toolbarStrategy ?? 'items';
     setDemoInteractionBlocked(true);
     setConfigurationError(null);
     setState('loading');
@@ -542,11 +556,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           ...(preset === 'search'
             ? {
                 search: { replaceEnabled: initialReplaceEnabled },
-                toolbar: {
-                  container: builtInToolbar!,
-                  groups: { left: ['search'] },
-                  responsiveToContainer: true,
-                },
+                toolbar: getPinnedFocusedToolbarOptions(builtInToolbar!, { left: ['search'] }),
               }
             : {}),
           ...(preset === 'context-menu'
@@ -563,14 +573,12 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                 // resolver until that pin includes Config.hyperlinks; the
                 // published examples use the canonical API added in this stack.
                 linkPopover: getPinnedRuntimeLinkPopover(initialHyperlinkBehavior),
-                toolbar: {
-                  container: builtInToolbar!,
-                  groups: { center: ['link'] },
-                  responsiveToContainer: true,
-                },
+                toolbar: getPinnedFocusedToolbarOptions(builtInToolbar!, { center: ['link'] }),
               }
             : {}),
-          ...(preset === 'toolbar' ? { toolbar: getToolbarOptions(initialToolbarStrategy, builtInToolbar!) } : {}),
+          ...(preset === 'toolbar'
+            ? { toolbar: getPinnedToolbarOptions(initialToolbarStrategy, builtInToolbar!) }
+            : {}),
         },
         interaction:
           preset === 'comments' ? { comments: getCommentsInteractionOptions(initialCommentsLevel) } : undefined,

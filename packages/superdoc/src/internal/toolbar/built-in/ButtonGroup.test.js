@@ -81,7 +81,7 @@ const mountOverflowGroup = (attachTo = document.body) => {
   const emitCommand = vi.fn();
 
   wrapper = mount(ButtonGroup, {
-    props: { toolbarItems, overflowItems, position: 'right' },
+    props: { toolbarItems, overflowItems, position: 'right', onCommand: emitCommand },
     attachTo,
     global: {
       config: {
@@ -166,6 +166,24 @@ describe('ButtonGroup font-family combobox wiring', () => {
 });
 
 describe('ButtonGroup overflow menu', () => {
+  it('keeps pointer actions from taking focus away from the editor', async () => {
+    const editor = document.createElement('div');
+    editor.tabIndex = -1;
+    document.body.appendChild(editor);
+    editor.focus();
+
+    mountOverflowGroup();
+    await wrapper.get('[aria-label="Overflow items"]').trigger('click');
+    await nextTick();
+
+    const bold = document.body.querySelector('[aria-label="Bold"]');
+    const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+
+    expect(bold.dispatchEvent(mouseDown)).toBe(false);
+    expect(mouseDown.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(editor);
+  });
+
   it('renders the menu outside the toolbar host so clipping containers cannot hide it', async () => {
     mountOverflowGroup();
 
@@ -282,7 +300,12 @@ describe('ButtonGroup overflow menu', () => {
     zoom125.click();
     await nextTick();
 
-    expect(emitCommand).toHaveBeenCalledWith(expect.objectContaining({ argument: '125%' }));
+    expect(emitCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        argument: '125%',
+        option: expect.objectContaining({ label: '125%', key: 1.25 }),
+      }),
+    );
     expect(document.body.querySelector('.sd-toolbar-overflow-menu')).not.toBeNull();
   });
 });

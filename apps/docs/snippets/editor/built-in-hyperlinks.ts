@@ -9,7 +9,7 @@ const superdoc = new SuperDoc({
     onActivate: handleHyperlinkActivation,
   },
   ui: {
-    toolbar: { container: '#toolbar', groups: { center: ['link'] } },
+    toolbar: { container: '#toolbar', items: { center: ['link'] } },
   },
 });
 
