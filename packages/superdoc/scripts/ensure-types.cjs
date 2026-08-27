@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { formatTypeScriptLaunchError, runTypeScript } = require('./typescript-runner.cjs');
 
 // SD-2864: canonical taxonomy for the published type surface. Mirrors
 // vite.config.js, tsconfig.json, and audit-declarations.cjs from a single
@@ -12,10 +13,7 @@ const typeSurface = require('./type-surface.config.cjs');
 // Verify that vite-plugin-dts generated the expected type entry points.
 // Path aliases are resolved by vite-plugin-dts via tsconfig.json paths.
 const { npmDistRoot: distRoot } = require('./build-output-paths.cjs');
-const packageRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
-const binExtension = process.platform === 'win32' ? '.cmd' : '';
-const resolvePackageBin = (name) => path.join(packageRoot, 'node_modules', '.bin', `${name}${binExtension}`);
 
 // SD-2842: vite-plugin-dts skips hand-written `.d.ts` files in its include
 // glob (it only emits declarations from `.ts`/`.js`). When a file like
@@ -62,8 +60,6 @@ function copyHandwrittenDtsFiles(srcDir, destDir) {
 // `shared/common/<filename>.d.ts`.
 const SHARED_COMMON_DTS_TARGETS = typeSurface.sharedCommonDtsTargets;
 {
-  const { spawnSync: _spawnSync } = require('node:child_process');
-  const tscBin = resolvePackageBin('tsc');
   const sharedCommonDistDir = path.join(distRoot, 'shared/common');
   fs.mkdirSync(sharedCommonDistDir, { recursive: true });
   const sources = SHARED_COMMON_DTS_TARGETS.map((f) => path.join(repoRoot, 'shared/common', f));
@@ -93,9 +89,14 @@ const SHARED_COMMON_DTS_TARGETS = typeSurface.sharedCommonDtsTargets;
   );
   let tscResult;
   try {
-    tscResult = _spawnSync(tscBin, ['-p', tempTsconfig], { stdio: 'inherit' });
+    tscResult = runTypeScript(['-p', tempTsconfig], { stdio: 'inherit' });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+  const launchError = formatTypeScriptLaunchError(tscResult, 'shared/common declarations');
+  if (launchError) {
+    console.error(`[ensure-types] ${launchError}`);
+    process.exit(1);
   }
   if (tscResult.status !== 0) {
     console.error('[ensure-types] tsc failed emitting shared/common declarations');
@@ -110,8 +111,6 @@ const SHARED_COMMON_DTS_TARGETS = typeSurface.sharedCommonDtsTargets;
 // package's `index.ts` (which has no asset imports). The relocation rule rewrites bare
 // `@superdoc/font-system` specifiers in other dist files to `shared/font-system/src/index.d.ts`.
 {
-  const { spawnSync: _spawnSync } = require('node:child_process');
-  const tscBin = resolvePackageBin('tsc');
   const fontSystemSrc = path.join(repoRoot, 'shared/font-system/src');
   const fontSystemDistDir = path.join(distRoot, 'shared/font-system/src');
   fs.mkdirSync(fontSystemDistDir, { recursive: true });
@@ -141,9 +140,14 @@ const SHARED_COMMON_DTS_TARGETS = typeSurface.sharedCommonDtsTargets;
   );
   let tscResult;
   try {
-    tscResult = _spawnSync(tscBin, ['-p', tempTsconfig], { stdio: 'inherit' });
+    tscResult = runTypeScript(['-p', tempTsconfig], { stdio: 'inherit' });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+  const launchError = formatTypeScriptLaunchError(tscResult, '@superdoc/font-system declarations');
+  if (launchError) {
+    console.error(`[ensure-types] ${launchError}`);
+    process.exit(1);
   }
   if (tscResult.status !== 0) {
     console.error('[ensure-types] tsc failed emitting @superdoc/font-system declarations');
