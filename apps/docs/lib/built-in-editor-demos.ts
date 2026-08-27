@@ -49,7 +49,7 @@ export const hyperlinkDemoBehaviors = [
 ] as const satisfies readonly BuiltInDemoChoice<HyperlinkDemoBehavior>[];
 
 export function renderBuiltInEditorDemoMarkdown(
-  preset: 'comments' | 'content-controls' | 'context-menu' | 'hyperlinks' | 'search' | 'toolbar',
+  preset: 'comments' | 'content-controls' | 'context-menu' | 'hyperlinks' | 'loading' | 'search' | 'toolbar',
 ) {
   if (preset === 'toolbar') {
     return [
@@ -103,6 +103,15 @@ export function renderBuiltInEditorDemoMarkdown(
       '- **Custom action — `hyperlinks.onActivate`:** your application renders an action beside the hyperlink.',
       '',
       'The fixture contains one real external hyperlink. Changing the behavior recreates the Editor from its current DOCX.',
+    ].join('\n');
+  }
+
+  if (preset === 'loading') {
+    return [
+      'Loading behavior available in the interactive Editor:',
+      '',
+      '- **Built-in overlay — `ui.loading`:** enabled by default. It reports real document progress and stays visible until the Editor is ready.',
+      '- **Replay loading:** opens the fixture again through `replaceFile()` so the same overlay covers a document replacement.',
     ].join('\n');
   }
 

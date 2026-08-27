@@ -55,6 +55,16 @@ export function BuiltInUiMap() {
 
           <div className='sd-builtin-map-body'>
             <div className='sd-builtin-map-canvas'>
+              {selected === 'loading' ? (
+                <div className={`${regionClass(selected, 'loading', 'float')} sd-builtin-map-loading`}>
+                  <span className='sd-builtin-map-loading-title' />
+                  <span className='sd-builtin-map-loading-copy' />
+                  <span className='sd-builtin-map-loading-track'>
+                    <span />
+                  </span>
+                </div>
+              ) : null}
+
               <div className={`${regionClass(selected, 'search', 'float')} sd-builtin-map-search`}>
                 <span className='sd-builtin-map-search-icon' />
                 <span className='sd-builtin-map-search-field' />

@@ -14,6 +14,7 @@ type ReferenceDefinition = Omit<ConfigExplorerData, 'fields'> & {
   outputFile: string;
   excludeDeprecated?: boolean;
   excludeFields?: readonly string[];
+  includeFields?: readonly string[];
 };
 
 const references: ReferenceDefinition[] = [
@@ -138,6 +139,16 @@ const references: ReferenceDefinition[] = [
     excludeDeprecated: true,
     groups: [{ id: 'other', label: 'Options' }],
   },
+  {
+    typeName: 'UIConfig',
+    outputFile: 'loading-config-reference.json',
+    id: 'loading-config-source',
+    name: 'UIConfig',
+    root: 'ui',
+    label: 'loading UI configuration',
+    includeFields: ['loading'],
+    groups: [{ id: 'other', label: 'Options' }],
+  },
 ];
 
 for (const reference of references) await generateReference(reference);
@@ -222,12 +233,25 @@ async function generateReference(definition: ReferenceDefinition) {
 
   if (!document) throw new Error(`${definition.typeName} was not exported by ${sourcePath}`);
 
-  const { outputFile, typeName: _typeName, excludeDeprecated, excludeFields, ...metadata } = definition;
+  const { outputFile, typeName: _typeName, excludeDeprecated, excludeFields, includeFields, ...metadata } = definition;
+  const includedFieldNames = includeFields ? new Set(includeFields) : undefined;
+  const fields = document.entries
+    .map(toField)
+    .filter(
+      (field) =>
+        (!excludeDeprecated || !field.deprecated) &&
+        !excludeFields?.includes(field.name) &&
+        (!includedFieldNames || includedFieldNames.has(field.name)),
+    );
+
+  const missingFields = includeFields?.filter((name) => !fields.some((field) => field.name === name)) ?? [];
+  if (missingFields.length > 0) {
+    throw new Error(`${definition.typeName} is missing requested fields: ${missingFields.join(', ')}`);
+  }
+
   const data: ConfigExplorerData = {
     ...metadata,
-    fields: document.entries
-      .map(toField)
-      .filter((field) => (!excludeDeprecated || !field.deprecated) && !excludeFields?.includes(field.name)),
+    fields,
   };
   const outputPath = resolve(appRoot, `generated/${outputFile}`);
   await mkdir(dirname(outputPath), { recursive: true });

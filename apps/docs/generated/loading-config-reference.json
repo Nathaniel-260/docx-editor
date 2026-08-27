@@ -1,0 +1,21 @@
+{
+  "id": "loading-config-source",
+  "name": "UIConfig",
+  "root": "ui",
+  "label": "loading UI configuration",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "loading",
+      "type": "boolean",
+      "required": false,
+      "description": "Built-in loading overlay shown while a document opens. Enabled by default. Set to `false` to show your own loading UI instead. This only decides whether SuperDoc draws the overlay. It does not change how long a document takes to open, and it does not affect loading UI the host renders (such as `renderLoading` in `@superdoc/react`). The built-in overlay also masks the document while it opens. Turning it off hands that responsibility to your UI: keep yours up until `onReady`, and around a replacement await `superdoc.replaceFile(...)`.",
+      "group": "other"
+    }
+  ]
+}

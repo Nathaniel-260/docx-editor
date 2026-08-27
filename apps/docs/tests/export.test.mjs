@@ -713,6 +713,7 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
     new URL('../out/md/editor/built-in-ui/responsive-layout.md', import.meta.url),
     'utf8',
   );
+  const loading = await readFile(new URL('../out/md/editor/built-in-ui/loading.md', import.meta.url), 'utf8');
 
   assert.match(hyperlinks, /hyperlinks-sample\.docx/);
   assert.match(hyperlinks, /HyperlinkActivationHandler/);
@@ -764,7 +765,19 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
   assert.match(responsive, /retained semantic document surface/);
   assert.match(responsive, /fullscreenchange/);
   assert.match(responsive, /Avoid nesting the Editor inside another horizontal scroller/);
-  assert.doesNotMatch(`${hyperlinks}\n${contextMenu}\n${contentControls}\n${responsive}`, /<include>/);
+  assert.match(loading, /Built-in overlay — `ui\.loading`/);
+  assert.match(loading, /\| `loading` \| `boolean` \| `true` \|/);
+  assert.doesNotMatch(loading, /<LoadingConfigReference\b/);
+  assert.match(loading, /Replay loading/);
+  assert.match(loading, /renderLoading/);
+  assert.match(loading, /Could not open the document\./);
+  assert.match(loading, /onContentError/);
+  assert.match(loading, /ui: \{ loading: false \}/);
+  assert.match(loading, /await superdoc\.replaceFile\(file\)/);
+  assert.match(loading, /state === 'editing-ready'/);
+  assert.match(loading, /onException/);
+  assert.match(loading, /Could not open the document\. Try again\./);
+  assert.doesNotMatch(`${hyperlinks}\n${contextMenu}\n${contentControls}\n${responsive}\n${loading}`, /<include>/);
 });
 
 test('exports the redistributed Editor guidance as clean Markdown', async () => {

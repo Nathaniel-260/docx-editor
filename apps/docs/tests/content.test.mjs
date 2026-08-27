@@ -54,6 +54,7 @@ const generatedSearchConfigUrl = new URL('../generated/search-config-reference.j
 const generatedSearchFloatingConfigUrl = new URL('../generated/search-floating-config-reference.json', import.meta.url);
 const generatedSearchStringsUrl = new URL('../generated/search-strings-reference.json', import.meta.url);
 const generatedHyperlinksConfigUrl = new URL('../generated/hyperlinks-config-reference.json', import.meta.url);
+const generatedLoadingConfigUrl = new URL('../generated/loading-config-reference.json', import.meta.url);
 const generatedContextMenuConfigUrl = new URL('../generated/context-menu-config-reference.json', import.meta.url);
 const generatedToolbarConfigUrl = new URL('../generated/toolbar-config-reference.json', import.meta.url);
 const generatedCommentsConfigUrl = new URL('../generated/comments-config-reference.json', import.meta.url);
@@ -119,6 +120,7 @@ const registeredComponents = new Set([
   'HyperlinksConfigReference',
   'InterfaceOwnership',
   'LifecycleJourney',
+  'LoadingConfigReference',
   'MigrationAgentPrompt',
   'MigrationExplorer',
   'MigrationExample',
@@ -136,6 +138,7 @@ const editorDemoPresets = new Set([
   'context-menu',
   'document-modes',
   'hyperlinks',
+  'loading',
   'proofing',
   'search',
   'toolbar',
@@ -649,6 +652,30 @@ test('the generated Hyperlinks reference mirrors every canonical field', async (
   assert.deepEqual(generatedFields, sourceFields);
   assert.equal(new Set(generatedFields).size, generatedFields.length);
   assert.ok(generatedHyperlinksConfig.fields.every((field) => field.type && field.description && !field.deprecated));
+});
+
+test('the Loading configuration explorer mirrors UIConfig.loading', async () => {
+  const [generatedLoadingConfig, superdocTypes] = await Promise.all([
+    readFile(generatedLoadingConfigUrl, 'utf8').then(JSON.parse),
+    readFile(superdocCoreTypesUrl, 'utf8'),
+  ]);
+  const { loadingConfigExplorer } = await import('../lib/loading-config-explorer.ts');
+  const { configFieldTemplate, renderConfigReferenceMarkdown } = await import('../lib/config-explorer.ts');
+  const uiConfigBody = superdocTypes.match(/export interface UIConfig \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+  const loadingDeclaration = uiConfigBody.match(/^\s{2}loading\??:\s*([^;]+);/mu);
+  const field = loadingConfigExplorer.fields[0];
+  const group = loadingConfigExplorer.groups[0];
+
+  assert.ok(loadingDeclaration, 'UIConfig.loading must remain public.');
+  assert.deepEqual(generatedLoadingConfig.fields.map((candidate) => candidate.name), ['loading']);
+  assert.equal(field.name, 'loading');
+  assert.equal(field.type, loadingDeclaration[1].trim());
+  assert.equal(field.default, 'true');
+  assert.equal(
+    configFieldTemplate(loadingConfigExplorer, group, field),
+    ['ui: {', '  loading: false', '}'].join('\n'),
+  );
+  assert.match(renderConfigReferenceMarkdown(loadingConfigExplorer), /\| `loading` \| `boolean` \| `true` \|/u);
 });
 
 test('the Hyperlinks configuration explorer renders the canonical activation result', async () => {

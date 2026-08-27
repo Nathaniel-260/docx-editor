@@ -31,6 +31,7 @@ type EditorDemoPreset =
   | 'context-menu'
   | 'document-modes'
   | 'hyperlinks'
+  | 'loading'
   | 'proofing'
   | 'search'
   | 'toolbar'
@@ -65,6 +66,11 @@ type RetryMount = {
 type UiConfig = Exclude<NonNullable<Config['ui']>, false>;
 type CommentsUiConfig = Exclude<NonNullable<UiConfig['comments']>, boolean>;
 type ToolbarUiConfig = Exclude<NonNullable<UiConfig['toolbar']>, boolean>;
+
+function documentReplacementSucceeded(result: unknown) {
+  const state = result && typeof result === 'object' ? (result as { state?: unknown }).state : undefined;
+  return state === undefined || state === null || state === 'review-ready' || state === 'editing-ready';
+}
 
 const pinnedToolbarItems = {
   left: [...toolbarDemoItems.left],
@@ -507,7 +513,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     const initialIncludeTrackedDeletions = options.includeTrackedDeletions ?? false;
     const initialReplaceControls = options.replaceControls ?? true;
     const initialToolbarStrategy = options.toolbarStrategy ?? 'items';
-    setDemoInteractionBlocked(true);
+    // The loading preset exists to expose the real status/progress surface.
+    // `inert` would remove that status from the accessibility tree.
+    if (preset !== 'loading') setDemoInteractionBlocked(true);
     setConfigurationError(null);
     setState('loading');
     let replacedEditor = false;
@@ -561,7 +569,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
         proofing: preset === 'proofing' ? { enabled: true, provider: proofingProvider } : undefined,
         ui: {
           comments: getPinnedCommentsOptions(preset === 'comments' ? initialCommentsLayout : 'inline'),
-          loading: false,
+          loading: preset === 'loading',
           ...(preset === 'search'
             ? {
                 // AIDEV-NOTE: The embed runs the exact stable release in
@@ -813,17 +821,29 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     setModeResetBusy(true);
     try {
       const result = await instance.replaceFile(await getFixtureFile());
-      const replacement = result && typeof result === 'object' ? (result as { state?: unknown }) : null;
-      const replacementState = replacement?.state ?? null;
-      const replacementSucceeded =
-        replacementState === null || replacementState === 'review-ready' || replacementState === 'editing-ready';
-      if (!replacementSucceeded) throw new Error('SuperDoc could not reset the sample document.');
+      if (!documentReplacementSucceeded(result)) throw new Error('SuperDoc could not reset the sample document.');
 
       instance.setDocumentMode(documentMode);
     } catch {
       setState('error');
     } finally {
       if (mountedRef.current) setModeResetBusy(false);
+    }
+  }
+
+  async function replayLoading() {
+    const instance = instanceRef.current;
+    if (!instance || !fixture || configurationBusy) return;
+
+    setConfigurationBusy(true);
+    setConfigurationError(null);
+    try {
+      const result = await instance.replaceFile(await getFixtureFile());
+      if (!documentReplacementSucceeded(result)) throw new Error('SuperDoc could not reopen the sample document.');
+    } catch {
+      if (mountedRef.current) setConfigurationError('The document could not be reopened. Try again.');
+    } finally {
+      if (mountedRef.current) setConfigurationBusy(false);
     }
   }
 
@@ -922,11 +942,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                         ? (contextMenuActionStatus ?? 'Select text, then right-click to open the document menu.')
                         : preset === 'hyperlinks'
                           ? 'Click the hyperlink to try the selected activation behavior.'
-                          : preset === 'search'
-                            ? 'Search for “Client”, or include tracked deletions and search for “Legacy”.'
-                            : preset === 'toolbar'
-                              ? 'Switch strategies, then try the rendered controls in the document.'
-                              : 'Loads the sample DOCX in suggesting mode.'}
+                          : preset === 'loading'
+                            ? 'Replay loading to see the built-in progress overlay during a document replacement.'
+                            : preset === 'search'
+                              ? 'Search for “Client”, or include tracked deletions and search for “Legacy”.'
+                              : preset === 'toolbar'
+                                ? 'Switch strategies, then try the rendered controls in the document.'
+                                : 'Loads the sample DOCX in suggesting mode.'}
           </span>
         </div>
         <div className='sd-editor-demo-actions'>
@@ -935,8 +957,15 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               Try sample again
             </button>
           ) : (
-            <span className='sd-editor-demo-status'>{state === 'ready' ? 'Ready' : 'Loading…'}</span>
+            <span className='sd-editor-demo-status' aria-live='polite'>
+              {state === 'ready' && !(preset === 'loading' && configurationBusy) ? 'Ready' : 'Loading…'}
+            </span>
           )}
+          {preset === 'loading' && state === 'ready' ? (
+            <button type='button' disabled={configurationBusy} onClick={() => void replayLoading()}>
+              Replay loading
+            </button>
+          ) : null}
           {allowLocalFile ? (
             <>
               <button
@@ -1117,11 +1146,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                       ? 'The context-menu editor could not load. Try again.'
                       : preset === 'hyperlinks'
                         ? 'The hyperlinks editor could not load. Try again.'
-                        : preset === 'search'
-                          ? 'The search editor could not load. Try again.'
-                          : preset === 'toolbar'
-                            ? 'The toolbar editor could not load. Try again.'
-                            : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
+                        : preset === 'loading'
+                          ? 'The loading UI demo could not open the document. Try again.'
+                          : preset === 'search'
+                            ? 'The search editor could not load. Try again.'
+                            : preset === 'toolbar'
+                              ? 'The toolbar editor could not load. Try again.'
+                              : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
           </p>
         ) : null}
         {configurationError ? (
@@ -1230,8 +1261,8 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           ref={mountRef}
           className='sd-editor-demo-surface'
           hidden={state === 'idle'}
-          aria-busy={configurationBusy}
-          inert={configurationBusy}
+          aria-busy={configurationBusy && preset !== 'loading'}
+          inert={configurationBusy && preset !== 'loading'}
           tabIndex={preset === 'document-modes' && documentMode === 'viewing' ? -1 : undefined}
           onPointerDownCapture={() => {
             if (preset === 'document-modes' && documentMode === 'viewing') {
@@ -1257,11 +1288,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                         ? 'The context-menu editor is loading.'
                         : preset === 'hyperlinks'
                           ? 'The hyperlinks editor is loading.'
-                          : preset === 'search'
-                            ? 'The search editor is loading.'
-                            : preset === 'toolbar'
-                              ? 'The toolbar editor is loading.'
-                              : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
+                          : preset === 'loading'
+                            ? 'The document loading UI is loading.'
+                            : preset === 'search'
+                              ? 'The search editor is loading.'
+                              : preset === 'toolbar'
+                                ? 'The toolbar editor is loading.'
+                                : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
             </p>
           </div>
         ) : null}

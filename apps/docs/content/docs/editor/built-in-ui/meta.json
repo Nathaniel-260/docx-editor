@@ -9,6 +9,7 @@
     "hyperlinks",
     "context-menus",
     "content-controls",
-    "responsive-layout"
+    "responsive-layout",
+    "loading"
   ]
 }

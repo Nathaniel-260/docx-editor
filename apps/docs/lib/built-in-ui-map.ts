@@ -5,7 +5,8 @@ export type BuiltInUiSurfaceId =
   | 'hyperlinks'
   | 'context-menu'
   | 'content-controls'
-  | 'layout';
+  | 'layout'
+  | 'loading';
 
 export type BuiltInUiInlinePart = { kind: 'text'; value: string } | { kind: 'code'; value: string };
 
@@ -97,6 +98,14 @@ export const builtInUiSurfaces = [
       { kind: 'text', value: ' to measure its mount instead.' },
     ],
     description: 'Fit the document to its container, adapt built-in chrome, and refit after fullscreen changes.',
+  },
+  {
+    id: 'loading',
+    slug: 'loading',
+    label: 'Loading',
+    href: '/editor/built-in-ui/loading',
+    initialBehavior: [{ kind: 'text', value: 'SuperDoc shows document progress until the Editor is ready.' }],
+    description: 'Keep the built-in progress overlay or let your application own the loading state.',
   },
 ] as const satisfies readonly BuiltInUiSurface[];
 

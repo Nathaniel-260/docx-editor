@@ -1,0 +1,58 @@
+---
+title: Choose a document loading UI
+navTitle: Loading
+description: Keep SuperDoc's progress overlay or replace it with an application-owned loading state.
+---
+
+SuperDoc shows document progress while the Editor opens. Keep this default unless your application needs to own the
+entire loading experience.
+
+## Try the built-in overlay
+
+Select **Replay loading**. SuperDoc opens the document again and keeps the existing content covered until the
+replacement is ready.
+
+<EditorDemo fixture='/fixtures/getting-started.docx' preset='loading' title='Try document loading' />
+
+## Keep the built-in progress overlay
+
+No configuration is required. The overlay follows real document progress and stays visible until the Editor is ready.
+It also appears when `replaceFile()` opens another DOCX.
+
+In React, omit `renderLoading` so the built-in overlay remains visible:
+
+<include>../../../../snippets/editor/react-built-in-loading.tsx</include>
+
+Wait for `onReady` before enabling actions that depend on the document.
+
+## Show application loading UI
+
+In React, pass `renderLoading` to replace the initial loading experience. The wrapper hides the Editor until `onReady`:
+
+<include>../../../../snippets/editor/react-custom-loading.tsx</include>
+
+This fallback also appears when changing the `document` prop. It does not run for an imperative `replaceFile()` call;
+the built-in overlay still covers that operation.
+
+For Vanilla, set `ui.loading: false` only when your application covers both the initial open and every file replacement:
+
+<include>../../../../snippets/editor/custom-loading.html</include>
+
+<include>../../../../snippets/editor/custom-loading.ts</include>
+
+Keep the application state visible until `onReady`. Around `replaceFile()`, keep it visible until the call returns a
+ready state. If opening fails, replace the loading message with an error instead of revealing an incomplete Editor.
+
+## Configure the overlay
+
+Choose the field to see its generated TypeScript signature and copy a focused configuration fragment.
+
+<LoadingConfigReference />
+
+This reference covers the core `Config` option. React's `renderLoading` is a `SuperDocEditor` prop, so it remains in the
+React example above.
+
+## Continue to custom UI
+
+Use [Custom UI](/editor/custom-ui/overview) when your application should own loading alongside the toolbar, comments,
+review controls, and other Editor chrome.

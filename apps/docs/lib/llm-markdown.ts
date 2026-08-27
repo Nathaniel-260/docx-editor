@@ -7,6 +7,7 @@ import {
 import { renderConfigReferenceMarkdown } from './config-explorer';
 import { contextMenuConfigExplorer } from './context-menu-config-explorer';
 import { hyperlinksConfigExplorer } from './hyperlinks-config-explorer';
+import { loadingConfigExplorer } from './loading-config-explorer';
 import { renderBuiltInUiMapMarkdown } from './built-in-ui-map';
 import { renderBuiltInEditorDemoMarkdown } from './built-in-editor-demos';
 import { renderLifecycleJourneyMarkdown } from './lifecycle-journey';
@@ -38,6 +39,7 @@ export const llmPlaceholderComponents = [
   'HyperlinksConfigReference',
   'InterfaceOwnership',
   'LifecycleJourney',
+  'LoadingConfigReference',
   'MigrationAgentPrompt',
   'MigrationExplorer',
   'ProofingConfigReference',
@@ -126,6 +128,9 @@ export function renderLLMMarkdown(markdown: string) {
     HyperlinksConfigReference() {
       return renderConfigReferenceMarkdown(hyperlinksConfigExplorer);
     },
+    LoadingConfigReference() {
+      return renderConfigReferenceMarkdown(loadingConfigExplorer);
+    },
     CustomBoldDemo() {
       return [
         '> **Live example: one custom control on a real document**',
@@ -189,6 +194,7 @@ export function renderLLMMarkdown(markdown: string) {
         preset === 'content-controls' ||
         preset === 'context-menu' ||
         preset === 'hyperlinks' ||
+        preset === 'loading' ||
         preset === 'search' ||
         preset === 'toolbar'
           ? preset

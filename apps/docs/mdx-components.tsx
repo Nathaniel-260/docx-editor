@@ -19,6 +19,7 @@ import { FileDownload } from '@/components/mdx/file-download';
 import { FrameworkExample, FrameworkExampleTabs } from '@/components/mdx/FrameworkExampleTabs';
 import { HyperlinksConfigReference } from '@/components/mdx/hyperlinks-config-reference';
 import { LifecycleJourney } from '@/components/embeds/lifecycle-journey';
+import { LoadingConfigReference } from '@/components/mdx/loading-config-reference';
 import { MigrationAgentPrompt } from '@/components/mdx/MigrationAgentPrompt';
 import { MigrationExplorer } from '@/components/mdx/migration-explorer';
 import { MigrationExample, MigrationExampleTabs } from '@/components/mdx/migration-example-tabs';
@@ -71,6 +72,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     HyperlinksConfigReference,
     InterfaceOwnership,
     LifecycleJourney,
+    LoadingConfigReference,
     MigrationAgentPrompt,
     MigrationExplorer,
     MigrationExample,
