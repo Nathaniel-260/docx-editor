@@ -34,7 +34,9 @@ export type SectionPageNumberingFormat =
   | 'upperLetter'
   | 'lowerRoman'
   | 'upperRoman'
-  | 'numberInDash';
+  | 'numberInDash'
+  | 'hebrew1'
+  | 'hebrew2';
 
 export type SectionPageNumberingChapterSeparator = 'hyphen' | 'period' | 'colon' | 'emDash' | 'enDash';
 

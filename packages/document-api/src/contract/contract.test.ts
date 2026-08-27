@@ -128,6 +128,26 @@ describe('document-api contract catalog', () => {
     expect(input.required).not.toContain('isLgl');
   });
 
+  it('publishes Hebrew page-numbering formats for section reads and writes', () => {
+    const schemas = buildInternalContractSchemas();
+    const formats = [
+      'decimal',
+      'lowerLetter',
+      'upperLetter',
+      'lowerRoman',
+      'upperRoman',
+      'numberInDash',
+      'hebrew1',
+      'hebrew2',
+    ];
+    const setInput = schemas.operations['sections.setPageNumbering'].input as ContractTestSchemaShape;
+    const listOutput = schemas.operations['sections.list'].output as ContractTestSchemaShape;
+    const listedFormat = listOutput.properties?.items?.items?.properties?.pageNumbering?.properties?.format;
+
+    expect(setInput.properties?.format?.enum).toEqual(formats);
+    expect(listedFormat?.enum).toEqual(formats);
+  });
+
   it('publishes review-aware blocks.list input and effective-mode output', () => {
     const schemas = buildInternalContractSchemas();
     const operation = schemas.operations['blocks.list'];

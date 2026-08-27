@@ -45,7 +45,15 @@ export interface SDSection {
   };
   pageNumbering?: {
     start?: number;
-    format?: 'decimal' | 'lowerLetter' | 'upperLetter' | 'lowerRoman' | 'upperRoman' | 'numberInDash';
+    format?:
+      | 'decimal'
+      | 'lowerLetter'
+      | 'upperLetter'
+      | 'lowerRoman'
+      | 'upperRoman'
+      | 'numberInDash'
+      | 'hebrew1'
+      | 'hebrew2';
     chapterStyle?: number;
     chapterSeparator?: 'hyphen' | 'period' | 'colon' | 'emDash' | 'enDash';
   };

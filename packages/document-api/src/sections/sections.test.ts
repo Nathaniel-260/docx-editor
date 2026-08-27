@@ -138,6 +138,21 @@ describe('sections API validation', () => {
     );
   });
 
+  it.each(['hebrew1', 'hebrew2'] as const)('accepts %s for setPageNumbering', (format) => {
+    const setPageNumbering = mock(makeAdapter().setPageNumbering);
+    const adapter = makeAdapter({ setPageNumbering });
+
+    executeSectionsSetPageNumbering(adapter, {
+      target: { kind: 'section', sectionId: 'section-0' },
+      format,
+    });
+
+    expect(setPageNumbering).toHaveBeenCalledWith(
+      { target: { kind: 'section', sectionId: 'section-0' }, format },
+      { changeMode: 'direct', dryRun: false, expectedRevision: undefined },
+    );
+  });
+
   it('rejects invalid chapterSeparator for setPageNumbering', () => {
     const adapter = makeAdapter();
     expect(() =>

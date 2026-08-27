@@ -1,5 +1,14 @@
 export type PageNumberFieldFormat = {
-  format?: 'decimal' | 'upperRoman' | 'lowerRoman' | 'upperLetter' | 'lowerLetter' | 'numberInDash' | 'ordinal';
+  format?:
+    | 'decimal'
+    | 'upperRoman'
+    | 'lowerRoman'
+    | 'upperLetter'
+    | 'lowerLetter'
+    | 'numberInDash'
+    | 'ordinal'
+    | 'hebrew1'
+    | 'hebrew2';
   zeroPadding?: number;
   numericPicture?: string;
 };
@@ -48,6 +57,40 @@ function toOrdinal(value: number): string {
   }
 }
 
+// Word's Hebrew numerals cover 1-392 and stop there. A list marker wraps back
+// to א past that bound, but a PAGE field does not: Word replaces the number
+// with an error string localized to the Word UI language. Measured on a
+// document whose sectPr carries <w:pgNumType w:fmt="hebrew1"/> (and hebrew2 in
+// a second section), page 392 is the last one numbered and 393 onward read
+// "שגיאה! אין אפשרות לייצג את המספר בתבנית שצוינה." on a Hebrew-UI Word 16.
+// There is no locale-independent string to reproduce, so fall back to decimal
+// and keep the page readable. In range, the output is byte-identical to Word.
+//
+// hebrew1 is gematria, with 15 and 16 spelled טו and טז at every hundreds level
+// so they do not spell the divine names יה and יו. hebrew2 counts the 22-letter
+// alphabet, adding a ת prefix per completed pass, and carries a leading U+200F
+// that hebrew1 does not.
+const HEBREW_PAGE_NUMBER_MAX = 392;
+const HEBREW_HUNDREDS = ['', 'ק', 'ר', 'ש'];
+const HEBREW_TENS = ['', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ'];
+const HEBREW_ONES = ['', 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'];
+const HEBREW_ALPHABET = 'אבגדהוזחטיכלמנסעפצקרשת';
+
+function toHebrewNumeral(value: number): string {
+  if (value > HEBREW_PAGE_NUMBER_MAX) return String(value);
+  const hundreds = HEBREW_HUNDREDS[Math.floor(value / 100)];
+  const rest = value % 100;
+  if (rest === 15) return `${hundreds}טו`;
+  if (rest === 16) return `${hundreds}טז`;
+  return `${hundreds}${HEBREW_TENS[Math.floor(rest / 10)]}${HEBREW_ONES[rest % 10]}`;
+}
+
+function toHebrewAlphabetic(value: number): string {
+  if (value > HEBREW_PAGE_NUMBER_MAX) return String(value);
+  const repeats = Math.floor((value - 1) / HEBREW_ALPHABET.length);
+  return `\u200F${'ת'.repeat(repeats)}${HEBREW_ALPHABET[(value - 1) % HEBREW_ALPHABET.length]}`;
+}
+
 export function formatPageNumber(pageNumber: number, format: PageNumberFormat): string {
   const value = Math.max(1, Math.trunc(Number.isFinite(pageNumber) ? pageNumber : 1));
 
@@ -64,6 +107,10 @@ export function formatPageNumber(pageNumber: number, format: PageNumberFormat): 
       return `- ${value} -`;
     case 'ordinal':
       return toOrdinal(value);
+    case 'hebrew1':
+      return toHebrewNumeral(value);
+    case 'hebrew2':
+      return toHebrewAlphabetic(value);
     case 'decimal':
     default:
       return String(value);

@@ -1725,7 +1725,7 @@ const sectionHeaderFooterKindSchema: JsonSchema = { enum: ['header', 'footer'] }
 const sectionHeaderFooterVariantSchema: JsonSchema = { enum: ['default', 'first', 'even'] };
 const sectionLineNumberRestartSchema: JsonSchema = { enum: ['continuous', 'newPage', 'newSection'] };
 const sectionPageNumberFormatSchema: JsonSchema = {
-  enum: ['decimal', 'lowerLetter', 'upperLetter', 'lowerRoman', 'upperRoman', 'numberInDash'],
+  enum: ['decimal', 'lowerLetter', 'upperLetter', 'lowerRoman', 'upperRoman', 'numberInDash', 'hebrew1', 'hebrew2'],
 };
 const sectionRangeDomainSchema = objectSchema(
   {
