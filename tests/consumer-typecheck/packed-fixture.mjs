@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export function installPackedSuperdocFixture({ fixtureRoot, superdocTarball, engineTarball }) {
+export function installPackedSuperdocFixture({ fixtureRoot, superdocTarball, engineTarball, fontsTarball }) {
   const manifestPath = join(fixtureRoot, 'package.json');
   const workspacePath = join(fixtureRoot, 'pnpm-workspace.yaml');
   const originalManifest = readFileSync(manifestPath, 'utf8');
@@ -14,6 +14,7 @@ export function installPackedSuperdocFixture({ fixtureRoot, superdocTarball, eng
       ...manifest.dependencies,
       superdoc: `file:${superdocTarball}`,
       ...(engineTarball ? { '@superdoc/docx-engine': `file:${engineTarball}` } : {}),
+      ...(fontsTarball ? { '@superdoc/fonts': `file:${fontsTarball}` } : {}),
     };
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     if (engineTarball) {

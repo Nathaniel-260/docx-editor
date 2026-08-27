@@ -1,17 +1,17 @@
 /**
  * TypeScript compatibility matrix for the v2 public package contract.
  *
- * The fixture installs SuperDoc from the packed tarball at
- * ../../packages/superdoc/superdoc.tgz, so the matrix tests the
- * customer-visible package surface rather than workspace symlinks.
+ * The fixture installs SuperDoc and its optional font bundle from packed tarballs, so the matrix
+ * tests the customer-visible package surfaces rather than workspace symlinks.
  *
  * Run: npm run typecheck:matrix
  *
  * Pass --use-existing-tarball to freshly install an already-built
  * superdoc.tgz, or --skip-pack to reuse the already-installed fixture.
  */
-import { execSync } from 'child_process';
-import { existsSync } from 'fs';
+import { execFileSync, execSync } from 'child_process';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -56,15 +56,28 @@ if (!skipPack) {
     console.error(`Expected tarball at ${tarballPath} but it is missing.`);
     process.exit(1);
   }
+  const fontsPackRoot = mkdtempSync(join(tmpdir(), 'superdoc-fonts-pack-'));
   try {
+    execFileSync('npm', ['pack', '--silent', '--pack-destination', fontsPackRoot], {
+      cwd: join(repoRoot, 'packages', 'fonts'),
+      stdio: 'inherit',
+    });
+    const fontsTarballs = readdirSync(fontsPackRoot).filter((name) => name.endsWith('.tgz'));
+    if (fontsTarballs.length !== 1) throw new Error(`Expected one fonts tarball, found ${fontsTarballs.length}`);
+    const [fontsTarballName] = fontsTarballs;
+    const fontsTarballPath = join(fontsPackRoot, fontsTarballName);
+    if (!existsSync(fontsTarballPath)) throw new Error(`Expected fonts tarball at ${fontsTarballPath}`);
     installPackedSuperdocFixture({
       fixtureRoot: __dirname,
       superdocTarball: tarballPath,
       engineTarball: process.env.SUPERDOC_DOCX_ENGINE_TARBALL,
+      fontsTarball: fontsTarballPath,
     });
   } catch {
-    console.error('Failed to install fixture from tarball.');
+    console.error('Failed to install fixture from packed SuperDoc packages.');
     process.exit(1);
+  } finally {
+    rmSync(fontsPackRoot, { recursive: true, force: true });
   }
   console.log('Fresh fixture install complete.\n');
 }
