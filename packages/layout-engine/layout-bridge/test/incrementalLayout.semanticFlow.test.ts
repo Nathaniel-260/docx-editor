@@ -29,6 +29,80 @@ const makeParagraphMeasure = (lineHeight: number, runLength: number, maxWidth: n
 });
 
 describe('incrementalLayout semantic flow', () => {
+  it('resolves live REF text before measuring the field paragraph', async () => {
+    const field: FlowBlock = {
+      kind: 'paragraph',
+      id: 'field',
+      runs: [
+        {
+          text: 'stale',
+          fontFamily: 'Arial',
+          fontSize: 12,
+          crossReferenceMetadata: {
+            kind: 'ref',
+            instruction: 'REF Target',
+            target: 'Target',
+          },
+        },
+      ],
+    };
+    const target: FlowBlock = {
+      kind: 'paragraph',
+      id: 'target',
+      runs: [
+        {
+          text: '',
+          fontFamily: 'Arial',
+          fontSize: 12,
+          dataAttrs: {
+            'data-bookmark-marker': 'start',
+            'data-bookmark-id': '1',
+            'data-bookmark-name': 'Target',
+          },
+        },
+        { text: 'Current target', fontFamily: 'Arial', fontSize: 12 },
+        {
+          text: '',
+          fontFamily: 'Arial',
+          fontSize: 12,
+          dataAttrs: { 'data-bookmark-marker': 'end', 'data-bookmark-id': '1' },
+        },
+      ],
+    };
+    const previousTarget: FlowBlock = {
+      ...target,
+      runs:
+        target.kind === 'paragraph'
+          ? target.runs.map((run) =>
+              'text' in run && run.text === 'Current target' ? { ...run, text: 'Previous target' } : { ...run },
+            )
+          : [],
+    } as FlowBlock;
+    const measuredText = new Map<string, string>();
+    const measureBlock = vi.fn(async (block: FlowBlock, constraints: { maxWidth: number; maxHeight: number }) => {
+      if (block.kind !== 'paragraph') throw new Error(`Unexpected block kind: ${block.kind}`);
+      const text = block.runs.map((run) => ('text' in run ? run.text : '')).join('');
+      measuredText.set(block.id, text);
+      return makeParagraphMeasure(20, text.length, constraints.maxWidth);
+    });
+
+    await incrementalLayout(
+      [field, previousTarget],
+      null,
+      [field, target],
+      {
+        flowMode: 'semantic',
+        pageSize: { w: 600, h: 800 },
+        margins: { top: 40, right: 40, bottom: 40, left: 40 },
+        semantic: { contentWidth: 520, marginTop: 40, marginBottom: 40 },
+      },
+      measureBlock,
+    );
+
+    expect(measuredText.get('field')).toBe('Current target');
+    expect(field.kind === 'paragraph' ? field.runs[0]?.text : '').toBe('stale');
+  });
+
   it('rewrites section-break columns to single-column semantic width before layout', async () => {
     const semanticMargins = { top: 24, right: 100, bottom: 36, left: 100 };
     const semanticContentWidth = 600;

@@ -13,6 +13,7 @@ export type PageCheckpointDependencyClass =
   | 'non-flowing-page-relative-body-anchors'
   | 'footnotes'
   | 'page-references'
+  | 'cross-references'
   | 'keep-constraints'
   | 'tables'
   | 'furniture-anchored-objects';
@@ -25,6 +26,7 @@ export const PAGE_CHECKPOINT_DEPENDENCY_CLASSES = Object.freeze([
   'non-flowing-page-relative-body-anchors',
   'footnotes',
   'page-references',
+  'cross-references',
   'keep-constraints',
   'tables',
   'furniture-anchored-objects',

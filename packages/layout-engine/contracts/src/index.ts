@@ -581,6 +581,17 @@ export interface PageRefLocation {
   pmPosition?: number;
 }
 
+export type CrossReferenceMetadata = {
+  /** Cross-reference family parsed from the field instruction. */
+  kind: 'ref' | 'noteRef' | 'styleRef';
+  /** Original field instruction, retained so Word switches remain authoritative. */
+  instruction: string;
+  /** Bookmark name for REF/NOTEREF, or style name for STYLEREF. */
+  target: string;
+  /** STYLEREF `\\l`: prefer the following/last matching paragraph. */
+  preferFollowing?: boolean;
+};
+
 export type TextRun = RunMarks & {
   kind?: 'text';
   text: string;
@@ -623,6 +634,8 @@ export type TextRun = RunMarks & {
     /** CHARFORMAT / MERGEFORMAT, if present. */
     fieldResultFormat?: FieldResultFormat;
   };
+  /** Metadata for REF/NOTEREF/STYLEREF live result resolution before measurement. */
+  crossReferenceMetadata?: CrossReferenceMetadata;
   /** Metadata for SEQ tokens (resolved by the document runtime before layout measurement). */
   seqMetadata?: {
     identifier: string;

@@ -670,10 +670,11 @@ describe('incrementalLayout affected frontier', () => {
     );
     expect(result.measures[editedIndex]).not.toBe(previous.measures[editedIndex]);
     expect(result.measures[diagnosticIndex]).not.toBe(previous.measures[diagnosticIndex]);
+    expect(result.measureReuse).toMatchObject({ mode: 'proved-dirty-only', blocksMeasured: 2 });
     expect(result.layoutReuse?.mode).toBe('tail-splice');
   });
 
-  it('locally paginates a proved split while lazily rekeying ordinal-scoped retained tail ids', async () => {
+  it('locally paginates a proved split without treating its inserted tail as retained vAlign evidence', async () => {
     const previousBlocks = Array.from({ length: 12 }, (_, index) =>
       paragraph(`n/main:body/P${index}/o${index}`, `text-${index}`, 1 + index * 20),
     );
@@ -743,12 +744,17 @@ describe('incrementalLayout affected frontier', () => {
         allowBlockIdChurn: true,
         dirtyBlockIds: dirtyIds,
         dependencyProof: {
-          profile: 'single-section-local-text',
+          profile: 'page-checkpoint-local-text',
           blockIdsUnchanged: true,
           blockIdsUnique: true,
-          globalDependenciesAbsent: true,
+          globalDependenciesAbsent: false,
+          globalDependenciesFencedByPageCheckpoint: true,
+          admittedDependencyClasses: ['cross-references'],
           renderInputsUnchanged: true,
           pageReferencesAbsent: true,
+          crossReferencesAbsent: false,
+          multiColumnSectionsProvedNonBalanceable: true,
+          vAlignSectionsBoundaryBlockId: previousBlocks[2]!.id,
         },
         provedDirtyRegion,
         provedDirtyMeasureConstraints: new Map(dirtyIds.map((id) => [id, { maxWidth: 180, maxHeight: 80 }])),

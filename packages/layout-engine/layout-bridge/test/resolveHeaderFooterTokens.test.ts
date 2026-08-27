@@ -13,6 +13,42 @@ import {
 import type { FlowBlock, ParagraphBlock, TextRun } from '@superdoc/contracts';
 
 describe('resolveHeaderFooterTokens', () => {
+  it('resolves a STYLEREF field against the current physical page before measurement', () => {
+    const blocks: FlowBlock[] = [
+      {
+        kind: 'paragraph',
+        id: 'header-style-ref',
+        runs: [
+          {
+            text: 'Cached heading',
+            fontFamily: 'Arial',
+            fontSize: 12,
+            crossReferenceMetadata: {
+              kind: 'styleRef',
+              instruction: 'STYLEREF "Heading 1" \\l',
+              target: 'Heading 1',
+              preferFollowing: true,
+            },
+          },
+        ],
+      } as ParagraphBlock,
+    ];
+
+    resolveHeaderFooterTokens(blocks, 3, 10, undefined, undefined, undefined, undefined, undefined, undefined, {
+      resolveStyleReference(request) {
+        expect(request).toEqual({
+          pageNumber: 3,
+          styleName: 'Heading 1',
+          preferFollowing: true,
+          instruction: 'STYLEREF "Heading 1" \\l',
+        });
+        return 'Heading on page three';
+      },
+    });
+
+    expect((blocks[0] as ParagraphBlock).runs[0]?.text).toBe('Heading on page three');
+  });
+
   it('should resolve pageNumber token in header blocks', () => {
     const blocks: FlowBlock[] = [
       {

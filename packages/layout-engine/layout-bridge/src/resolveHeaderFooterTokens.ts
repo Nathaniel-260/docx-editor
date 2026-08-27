@@ -21,6 +21,7 @@ import {
   type PageNumberFormat,
   type ParagraphBlock,
   type TableBlock,
+  type TextRun,
 } from '@superdoc/contracts';
 
 /**
@@ -43,6 +44,13 @@ export interface ResolveHeaderFooterTokensOptions {
    * Defaults to `true` (exact totals), preserving existing caller behavior.
    */
   pageCountFieldsExact?: boolean;
+  /** Page-aware STYLEREF resolver supplied after body pagination is known. */
+  resolveStyleReference?: (request: {
+    pageNumber: number;
+    styleName: string;
+    preferFollowing: boolean;
+    instruction: string;
+  }) => string | null;
 }
 
 /** Provisional text for a page-count field: cached DOCX result or em dash. */
@@ -155,7 +163,28 @@ export function resolveHeaderFooterTokens(
   // PAGE` inside a footer; the previous top-level-only walk silently
   // skipped those tokens and the digit never rendered.
   forEachParagraphBlock(blocks, (paraBlock) => {
+    const resolvedStyleReferences = new Set<object>();
     for (const run of paraBlock.runs) {
+      const styleReference =
+        'crossReferenceMetadata' in run && run.crossReferenceMetadata?.kind === 'styleRef'
+          ? run.crossReferenceMetadata
+          : null;
+      if (styleReference && options?.resolveStyleReference) {
+        const textRun = run as TextRun;
+        if (resolvedStyleReferences.has(styleReference)) {
+          textRun.text = '';
+          continue;
+        }
+        resolvedStyleReferences.add(styleReference);
+        textRun.text =
+          options.resolveStyleReference({
+            pageNumber,
+            styleName: styleReference.target,
+            preferFollowing: styleReference.preferFollowing === true,
+            instruction: styleReference.instruction,
+          }) ?? 'Error! No text of specified style in document.';
+        continue;
+      }
       // Type guard: only TextRun can have token property
       if ('token' in run && run.token) {
         if (run.token === 'pageNumber') {

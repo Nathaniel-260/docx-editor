@@ -71,6 +71,11 @@ export {
   PROVISIONAL_PAGE_COUNT_PLACEHOLDER,
   type ResolveHeaderFooterTokensOptions,
 } from './resolveHeaderFooterTokens';
+export {
+  buildPageStyleReferenceResolver,
+  flowBlocksContainCrossReferenceMetadata,
+  type PageStyleReferenceResolver,
+} from './resolveLiveCrossReferences';
 export { findWordBoundaries, findParagraphBoundaries } from './text-boundaries';
 export type { BoundaryRange } from './text-boundaries';
 export {

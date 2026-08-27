@@ -255,6 +255,58 @@ describe('layoutHeaderFooterWithCache - No-Token Fast Path', () => {
 });
 
 describe('layoutHeaderFooterWithCache - Per-Page Resolution (Small Docs)', () => {
+  it('measures STYLEREF header text independently for each physical page', async () => {
+    const sections = {
+      default: [
+        {
+          kind: 'paragraph',
+          id: 'header-style-ref',
+          runs: [
+            {
+              text: 'Cached heading',
+              fontFamily: 'Arial',
+              fontSize: 16,
+              crossReferenceMetadata: {
+                kind: 'styleRef',
+                instruction: 'STYLEREF "Heading 1"',
+                target: 'Heading 1',
+              },
+            } as TextRun,
+          ],
+        } as ParagraphBlock,
+      ],
+    };
+    const measured: string[] = [];
+    const measureBlock = vi.fn(async (block: FlowBlock) => {
+      measured.push(
+        block.kind === 'paragraph' ? block.runs.map((run) => ('text' in run ? run.text : '')).join('') : '',
+      );
+      return makeMeasure(20);
+    });
+    const pageResolver: PageResolver = (pageNum) => ({
+      displayText: String(pageNum),
+      totalPages: 2,
+    });
+
+    const result = await layoutHeaderFooterWithCache(
+      sections,
+      { width: 400, height: 80 },
+      measureBlock,
+      new HeaderFooterLayoutCache(),
+      undefined,
+      pageResolver,
+      'header',
+      '',
+      undefined,
+      {
+        resolveStyleReference: ({ pageNumber }) => `Heading on page ${pageNumber}`,
+      },
+    );
+
+    expect(result.default?.layout.pages).toHaveLength(2);
+    expect(measured).toEqual(['Heading on page 1', 'Heading on page 2']);
+  });
+
   it('should create per-page layouts for documents < 100 pages', async () => {
     const sections = {
       default: [makePageTokenBlock('header-with-page')],

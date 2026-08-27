@@ -35,6 +35,10 @@ import type {
   PageNumberChapterSeparator,
   PageNumberFormat,
   ParagraphLineRegion,
+  DrawingBlock,
+  ListBlock,
+  TableBlock,
+  TextRun,
 } from '@superdoc/contracts';
 import type { FontMeasureContext } from '@superdoc/font-system';
 import {
@@ -88,6 +92,12 @@ import { FeatureFlags } from './featureFlags';
 import { PageTokenLogger, HeaderFooterCacheLogger, globalMetrics } from './instrumentation';
 import { HeaderFooterCacheState, invalidateHeaderFooterCache } from './cacheInvalidation';
 import { hydrateTableTextboxMeasures } from './hydrateTableTextboxMeasures';
+import {
+  buildPageStyleReferenceResolver,
+  cloneLiveCrossReferenceFieldBlocks,
+  flowBlocksContainCrossReferenceMetadata,
+  resolveLiveCrossReferences,
+} from './resolveLiveCrossReferences';
 import {
   getPreferredReserveCandidates,
   getPreferredReserveTrialTargets,
@@ -612,6 +622,8 @@ type IncrementalPaginationProofBase = {
   renderInputsUnchanged: true;
   /** The retained dependency scan proved that no body or furniture PAGE_REF token exists. */
   pageReferencesAbsent: boolean;
+  /** The retained dependency scan proved that no live REF/NOTEREF/STYLEREF field exists. */
+  crossReferencesAbsent?: boolean;
   pageReferenceDependencyClosure?: {
     referenceBlockIds: readonly string[];
     targetBookmarkIds: readonly string[];
@@ -739,6 +751,112 @@ export type IncrementalLayoutReuseOptions = {
 };
 
 export const measureCache = new MeasureCache<Measure>();
+
+function retainedProofExcludesLiveCrossReferences(proof: IncrementalPaginationProof | null | undefined): boolean {
+  if (!proof) return false;
+  if (proof.crossReferencesAbsent != null) return proof.crossReferencesAbsent;
+  if (proof.globalDependenciesAbsent === true) return true;
+  return (
+    proof.profile === 'page-checkpoint-local-text' &&
+    Array.isArray(proof.admittedDependencyClasses) &&
+    !(proof.admittedDependencyClasses as readonly string[]).includes('cross-references')
+  );
+}
+
+function collectChangedLiveCrossReferenceBlockIds(
+  previousBlocks: readonly FlowBlock[],
+  currentBlocks: readonly FlowBlock[],
+  currentToPrevious: ReadonlyMap<string, string> | null | undefined,
+): string[] {
+  const previousById = new Map(previousBlocks.map((block) => [block.id, block] as const));
+  const changed: string[] = [];
+  for (const block of currentBlocks) {
+    const currentSignature = liveCrossReferenceResultSignature(block);
+    if (currentSignature == null) continue;
+    const previousId = currentToPrevious?.get(block.id) ?? block.id;
+    const previousSignature = liveCrossReferenceResultSignature(previousById.get(previousId));
+    if (currentSignature !== previousSignature) changed.push(block.id);
+  }
+  return changed;
+}
+
+function liveCrossReferenceResultSignature(block: FlowBlock | undefined): string | null {
+  if (!block) return null;
+  const entries: Array<readonly [string, string, string, boolean, string]> = [];
+  const visit = (candidate: FlowBlock): void => {
+    if (candidate.kind === 'paragraph') {
+      for (const run of (candidate as ParagraphBlock).runs) {
+        const textRun = run as TextRun;
+        const metadata = textRun.crossReferenceMetadata;
+        if (!metadata) continue;
+        entries.push([
+          metadata.kind,
+          metadata.instruction,
+          metadata.target,
+          metadata.preferFollowing === true,
+          textRun.text,
+        ]);
+      }
+      return;
+    }
+    if (candidate.kind === 'list') {
+      for (const item of (candidate as ListBlock).items ?? []) visit(item.paragraph);
+      return;
+    }
+    if (candidate.kind === 'table') {
+      for (const row of (candidate as TableBlock).rows ?? []) {
+        for (const cell of row.cells ?? []) {
+          for (const child of cell.blocks ?? (cell.paragraph ? [cell.paragraph] : [])) visit(child);
+        }
+      }
+      return;
+    }
+    if (candidate.kind === 'drawing') {
+      const drawing = candidate as DrawingBlock;
+      if (drawing.drawingKind === 'textboxShape') {
+        for (const child of drawing.contentBlocks ?? []) visit(child);
+      }
+    }
+  };
+  visit(block);
+  return entries.length > 0 ? JSON.stringify(entries) : null;
+}
+
+function mergeLiveCrossReferenceDirtyRegion(
+  proved: ReturnType<typeof computeDirtyRegions>,
+  liveChangedBlockIds: readonly string[],
+  currentBlockIndexById: ReadonlyMap<string, number> | null | undefined,
+): ReturnType<typeof computeDirtyRegions> {
+  const changedBlockIds = [...new Set([...proved.changedBlockIds, ...liveChangedBlockIds])];
+  let firstDirtyIndex = proved.firstDirtyIndex;
+  for (const blockId of liveChangedBlockIds) {
+    const index = currentBlockIndexById?.get(blockId);
+    firstDirtyIndex = Number.isInteger(index) ? Math.min(firstDirtyIndex, index!) : 0;
+  }
+  const liveChanged = new Set(liveChangedBlockIds);
+  return {
+    ...proved,
+    firstDirtyIndex,
+    lastStableIndex: Math.min(proved.lastStableIndex, firstDirtyIndex - 1),
+    changedBlockIds,
+    stableBlockIds: new Set([...proved.stableBlockIds].filter((blockId) => !liveChanged.has(blockId))),
+  };
+}
+
+function retainedDirtyBlockIds(
+  dirty: ReturnType<typeof computeDirtyRegions>,
+  currentToPrevious: ReadonlyMap<string, string> | null | undefined,
+): string[] {
+  const inserted = new Set(dirty.insertedBlockIds);
+  return [
+    ...new Set([
+      ...dirty.changedBlockIds
+        .filter((blockId) => !inserted.has(blockId))
+        .map((blockId) => currentToPrevious?.get(blockId) ?? blockId),
+      ...dirty.deletedBlockIds,
+    ]),
+  ];
+}
 
 function isPrivateV2SourceToLayoutFailure(error: unknown): error is Error {
   return error instanceof Error && error.name === 'V2SourceToLayoutFailure';
@@ -1992,11 +2110,65 @@ export async function incrementalLayout(
     nextBlocks = rewriteSectionBreaksForSemanticFlow(nextBlocks, options);
   }
 
+  const suppliedMeasureReuseProof = measureReuseProof ?? layoutReuse;
+  const hasLiveBodyCrossReferences =
+    !retainedProofExcludesLiveCrossReferences(suppliedMeasureReuseProof?.dependencyProof) &&
+    flowBlocksContainCrossReferenceMetadata(nextBlocks);
+  if (hasLiveBodyCrossReferences) {
+    nextBlocks = cloneLiveCrossReferenceFieldBlocks(nextBlocks);
+    resolveLiveCrossReferences(nextBlocks);
+  }
+
+  // Live field results are derived layout inputs. The host's exact packet can
+  // name the source paragraph that changed, but only this bridge can compare
+  // freshly resolved result runs with the retained projection baseline.
+  // Merge only result owners whose live signatures changed into the proved
+  // region: a broad computeDirtyRegions scan would also classify fragmentless
+  // section carriers as dirty and discard the packet's exact locality proof.
+  const liveCrossReferenceChangedBlockIds = hasLiveBodyCrossReferences
+    ? collectChangedLiveCrossReferenceBlockIds(
+        previousBlocks,
+        nextBlocks,
+        layoutReuse?.blockIdRewrites?.currentToPrevious,
+      )
+    : [];
+  const liveCrossReferenceDirty =
+    liveCrossReferenceChangedBlockIds.length > 0 && suppliedMeasureReuseProof?.provedDirtyRegion
+      ? mergeLiveCrossReferenceDirtyRegion(
+          suppliedMeasureReuseProof.provedDirtyRegion,
+          liveCrossReferenceChangedBlockIds,
+          layoutReuse?.currentBlockIndexById,
+        )
+      : null;
+  if (liveCrossReferenceDirty && layoutReuse?.dependencyProof?.crossReferencesAbsent === false) {
+    layoutReuse = {
+      ...layoutReuse,
+      dirtyBlockIds: [...new Set([...(layoutReuse.dirtyBlockIds ?? []), ...liveCrossReferenceChangedBlockIds])],
+      provedDirtyRegion: liveCrossReferenceDirty,
+    };
+  }
+  const effectiveDirtyRegionProof = liveCrossReferenceDirty ?? suppliedMeasureReuseProof?.provedDirtyRegion;
+  const effectiveMeasureReuseProof = (() => {
+    if (!suppliedMeasureReuseProof || !liveCrossReferenceDirty) return suppliedMeasureReuseProof;
+    const constraints = new Map(suppliedMeasureReuseProof.provedDirtyMeasureConstraints ?? []);
+    const perSectionConstraints = computePerSectionConstraints(options, nextBlocks);
+    for (const blockId of liveCrossReferenceChangedBlockIds) {
+      if (constraints.has(blockId)) continue;
+      const index = suppliedMeasureReuseProof.currentBlockIndexById?.get(blockId);
+      const resolved = index == null ? undefined : perSectionConstraints[index];
+      if (resolved) constraints.set(blockId, resolved);
+    }
+    return {
+      ...suppliedMeasureReuseProof,
+      provedDirtyRegion: liveCrossReferenceDirty,
+      provedDirtyMeasureConstraints: constraints,
+    };
+  })();
+
   let blocksByKind: Record<FlowBlock['kind'], number> | undefined;
   const bodyBlocksMeasuredByKind = createFlowBlockKindCounters();
 
   // Dirty region computation
-  const effectiveMeasureReuseProof = measureReuseProof ?? layoutReuse;
   const headerFooterOnlyProof = layoutReuse?.provedHeaderFooterOnlyRefresh;
   const headerFooterBodyReferencesRetained =
     !isSemanticFlow &&
@@ -2014,7 +2186,7 @@ export async function incrementalLayout(
         changedBlockIds: [],
         stableBlockIds: new Set(nextBlocks.map((block) => block.id)),
       }
-    : (effectiveMeasureReuseProof?.provedDirtyRegion ?? computeDirtyRegions(previousBlocks, nextBlocks));
+    : (effectiveDirtyRegionProof ?? computeDirtyRegions(previousBlocks, nextBlocks));
   // P8.4: cache-miss count that arms content-keyed previous-measure adoption
   // (see the adoption block in the measure loop). Small enough that a
   // structural keystroke's shifted tail engages within a few redundant
@@ -2046,6 +2218,7 @@ export async function incrementalLayout(
           dirty,
           previousBlockIndexById: effectiveMeasureReuseProof.previousBlockIndexById ?? null,
           currentBlockIndexById: effectiveMeasureReuseProof.currentBlockIndexById,
+          currentToPreviousBlockId: layoutReuse?.blockIdRewrites?.currentToPrevious ?? null,
           dirtyMeasureConstraints: effectiveMeasureReuseProof.provedDirtyMeasureConstraints ?? null,
           requiresExactConstraints: effectiveMeasureReuseProof.dependencyProof.profile !== 'single-section-local-text',
         })
@@ -4925,6 +5098,20 @@ export async function incrementalLayout(
     const hfStart = performance.now();
 
     const measureFn = headerFooter.measure ?? measureBlock;
+    const furnitureHasStyleReference = [headerFooter.headerBlocks, headerFooter.footerBlocks]
+      .filter((batch): batch is NonNullable<typeof batch> => batch != null)
+      .some((batch) =>
+        Object.values(batch).some(
+          (blocks) => blocks != null && flowBlocksContainCrossReferenceMetadata(blocks, 'styleRef'),
+        ),
+      );
+    const resolveStyleReference = furnitureHasStyleReference
+      ? buildPageStyleReferenceResolver(currentBlocks, layout)
+      : undefined;
+    const finalHfTokenOptions: ResolveHeaderFooterTokensOptions = {
+      ...hfTokenOptions,
+      ...(resolveStyleReference ? { resolveStyleReference } : {}),
+    };
 
     // Invalidate header/footer cache if content or constraints changed
     invalidateHeaderFooterCache(
@@ -4976,7 +5163,7 @@ export async function incrementalLayout(
         headerFooterCacheSignature,
         (block, maxWidth, firstLineIndent, lineRegions) =>
           remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
-        hfTokenOptions,
+        finalHfTokenOptions,
         headerFooterExecution,
       );
       headers = serializeHeaderFooterResults('header', headerLayouts);
@@ -4993,7 +5180,7 @@ export async function incrementalLayout(
         headerFooterCacheSignature,
         (block, maxWidth, firstLineIndent, lineRegions) =>
           remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
-        hfTokenOptions,
+        finalHfTokenOptions,
         headerFooterExecution,
       );
       footers = serializeHeaderFooterResults('footer', footerLayouts);
@@ -5133,6 +5320,7 @@ function validateProvedDirtyMeasurePacket(input: {
   dirty: ReturnType<typeof computeDirtyRegions>;
   previousBlockIndexById: ReadonlyMap<string, number> | null;
   currentBlockIndexById: ReadonlyMap<string, number>;
+  currentToPreviousBlockId: ReadonlyMap<string, string> | null;
   dirtyMeasureConstraints: ReadonlyMap<string, { maxWidth: number; maxHeight: number }> | null;
   requiresExactConstraints: boolean;
 }): {
@@ -5153,10 +5341,11 @@ function validateProvedDirtyMeasurePacket(input: {
     const insertedIndex = input.currentBlockIndexById.get(inserted[0]!);
     if (!Number.isInteger(insertedIndex) || insertedIndex! <= 0) return null;
     const headId = input.blocks[insertedIndex! - 1]?.id;
+    const previousHeadId = headId ? (input.currentToPreviousBlockId?.get(headId) ?? headId) : null;
     if (
-      !headId ||
-      input.previousBlockIndexById.get(headId) !== insertedIndex! - 1 ||
-      input.previousBlocks[insertedIndex! - 1]?.id !== headId
+      !previousHeadId ||
+      input.previousBlockIndexById.get(previousHeadId) !== insertedIndex! - 1 ||
+      input.previousBlocks[insertedIndex! - 1]?.id !== previousHeadId
     )
       return null;
     measureSplice = { atIndex: insertedIndex!, deleteCount: 0, insertCount: 1 };
@@ -5211,8 +5400,9 @@ function validateProvedDirtyMeasurePacket(input: {
     const current = input.blocks[index!]!;
     if (current.id !== blockId || current.kind === 'sectionBreak') return null;
     if (!inserted.includes(blockId)) {
-      const previousIndex = input.previousBlockIndexById?.get(blockId) ?? index;
-      if (!Number.isInteger(previousIndex) || input.previousBlocks[previousIndex!]?.id !== blockId) return null;
+      const previousBlockId = input.currentToPreviousBlockId?.get(blockId) ?? blockId;
+      const previousIndex = input.previousBlockIndexById?.get(previousBlockId) ?? index;
+      if (!Number.isInteger(previousIndex) || input.previousBlocks[previousIndex!]?.id !== previousBlockId) return null;
     }
     const constraints = input.dirtyMeasureConstraints?.get(blockId);
     if (
@@ -6085,7 +6275,7 @@ async function layoutWithOptionalReuse(input: {
     ) {
       return full('m5-layout-reuse-disabled-valign-boundary-unresolved');
     }
-    const dirtyPreviousBlockIds = [...input.dirty.changedBlockIds, ...input.dirty.deletedBlockIds];
+    const dirtyPreviousBlockIds = retainedDirtyBlockIds(input.dirty, reuse.blockIdRewrites?.currentToPrevious);
     if (dirtyPreviousBlockIds.length === 0) {
       return full('m5-layout-reuse-disabled-valign-boundary-no-dirty-evidence');
     }
@@ -6132,7 +6322,7 @@ async function layoutWithOptionalReuse(input: {
     if (!boundaryPages) {
       return full('m5-layout-reuse-disabled-page-relative-anchor-boundary-unresolved');
     }
-    const dirtyPreviousBlockIds = [...input.dirty.changedBlockIds, ...input.dirty.deletedBlockIds];
+    const dirtyPreviousBlockIds = retainedDirtyBlockIds(input.dirty, reuse.blockIdRewrites?.currentToPrevious);
     if (dirtyPreviousBlockIds.length === 0) {
       return full('m5-layout-reuse-disabled-page-relative-anchor-no-dirty-evidence');
     }
@@ -8136,6 +8326,7 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
     multiColumnSectionsProvedNonBalanceable?: boolean;
     admittedDependencyClasses?: unknown;
     pageReferencesAbsent?: boolean;
+    crossReferencesAbsent?: boolean;
     pageReferenceDependencyClosure?: unknown;
     localKeepDependencyClosure?: unknown;
     nonFlowingPageRelativeAnchorDependency?: unknown;
@@ -8169,11 +8360,16 @@ function validateIncrementalPaginationProof(proof: IncrementalPaginationProof): 
             ) &&
             balanceableSectionsAdmissible
           : false;
+  const crossReferenceDependencyIsMaterialized =
+    runtimeProof.crossReferencesAbsent === false &&
+    (proof.profile === 'document-start-local-text' ||
+      (proof.profile === 'page-checkpoint-local-text' && proof.admittedDependencyClasses.includes('cross-references')));
   if (
     !dependencyProfileValid ||
     proof.blockIdsUnchanged !== true ||
     proof.blockIdsUnique !== true ||
     proof.renderInputsUnchanged !== true ||
+    (runtimeProof.crossReferencesAbsent === false && !crossReferenceDependencyIsMaterialized) ||
     !hasValidPageReferenceClosure(
       proof.profile,
       runtimeProof.pageReferencesAbsent,

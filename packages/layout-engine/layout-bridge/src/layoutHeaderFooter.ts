@@ -308,6 +308,9 @@ function canUseDigitBucketingForVariant(
  */
 function paragraphHasPageToken(para: ParagraphBlock): boolean {
   for (const run of para.runs) {
+    if ('crossReferenceMetadata' in run && run.crossReferenceMetadata?.kind === 'styleRef') {
+      return true;
+    }
     if (
       'token' in run &&
       (run.token === 'pageNumber' || run.token === 'totalPageCount' || run.token === 'sectionPageCount')
@@ -342,6 +345,9 @@ function isDigitBucketCompatiblePageNumberFormat(format?: string): boolean {
 
 function paragraphRequiresPerPageLayout(para: ParagraphBlock): boolean {
   for (const run of para.runs) {
+    if ('crossReferenceMetadata' in run && run.crossReferenceMetadata?.kind === 'styleRef') {
+      return true;
+    }
     if (
       'token' in run &&
       run.token === 'pageNumber' &&
