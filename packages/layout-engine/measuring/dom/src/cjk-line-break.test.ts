@@ -109,7 +109,7 @@ describe('CJK line breaking', () => {
       ]);
     });
 
-    it('includes Japanese script-extension letters without admitting punctuation', async () => {
+    it('includes Japanese script-extension letters and punctuation', async () => {
       const japanese = paragraph([{ text: 'スーパー' }]);
       japanese.attrs = { alignment: 'justify' };
       const punctuated = paragraph([{ text: 'スーパー。' }]);
@@ -122,7 +122,10 @@ describe('CJK line breaking', () => {
         type: 'inter-character',
         boundaries: [1, 2, 3],
       });
-      expect(punctuatedMeasure.lines[0].justificationPlan).toBeUndefined();
+      expect(punctuatedMeasure.lines[0].justificationPlan).toEqual({
+        type: 'inter-character',
+        boundaries: [1, 2, 3, 4],
+      });
     });
 
     it('emits boundaries after complete CJK grapheme clusters', async () => {
@@ -153,8 +156,26 @@ describe('CJK line breaking', () => {
       expect(measure.lines[0].justificationPlan).toBeUndefined();
     });
 
-    it('does not reuse punctuation wrapping rules as justification boundaries', async () => {
-      const block = paragraph([{ text: '春天，来到' }]);
+    it.each([
+      ['春天、来到', [1, 2, 3, 4]],
+      ['春天。来到', [1, 2, 3, 4]],
+      ['春天，来到', [1, 2, 3, 4]],
+      ['春天,来到', [1, 2, 3, 4]],
+      ['“春天”来到', [1, 2, 3, 4, 5]],
+    ])('emits dense boundaries for punctuation in CJK lines: %s', async (text, boundaries) => {
+      const block = paragraph([{ text }]);
+      block.attrs = { alignment: 'justify' };
+
+      const measure = expectParagraphMeasure(await measureBlock(block, 10_000));
+
+      expect(measure.lines[0].justificationPlan).toEqual({
+        type: 'inter-character',
+        boundaries,
+      });
+    });
+
+    it.each(['，。', '春天+来到'])('does not admit punctuation-only or symbol lines: %s', async (text) => {
+      const block = paragraph([{ text }]);
       block.attrs = { alignment: 'justify' };
 
       const measure = expectParagraphMeasure(await measureBlock(block, 10_000));

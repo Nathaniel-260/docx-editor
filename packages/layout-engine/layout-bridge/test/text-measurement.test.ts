@@ -602,6 +602,27 @@ describe('text measurement utility', () => {
       expect(findCharacterAtX(block, line, 35, 0, 70).charOffset).toBe(2);
     });
 
+    it.each(['春天，来到', '春天,来到'])('keeps punctuated CJK caret and hit geometry aligned: %s', (text) => {
+      const block = createBlock([
+        { text, fontFamily: 'Arial', fontSize: 16 },
+        { text: '后续', fontFamily: 'Arial', fontSize: 16 },
+      ]);
+      (block as any).attrs = { alignment: 'justify' };
+      const line = baseLine({
+        fromRun: 0,
+        toRun: 0,
+        toChar: text.length,
+        width: 50,
+        maxWidth: 90,
+        justificationPlan: { type: 'inter-character', boundaries: [1, 2, 3, 4] },
+      });
+
+      expect([0, 1, 2, 3, 4, 5].map((offset) => measureCharacterX(block, line, offset, 90))).toEqual([
+        0, 20, 40, 60, 80, 90,
+      ]);
+      expect(findCharacterAtX(block, line, 51, 0, 90).charOffset).toBe(3);
+    });
+
     it('applies CJK justify advance only after a complete grapheme', () => {
       const block = createBlock([
         { text: '한글', fontFamily: 'Arial', fontSize: 16 },

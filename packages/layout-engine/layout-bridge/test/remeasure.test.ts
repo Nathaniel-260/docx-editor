@@ -149,22 +149,19 @@ beforeAll(() => {
 });
 
 describe('remeasureParagraph', () => {
-  it('preserves CJK justification opportunities in fallback measurement', () => {
+  it('preserves punctuated CJK justification opportunities in fallback measurement', () => {
     const block = {
       kind: 'paragraph' as const,
       id: 'cjk-justify-fallback',
       attrs: { alignment: 'justify' as const },
-      runs: [
-        { kind: 'text' as const, text: '春天', fontFamily: 'Arial', fontSize: 16 },
-        { kind: 'text' as const, text: '来到', fontFamily: 'Arial', fontSize: 16 },
-      ],
+      runs: [{ kind: 'text' as const, text: '春天，来到', fontFamily: 'Arial', fontSize: 16 }],
     };
 
     const measure = remeasureParagraph(block, 1_000);
 
     expect(measure.lines[0]?.justificationPlan).toEqual({
       type: 'inter-character',
-      boundaries: [1, 2, 3],
+      boundaries: [1, 2, 3, 4],
     });
   });
 
