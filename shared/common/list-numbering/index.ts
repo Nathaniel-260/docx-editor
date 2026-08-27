@@ -25,6 +25,9 @@ const handleChineseCounting: NumberingHandler = (path, lvlText) =>
   generateNumbering(path, lvlText, intToChineseCounting);
 const handleChineseCountingThousand: NumberingHandler = (path, lvlText) =>
   generateNumbering(path, lvlText, intToChineseCountingThousand);
+const handleHebrewNumeral: NumberingHandler = (path, lvlText) => generateNumbering(path, lvlText, intToHebrewNumeral);
+const handleHebrewAlphabetic: NumberingHandler = (path, lvlText) =>
+  generateNumbering(path, lvlText, intToHebrewAlphabetic);
 
 const listIndexMap: Record<string, NumberingHandler> = {
   decimal: handleDecimal,
@@ -40,6 +43,8 @@ const listIndexMap: Record<string, NumberingHandler> = {
   japaneseCounting: handleJapaneseCounting,
   chineseCounting: handleChineseCounting,
   chineseCountingThousand: handleChineseCountingThousand,
+  hebrew1: handleHebrewNumeral,
+  hebrew2: handleHebrewAlphabetic,
 };
 
 export interface GenerateOrderedListIndexOptions {
@@ -336,6 +341,62 @@ const intToChineseCountingThousand = (num: number): string => {
     result += (zeroBetweenGroups ? '〇' : '') + chineseThousandGroup(rest);
   }
   return result;
+};
+
+// OOXML w:numFmt values per ECMA-376 §17.18.59, matched to Word 16 output
+// (ListFormat.ListString) where the spec and Word disagree:
+//   hebrew1 -> gematria numerals   (א, ב, ... י, יא, ... כ, ... ק, ר, ש)
+//   hebrew2 -> alphabet counting   (א ... ת, then תא, תב, ... תת, תתא, ...)
+//
+// Word's Hebrew converter only represents 1-392, and both formats then restart
+// from א. Measured across three full periods of a 1200-item list and at the
+// w:start values 0, 1, 380, 390, 391, 392, 393, 700, 780, 783, 784, 785 and
+// 32760, so the wrap keys off the counter value rather than the item position.
+// 392 has no meaning in Hebrew numeration - the natural bounds would be 399 or
+// 400 - so treat it as an internal Word constant. Note that ת never appears in
+// hebrew1: the highest representable value is 392 (שצב).
+//
+// The same 392 bound applies to the PAGE-field path, but its out-of-range
+// behavior differs - Word emits a localized error string there rather than
+// wrapping - so page numbering deliberately does not share these formatters.
+//
+// Two details Word insists on that the spec does not mention: 15 and 16 are טו
+// and טז at every hundreds level (115, 215, 315 too), avoiding the divine-name
+// spellings יה and יו; and every hebrew2 marker - but no hebrew1 marker -
+// carries a leading U+200F, confirmed on both ListFormat.ListString and
+// Field.Result.Text.
+const HEBREW_NUMERAL_CYCLE = 392;
+const HEBREW_HUNDREDS = ['', 'ק', 'ר', 'ש'];
+const HEBREW_TENS = ['', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ'];
+const HEBREW_ONES = ['', 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'];
+// The 22 letters in alphabet order; hebrew2 never uses the final forms.
+const HEBREW_ALPHABET = 'אבגדהוזחטיכלמנסעפצקרשת';
+
+/**
+ * Folds a counter onto Word's representable 1-392 range. Returns 0 for input
+ * Word cannot number at all, which renders as an empty marker: `w:start="0"` is
+ * schema-valid (`ST_DecimalNumber`) and Word draws no marker for that item.
+ */
+const toHebrewCycleValue = (num: number): number => {
+  if (!Number.isInteger(num) || num < 1) return 0;
+  return ((num - 1) % HEBREW_NUMERAL_CYCLE) + 1;
+};
+
+const intToHebrewNumeral = (num: number): string => {
+  const value = toHebrewCycleValue(num);
+  if (value === 0) return '';
+  const hundreds = HEBREW_HUNDREDS[Math.floor(value / 100)];
+  const rest = value % 100;
+  if (rest === 15) return `${hundreds}טו`;
+  if (rest === 16) return `${hundreds}טז`;
+  return `${hundreds}${HEBREW_TENS[Math.floor(rest / 10)]}${HEBREW_ONES[rest % 10]}`;
+};
+
+const intToHebrewAlphabetic = (num: number): string => {
+  const value = toHebrewCycleValue(num);
+  if (value === 0) return '';
+  const repeats = Math.floor((value - 1) / HEBREW_ALPHABET.length);
+  return `\u200F${'ת'.repeat(repeats)}${HEBREW_ALPHABET[(value - 1) % HEBREW_ALPHABET.length]}`;
 };
 
 const normalizeChars = new Set(['', '', '○', 'o', '■', '□']);

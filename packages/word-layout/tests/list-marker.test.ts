@@ -398,6 +398,77 @@ describe('computeWordListMarker', () => {
     expect(r.listRenderingAttrs.markerText).toBe('1.一');
   });
 
+  // Hebrew numbering reaches the marker through both branches of
+  // formatNumberingTemplate. Before the fix, the branch without
+  // levelNumberingFormats dropped the marker entirely, and the branch with them
+  // rendered only the punctuation from lvlText. Expected strings are pinned to
+  // Word 16 (ListFormat.ListString).
+  it('renders hebrew1 markers without level placeholder formats', () => {
+    const manager = createNumberingManager();
+    const def = baseDef({ numFmt: 'hebrew1', start: 14 });
+    const a = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 1 });
+    const b = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 2 });
+    const c = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 3 });
+    expect(a.listRenderingAttrs.markerText).toBe('יד.');
+    // 15 and 16 avoid the divine-name spellings יה and יו.
+    expect(b.listRenderingAttrs.markerText).toBe('טו.');
+    expect(c.listRenderingAttrs.markerText).toBe('טז.');
+  });
+
+  it('renders hebrew1 markers via level placeholder formats', () => {
+    const manager = createNumberingManager();
+    const def = baseDef({
+      numFmt: 'hebrew1',
+      start: 99,
+      levelNumberingFormats: [{ ilvl: 0, numFmt: 'hebrew1' }],
+    });
+    const a = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 1 });
+    const b = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 2 });
+    expect(a.listRenderingAttrs.markerText).toBe('צט.');
+    expect(b.listRenderingAttrs.markerText).toBe('ק.');
+  });
+
+  // Every hebrew2 marker carries a leading U+200F; no hebrew1 marker does.
+  it('renders hebrew2 markers via level placeholder formats', () => {
+    const manager = createNumberingManager();
+    const def = baseDef({
+      numFmt: 'hebrew2',
+      start: 22,
+      levelNumberingFormats: [{ ilvl: 0, numFmt: 'hebrew2' }],
+    });
+    const a = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 1 });
+    const b = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 2 });
+    expect(a.listRenderingAttrs.markerText).toBe('\u200fת.');
+    expect(b.listRenderingAttrs.markerText).toBe('\u200fתא.');
+  });
+
+  // The widest marker either Hebrew format produces: 18 letters, where a decimal
+  // marker at the same counter would be 3 digits. hebrew2 reaches that width
+  // from 375 onward, so the top of the representable range is one case of it.
+  it('renders the widest hebrew2 marker at the top of the range', () => {
+    const manager = createNumberingManager();
+    const def = baseDef({ numFmt: 'hebrew2', start: 392 });
+    const a = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 1 });
+    const b = computeWordListMarker({ definition: def, manager, paragraphOrdinal: 2 });
+    expect(a.listRenderingAttrs.markerText).toBe('\u200fתתתתתתתתתתתתתתתתתצ.');
+    // 393 is past what Word represents, so the counter restarts from א.
+    expect(b.listRenderingAttrs.markerText).toBe('\u200fא.');
+  });
+
+  it('renders mixed multilevel templates where one referenced level is hebrew1', () => {
+    const manager = createNumberingManager();
+    const levelNumberingFormats = [
+      { ilvl: 0, numFmt: 'decimal' },
+      { ilvl: 1, numFmt: 'hebrew1' },
+    ];
+    const lvl0 = baseDef({ ilvl: 0, lvlText: '%1.', numFmt: 'decimal', levelNumberingFormats });
+    const lvl1 = baseDef({ ilvl: 1, lvlText: '%1.%2', numFmt: 'hebrew1', levelNumberingFormats });
+    computeWordListMarker({ definition: lvl0, manager, paragraphOrdinal: 1 });
+    const r = computeWordListMarker({ definition: lvl1, manager, paragraphOrdinal: 2 });
+    expect(r.path).toEqual([1, 1]);
+    expect(r.listRenderingAttrs.markerText).toBe('1.א');
+  });
+
   it('formats decimalZero custom zero-padding (path > 1 entry)', () => {
     const manager = createNumberingManager();
     const lvl0 = baseDef({ ilvl: 0, lvlText: '%1', numFmt: 'decimal' });
