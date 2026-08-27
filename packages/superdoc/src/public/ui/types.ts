@@ -1146,8 +1146,8 @@ export interface ContentControlsHandle extends SnapshotSubscribable<ContentContr
   /** List content controls through the best-known controller state. */
   list(): readonly ContentControlInfo[];
   /**
-   * Resolve a single content control by id from the loaded list. v1/main code
-   * should prefer `get({ id })`; `getById(id)` is kept for existing v2 callers.
+   * Previous positional form for resolving one content control by id.
+   * @deprecated replaceWith=`get({ id })` compat-indefinitely=v2 UI compatibility
    */
   getById(id: string): ContentControlInfo | null;
   /**

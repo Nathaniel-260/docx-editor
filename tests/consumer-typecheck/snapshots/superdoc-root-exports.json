@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-26T14:47:06.997Z",
+  "generatedAt": "2026-08-26T19:27:20.147Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -35,6 +35,7 @@
         "Config",
         "ContentControlActiveChangePayload",
         "ContentControlClickPayload",
+        "ContentControlRef",
         "ContentControlsConfig",
         "ContextMenuConfig",
         "ContextMenuContext",
@@ -287,6 +288,7 @@
         "Config",
         "ContentControlActiveChangePayload",
         "ContentControlClickPayload",
+        "ContentControlRef",
         "ContentControlsConfig",
         "ContextMenuConfig",
         "ContextMenuContext",
@@ -549,11 +551,11 @@
     }
   },
   "counts": {
-    "types.import": 246,
-    "types.require": 246,
+    "types.import": 247,
+    "types.require": 247,
     "import": 10,
     "require": 10,
-    "union": 246
+    "union": 247
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -586,6 +588,7 @@
         "Config",
         "ContentControlActiveChangePayload",
         "ContentControlClickPayload",
+        "ContentControlRef",
         "ContentControlsConfig",
         "ContextMenuConfig",
         "ContextMenuContext",

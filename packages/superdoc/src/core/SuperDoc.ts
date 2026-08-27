@@ -4,6 +4,7 @@ import { EventEmitter } from 'eventemitter3';
 import { v4 as uuidv4 } from 'uuid';
 import { markRaw, nextTick, toRaw } from 'vue';
 import type { HocuspocusProviderWebsocket } from '@hocuspocus/provider';
+import type { ContentControlType } from '@superdoc/document-api';
 import JSZip from 'jszip';
 
 import { DOCX, PDF, HTML, getActorIdentityKey, normalizeActorEmail } from '@superdoc/common';
@@ -37,7 +38,7 @@ import { EditorRuntimeRegistry } from './editor-runtime/editor-runtime-registry.
 import type { EditorRuntimeFocusOptions } from './editor-runtime/types.js';
 import { createBuiltInToolbar } from '../internal/toolbar/index.js';
 import { createSuperDocUI } from '../public/ui/create-super-doc-ui.js';
-import type { BorrowedSuperDocUI, SuperDocUI } from '../public/ui/types.js';
+import type { BorrowedSuperDocUI, SelectionSlice, SuperDocUI } from '../public/ui/types.js';
 import { loadDefaultV2IntegrationOrFallback } from './v2-integration/v2-integration.js';
 
 /**
@@ -51,6 +52,23 @@ const STRUCTURED_CONTENT_FRAME_SELECTOR = [
   '[data-sdt-type="structuredContent"][data-sdt-container-id]',
   '[data-sdt-container-type="structuredContent"][data-sdt-container-id]',
 ].join(', ');
+
+const CONTENT_CONTROL_POINTER_END_WINDOW_MS = 800;
+
+function isContentControlNonSelectionKeyDown(event: KeyboardEvent): boolean {
+  if (event.key === 'Alt' || event.key === 'Control' || event.key === 'Meta' || event.key === 'Shift') return true;
+
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    event.shiftKey &&
+    !event.altKey &&
+    (event.code === 'Digit8' || event.key === '8' || event.key === '*')
+  ) {
+    return true;
+  }
+
+  return (event.ctrlKey || event.metaKey) && ['b', 'c', 'f', 'i', 's', 'u'].includes(event.key.toLowerCase());
+}
 
 // 24 visually distinct hex colors for awareness cursor assignment.
 // Large enough to minimize collisions (~4% for two users) while staying
@@ -238,6 +256,7 @@ import type {
   Config,
   ContentControlActiveChangePayload,
   ContentControlClickPayload,
+  ContentControlRef,
   DocumentMode,
   DocumentFontOption,
   Editor,
@@ -255,7 +274,6 @@ import type {
   DocumentRendererRuntime,
   RuntimeDocument,
   SearchMatch,
-  SdtRef,
   SuperDocAwarenessUpdatePayload,
   SuperDocCommentsUpdatePayload,
   SuperDocDocumentReplacedPayload,
@@ -294,7 +312,7 @@ import type { WhiteboardData } from './whiteboard/Whiteboard.js';
 type ContentControlCatalogItem = {
   id?: unknown;
   kind?: unknown;
-  controlType?: unknown;
+  controlType?: ContentControlType;
   properties?: {
     alias?: unknown;
     tag?: unknown;
@@ -330,7 +348,7 @@ function getContentControlItems(result: unknown): ContentControlCatalogItem[] {
   return Array.isArray(items) ? (items as ContentControlCatalogItem[]) : [];
 }
 
-function toSdtRef(item: ContentControlCatalogItem | undefined): SdtRef | null {
+function toContentControlRef(item: ContentControlCatalogItem | undefined): ContentControlRef | null {
   if (
     !item ||
     typeof item.id !== 'string' ||
@@ -349,6 +367,16 @@ function toSdtRef(item: ContentControlCatalogItem | undefined): SdtRef | null {
     ...(typeof tag === 'string' && tag ? { tag } : {}),
     ...(typeof alias === 'string' && alias ? { alias } : {}),
   };
+}
+
+function contentControlSelectionKey(selection: SelectionSlice): string | null {
+  const target = selection.selectionTarget ?? selection.target;
+  if (!target) return null;
+  try {
+    return JSON.stringify(target);
+  } catch {
+    return null;
+  }
 }
 
 type V2ActiveEditorFacade = {
@@ -668,6 +696,52 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   #mountWrapper: HTMLDivElement | null = null;
 
   #contentControlClickRoot: HTMLElement | null = null;
+
+  #contentControlActiveChangeUnsub: (() => void) | null = null;
+
+  #contentControlActiveChangeInstalling = false;
+
+  #contentControlEventBridgeReady = false;
+
+  #pendingContentControlInputSource: 'keyboard' | 'pointer' | null = null;
+
+  #pendingContentControlInputExpiresAt: number | null = null;
+
+  #contentControlPointerActive = false;
+
+  #contentControlPointerId: number | null = null;
+
+  #contentControlSelectionSource: {
+    editor: Editor | null;
+    key: string;
+    source: 'keyboard' | 'pointer';
+  } | null = null;
+
+  #handleContentControlPointerDown = (event: PointerEvent) => {
+    if (this.listenerCount('content-control:active-change') > 0) {
+      if (!this.#contentControlPointerActive) this.#contentControlPointerId = event.pointerId;
+      this.#contentControlPointerActive = true;
+      this.#pendingContentControlInputSource = 'pointer';
+      this.#pendingContentControlInputExpiresAt = null;
+    }
+  };
+
+  #handleContentControlPointerEnd = (event: PointerEvent) => {
+    if (event.pointerId !== this.#contentControlPointerId) return;
+    this.#contentControlPointerActive = false;
+    this.#contentControlPointerId = null;
+    this.#pendingContentControlInputSource ??= 'pointer';
+    if (this.#pendingContentControlInputSource === 'pointer') {
+      this.#pendingContentControlInputExpiresAt = Date.now() + CONTENT_CONTROL_POINTER_END_WINDOW_MS;
+    }
+  };
+
+  #handleContentControlKeyDown = (event: KeyboardEvent) => {
+    if (this.listenerCount('content-control:active-change') > 0 && !isContentControlNonSelectionKeyDown(event)) {
+      this.#pendingContentControlInputSource = 'keyboard';
+      this.#pendingContentControlInputExpiresAt = null;
+    }
+  };
 
   #handleContentControlClick = (event: MouseEvent) => {
     void this.#emitContentControlClick(event);
@@ -1041,8 +1115,15 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     });
 
     this.#contentControlClickRoot = container;
+    container.addEventListener('pointerdown', this.#handleContentControlPointerDown, true);
+    container.ownerDocument.addEventListener('pointerup', this.#handleContentControlPointerEnd, true);
+    container.ownerDocument.addEventListener('pointercancel', this.#handleContentControlPointerEnd, true);
+    container.addEventListener('keydown', this.#handleContentControlKeyDown, true);
     container.addEventListener('click', this.#handleContentControlClick, true);
+    this.#onConfig('content-control:active-change', config.onContentControlActiveChange);
     this.#init(config, container);
+    this.#contentControlEventBridgeReady = true;
+    if (this.listenerCount('content-control:active-change') > 0) void this.ui;
   }
 
   async #emitContentControlClick(event: MouseEvent): Promise<void> {
@@ -1056,7 +1137,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     try {
       const result = await list();
       if (this.#destroyed) return;
-      const target = toSdtRef(getContentControlItems(result).find((item) => item.id === id));
+      const target = toContentControlRef(getContentControlItems(result).find((item) => item.id === id));
       if (target) this.emit('content-control:click', { target, source: 'pointer' });
     } catch {
       return;
@@ -1334,7 +1415,177 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       // a stable object instead of a null check, but it is inert.
       if (this.#destroyed) this.#ui.destroy();
     }
+    this.#ensureContentControlActiveChangeBridge();
     return this.#ui;
+  }
+
+  override on<K extends keyof SuperDocEventMap>(
+    event: K,
+    fn: EventEmitter.EventListener<SuperDocEventMap, K>,
+    context?: unknown,
+  ): this {
+    super.on(event, fn, context);
+    if (event === 'content-control:active-change' && this.#contentControlEventBridgeReady) void this.ui;
+    return this;
+  }
+
+  override addListener<K extends keyof SuperDocEventMap>(
+    event: K,
+    fn: EventEmitter.EventListener<SuperDocEventMap, K>,
+    context?: unknown,
+  ): this {
+    super.addListener(event, fn, context);
+    if (event === 'content-control:active-change' && this.#contentControlEventBridgeReady) void this.ui;
+    return this;
+  }
+
+  override once<K extends keyof SuperDocEventMap>(
+    event: K,
+    fn: EventEmitter.EventListener<SuperDocEventMap, K>,
+    context?: unknown,
+  ): this {
+    super.once(event, fn, context);
+    if (event === 'content-control:active-change' && this.#contentControlEventBridgeReady) void this.ui;
+    return this;
+  }
+
+  override removeListener<K extends keyof SuperDocEventMap>(
+    event: K,
+    fn?: EventEmitter.EventListener<SuperDocEventMap, K>,
+    context?: unknown,
+    once?: boolean,
+  ): this {
+    super.removeListener(event, fn, context, once);
+    this.#detachContentControlActiveChangeBridgeIfUnused();
+    return this;
+  }
+
+  override off<K extends keyof SuperDocEventMap>(
+    event: K,
+    fn?: EventEmitter.EventListener<SuperDocEventMap, K>,
+    context?: unknown,
+    once?: boolean,
+  ): this {
+    super.off(event, fn, context, once);
+    this.#detachContentControlActiveChangeBridgeIfUnused();
+    return this;
+  }
+
+  override removeAllListeners(event?: keyof SuperDocEventMap): this {
+    super.removeAllListeners(event);
+    this.#detachContentControlActiveChangeBridgeIfUnused();
+    return this;
+  }
+
+  #detachContentControlActiveChangeBridgeIfUnused(): void {
+    if (this.listenerCount('content-control:active-change') > 0) return;
+    this.#contentControlActiveChangeUnsub?.();
+    this.#contentControlActiveChangeUnsub = null;
+    this.#contentControlSelectionSource = null;
+    this.#pendingContentControlInputSource = null;
+    this.#pendingContentControlInputExpiresAt = null;
+    this.#contentControlPointerActive = false;
+    this.#contentControlPointerId = null;
+  }
+
+  #ensureContentControlActiveChangeBridge(): void {
+    if (
+      this.#contentControlActiveChangeUnsub ||
+      this.#contentControlActiveChangeInstalling ||
+      !this.#ui ||
+      this.#destroyed ||
+      this.listenerCount('content-control:active-change') === 0
+    ) {
+      return;
+    }
+
+    let previousEditor: Editor | null = null;
+    let previousPath: ContentControlRef[] = [];
+    let selectionUnsub: (() => void) | null = null;
+    let contentControlsUnsub: (() => void) | null = null;
+    let skipInitialSelection = true;
+    this.#contentControlActiveChangeInstalling = true;
+    try {
+      selectionUnsub = this.#ui.selection.observe((selection) => {
+        if (skipInitialSelection) {
+          skipInitialSelection = false;
+          return;
+        }
+        if (selection.status !== 'ready') return;
+        const key = contentControlSelectionKey(selection);
+        if (!key) return;
+        if (
+          this.#pendingContentControlInputSource === 'pointer' &&
+          this.#pendingContentControlInputExpiresAt !== null &&
+          Date.now() > this.#pendingContentControlInputExpiresAt
+        ) {
+          this.#pendingContentControlInputSource = null;
+          this.#pendingContentControlInputExpiresAt = null;
+        }
+        const source = this.#pendingContentControlInputSource ?? (this.#contentControlPointerActive ? 'pointer' : null);
+        const editor = this.activeEditor;
+        if (
+          source ||
+          this.#contentControlSelectionSource?.editor !== editor ||
+          this.#contentControlSelectionSource.key !== key
+        ) {
+          this.#contentControlSelectionSource = {
+            editor,
+            key,
+            source: source ?? 'keyboard',
+          };
+        }
+        this.#pendingContentControlInputSource = null;
+        this.#pendingContentControlInputExpiresAt = null;
+      });
+
+      contentControlsUnsub = this.#ui.contentControls.observe((snapshot) => {
+        const editor = this.activeEditor;
+        const activePath = snapshot.activeIds.map((id) =>
+          toContentControlRef(snapshot.items.find((item) => item.id === id)),
+        );
+        if (activePath.some((item) => item === null)) return;
+
+        const nextPath = activePath as ContentControlRef[];
+        const sameEditor = editor === previousEditor;
+        const samePath =
+          nextPath.length === previousPath.length &&
+          nextPath.every((item, index) => item.id === previousPath[index]?.id);
+        if (sameEditor && samePath) return;
+        if (nextPath.length === 0 && previousPath.length === 0) {
+          previousEditor = editor;
+          return;
+        }
+
+        const previous = sameEditor ? (previousPath[0] ?? null) : null;
+        previousEditor = editor;
+        previousPath = nextPath;
+        const selectionKey = contentControlSelectionKey(this.#ui!.selection.getSnapshot());
+        const selectionSource = this.#contentControlSelectionSource;
+        this.emit('content-control:active-change', {
+          active: nextPath[0] ?? null,
+          previous,
+          activePath: nextPath,
+          source:
+            selectionKey && selectionSource?.editor === editor && selectionSource.key === selectionKey
+              ? selectionSource.source
+              : 'keyboard',
+        });
+      });
+
+      const unsubscribe = () => {
+        selectionUnsub?.();
+        contentControlsUnsub?.();
+      };
+      if (this.#destroyed || this.listenerCount('content-control:active-change') === 0) unsubscribe();
+      else this.#contentControlActiveChangeUnsub = unsubscribe;
+    } catch (error) {
+      selectionUnsub?.();
+      contentControlsUnsub?.();
+      throw error;
+    } finally {
+      this.#contentControlActiveChangeInstalling = false;
+    }
   }
 
   /**
@@ -1540,7 +1791,6 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     this.#onConfig('source:signals-complete', this.config.onSourceSignalsComplete);
     this.#onConfig('ready', this.config.onReady);
     this.#onConfig('comments-update', this.config.onCommentsUpdate);
-    this.#onConfig('content-control:active-change', this.config.onContentControlActiveChange);
     this.#onConfig('content-control:click', this.config.onContentControlClick);
     this.#onConfig('awareness-update', this.config.onAwarenessUpdate);
     this.#onConfig('locked', this.config.onLocked);
@@ -4117,7 +4367,22 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     this.#destroyed = true;
 
     this.#contentControlClickRoot?.removeEventListener('click', this.#handleContentControlClick, true);
+    this.#contentControlClickRoot?.removeEventListener('pointerdown', this.#handleContentControlPointerDown, true);
+    this.#contentControlClickRoot?.ownerDocument.removeEventListener(
+      'pointerup',
+      this.#handleContentControlPointerEnd,
+      true,
+    );
+    this.#contentControlClickRoot?.ownerDocument.removeEventListener(
+      'pointercancel',
+      this.#handleContentControlPointerEnd,
+      true,
+    );
+    this.#contentControlClickRoot?.removeEventListener('keydown', this.#handleContentControlKeyDown, true);
     this.#contentControlClickRoot = null;
+
+    this.#contentControlActiveChangeUnsub?.();
+    this.#contentControlActiveChangeUnsub = null;
 
     // Abort any in-flight upgrade (sync wait or ready wait) so it settles
     // immediately instead of hanging for the full timeout duration.

@@ -85,6 +85,7 @@ export type { ResolvedPasswordPromptTexts } from '../core/types/index.js';
 export type { ResolveRangeOutput } from '@superdoc/document-api';
 export type { ContentControlActiveChangePayload } from '../core/types/index.js';
 export type { ContentControlClickPayload } from '../core/types/index.js';
+export type { ContentControlRef } from '../core/types/index.js';
 export type { SdtRef } from '../core/types/index.js';
 export type { SearchMatch } from '../core/types/index.js';
 export type { SelectionHandle } from './ui/types.js';

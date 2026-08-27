@@ -6687,7 +6687,7 @@ describe('public ui — content controls workflow parity (row 738)', () => {
     },
   ];
 
-  it('surfaces active content-control ids overlapping the selection via listInRange', async () => {
+  it('surfaces the control containing the selection anchor', async () => {
     const listInRange = vi.fn(() => ({ items: [ccItems[0]] }));
     const { superdoc } = makeWorkflowSuperdoc({
       contentControls: { list: () => ({ items: ccItems }), listInRange },
@@ -6723,6 +6723,190 @@ describe('public ui — content controls workflow parity (row 738)', () => {
     expect(snapshot.activeIds).toEqual(['cc-2']);
     expect(snapshot.activeId).toBe('cc-2');
     expect(listInRange).toHaveBeenCalledWith({ startBlockId: 'P2', endBlockId: 'P2' });
+  });
+
+  it('surfaces the active content control when selectionTarget is unavailable', () => {
+    const listInRange = vi.fn(() => ({ items: [ccItems[1]] }));
+    const { superdoc } = makeWorkflowSuperdoc({
+      contentControls: { list: () => ({ items: ccItems }), listInRange },
+      selectionInfo: {
+        empty: true,
+        target: { kind: 'text', segments: [{ blockId: 'P2', range: { start: 4, end: 4 } }] },
+        activeMarks: [],
+        activeCommentIds: [],
+        activeChangeIds: [],
+        text: '',
+      },
+    });
+
+    const snapshot = createSuperDocUI({ superdoc }).contentControls.getSnapshot();
+
+    expect(snapshot.activeIds).toEqual(['cc-2']);
+    expect(snapshot.activeId).toBe('cc-2');
+    expect(listInRange).toHaveBeenCalledWith({ startBlockId: 'P2', endBlockId: 'P2' });
+  });
+
+  it('compares a tracked live selection to content-control bounds in visible offsets', () => {
+    const listInRange = vi.fn(() => ({ items: [ccItems[1]] }));
+    const { superdoc } = makeWorkflowSuperdoc({
+      contentControls: { list: () => ({ items: ccItems }), listInRange },
+      selectionInfo: {
+        empty: true,
+        target: { kind: 'text', segments: [{ blockId: 'P2', range: { start: 5, end: 5 } }] },
+        selectionTarget: {
+          kind: 'selection',
+          coordinateSpace: 'tracked',
+          start: { kind: 'text', blockId: 'P2', offset: 8 },
+          end: { kind: 'text', blockId: 'P2', offset: 8 },
+        },
+        activeMarks: [],
+        activeCommentIds: [],
+        activeChangeIds: ['deleted-before-caret'],
+        text: '',
+      },
+    });
+
+    const snapshot = createSuperDocUI({ superdoc }).contentControls.getSnapshot();
+
+    expect(snapshot.activeIds).toEqual(['cc-2']);
+    expect(snapshot.activeId).toBe('cc-2');
+  });
+
+  it('filters same-paragraph candidates by the exact caret offset', () => {
+    const laterControl = {
+      ...ccItems[1],
+      id: 'cc-3',
+      target: { kind: 'inline', nodeType: 'sdt', nodeId: 'n3' },
+      selectionTarget: {
+        kind: 'selection',
+        start: { kind: 'text', blockId: 'P2', offset: 10 },
+        end: { kind: 'text', blockId: 'P2', offset: 14 },
+      },
+    };
+    const listInRange = vi.fn(() => ({ items: [ccItems[1], laterControl] }));
+    const { superdoc } = makeWorkflowSuperdoc({
+      contentControls: { list: () => ({ items: [ccItems[1], laterControl] }), listInRange },
+      selectionInfo: {
+        empty: true,
+        target: { kind: 'text', segments: [{ blockId: 'P2', range: { start: 2, end: 2 } }] },
+        selectionTarget: {
+          kind: 'selection',
+          start: { kind: 'text', blockId: 'P2', offset: 2 },
+          end: { kind: 'text', blockId: 'P2', offset: 2 },
+        },
+        activeMarks: [],
+        activeCommentIds: [],
+        activeChangeIds: [],
+        text: '',
+      },
+    });
+
+    const snapshot = createSuperDocUI({ superdoc }).contentControls.getSnapshot();
+
+    expect(snapshot.activeIds).toEqual([]);
+    expect(snapshot.activeId).toBeNull();
+  });
+
+  it('excludes multi-block candidates that do not contain the selection start', () => {
+    const middleControl = {
+      ...ccItems[0],
+      id: 'cc-middle',
+      selectionTarget: {
+        kind: 'selection',
+        start: { kind: 'text', blockId: 'P3', offset: 0 },
+        end: { kind: 'text', blockId: 'P4', offset: 5 },
+      },
+    };
+    const listInRange = vi.fn(() => ({ items: [middleControl] }));
+    const { superdoc } = makeWorkflowSuperdoc({
+      contentControls: { list: () => ({ items: [middleControl] }), listInRange },
+      selectionInfo: {
+        empty: false,
+        target: {
+          kind: 'text',
+          segments: ['P1', 'P2', 'P3', 'P4', 'P5'].map((blockId) => ({
+            blockId,
+            range: { start: 0, end: 5 },
+          })),
+        },
+        selectionTarget: {
+          kind: 'selection',
+          start: { kind: 'text', blockId: 'P1', offset: 0 },
+          end: { kind: 'text', blockId: 'P5', offset: 5 },
+        },
+        activeMarks: [],
+        activeCommentIds: [],
+        activeChangeIds: [],
+        text: 'selected range',
+      },
+    });
+
+    const snapshot = createSuperDocUI({ superdoc }).contentControls.getSnapshot();
+
+    expect(listInRange).toHaveBeenCalledWith({ startBlockId: 'P1', endBlockId: 'P5' });
+    expect(snapshot.activeIds).toEqual([]);
+    expect(snapshot.activeId).toBeNull();
+  });
+
+  it('orders an exact nested active path innermost first', () => {
+    const outer = {
+      ...ccItems[0],
+      id: 'cc-outer',
+      target: { kind: 'block', nodeType: 'sdt', nodeId: 'outer' },
+      selectionTarget: {
+        kind: 'selection',
+        start: { kind: 'text', blockId: 'P1', offset: 0 },
+        end: { kind: 'text', blockId: 'P3', offset: 5 },
+      },
+    };
+    const listInRange = vi.fn(() => ({ items: [outer, ccItems[1]] }));
+    const { superdoc } = makeWorkflowSuperdoc({
+      contentControls: { list: () => ({ items: [outer, ccItems[1]] }), listInRange },
+      selectionInfo: {
+        empty: true,
+        target: { kind: 'text', segments: [{ blockId: 'P2', range: { start: 5, end: 5 } }] },
+        selectionTarget: {
+          kind: 'selection',
+          start: { kind: 'text', blockId: 'P2', offset: 5 },
+          end: { kind: 'text', blockId: 'P2', offset: 5 },
+        },
+        activeMarks: [],
+        activeCommentIds: [],
+        activeChangeIds: [],
+        text: '',
+      },
+    });
+
+    const snapshot = createSuperDocUI({ superdoc }).contentControls.getSnapshot();
+
+    expect(snapshot.activeIds).toEqual(['cc-2', 'cc-outer']);
+    expect(snapshot.activeId).toBe('cc-2');
+  });
+
+  it('keeps active metadata available while the full catalog is pending', () => {
+    const listInRange = vi.fn(() => ({ items: [ccItems[1]] }));
+    const { superdoc } = makeWorkflowSuperdoc({
+      contentControls: { list: () => new Promise(() => {}), listInRange },
+      selectionInfo: {
+        empty: true,
+        target: { kind: 'text', segments: [{ blockId: 'P2', range: { start: 5, end: 5 } }] },
+        selectionTarget: {
+          kind: 'selection',
+          start: { kind: 'text', blockId: 'P2', offset: 5 },
+          end: { kind: 'text', blockId: 'P2', offset: 5 },
+        },
+        activeMarks: [],
+        activeCommentIds: [],
+        activeChangeIds: [],
+        text: '',
+      },
+    });
+
+    const snapshot = createSuperDocUI({ superdoc }).contentControls.getSnapshot();
+
+    expect(snapshot.status).toBe('pending');
+    expect(snapshot.activeIds).toEqual(['cc-2']);
+    expect(snapshot.items.find((item) => item.id === 'cc-2')).toBe(ccItems[1]);
   });
 
   it('active ids fail closed to empty when listInRange is unavailable', async () => {
@@ -13792,6 +13976,16 @@ describe('public ui — async browser reads (read coordinator)', () => {
     activeChangeIds: ['tc-1'],
     text: 'hello',
   };
+  const ASYNC_CONTENT_CONTROL = {
+    nodeType: 'sdt',
+    kind: 'inline',
+    id: 'cc-1',
+    controlType: 'text',
+    lockMode: 'unlocked',
+    properties: {},
+    target: { kind: 'inline', nodeType: 'sdt', nodeId: 'cc-1' },
+    selectionTarget: SELECTION_TARGET,
+  };
 
   function makeAsyncSuperdoc(
     over: {
@@ -13850,8 +14044,8 @@ describe('public ui — async browser reads (read coordinator)', () => {
         ...(over.trackChangesDecide ? { decide: over.trackChangesDecide } : {}),
       },
       contentControls: {
-        list: over.contentControls?.list ?? (() => Promise.resolve({ items: [{ id: 'cc-1' }] })),
-        listInRange: over.contentControls?.listInRange ?? (() => Promise.resolve({ items: [{ id: 'cc-1' }] })),
+        list: over.contentControls?.list ?? (() => Promise.resolve({ items: [ASYNC_CONTENT_CONTROL] })),
+        listInRange: over.contentControls?.listInRange ?? (() => Promise.resolve({ items: [ASYNC_CONTENT_CONTROL] })),
       },
       query: { match: over.query ?? (() => Promise.resolve({ items: [] })) },
       format: over.format ?? { bold: () => Promise.resolve({ success: true }) },
@@ -13902,6 +14096,60 @@ describe('public ui — async browser reads (read coordinator)', () => {
     expect(ui.trackChanges.getSnapshot().total).toBe(1);
     expect(ui.contentControls.getSnapshot().status).toBe('ready');
     expect(ui.contentControls.getSnapshot().activeIds).toEqual(['cc-1']);
+  });
+
+  it('preserves settled active controls while a new selection range read is pending', async () => {
+    const rangeResolvers: Array<(value: unknown) => void> = [];
+    const listInRange = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          rangeResolvers.push(resolve);
+        }),
+    );
+    let currentSelection = RANGE_SELECTION;
+    const { superdoc, notifySelection } = makeAsyncSuperdoc({
+      selection: () => Promise.resolve(currentSelection),
+      contentControls: { listInRange },
+    });
+    const ui = createSuperDocUI({ superdoc });
+
+    await flush();
+    expect(rangeResolvers).toHaveLength(1);
+    rangeResolvers[0]?.({ items: [ASYNC_CONTENT_CONTROL] });
+    await flush();
+    expect(ui.contentControls.getSnapshot().activeIds).toEqual(['cc-1']);
+    const activeIdsAfterSettle: string[][] = [];
+    const stop = ui.contentControls.observe((snapshot) => activeIdsAfterSettle.push(snapshot.activeIds));
+
+    currentSelection = {
+      ...RANGE_SELECTION,
+      target: { kind: 'text', segments: [{ blockId: 'P1', range: { start: 1, end: 4 } }] },
+      selectionTarget: {
+        kind: 'selection',
+        start: { kind: 'text', blockId: 'P1', offset: 1 },
+        end: { kind: 'text', blockId: 'P1', offset: 4 },
+      },
+      text: 'ell',
+    };
+    notifySelection();
+    await flush();
+
+    expect(rangeResolvers).toHaveLength(2);
+    expect(ui.contentControls.getSnapshot()).toMatchObject({
+      status: 'stale',
+      activeId: 'cc-1',
+      activeIds: ['cc-1'],
+    });
+
+    rangeResolvers[1]?.({ items: [ASYNC_CONTENT_CONTROL] });
+    await flush();
+    expect(ui.contentControls.getSnapshot()).toMatchObject({
+      status: 'ready',
+      activeId: 'cc-1',
+      activeIds: ['cc-1'],
+    });
+    expect(activeIdsAfterSettle).not.toContainEqual([]);
+    stop();
   });
 
   it('keeps snapshots page-bounded and holds complete directories only for explicit domain observers', async () => {
@@ -15099,7 +15347,7 @@ describe('public ui — async browser reads (read coordinator)', () => {
     expect(ui.comments.list()).toEqual([{ id: 'c-1', text: 'hi' }]);
     expect(ui.comments.getById('c-1')).toMatchObject({ id: 'c-1', text: 'hi' });
     expect(ui.trackChanges.list()).toMatchObject([{ id: 'tc-1', type: 'insert' }]);
-    expect(ui.contentControls.list()).toEqual([{ id: 'cc-1' }]);
+    expect(ui.contentControls.list()).toMatchObject([{ id: 'cc-1' }]);
     expect(ui.contentControls.getById('cc-1')).toMatchObject({ id: 'cc-1' });
     expect(ui.styles.getCatalog({ includePreview: true })?.revision).toBe('rev-compat');
     expect(ui.document.getText()).toBe('compat text');

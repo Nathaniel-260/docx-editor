@@ -4131,6 +4131,25 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     };
   };
 
+  let settledActiveContentControlsToken: string | null = null;
+  let settledActiveContentControls: ContentControlInfo[] = [];
+
+  const retainSettledActiveContentControls = (
+    items: ContentControlInfo[],
+    status: SliceStatus,
+  ): { items: ContentControlInfo[]; status: SliceStatus } => {
+    const token = contentToken();
+    if (status === 'ready') {
+      settledActiveContentControlsToken = token;
+      settledActiveContentControls = items;
+      return { items, status };
+    }
+    if (status === 'pending' && settledActiveContentControlsToken === token) {
+      return { items: settledActiveContentControls, status: 'stale' };
+    }
+    return { items, status };
+  };
+
   const computeContentControls = (selection: SelectionSlice): ContentControlsSlice => {
     const doc = getDoc();
     const ccApi = doc?.contentControls as LooseRecord | undefined;
@@ -4143,13 +4162,15 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
           ? ((raw as LooseRecord).items as ContentControlsSlice['items'])
           : [],
     );
-    const items = value ?? [];
-    // Active ids overlapping the live selection, routed through the public
-    // `contentControls.listInRange` operation (block-range scoped). There is no
-    // `activeContentControlIds` on the selection info, so this is the only
-    // public route; it fails closed to an empty set when the selection has no
-    // resolvable block range or the operation is unavailable.
-    const { ids: activeIds, status: rangeStatus } = computeActiveContentControlIds(ccApi, selection);
+    const catalogItems = value ?? [];
+    const { items: activeItems, status: rangeStatus } = computeActiveContentControls(ccApi, selection);
+    const activeById = new Map(activeItems.map((item) => [item.id, item]));
+    const catalogIds = new Set(catalogItems.map((item) => item.id));
+    const items = [
+      ...catalogItems.map((item) => activeById.get(item.id) ?? item),
+      ...activeItems.filter((item) => !catalogIds.has(item.id)),
+    ];
+    const activeIds = activeItems.map((item) => item.id);
     return {
       status: combineStatus(listStatus, rangeStatus, selection.status),
       items,
@@ -4163,21 +4184,23 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
    * Lock mode of every content control overlapping the current selection's
    * block range, keyed by control id. Powers `contentControlLockReason` so the
    * toolbar can disable styling controls when the selection touches a
-   * `contentLocked`/`sdtContentLocked` control (SD-3274) — block-range scoped,
-   * same precision as `computeActiveContentControlIds` below.
+   * `contentLocked`/`sdtContentLocked` control (SD-3274) — block-range scoped.
    */
   const computeActiveContentControlLockModes = (
     ccApi: LooseRecord | undefined,
     selection: SelectionSlice,
-  ): { lockModesById: ReadonlyMap<string, string>; status: SliceStatus } => {
-    if (!ccApi || typeof ccApi.listInRange !== 'function') return { lockModesById: new Map(), status: 'ready' };
+  ): { lockModesById: ReadonlyMap<string, string>; rows: readonly ContentControlInfo[]; status: SliceStatus } => {
+    if (!ccApi || typeof ccApi.listInRange !== 'function') {
+      return { lockModesById: new Map(), rows: [], status: 'ready' };
+    }
     const range = selectionBlockRange(selection);
-    if (!range) return { lockModesById: new Map(), status: 'ready' };
-    const { value, status } = readAsync<LooseRecord[]>(
+    if (!range) return { lockModesById: new Map(), rows: [], status: 'ready' };
+    const { value, status } = readAsync<ContentControlInfo[]>(
       `contentControls:inRange:${selectionSignature(selection)}`,
       contentToken(),
       () => ccApi.listInRange(range),
-      (raw) => (raw && Array.isArray((raw as LooseRecord).items) ? ((raw as LooseRecord).items as LooseRecord[]) : []),
+      (raw) =>
+        raw && Array.isArray((raw as LooseRecord).items) ? ((raw as LooseRecord).items as ContentControlInfo[]) : [],
     );
     const rows = value ?? [];
     const lockModesById = new Map<string, string>();
@@ -4185,15 +4208,141 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       if (typeof row?.id === 'string')
         lockModesById.set(row.id, typeof row.lockMode === 'string' ? row.lockMode : 'unlocked');
     }
-    return { lockModesById, status };
+    return { lockModesById, rows, status };
   };
 
-  const computeActiveContentControlIds = (
+  const computeActiveContentControls = (
     ccApi: LooseRecord | undefined,
     selection: SelectionSlice,
-  ): { ids: string[]; status: SliceStatus } => {
-    const { lockModesById, status } = computeActiveContentControlLockModes(ccApi, selection);
-    return { ids: [...lockModesById.keys()], status };
+  ): { items: ContentControlInfo[]; status: SliceStatus } => {
+    const { rows, status } = computeActiveContentControlLockModes(ccApi, selection);
+    const explicitTarget = selection.selectionTarget as LooseRecord | null;
+    const selectionTarget = selection.target as LooseRecord | null;
+    let selectionAnchor = explicitTarget?.start as LooseRecord | undefined;
+    if (explicitTarget) {
+      if (
+        explicitTarget.kind !== 'selection' ||
+        selectionAnchor?.kind !== 'text' ||
+        typeof selectionAnchor.blockId !== 'string' ||
+        typeof selectionAnchor.offset !== 'number'
+      ) {
+        return retainSettledActiveContentControls([], status);
+      }
+    } else {
+      const firstSegment =
+        selectionTarget?.kind === 'text' && Array.isArray(selectionTarget.segments)
+          ? (selectionTarget.segments[0] as LooseRecord | undefined)
+          : undefined;
+      const firstRange = firstSegment?.range as LooseRecord | undefined;
+      if (typeof firstSegment?.blockId !== 'string' || typeof firstRange?.start !== 'number') {
+        return retainSettledActiveContentControls([], status);
+      }
+      selectionAnchor = {
+        kind: 'text',
+        blockId: firstSegment.blockId,
+        offset: firstRange.start,
+        story: selectionTarget?.story,
+      };
+    }
+    const visibleSegments =
+      selectionTarget?.coordinateSpace !== 'tracked' && Array.isArray(selectionTarget?.segments)
+        ? (selectionTarget.segments as LooseRecord[])
+        : [];
+    const visibleSegment = visibleSegments.find((segment) => segment.blockId === selectionAnchor.blockId);
+    const visibleRange = visibleSegment?.range as LooseRecord | undefined;
+    const visibleStart =
+      visibleSegment && typeof visibleSegment.blockId === 'string' && typeof visibleRange?.start === 'number'
+        ? {
+            kind: 'text',
+            blockId: visibleSegment.blockId,
+            offset: visibleRange.start,
+            story: selectionTarget?.story ?? selectionAnchor.story,
+          }
+        : null;
+    const targetCoordinateSpace =
+      (explicitTarget ? explicitTarget.coordinateSpace : selectionTarget?.coordinateSpace) === 'tracked'
+        ? 'tracked'
+        : 'visible';
+    const selectionStart = targetCoordinateSpace === 'tracked' ? visibleStart : selectionAnchor;
+    const selectedBlockIds = selectionBlockIds(selection);
+    const selectionStartIndex = selectedBlockIds.indexOf((selectionStart ?? selectionAnchor).blockId as string);
+
+    const activeItems = rows
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => {
+        const itemTarget = item.selectionTarget as LooseRecord | null | undefined;
+        const itemCoordinateSpace = itemTarget?.coordinateSpace === 'tracked' ? 'tracked' : 'visible';
+        if (itemCoordinateSpace === 'tracked' && targetCoordinateSpace !== 'tracked') return false;
+        const start = itemCoordinateSpace === 'tracked' ? selectionAnchor : selectionStart;
+        if (!start) return false;
+        const itemStart = itemTarget?.start as LooseRecord | undefined;
+        const itemEnd = itemTarget?.end as LooseRecord | undefined;
+        if (
+          itemTarget?.kind !== 'selection' ||
+          itemStart?.kind !== 'text' ||
+          itemEnd?.kind !== 'text' ||
+          typeof itemStart.blockId !== 'string' ||
+          typeof itemEnd.blockId !== 'string' ||
+          typeof itemStart.offset !== 'number' ||
+          typeof itemEnd.offset !== 'number'
+        ) {
+          return false;
+        }
+        if (
+          storyLocatorSignature(itemTarget.story ?? itemStart.story ?? itemEnd.story) !==
+          storyLocatorSignature(explicitTarget?.story ?? start.story)
+        ) {
+          return false;
+        }
+        if (itemStart.blockId === itemEnd.blockId) {
+          if (start.blockId !== itemStart.blockId) return false;
+          const low = Math.min(itemStart.offset, itemEnd.offset);
+          const high = Math.max(itemStart.offset, itemEnd.offset);
+          return low === high ? start.offset === low : start.offset >= low && start.offset < high;
+        }
+        if (start.blockId === itemStart.blockId) return start.offset >= itemStart.offset;
+        if (start.blockId === itemEnd.blockId) return start.offset < itemEnd.offset;
+        if (selectionStartIndex === -1) return false;
+        const itemStartIndex = selectedBlockIds.indexOf(itemStart.blockId);
+        const itemEndIndex = selectedBlockIds.indexOf(itemEnd.blockId);
+        if (itemStartIndex !== -1 && itemEndIndex !== -1) {
+          const low = Math.min(itemStartIndex, itemEndIndex);
+          const high = Math.max(itemStartIndex, itemEndIndex);
+          return selectionStartIndex > low && selectionStartIndex < high;
+        }
+        if (itemStartIndex !== -1) return selectionStartIndex > itemStartIndex;
+        if (itemEndIndex !== -1) return selectionStartIndex < itemEndIndex;
+        return true;
+      })
+      .sort((left, right) => {
+        const leftTarget = left.item.selectionTarget!;
+        const rightTarget = right.item.selectionTarget!;
+        const leftSameBlock =
+          leftTarget.start.kind === 'text' &&
+          leftTarget.end.kind === 'text' &&
+          leftTarget.start.blockId === leftTarget.end.blockId;
+        const rightSameBlock =
+          rightTarget.start.kind === 'text' &&
+          rightTarget.end.kind === 'text' &&
+          rightTarget.start.blockId === rightTarget.end.blockId;
+        if (leftSameBlock !== rightSameBlock) return leftSameBlock ? -1 : 1;
+        if (left.item.kind !== right.item.kind) return left.item.kind === 'inline' ? -1 : 1;
+        if (
+          leftSameBlock &&
+          rightSameBlock &&
+          leftTarget.start.kind === 'text' &&
+          leftTarget.end.kind === 'text' &&
+          rightTarget.start.kind === 'text' &&
+          rightTarget.end.kind === 'text'
+        ) {
+          const leftSpan = Math.abs(leftTarget.end.offset - leftTarget.start.offset);
+          const rightSpan = Math.abs(rightTarget.end.offset - rightTarget.start.offset);
+          if (leftSpan !== rightSpan) return leftSpan - rightSpan;
+        }
+        return right.index - left.index;
+      })
+      .map(({ item }) => item);
+    return retainSettledActiveContentControls(activeItems, status);
   };
 
   const computeFonts = (): FontsSlice => {

@@ -1,9 +1,9 @@
 {
   "generatedAt": "2026-06-23T01:53:02.997Z",
   "summary": {
-    "total": 242,
+    "total": 243,
     "byBucket": {
-      "supported-root": 239,
+      "supported-root": 240,
       "legacy-root": 3
     },
     "byConfidence": {
@@ -233,9 +233,20 @@
       "inCjs": false
     },
     {
+      "name": "ContentControlRef",
+      "bucket": "supported-root",
+      "rationale": "Canonical content-control reference used by public interaction callback payloads.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "ContentControlsConfig",
       "bucket": "supported-root",
-      "rationale": "Canonical content-control chrome config type. Public extension surface for ui.contentControls.",
+      "rationale": "Deprecated object form retained for v2 source compatibility; use boolean ui.contentControls.",
       "confidence": "high",
       "source": "config-supported",
       "inDts": true,
@@ -961,7 +972,7 @@
     {
       "name": "SdtRef",
       "bucket": "supported-root",
-      "rationale": "Structured document tag reference used by public content-control callback payloads.",
+      "rationale": "Deprecated alias retained for v2 source compatibility; use ContentControlRef.",
       "confidence": "high",
       "source": "config-supported",
       "inDts": true,

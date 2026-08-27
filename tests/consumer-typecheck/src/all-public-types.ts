@@ -42,6 +42,7 @@ import type {
   Config,
   ContentControlActiveChangePayload,
   ContentControlClickPayload,
+  ContentControlRef,
   ContextMenuConfig,
   ContextMenuContext,
   ContextMenuItem,
@@ -283,6 +284,7 @@ const _real_CommentsType: AssertNotAny<CommentsType> = true;
 const _real_Config: AssertNotAny<Config> = true;
 const _real_ContentControlActiveChangePayload: AssertNotAny<ContentControlActiveChangePayload> = true;
 const _real_ContentControlClickPayload: AssertNotAny<ContentControlClickPayload> = true;
+const _real_ContentControlRef: AssertNotAny<ContentControlRef> = true;
 const _real_ContextMenuConfig: AssertNotAny<ContextMenuConfig> = true;
 const _real_ContextMenuContext: AssertNotAny<ContextMenuContext> = true;
 const _real_ContextMenuItem: AssertNotAny<ContextMenuItem> = true;

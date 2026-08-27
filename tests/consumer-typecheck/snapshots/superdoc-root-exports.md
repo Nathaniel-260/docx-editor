@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-26T14:47:06.997Z
+Generated: 2026-08-26T19:27:20.147Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 246 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 246 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 247 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 247 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **246** |
+| **union** |  | **247** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 236
+- typed but no runtime export (phantom risk): 237
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -44,6 +44,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `Config`
 - `ContentControlActiveChangePayload`
 - `ContentControlClickPayload`
+- `ContentControlRef`
 - `ContentControlsConfig`
 - `ContextMenuConfig`
 - `ContextMenuContext`
@@ -283,9 +284,10 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `CommentsLayout` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsResponsiveConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsType` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Config` | ✓ | ✓ |   |   | 22 |   | 7 | 3 | 0 |
-| `ContentControlActiveChangePayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `ContentControlClickPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `Config` | ✓ | ✓ |   |   | 23 |   | 7 | 3 | 0 |
+| `ContentControlActiveChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ContentControlClickPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `ContentControlRef` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContentControlsConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -303,7 +305,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `DiffApplyReviewItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DirectSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DocRange` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Document` | ✓ | ✓ |   |   | 2 |   | 94 | 6 | 0 |
+| `Document` | ✓ | ✓ |   |   | 2 |   | 93 | 6 | 0 |
 | `DocumentApi` | ✓ | ✓ |   |   | 3 |   | 2 | 0 | 0 |
 | `DocumentMode` | ✓ | ✓ |   |   | 3 |   | 1 | 2 | 0 |
 | `DocumentProtectionState` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -355,7 +357,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `ResolveRangeOutput` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ResolvedFindReplaceTexts` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ResolvedPasswordPromptTexts` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `SdtRef` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SdtRef` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SearchConfig` | ✓ | ✓ |   |   | 3 |   | 0 | 0 | 0 |
 | `SearchFloatingConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SearchMatch` | ✓ | ✓ |   |   | 3 |   | 0 | 0 | 0 |
@@ -363,7 +365,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SelectionHandle` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 2 | 0 | 0 |
-| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 23 |   | 244 | 37 | 0 |
+| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 23 |   | 240 | 37 | 0 |
 | `SuperDocActiveEditorExtensions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsCommands` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsDiagnostics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |

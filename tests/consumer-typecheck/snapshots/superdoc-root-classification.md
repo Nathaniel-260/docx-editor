@@ -1,22 +1,22 @@
 # SD-3212 A1 — root classification
 
 Generated: derived from superdoc-root-classification.json (aligned with current root export inventory)
-Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (242 names)
+Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (243 names)
 
 ## Summary
 
 | Bucket | Count |
 |---|---|
-| supported-root | 239 |
+| supported-root | 240 |
 | legacy-root | 3 |
 | move-to-subpath | 0 |
 | internal-candidate | 0 |
 | NEEDS-REVIEW | 0 |
-| **total** | **242** |
+| **total** | **243** |
 
-Confidence: high=194, medium=48, low=0, needs-review=0.
+Confidence: high=195, medium=48, low=0, needs-review=0.
 
-## supported-root (239)
+## supported-root (240)
 
 | Name | Confidence | Source | Rationale |
 |---|---|---|---|
@@ -39,7 +39,8 @@ Confidence: high=194, medium=48, low=0, needs-review=0.
 | `Config` | medium | config-supported | Configuration type for a supported feature. |
 | `ContentControlActiveChangePayload` | high | config-supported | Payload for Config.onContentControlActiveChange. Customer-facing content-control callback type exported from src/public/index.ts. |
 | `ContentControlClickPayload` | high | config-supported | Payload for Config.onContentControlClick. Customer-facing content-control callback type exported from src/public/index.ts. |
-| `ContentControlsConfig` | high | config-supported | Canonical content-control chrome config type. Public extension surface for ui.contentControls. |
+| `ContentControlRef` | high | config-supported | Canonical content-control reference used by public interaction callback payloads. |
+| `ContentControlsConfig` | high | config-supported | Deprecated object form retained for v2 source compatibility; use boolean ui.contentControls. |
 | `ContextMenuConfig` | high | context-menu | Canonical configuration for the built-in context menu, including application sections, visibility and availability predicates, and final-section transforms. |
 | `ContextMenuItem` | high | context-menu | Canonical application item definition accepted by ContextMenuConfig.sections. |
 | `ContextMenuOpenContext` | high | context-menu | Runtime-truthful editor snapshot passed to context-menu visibility, availability, and final-section callbacks. |
@@ -103,7 +104,7 @@ Confidence: high=194, medium=48, low=0, needs-review=0.
 | `ResolveRangeOutput` | high | doc-api | Document API ranges.resolve result type implemented by the v2 range resolver adapter; useful for consumers typing range handles, targets, and preview metadata from the root package. |
 | `ResolvedFindReplaceTexts` | medium | find-replace | FindReplace surface API type. Public. |
 | `ResolvedPasswordPromptTexts` | medium | password-prompt | PasswordPrompt surface API type. Public. |
-| `SdtRef` | high | config-supported | Structured document tag reference used by public content-control callback payloads. |
+| `SdtRef` | high | config-supported | Deprecated alias retained for v2 source compatibility; use ContentControlRef. |
 | `SearchConfig` | high | config-supported | Canonical startup options for the built-in Search surface. |
 | `SearchFloatingConfig` | high | config-supported | Position and focus options used by SearchConfig. |
 | `SearchMatch` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |

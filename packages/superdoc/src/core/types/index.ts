@@ -14,7 +14,7 @@
 import type { Doc as YDoc } from 'yjs';
 import type { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider';
 import type { Ref, ComputedRef } from 'vue';
-import type { HyperlinkTarget } from '@superdoc/document-api';
+import type { ContentControlType, HyperlinkTarget } from '@superdoc/document-api';
 
 import type {
   DocumentFontOption,
@@ -1429,14 +1429,14 @@ export interface TrackChangeHighlightColors {
 }
 
 /**
- * Canonical configuration for the chrome drawn around content controls.
- *
- * `chrome` is the whole option bag this surface has. `'default'` and `'none'`
- * are the only values the painter and the v2 host accept; anything else is
- * coerced back to `'default'`.
+ * Previous object form for content-control chrome.
+ * @deprecated replaceWith=`boolean ui.contentControls` compat-indefinitely=v2 configuration compatibility
  */
 export interface ContentControlsConfig {
-  /** Whether SuperDoc draws its own chrome around each content control. */
+  /**
+   * Previous spelling for enabling or disabling SuperDoc's content-control chrome.
+   * @deprecated replaceWith=`boolean ui.contentControls` compat-indefinitely=v2 configuration compatibility
+   */
   chrome?: 'default' | 'none';
 }
 
@@ -2466,9 +2466,15 @@ export interface CanPerformPermissionParams {
 
 /** Modules registered with the SuperDoc instance. */
 export interface Modules {
-  /** Content controls module configuration. */
+  /**
+   * Previous configuration for content-control chrome.
+   * @deprecated replaceWith=`ui.contentControls` compat-indefinitely=v2 configuration compatibility
+   */
   contentControls?: {
-    /** Built-in SDT chrome rendering mode. */
+    /**
+     * Previous spelling for enabling or disabling SuperDoc's content-control chrome.
+     * @deprecated replaceWith=`ui.contentControls` compat-indefinitely=v2 configuration compatibility
+     */
     chrome?: 'default' | 'none';
   };
   /**
@@ -3128,6 +3134,24 @@ export interface EditorTransactionEvent {
   sectionType?: string | null;
 }
 
+/** A content control reported by an Editor interaction callback. */
+export interface ContentControlRef {
+  /** Content-control id from the DOCX. */
+  id: string;
+  /** Content-control tag, when the DOCX defines one. */
+  tag?: string;
+  /** Display name from the DOCX, when defined. */
+  alias?: string;
+  /** Content-control type, such as `text`, `checkbox`, or `date`. */
+  controlType: ContentControlType;
+  /** Whether the control is inline or contains one or more blocks. */
+  scope: 'inline' | 'block';
+}
+
+/**
+ * Previous content-control reference shape.
+ * @deprecated replaceWith=`ContentControlRef` compat-indefinitely=v2 event payload compatibility
+ */
 export interface SdtRef {
   id: string;
   tag?: string;
@@ -3136,21 +3160,26 @@ export interface SdtRef {
   scope: 'inline' | 'block';
 }
 
+/** Details reported when the active content-control path changes. */
 export interface ContentControlActiveChangePayload {
-  active: SdtRef | null;
-  previous: SdtRef | null;
+  /** Innermost active content control, or `null` outside a control. */
+  active: ContentControlRef | null;
+  /** Previously active innermost content control, or `null`. */
+  previous: ContentControlRef | null;
   /**
-   * Active content-control stack for the new selection, innermost first
-   * (matches `ui.contentControls` activeIds). `active` is `activePath[0]`.
-   * Empty when the selection is not inside any control. Lets nested-aware
-   * custom UI read the surrounding controls without combining with observe().
+   * Active content-control stack, innermost first. `active` is
+   * `activePath[0]`. Empty when the selection is outside a content control.
    */
-  activePath: SdtRef[];
+  activePath: ContentControlRef[];
+  /** Reported source of the selection change. */
   source: 'keyboard' | 'pointer';
 }
 
+/** Details reported when someone clicks inside a content control. */
 export interface ContentControlClickPayload {
-  target: SdtRef;
+  /** Innermost clicked content control. */
+  target: ContentControlRef;
+  /** Content-control clicks always originate from a pointer. */
   source: 'pointer';
 }
 
@@ -3974,7 +4003,13 @@ export interface UIConfig {
         /** Element or selector to render the ruler into. */
         container?: string | HTMLElement;
       };
-  /** Built-in chrome drawn around content controls. Enabled by default. */
+  /**
+   * Built-in chrome drawn around content controls (default: `true`). Set to
+   * `false` to hide the chrome.
+   *
+   * The previous `{ chrome: 'default' | 'none' }` form remains accepted for
+   * v2 compatibility. New integrations should use the boolean form.
+   */
   contentControls?: boolean | ContentControlsConfig;
 }
 
@@ -4304,9 +4339,12 @@ export interface Config {
   onReady?: (params: SuperDocReadyPayload) => void;
   /** Callback when comments are updated. */
   onCommentsUpdate?: (params: SuperDocCommentsUpdatePayload) => void;
-  /** Callback when active content control changes. */
+  /**
+   * Callback when the selection enters, leaves, or moves between content controls.
+   * @deprecated replaceWith=`superdoc.ui.contentControls.observe` compat-indefinitely=v2 event compatibility
+   */
   onContentControlActiveChange?: (params: ContentControlActiveChangePayload) => void;
-  /** Callback when user clicks inside a content control. */
+  /** Callback when someone clicks inside a content control. */
   onContentControlClick?: (params: ContentControlClickPayload) => void;
   /** Callback when awareness is updated. */
   onAwarenessUpdate?: (params: SuperDocAwarenessUpdatePayload) => void;
