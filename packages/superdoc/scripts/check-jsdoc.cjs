@@ -62,13 +62,12 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
 const ts = require('typescript');
+const { formatTypeScriptLaunchError, runTypeScript } = require('./typescript-runner.cjs');
 
 const packageDir = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(packageDir, '..', '..');
 
-const tscBin = path.join(repoRoot, 'node_modules', '.bin', 'tsc');
 const tsconfigPath = path.join(packageDir, 'tsconfig.json');
 
 const DEBT_SNAPSHOT_PATH = path.join(__dirname, 'jsdoc-debt-snapshot.json');
@@ -401,13 +400,14 @@ if (preflightFailures.length > 0 || allowlistFailures.length > 0 || ratchetFailu
 
 // ─── Drift check on CHECKED_FILES (the original gate) ────────────────
 
-const result = spawnSync(tscBin, ['--noEmit', '-p', tsconfigPath], {
+const result = runTypeScript(['--noEmit', '-p', tsconfigPath], {
   encoding: 'utf8',
   cwd: repoRoot,
 });
 
-if (result.error) {
-  console.error(`[check-jsdoc] failed to invoke tsc at ${tscBin}: ${result.error.message}`);
+const launchError = formatTypeScriptLaunchError(result, 'JSDoc contract check');
+if (launchError) {
+  console.error(`[check-jsdoc] ${launchError}`);
   process.exit(1);
 }
 if (result.signal !== null) {
