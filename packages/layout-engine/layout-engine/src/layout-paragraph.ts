@@ -488,7 +488,6 @@ function shouldAdvanceForParagraphRelativeDrawing(
     if (
       (anchor?.vRelativeFrom != null && anchor.vRelativeFrom !== 'paragraph') ||
       wrapType === 'Inline' ||
-      wrapType === 'None' ||
       objectHeight <= 0 ||
       objectHeight > contentHeight + ANCHORED_DRAWING_PAGE_FIT_EPSILON_PX
     ) {

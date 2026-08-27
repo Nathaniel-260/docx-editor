@@ -1890,6 +1890,78 @@ describe('layoutParagraphBlock - paragraph-relative anchored image pagination', 
     expect(floatManager.registerDrawing).toHaveBeenCalledWith(imageBlock, imageMeasure, 50, 0, 2);
   });
 
+  it('moves paragraph-relative wrap-none behind-doc images instead of placing them in the previous footer', () => {
+    const firstPage = makePageState();
+    firstPage.cursorY = 700;
+    firstPage.maxCursorY = 700;
+
+    const secondPage = makePageState();
+    secondPage.page.number = 2;
+
+    let currentState = firstPage;
+    const ensurePage = mock(() => currentState);
+    const advanceColumn = mock(() => {
+      currentState = secondPage;
+      return secondPage;
+    });
+    const floatManager = makeFloatManager();
+    const block: ParagraphBlock = {
+      kind: 'paragraph',
+      id: 'image-anchor-paragraph',
+      runs: [{ text: '', fontFamily: 'Arial', fontSize: 12 }],
+    };
+    const imageBlock: ImageBlock = {
+      kind: 'image',
+      id: 'paragraph-relative-behind-doc-image',
+      src: 'blob:paragraph-relative-behind-doc-image',
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'margin',
+        vRelativeFrom: 'paragraph',
+        alignH: 'left',
+        alignV: 'top',
+        offsetV: 0,
+        behindDoc: true,
+      },
+      wrap: { type: 'None', behindDoc: true },
+    };
+    const imageMeasure: ImageMeasure = {
+      kind: 'image',
+      width: 500,
+      height: 650,
+    };
+
+    layoutParagraphBlock(
+      {
+        block,
+        measure: makeMeasure([{ width: 0, lineHeight: 20, maxWidth: 600 }]),
+        columnWidth: 600,
+        ensurePage,
+        advanceColumn,
+        columnX: mock(() => 50),
+        floatManager,
+      },
+      {
+        anchoredDrawings: [{ block: imageBlock, measure: imageMeasure }],
+        anchoredTables: [],
+        columnWidth: 600,
+        pageWidth: 700,
+        pageMargins: { top: 50, right: 50, bottom: 50, left: 50 },
+        columns: { width: 600, gap: 0, count: 1 },
+        placedAnchoredIds: new Set<string>(),
+      },
+    );
+
+    expect(advanceColumn).toHaveBeenCalledTimes(1);
+    expect(firstPage.page.fragments).toHaveLength(0);
+    expect(secondPage.page.fragments.map((fragment) => fragment.kind)).toEqual(['image', 'para']);
+    const image = secondPage.page.fragments[0] as ImageFragment;
+    expect(image.behindDoc).toBe(true);
+    expect(image.y).toBe(50);
+    expect(image.y + image.height).toBeLessThanOrEqual(secondPage.contentBottom);
+    expect(floatManager.registerDrawing).toHaveBeenCalledWith(imageBlock, imageMeasure, 50, 0, 2);
+  });
+
   it('does not advance repeatedly when the image cannot fit on an empty page', () => {
     const page = makePageState();
     page.cursorY = 700;
