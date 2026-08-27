@@ -1,0 +1,47 @@
+---
+title: Show the ruler
+navTitle: Ruler
+description: Show the horizontal ruler and let people adjust a section's left and right page margins.
+---
+
+## Try the ruler
+
+Expand the Editor, click in the document to activate its section, then drag either margin handle. The page content moves
+and reflows as its left or right margin changes. Switch the unit to confirm that the ruler can display the same margins
+in inches or centimeters.
+
+<EditorDemo fixture='/fixtures/ruler-sample.docx' preset='ruler' title='Adjust page margins' />
+
+The ruler follows the active section. In Viewing mode it remains visible but read-only. Web layout hides it.
+
+## Show the ruler
+
+Continue with `/sample.docx` from the [Quickstart](/editor/quickstart), then enable the ruler:
+
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../../snippets/editor/built-in-ruler.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/App.tsx' framework='React'>
+    <include>../../../../snippets/editor/react-built-in-ruler.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
+
+Vanilla also needs an Editor mount:
+
+<include>../../../../snippets/editor/built-in-ruler.html</include>
+
+Set the initial unit with `measurementUnit`. Change it later with `setMeasurementUnit('in')` or
+`setMeasurementUnit('cm')`. Show and hide the ruler with `toggleRuler()`.
+
+## Configure the ruler
+
+Choose a field to see its type, default, and a configuration fragment you can copy.
+
+<RulerConfigReference />
+
+`onPageMarginsChange` reports the changed side and the section's current margins in inches. Use the
+[Document API sections reference](/document-api/reference/sections/) for other page setup changes.
+
+Continue with [Responsive layout](/editor/built-in-ui/responsive-layout) to fit the Editor to its container and adapt
+its chrome when space becomes tight.

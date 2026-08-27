@@ -2,7 +2,14 @@
 
 import { Bold, Check, Expand, Italic, Minus, Plus, RotateCcw, Shrink, Underline, Undo2, X } from 'lucide-react';
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
-import type { Config, ContentControlRef, ContextMenuConfig, DocumentMode, ViewingTrackedChangesMode } from 'superdoc';
+import type {
+  Config,
+  ContentControlRef,
+  ContextMenuConfig,
+  DocumentMode,
+  SuperDocMeasurementUnit,
+  ViewingTrackedChangesMode,
+} from 'superdoc';
 import type { CommandState, SuperDocUI, ZoomSlice } from 'superdoc/ui';
 import {
   commentsDemoLayouts,
@@ -33,6 +40,7 @@ type EditorDemoPreset =
   | 'hyperlinks'
   | 'loading'
   | 'proofing'
+  | 'ruler'
   | 'search'
   | 'toolbar'
   | 'tracked-review';
@@ -338,6 +346,8 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const [modeResetBusy, setModeResetBusy] = useState(false);
   const [replaceControls, setReplaceControls] = useState(true);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [rulerUnit, setRulerUnit] = useState<SuperDocMeasurementUnit>('in');
+  const [rulerVisible, setRulerVisible] = useState(true);
   const [state, setState] = useState<DemoState>('idle');
   const [toolbarStrategy, setToolbarStrategy] = useState<ToolbarDemoStrategy>('items');
   const [trackedChangeCount, setTrackedChangeCount] = useState(0);
@@ -555,6 +565,8 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       setModeResetBusy(false);
       setReplaceControls(initialReplaceControls);
       setReviewBusy(false);
+      setRulerUnit('in');
+      setRulerVisible(true);
       setToolbarStrategy(initialToolbarStrategy);
       setTrackedChangeCount(0);
       setViewingTrackedChanges('original');
@@ -605,11 +617,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                 toolbar: getPinnedFocusedToolbarOptions(builtInToolbar!, { center: ['link'] }),
               }
             : {}),
+          ...(preset === 'ruler' ? { comments: false, ruler: true } : {}),
           ...(preset === 'toolbar'
             ? { toolbar: getPinnedToolbarOptions(initialToolbarStrategy, builtInToolbar!) }
             : {}),
         },
         interaction: preset === 'comments' ? { comments: { level: initialCommentsLevel } } : undefined,
+        measurementUnit: preset === 'ruler' ? 'in' : undefined,
         viewing: preset === 'document-modes' ? { trackedChanges: 'original' } : undefined,
         zoom: {
           mode: 'manual',
@@ -814,6 +828,21 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     void reconfigureDemo({ includeTrackedDeletions: nextIncludeTrackedDeletions });
   }
 
+  function changeRulerVisibility(value: 'show' | 'hide') {
+    const nextVisible = value === 'show';
+    if (nextVisible === rulerVisible || state !== 'ready') return;
+
+    instanceRef.current?.toggleRuler();
+    setRulerVisible(nextVisible);
+  }
+
+  function changeRulerUnit(unit: SuperDocMeasurementUnit) {
+    if (unit === rulerUnit || state !== 'ready') return;
+
+    instanceRef.current?.setMeasurementUnit(unit);
+    setRulerUnit(unit);
+  }
+
   async function resetModesDemo() {
     const instance = instanceRef.current;
     if (!instance || !fixture || modeResetBusy) return;
@@ -916,6 +945,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       aria-label={title}
       data-document-mode={preset === 'document-modes' || preset === 'search' ? documentMode : undefined}
       data-preset={preset}
+      data-ruler-visible={preset === 'ruler' ? rulerVisible : undefined}
       data-state={state}
     >
       <div className='sd-editor-demo-header'>
@@ -944,11 +974,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                           ? 'Click the hyperlink to try the selected activation behavior.'
                           : preset === 'loading'
                             ? 'Replay loading to see the built-in progress overlay during a document replacement.'
-                            : preset === 'search'
-                              ? 'Search for “Client”, or include tracked deletions and search for “Legacy”.'
-                              : preset === 'toolbar'
-                                ? 'Switch strategies, then try the rendered controls in the document.'
-                                : 'Loads the sample DOCX in suggesting mode.'}
+                            : preset === 'ruler'
+                              ? 'Click in the document, drag either margin handle, then switch units.'
+                              : preset === 'search'
+                                ? 'Search for “Client”, or include tracked deletions and search for “Legacy”.'
+                                : preset === 'toolbar'
+                                  ? 'Switch strategies, then try the rendered controls in the document.'
+                                  : 'Loads the sample DOCX in suggesting mode.'}
           </span>
         </div>
         <div className='sd-editor-demo-actions'>
@@ -997,6 +1029,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       preset === 'content-controls' ||
       preset === 'context-menu' ||
       preset === 'hyperlinks' ||
+      preset === 'ruler' ||
       preset === 'document-modes' ? (
         <div className='sd-editor-demo-config-bar' aria-label={`${title} configuration`}>
           {preset === 'document-modes' ? (
@@ -1117,6 +1150,30 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               value={hyperlinkBehavior}
             />
           ) : null}
+          {preset === 'ruler' ? (
+            <>
+              <DemoConfigGroup
+                disabled={state !== 'ready'}
+                label='Ruler'
+                onChange={changeRulerVisibility}
+                options={[
+                  { id: 'show', label: 'Show' },
+                  { id: 'hide', label: 'Hide' },
+                ]}
+                value={rulerVisible ? 'show' : 'hide'}
+              />
+              <DemoConfigGroup
+                disabled={state !== 'ready'}
+                label='Unit'
+                onChange={changeRulerUnit}
+                options={[
+                  { id: 'in', label: 'Inches' },
+                  { id: 'cm', label: 'Centimeters' },
+                ]}
+                value={rulerUnit}
+              />
+            </>
+          ) : null}
           <DemoViewControls
             disabled={state !== 'ready' || modeResetBusy}
             fitActive={fitActive}
@@ -1148,11 +1205,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                         ? 'The hyperlinks editor could not load. Try again.'
                         : preset === 'loading'
                           ? 'The loading UI demo could not open the document. Try again.'
-                          : preset === 'search'
-                            ? 'The search editor could not load. Try again.'
-                            : preset === 'toolbar'
-                              ? 'The toolbar editor could not load. Try again.'
-                              : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
+                          : preset === 'ruler'
+                            ? 'The ruler editor could not load. Try again.'
+                            : preset === 'search'
+                              ? 'The search editor could not load. Try again.'
+                              : preset === 'toolbar'
+                                ? 'The toolbar editor could not load. Try again.'
+                                : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
           </p>
         ) : null}
         {configurationError ? (
@@ -1178,6 +1237,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
             preset === 'content-controls' ||
             preset === 'context-menu' ||
             preset === 'hyperlinks' ||
+            preset === 'ruler' ||
             preset === 'search' ||
             preset === 'toolbar'
           }
@@ -1290,11 +1350,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                           ? 'The hyperlinks editor is loading.'
                           : preset === 'loading'
                             ? 'The document loading UI is loading.'
-                            : preset === 'search'
-                              ? 'The search editor is loading.'
-                              : preset === 'toolbar'
-                                ? 'The toolbar editor is loading.'
-                                : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
+                            : preset === 'ruler'
+                              ? 'The ruler editor is loading.'
+                              : preset === 'search'
+                                ? 'The search editor is loading.'
+                                : preset === 'toolbar'
+                                  ? 'The toolbar editor is loading.'
+                                  : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
             </p>
           </div>
         ) : null}

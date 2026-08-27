@@ -55,6 +55,8 @@ const generatedSearchFloatingConfigUrl = new URL('../generated/search-floating-c
 const generatedSearchStringsUrl = new URL('../generated/search-strings-reference.json', import.meta.url);
 const generatedHyperlinksConfigUrl = new URL('../generated/hyperlinks-config-reference.json', import.meta.url);
 const generatedLoadingConfigUrl = new URL('../generated/loading-config-reference.json', import.meta.url);
+const generatedRulerUiConfigUrl = new URL('../generated/ruler-ui-config-reference.json', import.meta.url);
+const generatedRulerEditorConfigUrl = new URL('../generated/ruler-editor-config-reference.json', import.meta.url);
 const generatedContextMenuConfigUrl = new URL('../generated/context-menu-config-reference.json', import.meta.url);
 const generatedToolbarConfigUrl = new URL('../generated/toolbar-config-reference.json', import.meta.url);
 const generatedCommentsConfigUrl = new URL('../generated/comments-config-reference.json', import.meta.url);
@@ -129,6 +131,7 @@ const registeredComponents = new Set([
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
+  'RulerConfigReference',
   'SearchConfigReference',
   'ToolbarConfigReference',
 ]);
@@ -140,6 +143,7 @@ const editorDemoPresets = new Set([
   'hyperlinks',
   'loading',
   'proofing',
+  'ruler',
   'search',
   'toolbar',
   'tracked-review',
@@ -536,6 +540,10 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /label='Built-in chrome'[\s\S]*value=\{contentControlChrome \? 'show' : 'hide'\}/u);
   assert.match(demo, /label='Menu'[\s\S]*options=\{contextMenuDemoStrategies\}/u);
   assert.match(demo, /label='Activation'[\s\S]*options=\{hyperlinkDemoBehaviors\}/u);
+  assert.match(demo, /preset === 'ruler' \? \{ comments: false, ruler: true \} : \{\}/u);
+  assert.match(demo, /instanceRef\.current\?\.toggleRuler\(\)/u);
+  assert.match(demo, /instanceRef\.current\?\.setMeasurementUnit\(unit\)/u);
+  assert.match(demo, /label='Ruler'[\s\S]*label='Unit'/u);
   assert.match(demo, /label='Replace controls'/u);
   assert.match(demo, /label='Tracked deletions'/u);
   assert.equal([...demo.matchAll(/<DemoViewControls\b/gu)].length, 2);
@@ -708,6 +716,29 @@ test('the generated Context menu reference mirrors every canonical field', async
   assert.ok(generatedContextMenuConfig.fields.every((field) => field.type && field.description && !field.deprecated));
   assert.match(configBody, /@deprecated replaceWith=`sections`/u);
   assert.match(configBody, /@deprecated replaceWith=`defaultItems`/u);
+});
+
+test('the Ruler configuration explorer mirrors the canonical UI and Editor fields', async () => {
+  const [{ rulerConfigExplorer }, { renderConfigReferenceMarkdown }, generatedUi, generatedEditor] = await Promise.all([
+    import('../lib/ruler-config-explorer.ts'),
+    import('../lib/config-explorer.ts'),
+    readFile(generatedRulerUiConfigUrl, 'utf8').then(JSON.parse),
+    readFile(generatedRulerEditorConfigUrl, 'utf8').then(JSON.parse),
+  ]);
+
+  assert.deepEqual(generatedUi.fields.map((field) => field.name), ['ruler']);
+  assert.deepEqual(
+    generatedEditor.fields.map((field) => field.name).sort(),
+    ['measurementUnit', 'onPageMarginsChange'],
+  );
+  assert.deepEqual(
+    rulerConfigExplorer.fields.map((field) => field.name),
+    ['ui.ruler', 'measurementUnit', 'onPageMarginsChange'],
+  );
+  const markdown = renderConfigReferenceMarkdown(rulerConfigExplorer);
+  assert.match(markdown, /\| `ui\.ruler` \|/u);
+  assert.match(markdown, /\| `onPageMarginsChange` \|/u);
+  assert.doesNotMatch(markdown, /\| `rulers` \||\| `rulerContainer` \|/u);
 });
 
 test('the Context menu configuration explorer renders valid canonical examples', async () => {

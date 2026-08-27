@@ -1,0 +1,22 @@
+{
+  "id": "ruler-ui-config-source",
+  "name": "UIConfig",
+  "root": "ui",
+  "label": "ruler UI configuration",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "ruler",
+      "type": "false | true | {\n  container?: string | HTMLElement;\n}",
+      "typeName": "false | true | RulerConfig",
+      "required": false,
+      "description": "Built-in ruler. Disabled by default.",
+      "group": "other"
+    }
+  ]
+}

@@ -303,7 +303,14 @@ const presentation = {
   measurementUnit: {
     default: "'in'",
     example: { value: "'cm'", code: "measurementUnit: 'cm'" },
-    guide: { label: 'Responsive layout', href: '/editor/built-in-ui/responsive-layout' },
+    guide: { label: 'Ruler', href: '/editor/built-in-ui/ruler' },
+  },
+  onPageMarginsChange: {
+    example: {
+      value: '({ side, value }) => { … }',
+      code: 'onPageMarginsChange: ({ side, value }) => {\n  console.info(side, value);\n}',
+    },
+    guide: { label: 'Ruler', href: '/editor/built-in-ui/ruler' },
   },
   modules: {
     example: { value: '{ trackChanges: … }', code: 'modules: { trackChanges: { enabled: true } }' },

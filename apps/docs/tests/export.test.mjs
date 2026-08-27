@@ -34,6 +34,7 @@ const routes = [
   ['editor/built-in-ui/hyperlinks/index.html', 'Configure hyperlink behavior'],
   ['editor/built-in-ui/context-menus/index.html', 'Configure the context menu'],
   ['editor/built-in-ui/content-controls/index.html', 'Show content-control chrome'],
+  ['editor/built-in-ui/ruler/index.html', 'Show the ruler'],
   ['editor/built-in-ui/responsive-layout/index.html', 'Build a responsive Editor layout'],
   ['editor/custom-ui/overview/index.html', 'Custom UI overview'],
   ['editor/custom-ui/controller-setup/index.html', 'Custom UI controller setup'],
@@ -778,6 +779,26 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
   assert.match(loading, /onException/);
   assert.match(loading, /Could not open the document\. Try again\./);
   assert.doesNotMatch(`${hyperlinks}\n${contextMenu}\n${contentControls}\n${responsive}\n${loading}`, /<include>/);
+});
+
+test('exports the Ruler guide with its interactive behavior and generated reference', async () => {
+  const [article, markdown] = await Promise.all([
+    readFile(new URL('../out/editor/built-in-ui/ruler/index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../out/md/editor/built-in-ui/ruler.md', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(article, /data-preset="ruler"/);
+  assert.match(article, /ruler-sample\.docx/);
+  assert.match(article, /id="ruler-config"/);
+  assert.match(article, /data-config-explorer="true"/);
+  assert.match(markdown, /Ruler controls available in the interactive Editor/);
+  assert.match(markdown, /Click in the document to activate a section/);
+  assert.match(markdown, /\| `ui\.ruler` \|/);
+  assert.match(markdown, /\| `measurementUnit` \|/);
+  assert.match(markdown, /\| `onPageMarginsChange` \|/);
+  assert.doesNotMatch(markdown, /<RulerConfigReference\b/);
+  assert.doesNotMatch(markdown, /<EditorDemo\b/);
+  assert.doesNotMatch(markdown, /<include>/);
 });
 
 test('exports the redistributed Editor guidance as clean Markdown', async () => {

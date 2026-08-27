@@ -49,7 +49,7 @@ export const hyperlinkDemoBehaviors = [
 ] as const satisfies readonly BuiltInDemoChoice<HyperlinkDemoBehavior>[];
 
 export function renderBuiltInEditorDemoMarkdown(
-  preset: 'comments' | 'content-controls' | 'context-menu' | 'hyperlinks' | 'loading' | 'search' | 'toolbar',
+  preset: 'comments' | 'content-controls' | 'context-menu' | 'hyperlinks' | 'loading' | 'ruler' | 'search' | 'toolbar',
 ) {
   if (preset === 'toolbar') {
     return [
@@ -112,6 +112,15 @@ export function renderBuiltInEditorDemoMarkdown(
       '',
       '- **Built-in overlay — `ui.loading`:** enabled by default. It reports real document progress and stays visible until the Editor is ready.',
       '- **Replay loading:** opens the fixture again through `replaceFile()` so the same overlay covers a document replacement.',
+    ].join('\n');
+  }
+
+  if (preset === 'ruler') {
+    return [
+      'Ruler controls available in the interactive Editor:',
+      '',
+      '- **Ruler:** show or hide the horizontal ruler. Click in the document to activate a section, then drag its handles to change the left and right page margins.',
+      '- **Unit:** display ruler measurements in inches or centimeters. Switching units does not change the margins.',
     ].join('\n');
   }
 

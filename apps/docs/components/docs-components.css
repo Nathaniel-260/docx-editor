@@ -2318,6 +2318,29 @@
   background: var(--sd-surface-muted);
 }
 
+.sd-builtin-map-ruler {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr) 1.25rem;
+  height: 1rem;
+  border-bottom: 1px solid var(--sd-border-soft);
+  background: var(--sd-surface);
+}
+
+.sd-builtin-map-ruler-margin {
+  background: var(--sd-surface-muted);
+}
+
+.sd-builtin-map-ruler-ticks {
+  display: flex;
+  align-items: start;
+  justify-content: space-around;
+}
+
+.sd-builtin-map-ruler-ticks i {
+  height: 0.45rem;
+  border-left: 1px solid var(--sd-border);
+}
+
 .sd-builtin-map-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 5.5rem;

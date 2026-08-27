@@ -149,6 +149,26 @@ const references: ReferenceDefinition[] = [
     includeFields: ['loading'],
     groups: [{ id: 'other', label: 'Options' }],
   },
+  {
+    typeName: 'UIConfig',
+    outputFile: 'ruler-ui-config-reference.json',
+    id: 'ruler-ui-config-source',
+    name: 'UIConfig',
+    root: 'ui',
+    label: 'ruler UI configuration',
+    includeFields: ['ruler'],
+    groups: [{ id: 'other', label: 'Options' }],
+  },
+  {
+    typeName: 'Config',
+    outputFile: 'ruler-editor-config-reference.json',
+    id: 'ruler-editor-config-source',
+    name: 'Config',
+    root: 'config',
+    label: 'ruler editor configuration',
+    includeFields: ['measurementUnit', 'onPageMarginsChange'],
+    groups: [{ id: 'other', label: 'Options' }],
+  },
 ];
 
 for (const reference of references) await generateReference(reference);

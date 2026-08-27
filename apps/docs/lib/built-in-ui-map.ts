@@ -5,6 +5,7 @@ export type BuiltInUiSurfaceId =
   | 'hyperlinks'
   | 'context-menu'
   | 'content-controls'
+  | 'ruler'
   | 'layout'
   | 'loading';
 
@@ -88,9 +89,21 @@ export const builtInUiSurfaces = [
     description: 'Show structured fields stored in the DOCX and respond when someone clicks one.',
   },
   {
+    id: 'ruler',
+    slug: 'ruler',
+    label: 'Ruler',
+    href: '/editor/built-in-ui/ruler',
+    initialBehavior: [
+      { kind: 'text', value: 'Off until ' },
+      { kind: 'code', value: 'ui: { ruler: true }' },
+      { kind: 'text', value: '.' },
+    ],
+    description: "Show the active section's horizontal ruler and adjust its left and right page margins.",
+  },
+  {
     id: 'layout',
     slug: 'responsive-layout',
-    label: 'Layout',
+    label: 'Responsive layout',
     href: '/editor/built-in-ui/responsive-layout',
     initialBehavior: [
       { kind: 'text', value: 'The toolbar responds to viewport width by default. Use ' },

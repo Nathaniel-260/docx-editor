@@ -53,6 +53,18 @@ export function BuiltInUiMap() {
             <span className='sd-builtin-map-button' />
           </div>
 
+          <div className={`${regionClass(selected, 'ruler', 'edge')} sd-builtin-map-ruler`}>
+            <span className='sd-builtin-map-ruler-margin' />
+            <span className='sd-builtin-map-ruler-ticks'>
+              <i />
+              <i />
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className='sd-builtin-map-ruler-margin' />
+          </div>
+
           <div className='sd-builtin-map-body'>
             <div className='sd-builtin-map-canvas'>
               {selected === 'loading' ? (

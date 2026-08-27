@@ -14,6 +14,7 @@ import { renderLifecycleJourneyMarkdown } from './lifecycle-journey';
 import { commentsConfigExplorer } from './comments-config-explorer';
 import { editorConfigExplorer } from './editor-config-explorer';
 import { proofingConfigExplorer } from './proofing-config-explorer';
+import { rulerConfigExplorer } from './ruler-config-explorer';
 import { searchConfigExplorer } from './search-config-explorer';
 import { toolbarConfigExplorer } from './toolbar-config-explorer';
 
@@ -46,6 +47,7 @@ export const llmPlaceholderComponents = [
   'ReceiptBar',
   'RuntimeExample',
   'RuntimeExampleTabs',
+  'RulerConfigReference',
   'SearchConfigReference',
   'ToolbarConfigReference',
   'MigrationExample',
@@ -195,6 +197,7 @@ export function renderLLMMarkdown(markdown: string) {
         preset === 'context-menu' ||
         preset === 'hyperlinks' ||
         preset === 'loading' ||
+        preset === 'ruler' ||
         preset === 'search' ||
         preset === 'toolbar'
           ? preset
@@ -282,6 +285,9 @@ export function renderLLMMarkdown(markdown: string) {
     },
     ProofingConfigReference() {
       return renderConfigReferenceMarkdown(proofingConfigExplorer);
+    },
+    RulerConfigReference() {
+      return renderConfigReferenceMarkdown(rulerConfigExplorer);
     },
     SearchConfigReference() {
       return renderConfigReferenceMarkdown(searchConfigExplorer);

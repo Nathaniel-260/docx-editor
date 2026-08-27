@@ -1,0 +1,29 @@
+{
+  "id": "ruler-editor-config-source",
+  "name": "Config",
+  "root": "config",
+  "label": "ruler editor configuration",
+  "groups": [
+    {
+      "id": "other",
+      "label": "Options"
+    }
+  ],
+  "fields": [
+    {
+      "name": "onPageMarginsChange",
+      "type": "(params: {\n  documentId: string;\n  editorVersion: 2;\n  sectionId: string;\n  sectionIndex: number;\n  side: \"left\" | \"right\";\n  value: number;\n  pageMargins: { top?: number; right?: number; bottom?: number; left?: number; };\n}) => void",
+      "typeName": "(params: SuperDocPageMarginsChangePayload) => void",
+      "required": false,
+      "description": "Callback after a ruler drag changes the active section's left or right page margin.",
+      "group": "other"
+    },
+    {
+      "name": "measurementUnit",
+      "type": "\"in\" | \"cm\"",
+      "required": false,
+      "description": "Starting measurement unit for rulers and measurement fields (Word's \"measurement units\" preference). Defaults to `'in'` (Word's en-US default). Change it at runtime with `setMeasurementUnit()`. See `SuperDocMeasurementUnit`.",
+      "group": "other"
+    }
+  ]
+}
