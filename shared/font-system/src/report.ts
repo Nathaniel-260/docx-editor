@@ -78,19 +78,27 @@ export interface FontResolutionRecord {
   reason: FontResolutionReason;
   /** Load state of the physical face at report time (`loaded` = ready before measurement). */
   loadStatus: FontLoadStatus;
+  /**
+   * Browser-availability result for a system pass-through face. Present only when no
+   * registered provider was available (`as_requested` or `fallback_face_absent`), because
+   * `loadStatus` then remains `unloaded`: there is deliberately no provider for the load gate to
+   * await. `checking` is transient; `unknown` is terminal and does not assert that the requested
+   * system face is missing.
+   */
+  systemAvailability?: 'checking' | 'available' | 'unavailable' | 'unknown';
   /** The family export writes back - always the logical name, so intent is preserved. */
   exportFamily: string;
   /**
    * True when SuperDoc did NOT faithfully render the requested font with a metric-compatible face.
-   * Two ways this happens:
-   *   - a non-metric substitute rendered but is not faithful, so it is missing EVEN WHEN `loaded`:
-   *     `reason: 'category_fallback'` (wrong weight / reflows, e.g. Calibri Light -> Carlito), and on
-   *     face-level rows `reason: 'fallback_face_absent'` (the substitute lacks this weight/style).
-   *   - the physical face settled to a state other than `loaded`: a font with no known substitute
-   *     (`reason: 'as_requested'`, e.g. Aptos), or a substitute whose asset failed
+   * This happens when:
+   *   - a non-metric category substitute rendered, even if its face loaded;
+   *   - a pass-through face (`as_requested` / `fallback_face_absent`) settled to
+   *     `systemAvailability: 'unavailable'`; or
+   *   - a registered physical face settled to a state other than `loaded`, such as an asset that failed
    *     (`reason: 'bundled_substitute'`, `loadStatus: 'failed'`, e.g. a 404ing `assetBaseUrl`).
-   * Transient states (`unloaded` / `loading`) are NOT missing, so an early `getReport()` pull before
-   * the gate settles does not over-report. `reason` and `loadStatus` distinguish the cause.
+   * Transient load states and system availability that is `checking` or `unknown` are not missing, so
+   * diagnostics do not over-report before they have evidence. `reason`, `loadStatus`, and
+   * `systemAvailability` distinguish the cause.
    */
   missing: boolean;
   /**
@@ -196,11 +204,9 @@ export function buildFaceReport(
       style: statusFace.style,
     });
     // `missing` = SuperDoc did not faithfully render this face with a metric-compatible substitute.
-    // - `fallback_face_absent` is ALWAYS missing: the substitute lacks this weight/style so the family
-    //   passes through unsubstituted. That pass-through is not a registered FontFace, so it can never
-    //   report `loaded` (document.fonts.load resolves only registered faces, not system fonts - it is
-    //   always `fallback_used` here), which is why this is reason-based and deterministic rather than
-    //   keyed on a probe.
+    // - `fallback_face_absent` is missing in this shared provider-only view: the substitute lacks this
+    //   weight/style. A mounted runtime may refine that answer with a document-scoped system-font
+    //   availability result, because the logical face can still exist on the user's machine.
     // - `category_fallback` is ALWAYS missing too: a non-metric family fallback (reflows / wrong weight,
     //   e.g. Calibri Light -> Carlito at Regular) renders something, but not a faithful metric match.
     // - Otherwise: missing once the load settles to anything but `loaded` (failed/timed_out/
