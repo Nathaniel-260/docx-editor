@@ -186,7 +186,10 @@ interface ReactProps {
   /** Optional ID for the editor container. Auto-generated if not provided. */
   id?: string;
 
-  /** Render function for loading state */
+  /**
+   * Render application-owned content while the Editor opens. When omitted,
+   * SuperDoc shows its built-in loading overlay unless `ui.loading` is false.
+   */
   renderLoading?: () => ReactNode;
 
   /**

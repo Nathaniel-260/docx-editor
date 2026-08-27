@@ -147,12 +147,28 @@ describe('SuperDocEditor', () => {
   });
 
   describe('loading state', () => {
-    it('should show loading content initially', () => {
+    it('keeps the editor mount visible for the built-in loading overlay', () => {
+      const { container } = render(<SuperDocEditor />);
+
+      const editor = container.querySelector<HTMLElement>('.superdoc-editor-container');
+      expect(editor?.style.display).not.toBe('none');
+      expect(container.querySelector<HTMLElement>('.superdoc-toolbar-container')?.style.display).toBe('none');
+    });
+
+    it('keeps the editor mount hidden when the built-in loading overlay is disabled', () => {
+      const { container } = render(<SuperDocEditor ui={{ loading: false }} />);
+
+      expect(container.querySelector<HTMLElement>('.superdoc-editor-container')?.style.display).toBe('none');
+    });
+
+    it('shows custom loading content and hides the editor mount initially', () => {
       const { container } = render(
         <SuperDocEditor renderLoading={() => <div data-testid='loading'>Loading...</div>} />,
       );
 
       expect(container.querySelector('[data-testid="loading"]')).toBeTruthy();
+      expect(container.querySelector<HTMLElement>('.superdoc-editor-container')?.style.display).toBe('none');
+      expect(container.querySelector<HTMLElement>('.superdoc-toolbar-container')?.style.display).toBe('none');
     });
   });
 
