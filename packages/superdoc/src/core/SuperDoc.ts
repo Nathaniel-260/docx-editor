@@ -2798,6 +2798,9 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
         // font runtime (v1 document renderer or v2 host facet); with no active editor, fail loudly
         // rather than silently no-op.
         map: (mappings) => {
+          if (!mappings || typeof mappings !== 'object' || Array.isArray(mappings)) {
+            throw new TypeError("superdoc.fonts.map requires a mapping object, for example { Aptos: 'Carlito' }");
+          }
           const rt = getActiveFontRuntime(this.activeEditor);
           if (!rt) throw new Error('superdoc.fonts.map requires an active editor');
           rt.map(mappings);

@@ -950,6 +950,7 @@ export interface SuperDocFontsApi {
    * a no-op. Each physical family must be loadable - a bundled substitute, or a face added via `add`.
    * Per document: other editors on the page are unaffected. Render-only - export keeps the logical
    * family name.
+   * @throws TypeError if called without a mapping object.
    * @throws Error if no editor is active (a write needs a document; this fails loudly, not silently).
    */
   map(mappings: Record<string, string>): void;
