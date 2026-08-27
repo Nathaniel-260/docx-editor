@@ -4,7 +4,7 @@ import type { ConfigExplorerData, ConfigField, ConfigFieldExample } from './conf
 import type { Config, UIConfig } from 'superdoc';
 
 type RulerField = Extract<keyof UIConfig, 'ruler'> | Extract<keyof Config, 'measurementUnit' | 'onPageMarginsChange'>;
-type RulerGroupId = 'ruler' | 'unit' | 'events';
+type RulerGroupId = 'ruler' | 'measurements' | 'events';
 type RulerPresentation = {
   default?: string;
   example: ConfigFieldExample;
@@ -22,8 +22,8 @@ const presentation = {
   measurementUnit: {
     default: "'in'",
     example: { value: "'cm'", code: "measurementUnit: 'cm'" },
-    group: 'unit',
-    summary: 'Display ruler and measurement fields in inches or centimeters.',
+    group: 'measurements',
+    summary: 'Display measurements across this Editor in inches or centimeters.',
   },
   onPageMarginsChange: {
     example: {
@@ -49,7 +49,7 @@ export const rulerConfigExplorer: ConfigExplorerData = {
   copyMode: 'selected-field',
   groups: [
     { id: 'ruler', label: 'Ruler', path: ['ui'] },
-    { id: 'unit', label: 'Unit' },
+    { id: 'measurements', label: 'Measurements' },
     { id: 'events', label: 'Events' },
   ],
   fields: [...generatedUi.fields, ...generatedEditor.fields]

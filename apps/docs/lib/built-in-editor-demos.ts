@@ -48,6 +48,16 @@ export const hyperlinkDemoBehaviors = [
   { id: 'custom', label: 'Custom action' },
 ] as const satisfies readonly BuiltInDemoChoice<HyperlinkDemoBehavior>[];
 
+export function hasRulerSelection(snapshot: { selectionTarget?: unknown; target?: unknown }) {
+  return Boolean(snapshot.target || snapshot.selectionTarget);
+}
+
+export function getRulerHint(active: boolean) {
+  return active
+    ? 'Drag either margin handle to reflow the page.'
+    : 'Click in the document to enable the margin handles.';
+}
+
 export function renderBuiltInEditorDemoMarkdown(
   preset: 'comments' | 'content-controls' | 'context-menu' | 'hyperlinks' | 'loading' | 'ruler' | 'search' | 'toolbar',
 ) {
@@ -119,8 +129,8 @@ export function renderBuiltInEditorDemoMarkdown(
     return [
       'Ruler controls available in the interactive Editor:',
       '',
-      '- **Ruler:** show or hide the horizontal ruler. Click in the document to activate a section, then drag its handles to change the left and right page margins.',
-      '- **Unit:** display ruler measurements in inches or centimeters. Switching units does not change the margins.',
+      '- **Ruler — `ui.ruler`:** show or hide the horizontal ruler. Click in the document to activate a section, then drag its handles to change the left and right page margins.',
+      '- **Measurements — `measurementUnit`:** display Editor measurements in inches or centimeters. Switching units does not change the margins.',
     ].join('\n');
   }
 

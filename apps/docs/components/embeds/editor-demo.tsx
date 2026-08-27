@@ -15,6 +15,8 @@ import {
   commentsDemoLayouts,
   commentsDemoLevels,
   contextMenuDemoStrategies,
+  getRulerHint,
+  hasRulerSelection,
   hyperlinkDemoBehaviors,
   toolbarDemoExcludedItems,
   toolbarDemoItems,
@@ -346,6 +348,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const [modeResetBusy, setModeResetBusy] = useState(false);
   const [replaceControls, setReplaceControls] = useState(true);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [rulerActive, setRulerActive] = useState(false);
   const [rulerUnit, setRulerUnit] = useState<SuperDocMeasurementUnit>('in');
   const [rulerVisible, setRulerVisible] = useState(true);
   const [state, setState] = useState<DemoState>('idle');
@@ -452,6 +455,14 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
         if (mountedRef.current) setZoom(snapshot);
       }),
     );
+
+    if (preset === 'ruler') {
+      cleanup.push(
+        ui.selection.observe((snapshot) => {
+          if (mountedRef.current) setRulerActive(hasRulerSelection(snapshot));
+        }),
+      );
+    }
 
     uiCleanupRef.current = () => cleanup.forEach((unsubscribe) => unsubscribe());
   }
@@ -565,6 +576,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       setModeResetBusy(false);
       setReplaceControls(initialReplaceControls);
       setReviewBusy(false);
+      setRulerActive(false);
       setRulerUnit('in');
       setRulerVisible(true);
       setToolbarStrategy(initialToolbarStrategy);
@@ -953,7 +965,10 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           <strong>{title}</strong>
           <span
             aria-live={
-              preset === 'content-controls' || preset === 'context-menu' || preset === 'document-modes'
+              preset === 'content-controls' ||
+              preset === 'context-menu' ||
+              preset === 'document-modes' ||
+              preset === 'ruler'
                 ? 'polite'
                 : undefined
             }
@@ -975,7 +990,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                           : preset === 'loading'
                             ? 'Replay loading to see the built-in progress overlay during a document replacement.'
                             : preset === 'ruler'
-                              ? 'Click in the document, drag either margin handle, then switch units.'
+                              ? getRulerHint(rulerActive)
                               : preset === 'search'
                                 ? 'Search for “Client”, or include tracked deletions and search for “Legacy”.'
                                 : preset === 'toolbar'
@@ -1164,7 +1179,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               />
               <DemoConfigGroup
                 disabled={state !== 'ready'}
-                label='Unit'
+                label='Measurements'
                 onChange={changeRulerUnit}
                 options={[
                   { id: 'in', label: 'Inches' },

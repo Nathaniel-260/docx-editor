@@ -6,9 +6,8 @@ description: Show the horizontal ruler and let people adjust a section's left an
 
 ## Try the ruler
 
-Expand the Editor, click in the document to activate its section, then drag either margin handle. The page content moves
-and reflows as its left or right margin changes. Switch the unit to confirm that the ruler can display the same margins
-in inches or centimeters.
+Expand the Editor and click in the document to activate its section. Drag either margin handle to reflow the page, then
+switch between inches and centimeters without changing the margins.
 
 <EditorDemo fixture='/fixtures/ruler-sample.docx' preset='ruler' title='Adjust page margins' />
 
@@ -31,8 +30,10 @@ Vanilla also needs an Editor mount:
 
 <include>../../../../snippets/editor/built-in-ruler.html</include>
 
-Set the initial unit with `measurementUnit`. Change it later with `setMeasurementUnit('in')` or
-`setMeasurementUnit('cm')`. Show and hide the ruler with `toggleRuler()`.
+`ui.ruler` controls the built-in surface. Show or hide it later with `toggleRuler()`.
+
+`measurementUnit` is an Editor-wide preference, so it stays at the top level rather than inside `ui.ruler`. Set the
+initial unit to inches or centimeters, then change it with `setMeasurementUnit()`.
 
 ## Configure the ruler
 

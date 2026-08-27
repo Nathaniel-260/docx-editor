@@ -543,10 +543,25 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /preset === 'ruler' \? \{ comments: false, ruler: true \} : \{\}/u);
   assert.match(demo, /instanceRef\.current\?\.toggleRuler\(\)/u);
   assert.match(demo, /instanceRef\.current\?\.setMeasurementUnit\(unit\)/u);
-  assert.match(demo, /label='Ruler'[\s\S]*label='Unit'/u);
+  assert.match(demo, /ui\.selection\.observe[\s\S]*setRulerActive\(hasRulerSelection\(snapshot\)\)/u);
+  assert.match(demo, /getRulerHint\(rulerActive\)/u);
+  assert.match(demo, /label='Ruler'[\s\S]*label='Measurements'/u);
   assert.match(demo, /label='Replace controls'/u);
   assert.match(demo, /label='Tracked deletions'/u);
   assert.equal([...demo.matchAll(/<DemoViewControls\b/gu)].length, 2);
+});
+
+test('the Ruler demo derives its live hint from the current selection', async () => {
+  const { getRulerHint, hasRulerSelection } = await import('../lib/built-in-editor-demos.ts');
+
+  assert.equal(hasRulerSelection({}), false);
+  assert.equal(getRulerHint(hasRulerSelection({})), 'Click in the document to enable the margin handles.');
+  assert.equal(hasRulerSelection({ target: { from: 1, to: 1 } }), true);
+  assert.equal(
+    getRulerHint(hasRulerSelection({ target: { from: 1, to: 1 } })),
+    'Drag either margin handle to reflow the page.',
+  );
+  assert.equal(hasRulerSelection({ selectionTarget: { from: 1, to: 1 } }), true);
 });
 
 test('the generated reference model mirrors the canonical operation inventory', async () => {
@@ -734,6 +749,10 @@ test('the Ruler configuration explorer mirrors the canonical UI and Editor field
   assert.deepEqual(
     rulerConfigExplorer.fields.map((field) => field.name),
     ['ui.ruler', 'measurementUnit', 'onPageMarginsChange'],
+  );
+  assert.deepEqual(
+    rulerConfigExplorer.groups.map((group) => group.label),
+    ['Ruler', 'Measurements', 'Events'],
   );
   const markdown = renderConfigReferenceMarkdown(rulerConfigExplorer);
   assert.match(markdown, /\| `ui\.ruler` \|/u);

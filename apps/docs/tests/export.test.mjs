@@ -318,6 +318,16 @@ test('exports the editor quickstart sample document', async () => {
   assert.ok(fixture.size > 0);
 });
 
+test('exports the focused loading sample document', async () => {
+  const fixture = await stat(new URL('../out/fixtures/loading-sample.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
+test('exports the focused ruler sample document', async () => {
+  const fixture = await stat(new URL('../out/fixtures/ruler-sample.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
 test('exports the focused search sample document', async () => {
   const fixture = await stat(new URL('../out/fixtures/search-sample.docx', import.meta.url));
   assert.ok(fixture.size > 0);
@@ -793,6 +803,7 @@ test('exports the Ruler guide with its interactive behavior and generated refere
   assert.match(article, /data-config-explorer="true"/);
   assert.match(markdown, /Ruler controls available in the interactive Editor/);
   assert.match(markdown, /Click in the document to activate a section/);
+  assert.match(markdown, /Measurements — `measurementUnit`/);
   assert.match(markdown, /\| `ui\.ruler` \|/);
   assert.match(markdown, /\| `measurementUnit` \|/);
   assert.match(markdown, /\| `onPageMarginsChange` \|/);
