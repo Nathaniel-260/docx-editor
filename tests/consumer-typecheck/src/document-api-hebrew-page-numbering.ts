@@ -22,14 +22,13 @@ type ListedSection = Awaited<ReturnType<DocumentApi['sections']['list']>>['items
 type ReadPageNumberingFormat = NonNullable<NonNullable<ListedSection['pageNumbering']>['format']>;
 type WritePageNumberingFormat = NonNullable<Parameters<DocumentApi['sections']['setPageNumbering']>[0]['format']>;
 
-// The read side reports whatever w:pgNumType/@w:fmt the document carries, so a
-// consumer that reads a section and writes it back needs the write union to
-// accept every value the read union can produce. This assignment is what fails
-// if the two drift apart again.
+// Keep the public read and write unions aligned so a consumer can pass a listed
+// format back to setPageNumbering. Runtime adapters separately decide which
+// OOXML formats sections.list exposes.
 declare const readFormat: ReadPageNumberingFormat;
 const roundTripped: WritePageNumberingFormat = readFormat;
 
-// And the read side has to name the Hebrew formats, not just tolerate them.
+// The listed-section type must also name both Hebrew formats.
 const readHebrewNumeral: ReadPageNumberingFormat = 'hebrew1';
 const readHebrewAlphabetic: ReadPageNumberingFormat = 'hebrew2';
 
