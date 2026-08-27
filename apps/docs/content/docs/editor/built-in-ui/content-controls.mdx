@@ -1,0 +1,63 @@
+---
+title: Show content-control chrome
+navTitle: Content controls
+description: Show or hide content-control chrome and respond when someone clicks a structured field in the DOCX.
+---
+
+Content controls are structured fields stored in a DOCX. Their IDs, aliases, tags, types, and content travel with the
+document. SuperDoc can draw chrome around those fields so people can recognize and select them in the Editor.
+
+## Try content controls
+
+Expand the Editor and click Acme Inc. or the checkbox. The demo reports the control's alias, tag, and type above the
+document.
+
+<EditorDemo fixture='/fixtures/content-controls-sample.docx' preset='content-controls' title='Try content controls' />
+
+Set **Built-in chrome** to **Hide**. The outlines disappear, but the fields and their DOCX metadata remain. Clicking a
+field still reports its metadata.
+
+Changing this startup option reloads the current DOCX. Document edits remain, while the selection and last-clicked
+status reset.
+
+## Show the built-in chrome
+
+Continue with the project from the [Quickstart](/editor/quickstart). Download the content-control sample and save it as
+`public/content-controls-sample.docx`:
+
+<FileDownload
+  href='/fixtures/content-controls-sample.docx'
+  label='Download the content-control sample'
+  description='Text field and checkbox'
+  fileType='DOCX'
+/>
+
+Vite serves that file at `/content-controls-sample.docx`. Content-control chrome is on by default; this example enables
+it explicitly and reports the field someone clicks:
+
+<FrameworkExampleTabs>
+  <FrameworkExample filename='src/main.ts' framework='Vanilla'>
+    <include>../../../../snippets/editor/built-in-content-controls.ts</include>
+  </FrameworkExample>
+  <FrameworkExample filename='src/App.tsx' framework='React'>
+    <include>../../../../snippets/editor/react-built-in-content-controls.tsx</include>
+  </FrameworkExample>
+</FrameworkExampleTabs>
+
+Vanilla also needs an Editor mount and a status element:
+
+<include>../../../../snippets/editor/built-in-content-controls.html</include>
+
+Click a control. The status should show the field's alias, tag, and type from `onContentControlClick`.
+
+Set `ui.contentControls: false` when your application should hide only SuperDoc's chrome. The content controls remain
+part of the document, and the click callback continues to work.
+
+## Choose the next layer
+
+Use `onContentControlClick` for behavior tied to one click. Use
+[custom content-control UI](/editor/custom-ui/content-controls) for a persistent field list, navigation, or
+application-owned chrome.
+
+Use the [Document API content-controls reference](/document-api/reference/content-controls/) when code needs to list,
+create, update, or remove content controls.

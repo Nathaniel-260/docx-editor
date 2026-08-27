@@ -305,3 +305,33 @@ test('the context-menu fixture stays focused on one selectable sentence', async 
     assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
   }
 });
+
+test('the content-controls fixture keeps one text field and one checkbox', async () => {
+  const { bytes, document, core, app } = await openFixture('content-controls-sample.docx');
+  const visibleText = [...document.matchAll(/<w:t(?:\s[^>]*)?>(.*?)<\/w:t>/g)]
+    .map((match) => match[1])
+    .join(' ');
+
+  assert.equal(firstArchiveEntry(bytes), '[Content_Types].xml');
+  assert.ok(bytes.length < 8_000, `must stay a small package, got ${bytes.length} bytes`);
+  assert.match(visibleText, /Client name:\s+Acme Inc\./);
+  assert.equal(document.match(/<w:sdt>/g)?.length, 2, 'must contain exactly two content controls');
+  assert.match(document, /<w:alias w:val="Client name"\/><w:tag w:val="client-name"\/><w:id w:val="2001"\/><w:text\/>/);
+  assert.match(
+    document,
+    /<w:alias w:val="Review approved"\/><w:tag w:val="review-approved"\/><w:id w:val="2002"\/><w14:checkbox>/,
+  );
+  assert.match(document, /xmlns:mc="http:\/\/schemas\.openxmlformats\.org\/markup-compatibility\/2006"/);
+  assert.match(document, /mc:Ignorable="w14"/);
+  assert.match(document, /<w14:checked w14:val="0"\/>/);
+  assert.match(document, /<w14:checkedState w14:font="MS Gothic" w14:val="2612"\/>/);
+  assert.match(document, /<w14:uncheckedState w14:font="MS Gothic" w14:val="2610"\/>/);
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+
+  for (const element of REVISION_ELEMENTS) {
+    assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
+  }
+});

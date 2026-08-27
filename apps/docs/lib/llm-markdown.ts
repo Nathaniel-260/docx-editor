@@ -186,6 +186,7 @@ export function renderLLMMarkdown(markdown: string) {
       const localFile = booleanAttribute(attributes, 'allowLocalFile');
       const builtInDemo =
         preset === 'comments' ||
+        preset === 'content-controls' ||
         preset === 'context-menu' ||
         preset === 'hyperlinks' ||
         preset === 'search' ||

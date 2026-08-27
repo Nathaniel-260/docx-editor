@@ -71,12 +71,11 @@ export function BuiltInUiMap() {
                 </div>
 
                 <div
-                  className={`${regionClass(selected, 'structured', 'float')} sd-builtin-map-table`}
+                  className={`${regionClass(selected, 'content-controls', 'float')} sd-builtin-map-content-control`}
                   style={{ width: '70%' }}
                 >
-                  {Array.from({ length: 6 }, (_, index) => (
-                    <span key={index} />
-                  ))}
+                  <span />
+                  <span />
                 </div>
 
                 <div className='sd-builtin-map-segments' style={{ width: '80%' }}>

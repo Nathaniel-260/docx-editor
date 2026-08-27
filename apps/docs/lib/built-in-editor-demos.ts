@@ -49,7 +49,7 @@ export const hyperlinkDemoBehaviors = [
 ] as const satisfies readonly BuiltInDemoChoice<HyperlinkDemoBehavior>[];
 
 export function renderBuiltInEditorDemoMarkdown(
-  preset: 'comments' | 'context-menu' | 'hyperlinks' | 'search' | 'toolbar',
+  preset: 'comments' | 'content-controls' | 'context-menu' | 'hyperlinks' | 'search' | 'toolbar',
 ) {
   if (preset === 'toolbar') {
     return [
@@ -71,6 +71,16 @@ export function renderBuiltInEditorDemoMarkdown(
       '- **Actions — `interaction.comments.level`:** choose `read`, `write`, or `resolve`. Read shows threads without mutation controls. Write adds create, reply, edit, and delete. Resolve also adds resolve and reopen.',
       '',
       'The sample contains one comment thread anchored to `September 30, 2026`.',
+    ].join('\n');
+  }
+
+  if (preset === 'content-controls') {
+    return [
+      'Content-control configuration available in the interactive Editor:',
+      '',
+      '- **Built-in chrome — `ui.contentControls`:** choose **Show** or **Hide**. The controls remain in the DOCX in either state.',
+      '',
+      'The fixture contains one text control and one checkbox. Clicking either control reports its alias, tag, and type through `onContentControlClick`.',
     ].join('\n');
   }
 

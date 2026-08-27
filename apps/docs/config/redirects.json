@@ -99,6 +99,11 @@
       "source": "/editor/built-in-ui/links-and-context-menus/",
       "destination": "/editor/built-in-ui/hyperlinks/",
       "reason": "Hyperlink behavior and context-menu actions now have focused guides."
+    },
+    {
+      "source": "/editor/built-in-ui/structured-content/",
+      "destination": "/editor/built-in-ui/configure-the-toolbar/",
+      "reason": "Toolbar configuration owns image, table, and link actions; content controls now have a focused guide."
     }
   ],
   "redirects": [

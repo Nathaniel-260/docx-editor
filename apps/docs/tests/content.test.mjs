@@ -23,9 +23,23 @@ const pinnedV2MajorPackageInstall =
   /\b(?:pnpm add(?:\s+--global)?|npm (?:install|i|add)|yarn add|bun add)[^\n]*\s(?:superdoc|@superdoc\/[a-z0-9-]+)@(?:\^|~)?2(?:[.\w-]*)?(?=\s|$)/mu;
 const focusedToolbarExampleUrl = new URL('../snippets/editor/focused-built-in-toolbar.ts', import.meta.url);
 const focusedReactToolbarExampleUrl = new URL('../snippets/editor/react-focused-built-in-toolbar.tsx', import.meta.url);
+const builtInToolbarPageUrl = new URL(
+  '../content/docs/editor/built-in-ui/configure-the-toolbar.mdx',
+  import.meta.url,
+);
+const redirectsConfigUrl = new URL('../config/redirects.json', import.meta.url);
 const builtInEditorDemoDataUrl = new URL('../lib/built-in-editor-demos.ts', import.meta.url);
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
+const builtInContentControlsPageUrl = new URL(
+  '../content/docs/editor/built-in-ui/content-controls.mdx',
+  import.meta.url,
+);
+const builtInContentControlsExampleUrl = new URL('../snippets/editor/built-in-content-controls.ts', import.meta.url);
+const reactBuiltInContentControlsExampleUrl = new URL(
+  '../snippets/editor/react-built-in-content-controls.tsx',
+  import.meta.url,
+);
 const reactBuiltInSearchExampleUrl = new URL('../snippets/editor/react-built-in-find-replace.tsx', import.meta.url);
 const customSearchTrackedDeletionsUrl = new URL(
   '../snippets/editor/custom-search-tracked-deletions.ts',
@@ -72,6 +86,16 @@ async function readContractOperationIds() {
   const { OPERATION_IDS } = await import('@superdoc/document-api');
   return new Set(OPERATION_IDS);
 }
+
+function compileImageMimeNormalizer(example) {
+  const source = example.match(/function withImageMimeType\(file: File\): Blob \{[\s\S]*?\n\}/u)?.[0];
+  assert.ok(source, 'The toolbar example must define withImageMimeType.');
+  const javascript = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  return Function(`${javascript}\nreturn withImageMimeType;`)();
+}
+
 const registeredComponents = new Set([
   'Card',
   'Cards',
@@ -108,6 +132,7 @@ const registeredComponents = new Set([
 ]);
 const editorDemoPresets = new Set([
   'comments',
+  'content-controls',
   'context-menu',
   'document-modes',
   'hyperlinks',
@@ -297,6 +322,92 @@ test('the built-in toolbar examples use canonical public item ids', async () => 
   assert.match(demoData, /toolbarDemoExcludedItems = \['bold', 'italic'\] as const/u);
 });
 
+test('the toolbar guide preserves the built-in image upload workflow', async () => {
+  const [page, vanillaExample, reactExample, redirectsConfig] = await Promise.all([
+    readFile(builtInToolbarPageUrl, 'utf8'),
+    readFile(focusedToolbarExampleUrl, 'utf8'),
+    readFile(focusedReactToolbarExampleUrl, 'utf8'),
+    readFile(redirectsConfigUrl, 'utf8').then(JSON.parse),
+  ]);
+
+  for (const example of [vanillaExample, reactExample]) {
+    assert.match(example, /center: \[[^\]]*'image'/u);
+    assert.match(example, /handleImageUpload/u);
+    assert.match(example, /new FileReader\(\)/u);
+    assert.match(example, /file\.slice\(0, file\.size, 'image\/png'\)/u);
+    assert.match(example, /file\.slice\(0, file\.size, 'image\/jpeg'\)/u);
+    assert.match(example, /readAsDataURL\(withImageMimeType\(file\)\)/u);
+    assert.doesNotMatch(example, /URL\.(?:create|revoke)ObjectURL/u);
+
+    const withImageMimeType = compileImageMimeNormalizer(example);
+    const typedPng = { name: 'typed.png', size: 4, type: 'image/png' };
+    const typedJpeg = { name: 'typed.jpg', size: 4, type: 'image/jpeg' };
+    assert.equal(withImageMimeType(typedPng), typedPng);
+    assert.equal(withImageMimeType(typedJpeg), typedJpeg);
+
+    const sliceCalls = [];
+    const emptyTypeFile = (name) => ({
+      name,
+      size: 4,
+      type: '',
+      slice(start, end, type) {
+        sliceCalls.push({ start, end, type });
+        return { type };
+      },
+    });
+    assert.deepEqual(withImageMimeType(emptyTypeFile('scan.PNG')), { type: 'image/png' });
+    assert.deepEqual(withImageMimeType(emptyTypeFile('photo.JpEg')), { type: 'image/jpeg' });
+    assert.deepEqual(sliceCalls, [
+      { start: 0, end: 4, type: 'image/png' },
+      { start: 0, end: 4, type: 'image/jpeg' },
+    ]);
+    assert.throws(() => withImageMimeType({ name: 'notes.txt', size: 4, type: '' }), /PNG or JPEG/u);
+    assert.throws(() => withImageMimeType({ name: 'notes.png', size: 4, type: 'text/plain' }), /PNG or JPEG/u);
+  }
+
+  assert.match(page, /handleImageUpload/u);
+  assert.match(page, /examples return data URLs/iu);
+  assert.match(page, /no backend or temporary object URL/iu);
+  assert.match(page, /extension-accepted PNG and JPEG files[^.]*browser leaves `file\.type` empty/iu);
+  assert.match(page, /immediately fetches object or HTTP URLs/iu);
+  assert.match(page, /embeds the image in the\s+DOCX/iu);
+  assert.match(page, /same-origin/iu);
+  assert.match(page, /public or presigned URL/iu);
+  assert.match(page, /without cross-origin\s+cookies or custom authorization headers/iu);
+  assert.match(page, /cross-origin requests \(CORS\)/iu);
+  assert.match(page, /CORS[^.]*application's origin/iu);
+  assert.doesNotMatch(page, /persistent (?:storage|URL)/iu);
+  assert.match(page, /\[Configure content controls\]\(\/editor\/built-in-ui\/content-controls\)/u);
+
+  const legacyRoute = redirectsConfig.pageMoves.find(
+    ({ source }) => source === '/editor/built-in-ui/structured-content/',
+  );
+  assert.equal(legacyRoute?.destination, '/editor/built-in-ui/configure-the-toolbar/');
+  assert.match(legacyRoute?.reason ?? '', /image/u);
+});
+
+test('the redirected toolbar guide preserves the built-in table controls', async () => {
+  const [page, vanillaExample, reactExample, redirectsConfig] = await Promise.all([
+    readFile(builtInToolbarPageUrl, 'utf8'),
+    readFile(focusedToolbarExampleUrl, 'utf8'),
+    readFile(focusedReactToolbarExampleUrl, 'utf8'),
+    readFile(redirectsConfigUrl, 'utf8').then(JSON.parse),
+  ]);
+
+  for (const example of [vanillaExample, reactExample]) {
+    assert.match(example, /center: \[[^\]]*'table'[^\]]*'table-actions'/u);
+  }
+
+  assert.match(page, /\*\*Table\*\* inserts a table/iu);
+  assert.match(page, /\*\*Table actions\*\*[^.]*selection is inside a table/iu);
+
+  const legacyRoute = redirectsConfig.pageMoves.find(
+    ({ source }) => source === '/editor/built-in-ui/structured-content/',
+  );
+  assert.equal(legacyRoute?.destination, '/editor/built-in-ui/configure-the-toolbar/');
+  assert.match(legacyRoute?.reason ?? '', /table/u);
+});
+
 test('the React toolbar example uses command ids from the public v2 command catalog', async () => {
   const example = await readFile(reactToolbarExampleUrl, 'utf8');
   const catalog = await readFile(commandCatalogUrl, 'utf8');
@@ -317,6 +428,29 @@ test('the React comments example keeps restart-sensitive config identities stabl
   assert.match(example, /user=\{editorConfig\.user\}/u);
   assert.match(example, /ui=\{editorConfig\.ui\}/u);
   assert.doesNotMatch(example, /\b(?:user|ui)=\{\{/u);
+});
+
+test('the content-control examples use the canonical chrome config and typed click payload', async () => {
+  const [page, vanilla, react] = await Promise.all(
+    [builtInContentControlsPageUrl, builtInContentControlsExampleUrl, reactBuiltInContentControlsExampleUrl].map((url) =>
+      readFile(url, 'utf8'),
+    ),
+  );
+
+  assert.match(page, /href='\/fixtures\/content-controls-sample\.docx'/u);
+  assert.match(page, /public\/content-controls-sample\.docx/u);
+  for (const example of [vanilla, react]) {
+    assert.match(example, /document(?:=|:)\s*['"]\/content-controls-sample\.docx['"]/u);
+    assert.match(example, /contentControls: true/u);
+    assert.match(example, /target\.alias/u);
+    assert.match(example, /target\.tag/u);
+    assert.match(example, /target\.controlType/u);
+    assert.doesNotMatch(example, /\b(?:modules\.contentControls|chrome:)\b/u);
+  }
+  assert.match(vanilla, /onContentControlClick/u);
+  assert.match(react, /ContentControlClickPayload/u);
+  assert.match(react, /onContentControlClick=\{handleContentControlClick\}/u);
+  assert.doesNotMatch(react, /\bui=\{\{/u);
 });
 
 test('the React search example enables the built-in search surface with stable config', async () => {
@@ -377,7 +511,7 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /setState\(replacedEditor \|\| !hadMountedEditor \? 'error' : 'ready'\)/u);
   assert.match(
     demo,
-    /commentsLayout,\s+commentsLevel,\s+contextMenuStrategy,\s+documentMode: currentDocumentMode,\s+hyperlinkBehavior,\s+includeTrackedDeletions,\s+replaceControls,\s+toolbarStrategy,/u,
+    /commentsLayout,\s+commentsLevel,\s+contentControlChrome,\s+contextMenuStrategy,\s+documentMode: currentDocumentMode,\s+hyperlinkBehavior,\s+includeTrackedDeletions,\s+replaceControls,\s+toolbarStrategy,/u,
   );
   assert.match(
     demo,
@@ -396,6 +530,7 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /label='Toolbar'[\s\S]*options=\{toolbarDemoStrategies\}/u);
   assert.match(demo, /label='Layout'[\s\S]*options=\{commentsDemoLayouts\}/u);
   assert.match(demo, /label='Actions'[\s\S]*options=\{commentsDemoLevels\}/u);
+  assert.match(demo, /label='Built-in chrome'[\s\S]*value=\{contentControlChrome \? 'show' : 'hide'\}/u);
   assert.match(demo, /label='Menu'[\s\S]*options=\{contextMenuDemoStrategies\}/u);
   assert.match(demo, /label='Activation'[\s\S]*options=\{hyperlinkDemoBehaviors\}/u);
   assert.match(demo, /label='Replace controls'/u);
@@ -744,6 +879,17 @@ test('the Editor configuration reference starts with concise essential fields', 
     editorConfigExplorer.fields.find((field) => field.name === 'onException')?.type,
     '(params: SuperDocExceptionPayload) => void',
   );
+  const onExceptionDescription =
+    editorConfigExplorer.fields.find((field) => field.name === 'onException')?.description ?? '';
+  assert.match(onExceptionDescription, /can accompany a legacy exception payload/iu);
+  assert.match(onExceptionDescription, /filters unsupported internal records/iu);
+  assert.match(
+    onExceptionDescription,
+    /translated package and readiness records[^.]*at most one structured diagnostic for each `\(documentId, generation, internalCode\)` tuple/iu,
+  );
+  assert.match(onExceptionDescription, /suppresses a generic boot diagnostic when a more specific package diagnostic/iu);
+  assert.doesNotMatch(onExceptionDescription, /one per underlying internal record/iu);
+  assert.doesNotMatch(onExceptionDescription, /emitted in addition to, not instead of/iu);
   const interactionType = editorConfigExplorer.fields.find((field) => field.name === 'interaction')?.type ?? '';
   assert.match(interactionType, /comments\?: \{ level\?: CommentInteractionLevel; \}/u);
   assert.doesNotMatch(interactionType, /CommentInteractionConfig|readOnly|allowResolve/u);

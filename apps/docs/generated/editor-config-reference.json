@@ -314,18 +314,20 @@
     },
     {
       "name": "onContentControlActiveChange",
-      "type": "(params: {\n  active: null | SdtRef;\n  previous: null | SdtRef;\n  activePath: SdtRef[];\n  source: \"keyboard\" | \"pointer\";\n}) => void",
+      "type": "(params: {\n  active: null | ContentControlRef;\n  previous: null | ContentControlRef;\n  activePath: ContentControlRef[];\n  source: \"keyboard\" | \"pointer\";\n}) => void",
       "typeName": "(params: ContentControlActiveChangePayload) => void",
       "required": false,
-      "description": "Callback when active content control changes.",
-      "group": "other"
+      "description": "Callback when the selection enters, leaves, or moves between content controls.",
+      "group": "other",
+      "deprecated": true,
+      "deprecatedReplacement": "superdoc.ui.contentControls.observe"
     },
     {
       "name": "onContentControlClick",
-      "type": "(params: {\n  target: SdtRef;\n  source: \"pointer\";\n}) => void",
+      "type": "(params: {\n  target: ContentControlRef;\n  source: \"pointer\";\n}) => void",
       "typeName": "(params: ContentControlClickPayload) => void",
       "required": false,
-      "description": "Callback when user clicks inside a content control.",
+      "description": "Callback when someone clicks inside a content control.",
       "group": "other"
     },
     {
@@ -386,7 +388,7 @@
       "name": "onException",
       "type": "(params: SuperDocExceptionPayload) => void",
       "required": false,
-      "description": "Callback when SuperDoc emits an `exception` event. Check for `stage`, `code`, `itemName`, or `source` before reading producer-specific fields.",
+      "description": "Callback when SuperDoc emits an `exception` event. The payload is a union of runtime shapes (store init, restore failure, editor lifecycle, built-in toolbar, hyperlink activation, structured diagnostic). Narrow with `'stage' in params` (store init), `'code' in params` (editor), `'itemName' in params` (toolbar), `'source' in params` (hyperlink), or `'diagnosticCode' in params` (structured diagnostic) before reading shape-specific fields. A structured diagnostic (`SuperDocExceptionDiagnosticPayload`, `diagnosticCode` one of `PARSE_ERROR` | `RENDER_ERROR` | `UNSUPPORTED_FEATURE` | `PERFORMANCE_ERROR`) can accompany a legacy exception payload. SuperDoc filters unsupported internal records. For translated package and readiness records, it emits at most one structured diagnostic for each `(documentId, generation, internalCode)` tuple. It also suppresses a generic boot diagnostic when a more specific package diagnostic describes the same failure. A single incident can therefore raise 0..N structured diagnostics. Only the `unzip` and `render` stages are populated today; `parse` and `layout` are reserved for future coverage.",
       "group": "other"
     },
     {

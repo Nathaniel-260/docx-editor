@@ -4,7 +4,7 @@ export type BuiltInUiSurfaceId =
   | 'search'
   | 'hyperlinks'
   | 'context-menu'
-  | 'structured'
+  | 'content-controls'
   | 'layout';
 
 export type BuiltInUiInlinePart = { kind: 'text'; value: string } | { kind: 'code'; value: string };
@@ -72,17 +72,19 @@ export const builtInUiSurfaces = [
     description: 'Keep the built-in menu, add application actions, or render the complete menu yourself.',
   },
   {
-    id: 'structured',
-    slug: 'structured-content',
-    label: 'Structured content',
-    href: '/editor/built-in-ui/structured-content',
+    id: 'content-controls',
+    slug: 'content-controls',
+    label: 'Content controls',
+    href: '/editor/built-in-ui/content-controls',
     initialBehavior: [
       {
         kind: 'text',
-        value: 'Content-control chrome is enabled by default. Toolbar actions depend on your toolbar configuration.',
+        value: 'Content-control chrome is enabled by default. Set ',
       },
+      { kind: 'code', value: 'ui.contentControls: false' },
+      { kind: 'text', value: ' to hide it without removing the fields from the DOCX.' },
     ],
-    description: 'Work with tables, images, links, and content controls through document-aware controls.',
+    description: 'Show structured fields stored in the DOCX and respond when someone clicks one.',
   },
   {
     id: 'layout',

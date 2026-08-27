@@ -38,8 +38,21 @@ React's `SuperDocEditor` creates the toolbar mount for you. Add the focused conf
   </FrameworkExample>
 </FrameworkExampleTabs>
 
-Reload the application. The toolbar should contain eight controls across the three regions. Select text and choose
+Reload the application. The toolbar should contain eleven controls across the three regions. Select text and choose
 **Bold** to confirm that the control follows the current selection.
+
+**Table** inserts a table at the current selection. **Table actions** becomes available when the selection is inside a table;
+use it to add or remove rows and columns, merge or split cells, change borders, or remove the table.
+
+Select **Image** to choose a local file. SuperDoc invokes `handleImageUpload`. These examples return data URLs, so the
+workflow needs no backend or temporary object URL. `withImageMimeType` keeps extension-accepted PNG and JPEG files
+insertable when the browser leaves `file.type` empty. SuperDoc immediately fetches object or HTTP URLs returned by a
+handler and embeds the image in the DOCX. The URL only needs to remain readable until that fetch completes. Same-origin
+URLs need no extra server configuration. For another origin, return a public or presigned URL that the browser can read
+without cross-origin cookies or custom authorization headers. Configure cross-origin requests (CORS) to allow the
+application's origin.
+
+For reusable document fields rather than toolbar actions, [Configure content controls](/editor/built-in-ui/content-controls).
 
 ## Configure the toolbar
 

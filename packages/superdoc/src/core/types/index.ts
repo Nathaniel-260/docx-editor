@@ -4371,12 +4371,15 @@ export interface Config {
    *
    * A structured diagnostic (`SuperDocExceptionDiagnosticPayload`,
    * `diagnosticCode` one of `PARSE_ERROR` | `RENDER_ERROR` |
-   * `UNSUPPORTED_FEATURE` | `PERFORMANCE_ERROR`) is emitted in addition to,
-   * not instead of, whatever legacy payload a given failure already
-   * produces — a single incident can raise both, and an open failure can
-   * raise 0..N diagnostics (one per underlying internal record). Only the
-   * `unzip` and `render` stages are populated today; `parse` and `layout`
-   * are reserved for future coverage.
+   * `UNSUPPORTED_FEATURE` | `PERFORMANCE_ERROR`) can accompany a legacy
+   * exception payload. SuperDoc filters unsupported internal records. For
+   * translated package and readiness records, it emits at most one structured
+   * diagnostic for each `(documentId, generation, internalCode)` tuple. It
+   * also suppresses a generic boot diagnostic when a more specific package
+   * diagnostic describes the same failure. A single incident can therefore
+   * raise 0..N structured diagnostics. Only the `unzip` and `render` stages
+   * are populated today; `parse` and `layout` are reserved for future
+   * coverage.
    */
   onException?: (params: SuperDocExceptionPayload) => void;
   /** Callback when the comments list is rendered. */

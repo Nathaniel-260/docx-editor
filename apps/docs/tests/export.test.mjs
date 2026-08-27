@@ -33,7 +33,7 @@ const routes = [
   ['editor/built-in-ui/search-and-replace/index.html', 'Search and replace document text'],
   ['editor/built-in-ui/hyperlinks/index.html', 'Configure hyperlink behavior'],
   ['editor/built-in-ui/context-menus/index.html', 'Configure the context menu'],
-  ['editor/built-in-ui/structured-content/index.html', 'Work with structured content'],
+  ['editor/built-in-ui/content-controls/index.html', 'Show content-control chrome'],
   ['editor/built-in-ui/responsive-layout/index.html', 'Build a responsive Editor layout'],
   ['editor/custom-ui/overview/index.html', 'Custom UI overview'],
   ['editor/custom-ui/controller-setup/index.html', 'Custom UI controller setup'],
@@ -443,6 +443,7 @@ test('exports the focused built-in toolbar example as clean Markdown', async () 
     new URL('../out/md/editor/built-in-ui/configure-the-toolbar.md', import.meta.url),
     'utf8',
   );
+  const redirects = await readFile(new URL('../out/_redirects', import.meta.url), 'utf8');
 
   assert.match(article, /responsiveTo/);
   assert.match(article, /Document mode/);
@@ -464,11 +465,33 @@ test('exports the focused built-in toolbar example as clean Markdown', async () 
   assert.match(markdown, /Add — `ui\.toolbar\.customItems`/);
   assert.match(markdown, /Review note:/);
   assert.match(markdown, /controls that no longer fit move into the overflow menu/);
+  assert.match(markdown, /handleImageUpload/);
+  assert.match(markdown, /new FileReader\(\)/u);
+  assert.match(markdown, /file\.slice\(0, file\.size, 'image\/png'\)/u);
+  assert.match(markdown, /file\.slice\(0, file\.size, 'image\/jpeg'\)/u);
+  assert.match(markdown, /readAsDataURL\(withImageMimeType\(file\)\)/u);
+  assert.doesNotMatch(markdown, /URL\.(?:create|revoke)ObjectURL/u);
+  assert.match(markdown, /examples return data URLs/iu);
+  assert.match(markdown, /no backend or temporary object URL/iu);
+  assert.match(markdown, /extension-accepted PNG and JPEG files[^.]*browser leaves `file\.type` empty/iu);
+  assert.match(markdown, /immediately fetches object or HTTP URLs/iu);
+  assert.match(markdown, /embeds the image in the\s+DOCX/iu);
+  assert.match(markdown, /same-origin/iu);
+  assert.match(markdown, /public or presigned URL/iu);
+  assert.match(markdown, /without cross-origin\s+cookies or custom authorization headers/iu);
+  assert.match(markdown, /cross-origin requests \(CORS\)/iu);
+  assert.match(markdown, /CORS[^.]*application's origin/iu);
+  assert.doesNotMatch(markdown, /persistent (?:storage|URL)/iu);
+  assert.match(markdown, /\[Configure content controls\]\(\/editor\/built-in-ui\/content-controls\)/u);
   assert.match(markdown, /\| `items` \|/);
   assert.match(markdown, /\| `customItems` \|/);
   assert.doesNotMatch(markdown, /<ToolbarConfigReference\b/);
   assert.doesNotMatch(markdown, /<EditorDemo\b/);
   assert.doesNotMatch(markdown, /<include>/);
+  assert.match(
+    redirects,
+    /^\/editor\/built-in-ui\/structured-content\/ \/editor\/built-in-ui\/configure-the-toolbar\/ 301$/mu,
+  );
 });
 
 test('exports the React custom UI example as clean Markdown', async () => {
@@ -682,8 +705,8 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
     readFile(new URL('../out/md/editor/built-in-ui/context-menus.md', import.meta.url), 'utf8'),
     readFile(new URL('../out/editor/built-in-ui/context-menus/index.html', import.meta.url), 'utf8'),
   ]);
-  const structured = await readFile(
-    new URL('../out/md/editor/built-in-ui/structured-content.md', import.meta.url),
+  const contentControls = await readFile(
+    new URL('../out/md/editor/built-in-ui/content-controls.md', import.meta.url),
     'utf8',
   );
   const responsive = await readFile(
@@ -729,14 +752,19 @@ test('exports the remaining built-in UI workflows as clean Markdown', async () =
   assert.doesNotMatch(contextMenu, /\b(?:customItems|includeDefaultItems)\b/);
   assert.doesNotMatch(contextMenu, /<ContextMenuConfigReference\b/);
   assert.match(contextMenu, /\*\*React — `src\/App\.tsx`\*\*/);
-  assert.match(structured, /handleImageUpload/);
-  assert.match(structured, /object URLs.*browser session/s);
+  assert.match(contentControls, /content-controls-sample\.docx/);
+  assert.match(contentControls, /contentControls: true/);
+  assert.match(contentControls, /onContentControlClick/);
+  assert.match(contentControls, /Built-in chrome — `ui\.contentControls`/);
+  assert.match(contentControls, /The controls remain in the DOCX/);
+  assert.match(contentControls, /\*\*React — `src\/App\.tsx`\*\*/);
+  assert.doesNotMatch(contentControls, /\b(?:modules\.contentControls|chrome: 'default'|handleImageUpload)\b/);
   assert.match(responsive, /mode: 'fit-width'/);
   assert.match(responsive, /viewOptions: \{ layout: 'web' \}/);
   assert.match(responsive, /retained semantic document surface/);
   assert.match(responsive, /fullscreenchange/);
   assert.match(responsive, /Avoid nesting the Editor inside another horizontal scroller/);
-  assert.doesNotMatch(`${hyperlinks}\n${contextMenu}\n${structured}\n${responsive}`, /<include>/);
+  assert.doesNotMatch(`${hyperlinks}\n${contextMenu}\n${contentControls}\n${responsive}`, /<include>/);
 });
 
 test('exports the redistributed Editor guidance as clean Markdown', async () => {

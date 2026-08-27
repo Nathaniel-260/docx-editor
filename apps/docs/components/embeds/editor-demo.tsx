@@ -2,7 +2,7 @@
 
 import { Bold, Check, Expand, Italic, Minus, Plus, RotateCcw, Shrink, Underline, Undo2, X } from 'lucide-react';
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
-import type { Config, ContextMenuConfig, DocumentMode, ViewingTrackedChangesMode } from 'superdoc';
+import type { Config, ContentControlRef, ContextMenuConfig, DocumentMode, ViewingTrackedChangesMode } from 'superdoc';
 import type { CommandState, SuperDocUI, ZoomSlice } from 'superdoc/ui';
 import {
   commentsDemoLayouts,
@@ -27,6 +27,7 @@ const initialZoom = { max: 200, min: 10, mode: 'manual', value: 100 } satisfies 
 
 type EditorDemoPreset =
   | 'comments'
+  | 'content-controls'
   | 'context-menu'
   | 'document-modes'
   | 'hyperlinks'
@@ -47,6 +48,7 @@ type DemoState = 'idle' | 'loading' | 'ready' | 'error';
 type MountDocumentOptions = {
   commentsLayout?: CommentsDemoLayout;
   commentsLevel?: CommentsDemoLevel;
+  contentControlChrome?: boolean;
   contextMenuStrategy?: ContextMenuDemoStrategy;
   documentMode?: DocumentMode;
   hyperlinkBehavior?: HyperlinkDemoBehavior;
@@ -314,6 +316,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const [commandStates, setCommandStates] = useState(initialCommandStates);
   const [commentsLayout, setCommentsLayout] = useState<CommentsDemoLayout>('auto');
   const [commentsLevel, setCommentsLevel] = useState<CommentsDemoLevel>('resolve');
+  const [contentControlChrome, setContentControlChrome] = useState(true);
   const [configurationBusy, setConfigurationBusy] = useState(false);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [documentMode, setDocumentMode] = useState<DocumentMode>(
@@ -321,6 +324,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   );
   const [fitActive, setFitActive] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [lastContentControl, setLastContentControl] = useState<ContentControlRef | null>(null);
   const [contextMenuActionStatus, setContextMenuActionStatus] = useState<string | null>(null);
   const [contextMenuStrategy, setContextMenuStrategy] = useState<ContextMenuDemoStrategy>('custom');
   const [hyperlinkBehavior, setHyperlinkBehavior] = useState<HyperlinkDemoBehavior>('default');
@@ -496,6 +500,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
     const hadMountedEditor = instanceRef.current !== null;
     const initialCommentsLayout = options.commentsLayout ?? 'auto';
     const initialCommentsLevel = options.commentsLevel ?? 'resolve';
+    const initialContentControlChrome = options.contentControlChrome ?? true;
     const initialContextMenuStrategy = options.contextMenuStrategy ?? 'custom';
     const initialDocumentMode = options.documentMode ?? (preset === 'tracked-review' ? 'suggesting' : 'editing');
     const initialHyperlinkBehavior = options.hyperlinkBehavior ?? 'default';
@@ -530,11 +535,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       setCommandStates(initialCommandStates());
       setCommentsLayout(initialCommentsLayout);
       setCommentsLevel(initialCommentsLevel);
+      setContentControlChrome(initialContentControlChrome);
       setDocumentMode(initialDocumentMode);
       setContextMenuActionStatus(null);
       setContextMenuStrategy(initialContextMenuStrategy);
       setHyperlinkBehavior(initialHyperlinkBehavior);
       setIncludeTrackedDeletions(initialIncludeTrackedDeletions);
+      setLastContentControl(null);
       fitActiveRef.current = true;
       setFitActive(true);
       setModeResetBusy(false);
@@ -572,6 +579,12 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
             ? {
                 comments: false,
                 contextMenu: getContextMenu(initialContextMenuStrategy),
+              }
+            : {}),
+          ...(preset === 'content-controls'
+            ? {
+                comments: false,
+                contentControls: initialContentControlChrome,
               }
             : {}),
           ...(preset === 'hyperlinks'
@@ -615,6 +628,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           if (!fitActiveRef.current) return;
           fitActiveRef.current = false;
           if (mountedRef.current) setFitActive(false);
+        },
+        onContentControlClick: ({ target }) => {
+          if (mountedRef.current) setLastContentControl(target);
         },
         onContentError: markError,
         onException: markError,
@@ -724,6 +740,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
         options: {
           commentsLayout,
           commentsLevel,
+          contentControlChrome,
           contextMenuStrategy,
           documentMode: currentDocumentMode,
           hyperlinkBehavior,
@@ -759,6 +776,12 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   function changeCommentsLevel(level: CommentsDemoLevel) {
     if (level === commentsLevel) return;
     void reconfigureDemo({ commentsLevel: level });
+  }
+
+  function changeContentControlChrome(value: 'show' | 'hide') {
+    const nextContentControlChrome = value === 'show';
+    if (nextContentControlChrome === contentControlChrome) return;
+    void reconfigureDemo({ contentControlChrome: nextContentControlChrome });
   }
 
   function changeContextMenuStrategy(strategy: ContextMenuDemoStrategy) {
@@ -862,6 +885,9 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
   const hasActiveChange = Boolean(activeChangeId) && !reviewBusy;
   const countLabel = `${trackedChangeCount} ${trackedChangeCount === 1 ? 'change' : 'changes'}`;
   const activeDocumentMode = documentModes.find((mode) => mode.id === documentMode) ?? documentModes[0];
+  const contentControlStatus = lastContentControl
+    ? `${lastContentControl.alias ?? lastContentControl.tag ?? lastContentControl.id} · tag: ${lastContentControl.tag ?? 'none'} · type: ${lastContentControl.controlType}`
+    : 'Click a field to see its alias, tag, and type.';
 
   return (
     <section
@@ -875,7 +901,13 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       <div className='sd-editor-demo-header'>
         <div className='sd-editor-demo-copy'>
           <strong>{title}</strong>
-          <span aria-live={preset === 'context-menu' || preset === 'document-modes' ? 'polite' : undefined}>
+          <span
+            aria-live={
+              preset === 'content-controls' || preset === 'context-menu' || preset === 'document-modes'
+                ? 'polite'
+                : undefined
+            }
+          >
             {preset === 'document-modes'
               ? activeDocumentMode.note
               : allowLocalFile
@@ -884,15 +916,17 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                   ? 'Type “mispelled”, “workng”, or “teh”, then right-click its underline.'
                   : preset === 'comments'
                     ? 'Open the existing thread, then change its layout or available actions.'
-                    : preset === 'context-menu'
-                      ? (contextMenuActionStatus ?? 'Select text, then right-click to open the document menu.')
-                      : preset === 'hyperlinks'
-                        ? 'Click the hyperlink to try the selected activation behavior.'
-                        : preset === 'search'
-                          ? 'Search for “Client”, or include tracked deletions and search for “Legacy”.'
-                          : preset === 'toolbar'
-                            ? 'Switch strategies, then try the rendered controls in the document.'
-                            : 'Loads the sample DOCX in suggesting mode.'}
+                    : preset === 'content-controls'
+                      ? contentControlStatus
+                      : preset === 'context-menu'
+                        ? (contextMenuActionStatus ?? 'Select text, then right-click to open the document menu.')
+                        : preset === 'hyperlinks'
+                          ? 'Click the hyperlink to try the selected activation behavior.'
+                          : preset === 'search'
+                            ? 'Search for “Client”, or include tracked deletions and search for “Legacy”.'
+                            : preset === 'toolbar'
+                              ? 'Switch strategies, then try the rendered controls in the document.'
+                              : 'Loads the sample DOCX in suggesting mode.'}
           </span>
         </div>
         <div className='sd-editor-demo-actions'>
@@ -931,6 +965,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
       {preset === 'toolbar' ||
       preset === 'search' ||
       preset === 'comments' ||
+      preset === 'content-controls' ||
       preset === 'context-menu' ||
       preset === 'hyperlinks' ||
       preset === 'document-modes' ? (
@@ -1023,6 +1058,18 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               />
             </>
           ) : null}
+          {preset === 'content-controls' ? (
+            <DemoConfigGroup
+              disabled={state !== 'ready' || configurationBusy}
+              label='Built-in chrome'
+              onChange={changeContentControlChrome}
+              options={[
+                { id: 'show', label: 'Show' },
+                { id: 'hide', label: 'Hide' },
+              ]}
+              value={contentControlChrome ? 'show' : 'hide'}
+            />
+          ) : null}
           {preset === 'context-menu' ? (
             <DemoConfigGroup
               disabled={state !== 'ready' || configurationBusy}
@@ -1064,15 +1111,17 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                 ? 'The proofing editor could not load. Try again.'
                 : preset === 'comments'
                   ? 'The comments editor could not load. Try again.'
-                  : preset === 'context-menu'
-                    ? 'The context-menu editor could not load. Try again.'
-                    : preset === 'hyperlinks'
-                      ? 'The hyperlinks editor could not load. Try again.'
-                      : preset === 'search'
-                        ? 'The search editor could not load. Try again.'
-                        : preset === 'toolbar'
-                          ? 'The toolbar editor could not load. Try again.'
-                          : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
+                  : preset === 'content-controls'
+                    ? 'The content-controls editor could not load. Try again.'
+                    : preset === 'context-menu'
+                      ? 'The context-menu editor could not load. Try again.'
+                      : preset === 'hyperlinks'
+                        ? 'The hyperlinks editor could not load. Try again.'
+                        : preset === 'search'
+                          ? 'The search editor could not load. Try again.'
+                          : preset === 'toolbar'
+                            ? 'The toolbar editor could not load. Try again.'
+                            : 'The editor could not load. Download the fixture and continue with the local quickstart below.'}
           </p>
         ) : null}
         {configurationError ? (
@@ -1095,6 +1144,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
           hidden={
             state === 'idle' ||
             preset === 'comments' ||
+            preset === 'content-controls' ||
             preset === 'context-menu' ||
             preset === 'hyperlinks' ||
             preset === 'search' ||
@@ -1201,15 +1251,17 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
                   ? 'The proofing editor is loading.'
                   : preset === 'comments'
                     ? 'The comments editor is loading.'
-                    : preset === 'context-menu'
-                      ? 'The context-menu editor is loading.'
-                      : preset === 'hyperlinks'
-                        ? 'The hyperlinks editor is loading.'
-                        : preset === 'search'
-                          ? 'The search editor is loading.'
-                          : preset === 'toolbar'
-                            ? 'The toolbar editor is loading.'
-                            : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
+                    : preset === 'content-controls'
+                      ? 'The content-controls editor is loading.'
+                      : preset === 'context-menu'
+                        ? 'The context-menu editor is loading.'
+                        : preset === 'hyperlinks'
+                          ? 'The hyperlinks editor is loading.'
+                          : preset === 'search'
+                            ? 'The search editor is loading.'
+                            : preset === 'toolbar'
+                              ? 'The toolbar editor is loading.'
+                              : 'The sample editor loads as this demo enters view. The rest of the article stays lightweight.'}
             </p>
           </div>
         ) : null}
