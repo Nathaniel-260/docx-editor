@@ -110,6 +110,9 @@ export type SuperDocZoomChangeEvent = Parameters<NonNullable<SuperDocConfig['onZ
  */
 export type SuperDocViewportChangeEvent = Parameters<NonNullable<SuperDocConfig['onViewportChange']>>[0];
 
+/** Event passed to onPageMarginsChange callback. */
+export type SuperDocPageMarginsChangeEvent = Parameters<NonNullable<SuperDocConfig['onPageMarginsChange']>>[0];
+
 // =============================================================================
 // React Component Types
 // =============================================================================
@@ -139,7 +142,8 @@ type ExplicitCallbackProps =
   | 'onContentError'
   | 'onException'
   | 'onZoomChange'
-  | 'onViewportChange';
+  | 'onViewportChange'
+  | 'onPageMarginsChange';
 
 // V2 branch: there is no `editorVersion` / `editorIntegration` React prop.
 // `@superdoc/react` wraps `superdoc@2`, which always runs the DOCX Engine
@@ -177,6 +181,9 @@ export interface CallbackProps {
 
   /** Callback when the implied fit changes (rounded fit zoom or base page width); see the core viewport-change event */
   onViewportChange?: (event: SuperDocViewportChangeEvent) => void;
+
+  /** Callback after a ruler drag changes the active section's left or right page margin. */
+  onPageMarginsChange?: (event: SuperDocPageMarginsChangeEvent) => void;
 }
 
 /**

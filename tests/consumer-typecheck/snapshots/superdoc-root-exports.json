@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-26T19:27:20.147Z",
+  "generatedAt": "2026-08-27T13:36:48.030Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -105,6 +105,7 @@
         "ResolveRangeOutput",
         "ResolvedFindReplaceTexts",
         "ResolvedPasswordPromptTexts",
+        "RulerConfig",
         "SdtRef",
         "SearchConfig",
         "SearchFloatingConfig",
@@ -178,6 +179,7 @@
         "SuperDocMutationEvent",
         "SuperDocMutationFilter",
         "SuperDocMutationOrigin",
+        "SuperDocPageMarginsChangePayload",
         "SuperDocPaintEvent",
         "SuperDocReadyPayload",
         "SuperDocReceiptSuccess",
@@ -358,6 +360,7 @@
         "ResolveRangeOutput",
         "ResolvedFindReplaceTexts",
         "ResolvedPasswordPromptTexts",
+        "RulerConfig",
         "SdtRef",
         "SearchConfig",
         "SearchFloatingConfig",
@@ -431,6 +434,7 @@
         "SuperDocMutationEvent",
         "SuperDocMutationFilter",
         "SuperDocMutationOrigin",
+        "SuperDocPageMarginsChangePayload",
         "SuperDocPaintEvent",
         "SuperDocReadyPayload",
         "SuperDocReceiptSuccess",
@@ -551,11 +555,11 @@
     }
   },
   "counts": {
-    "types.import": 247,
-    "types.require": 247,
+    "types.import": 249,
+    "types.require": 249,
     "import": 10,
     "require": 10,
-    "union": 247
+    "union": 249
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -655,6 +659,7 @@
         "ResolveRangeOutput",
         "ResolvedFindReplaceTexts",
         "ResolvedPasswordPromptTexts",
+        "RulerConfig",
         "SdtRef",
         "SearchConfig",
         "SearchFloatingConfig",
@@ -727,6 +732,7 @@
         "SuperDocMutationEvent",
         "SuperDocMutationFilter",
         "SuperDocMutationOrigin",
+        "SuperDocPageMarginsChangePayload",
         "SuperDocPaintEvent",
         "SuperDocReadyPayload",
         "SuperDocReceiptSuccess",

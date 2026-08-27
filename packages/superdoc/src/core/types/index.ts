@@ -3428,6 +3428,29 @@ export interface SuperDocMeasurementUnitChangePayload {
   unit: SuperDocMeasurementUnit;
 }
 
+/** Details reported after a ruler drag changes a section's page margins. */
+export interface SuperDocPageMarginsChangePayload {
+  /** Document whose margins changed. */
+  documentId: string;
+  /** Editor version that applied the change. */
+  editorVersion: 2;
+  /** Stable ID of the section whose margins changed. */
+  sectionId: string;
+  /** Zero-based index of the section whose margins changed. */
+  sectionIndex: number;
+  /** Margin handle that moved. */
+  side: 'left' | 'right';
+  /** New value of the moved margin, in inches. */
+  value: number;
+  /** Current page margins for the section, in inches. */
+  pageMargins: {
+    top?: number;
+    right?: number;
+    bottom?: number;
+    left?: number;
+  };
+}
+
 /**
  * Payload emitted with the `zoomChange` event and passed to
  * `Config.onZoomChange`. Fires for every zoom source: `setZoom()`,
@@ -3997,12 +4020,7 @@ export interface UIConfig {
    */
   linkPopover?: boolean | LinkPopoverConfig;
   /** Built-in ruler. Disabled by default. */
-  ruler?:
-    | boolean
-    | {
-        /** Element or selector to render the ruler into. */
-        container?: string | HTMLElement;
-      };
+  ruler?: boolean | RulerConfig;
   /**
    * Built-in chrome drawn around content controls (default: `true`). Set to
    * `false` to hide the chrome.
@@ -4011,6 +4029,12 @@ export interface UIConfig {
    * v2 compatibility. New integrations should use the boolean form.
    */
   contentControls?: boolean | ContentControlsConfig;
+}
+
+/** Built-in ruler configuration. */
+export interface RulerConfig {
+  /** Element or selector to render the ruler into. Omit to render it above the document. */
+  container?: string | HTMLElement;
 }
 
 /** Allowed values for `interaction.comments.level`. */
@@ -4404,6 +4428,8 @@ export interface Config {
    * first emit.
    */
   onViewportChange?: (params: SuperDocViewportChangePayload) => void;
+  /** Callback after a ruler drag changes the active section's left or right page margin. */
+  onPageMarginsChange?: (params: SuperDocPageMarginsChangePayload) => void;
   /** The format of the document (docx, pdf, html). */
   format?: string;
   /**
@@ -4448,7 +4474,10 @@ export interface Config {
   handleImageUpload?: (file: globalThis.File) => Promise<string>;
   /** The user who locked the SuperDoc. */
   lockedBy?: User;
-  /** Whether to show the ruler in the editor. */
+  /**
+   * Whether to show the ruler in the editor.
+   * @deprecated replaceWith=`ui.ruler` removeIn=v3.0
+   */
   rulers?: boolean;
   /**
    * Element or selector the ruler mounts into. Omit to render it inline above

@@ -21,11 +21,13 @@ export type {
   HyperlinkRenderContext,
   HyperlinkTarget,
   HyperlinksConfig,
+  RulerConfig,
   SearchConfig,
   SearchFloatingConfig,
   SearchStrings,
   ToolbarConfig,
   SuperDocExceptionHyperlinkPayload,
+  SuperDocPageMarginsChangePayload,
 } from 'superdoc';
 
 // Types - extracted from superdoc package for convenience
@@ -57,4 +59,5 @@ export type {
   SuperDocExceptionEvent,
   SuperDocZoomChangeEvent,
   SuperDocViewportChangeEvent,
+  SuperDocPageMarginsChangeEvent,
 } from './types';

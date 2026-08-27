@@ -1,9 +1,9 @@
 {
   "generatedAt": "2026-06-23T01:53:02.997Z",
   "summary": {
-    "total": 243,
+    "total": 245,
     "byBucket": {
-      "supported-root": 240,
+      "supported-root": 242,
       "legacy-root": 3
     },
     "byConfidence": {
@@ -970,6 +970,17 @@
       "inCjs": false
     },
     {
+      "name": "RulerConfig",
+      "bucket": "supported-root",
+      "rationale": "Canonical startup options for the built-in Ruler surface.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "SdtRef",
       "bucket": "supported-root",
       "rationale": "Deprecated alias retained for v2 source compatibility; use ContentControlRef.",
@@ -1743,6 +1754,17 @@
       "name": "SuperDocPaintEvent",
       "bucket": "supported-root",
       "rationale": "v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet.",
+      "confidence": "high",
+      "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SuperDocPageMarginsChangePayload",
+      "bucket": "supported-root",
+      "rationale": "Payload emitted after a ruler drag changes a section's page margins and passed to Config.onPageMarginsChange.",
       "confidence": "high",
       "source": "core",
       "inDts": true,

@@ -133,6 +133,7 @@ import type {
   ResolvedFindReplaceTexts,
   ResolvedPasswordPromptTexts,
   ResolveRangeOutput,
+  RulerConfig,
   SdtRef,
   SearchConfig,
   SearchFloatingConfig,
@@ -201,6 +202,7 @@ import type {
   SuperDocLockedPayload,
   SuperDocMeasurementUnit,
   SuperDocMeasurementUnitChangePayload,
+  SuperDocPageMarginsChangePayload,
   SuperDocMutationAffect,
   SuperDocMutationEvent,
   SuperDocMutationFilter,
@@ -375,6 +377,7 @@ const _real_PermissionResolverParams: AssertNotAny<PermissionResolverParams> = t
 const _real_ResolvedFindReplaceTexts: AssertNotAny<ResolvedFindReplaceTexts> = true;
 const _real_ResolvedPasswordPromptTexts: AssertNotAny<ResolvedPasswordPromptTexts> = true;
 const _real_ResolveRangeOutput: AssertNotAny<ResolveRangeOutput> = true;
+const _real_RulerConfig: AssertNotAny<RulerConfig> = true;
 const _real_SdtRef: AssertNotAny<SdtRef> = true;
 const _real_SearchConfig: AssertNotAny<SearchConfig> = true;
 const _real_SearchFloatingConfig: AssertNotAny<SearchFloatingConfig> = true;
@@ -440,6 +443,7 @@ const _real_SuperDocLayoutEngineOptions: AssertNotAny<SuperDocLayoutEngineOption
 const _real_SuperDocLockedPayload: AssertNotAny<SuperDocLockedPayload> = true;
 const _real_SuperDocMeasurementUnit: AssertNotAny<SuperDocMeasurementUnit> = true;
 const _real_SuperDocMeasurementUnitChangePayload: AssertNotAny<SuperDocMeasurementUnitChangePayload> = true;
+const _real_SuperDocPageMarginsChangePayload: AssertNotAny<SuperDocPageMarginsChangePayload> = true;
 const _real_SuperDocMutationAffect: AssertNotAny<SuperDocMutationAffect> = true;
 const _real_SuperDocMutationEvent: AssertNotAny<SuperDocMutationEvent> = true;
 const _real_SuperDocMutationFilter: AssertNotAny<SuperDocMutationFilter> = true;

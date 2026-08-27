@@ -118,6 +118,7 @@ export type {
 } from '../core/types/index.js';
 export type { TrackChangeHighlightColors } from '../core/types/index.js';
 export type { ContentControlsConfig } from '../core/types/index.js';
+export type { RulerConfig } from '../core/types/index.js';
 export type { FontFamilyOption } from './ui/types.js';
 export type { ToolbarConfig } from '../core/types/index.js';
 export type { SearchConfig, SearchFloatingConfig, SearchStrings } from '../core/types/index.js';
@@ -151,6 +152,7 @@ export type { LinkPopoverResolver } from '../core/types/index.js';
 export type { SuperDocLockedPayload } from '../core/types/index.js';
 export type { SuperDocMeasurementUnit } from '../core/types/index.js';
 export type { SuperDocMeasurementUnitChangePayload } from '../core/types/index.js';
+export type { SuperDocPageMarginsChangePayload } from '../core/types/index.js';
 export type { SuperDocReadyPayload } from '../core/types/index.js';
 export type { SuperDocState } from '../core/types/index.js';
 export type { SuperDocTelemetryConfig } from '../core/types/index.js';

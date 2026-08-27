@@ -284,6 +284,7 @@ import type {
   SuperDocLockedPayload,
   SuperDocMeasurementUnit,
   SuperDocMeasurementUnitChangePayload,
+  SuperDocPageMarginsChangePayload,
   SuperDocReadyPayload,
   SuperDocState,
   SuperDocTrackedChangesBulkDecisionPayload,
@@ -603,6 +604,7 @@ interface SuperDocEventMap {
   'search:open': [];
   zoomChange: [SuperDocZoomPayload];
   'measurement-unit-change': [SuperDocMeasurementUnitChangePayload];
+  'page-margins-change': [SuperDocPageMarginsChangePayload];
   'formatting-marks-change': [SuperDocFormattingMarksPayload];
   'document-mode-change': [SuperDocDocumentModeChangePayload];
   /**
@@ -1808,6 +1810,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     this.#onConfig('fonts-changed', this.config.onFontsChanged);
     this.#onConfig('zoomChange', this.config.onZoomChange);
     this.#onConfig('viewport-change', this.config.onViewportChange);
+    this.#onConfig('page-margins-change', this.config.onPageMarginsChange);
   }
 
   /**
@@ -3187,7 +3190,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    * Toggle the ruler visibility for document editors.
    *
    */
-  toggleRuler() {
+  toggleRuler(): void {
     // Guard before mutating `this.config.rulers` so a pre-ready call
     // throws without partially flipping the config.
     const store = this.#requireSuperdocStore('toggleRuler');

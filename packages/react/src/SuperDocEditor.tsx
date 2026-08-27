@@ -23,6 +23,7 @@ import type {
   SuperDocExceptionEvent,
   SuperDocZoomChangeEvent,
   SuperDocViewportChangeEvent,
+  SuperDocPageMarginsChangeEvent,
 } from './types';
 
 /**
@@ -55,6 +56,7 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
     onException,
     onZoomChange,
     onViewportChange,
+    onPageMarginsChange,
     // Key props that trigger rebuild when changed
     document: documentProp,
     user: userProp,
@@ -126,6 +128,7 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
     onException,
     onZoomChange,
     onViewportChange,
+    onPageMarginsChange,
   });
 
   // Update callback refs when props change
@@ -140,6 +143,7 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
       onException,
       onZoomChange,
       onViewportChange,
+      onPageMarginsChange,
     };
   }, [
     onReady,
@@ -151,6 +155,7 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
     onException,
     onZoomChange,
     onViewportChange,
+    onPageMarginsChange,
   ]);
 
   // Queue mode changes that happen during init
@@ -271,6 +276,11 @@ function SuperDocEditorInner(props: SuperDocEditorProps, ref: ForwardedRef<Super
           onViewportChange: (event: SuperDocViewportChangeEvent) => {
             if (!destroyed) {
               callbacksRef.current.onViewportChange?.(event);
+            }
+          },
+          onPageMarginsChange: (event: SuperDocPageMarginsChangeEvent) => {
+            if (!destroyed) {
+              callbacksRef.current.onPageMarginsChange?.(event);
             }
           },
         };

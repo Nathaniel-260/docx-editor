@@ -301,6 +301,40 @@ describe('SuperDocEditor', () => {
     );
 
     it(
+      'should route page margin changes through the latest callback after rerender',
+      async () => {
+        const ref = createRef<SuperDocRef>();
+        const onReady = vi.fn();
+        const firstCallback = vi.fn();
+        const secondCallback = vi.fn();
+        const { rerender } = render(<SuperDocEditor ref={ref} onReady={onReady} onPageMarginsChange={firstCallback} />);
+
+        await waitFor(() => expect(onReady).toHaveBeenCalled(), { timeout: SUPERDOC_READY_WAIT_TIMEOUT });
+
+        const instance = ref.current?.getInstance();
+        expect(instance).toBeTruthy();
+
+        rerender(<SuperDocEditor ref={ref} onReady={onReady} onPageMarginsChange={secondCallback} />);
+        expect(ref.current?.getInstance()).toBe(instance);
+
+        const payload = {
+          documentId: 'document-1',
+          editorVersion: 2 as const,
+          sectionId: 'section-1',
+          sectionIndex: 0,
+          side: 'right' as const,
+          value: 1.5,
+          pageMargins: { top: 1, right: 1.5, bottom: 1, left: 1 },
+        };
+        (instance as any).config.onPageMarginsChange(payload);
+
+        expect(firstCallback).not.toHaveBeenCalled();
+        expect(secondCallback).toHaveBeenCalledWith(payload);
+      },
+      SUPERDOC_READY_TEST_TIMEOUT,
+    );
+
+    it(
       'should apply zoom.initial through config passthrough',
       async () => {
         const ref = createRef<SuperDocRef>();
