@@ -125,7 +125,22 @@ export function translateRenderReadinessDiagnostic(diag, ctx = {}) {
   } else if (code.includes('unsupported')) {
     diagnosticCode = 'UNSUPPORTED_FEATURE';
   } else if (code.includes('degraded')) {
-    diagnosticCode = 'PERFORMANCE_ERROR';
+    // `render.engine-pass-degraded`/`render.scheduler-degraded` are
+    // pass-through wrappers (render-surface.ts's `emitEnginePassFailure`,
+    // the scheduler's `#enterDegraded`) around whatever the engine pass or
+    // scheduler actually failed with. That underlying `reason` is either a
+    // genuine capacity/timeout condition (retry-budget exhaustion, watchdog
+    // timers -- legitimately PERFORMANCE_ERROR) or one of ~40 defensive
+    // invariant-assertion `Error`s thrown by retained-state.ts (id
+    // collisions, immutable-index writes, stale/incomplete indexes -- a
+    // correctness bug, not a performance condition). retained-state.ts's own
+    // message vocabulary ("retained ...", "localized resolve ...") survives
+    // even after the scheduler wraps it with a retry-count prefix, so match
+    // on it to reclassify those as RENDER_ERROR; anything else keeps the
+    // PERFORMANCE_ERROR default.
+    const isRetainedStateInvariant =
+      typeof reason === 'string' && (reason.includes('retained ') || reason.includes('localized resolve '));
+    diagnosticCode = isRetainedStateInvariant ? 'RENDER_ERROR' : 'PERFORMANCE_ERROR';
   } else if (severity === 'error') {
     diagnosticCode = 'RENDER_ERROR';
   } else {

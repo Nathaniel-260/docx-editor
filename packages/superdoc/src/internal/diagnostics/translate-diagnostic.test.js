@@ -225,6 +225,54 @@ describe('translateRenderReadinessDiagnostic', () => {
     });
   });
 
+  it('reclassifies a retained-state invariant violation under engine-pass-degraded as RENDER_ERROR', () => {
+    // Confirmed real case: retained-state.ts throws a defensive invariant
+    // assertion (id collision), which emitEnginePassFailure passes through
+    // verbatim as the degraded reason. This is a correctness bug, not a
+    // performance condition.
+    const result = translateRenderReadinessDiagnostic({
+      code: 'render.engine-pass-degraded',
+      reason:
+        'initial-render: engine pass failed (retained-state-recording-failed): retained state recording failed at snapshotComplete: retained body block id collision: 0/section-break/67/o0',
+      severity: 'warn',
+    });
+    expect(result).toMatchObject({
+      diagnosticCode: 'RENDER_ERROR',
+      diagnosticStage: 'render',
+      internalCode: 'render.engine-pass-degraded',
+    });
+  });
+
+  it('reclassifies the same invariant violation once wrapped by the scheduler retry-count prefix', () => {
+    // The scheduler wraps the inner reason with "canonical render failed N
+    // consecutive times: ..." before reporting render.scheduler-degraded --
+    // the retained-state.ts vocabulary must still be detected through that
+    // wrapping.
+    const result = translateRenderReadinessDiagnostic({
+      code: 'render.scheduler-degraded',
+      reason:
+        'canonical render failed 2 consecutive times: canonical engine pass initial-render failed (retained-state-recording-failed): retained state recording failed at snapshotComplete: retained body block id collision: 0/section-break/67/o0',
+      severity: 'error',
+    });
+    expect(result).toMatchObject({
+      diagnosticCode: 'RENDER_ERROR',
+      diagnosticStage: 'render',
+      internalCode: 'render.scheduler-degraded',
+    });
+  });
+
+  it('keeps a genuine timeout/watchdog degraded reason as PERFORMANCE_ERROR', () => {
+    const result = translateRenderReadinessDiagnostic({
+      code: 'render.scheduler-degraded',
+      reason: 'current unpainted target reached 1200ms (limit 1000ms)',
+      severity: 'error',
+    });
+    expect(result).toMatchObject({
+      diagnosticCode: 'PERFORMANCE_ERROR',
+      diagnosticStage: 'render',
+    });
+  });
+
   it('falls back to RENDER_ERROR for an unrecognized error-severity code', () => {
     const result = translateRenderReadinessDiagnostic({
       code: 'render.some-new-failure',
