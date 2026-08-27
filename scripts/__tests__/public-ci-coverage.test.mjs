@@ -166,6 +166,29 @@ test('public validation stays read-only and on GitHub-hosted default runners', (
   }
 });
 
+test('SuperDoc CI covers the Windows TypeScript launch paths', () => {
+  const workflow = readWorkflow('ci-superdoc.yml');
+  const blocks = new Map(jobBlocks(workflow).map((block) => [block.id, block.source]));
+  const windowsChecks = blocks.get('windows-source-checks');
+  const validate = blocks.get('validate');
+
+  assert.ok(windowsChecks, 'ci-superdoc.yml is missing Windows source checks');
+  assert.match(windowsChecks, /^    needs: \[detect, pnpm-config\]$/mu);
+  assert.match(windowsChecks, /^    if: needs\.detect\.outputs\.superdoc == 'true'$/mu);
+  assert.match(windowsChecks, /^    runs-on: windows-latest$/mu);
+  assert.match(windowsChecks, /uses: pnpm\/action-setup@/u);
+  assert.match(windowsChecks, /uses: actions\/setup-node@/u);
+  assert.match(windowsChecks, /run: pnpm install --ignore-scripts --frozen-lockfile/u);
+  assert.match(
+    windowsChecks,
+    /node --test\s+packages\/superdoc\/scripts\/typescript-runner\.test\.mjs\s+packages\/superdoc\/scripts\/check-jsdoc-launcher\.test\.mjs/u,
+  );
+  assert.match(windowsChecks, /run: pnpm --filter superdoc run check:jsdoc/u);
+
+  assert.match(validate, /^    needs: \[[^\n]*windows-source-checks[^\n]*\]$/mu);
+  assert.match(validate, /windows-source-checks:\$\{\{ needs\.windows-source-checks\.result \}\}/u);
+});
+
 test('every focused workflow is reusable and retains its validation contract', () => {
   for (const [name, commands] of reusableWorkflows) {
     const workflow = readWorkflow(name);
