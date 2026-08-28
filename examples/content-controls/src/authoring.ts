@@ -13,6 +13,7 @@ let detectedControls: readonly ContentControlInfo[] = [];
 let selectionCleanup: (() => void) | null = null;
 const clientName = 'Acme Products, Inc.';
 const confidentialitySlotBlockId = 'A100000B';
+const selectionSettleTimeoutMs = 2_000;
 
 function requireElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -62,10 +63,38 @@ async function refreshControls(): Promise<void> {
   renderControls(result.items);
 }
 
+async function readReadySelection(): Promise<SelectionSlice | null> {
+  if (latestSelection?.status === 'ready') return latestSelection;
+
+  const current = superdoc.ui.selection.getSnapshot();
+  if (current.status === 'ready') return current;
+  const requiresTarget = Boolean(latestSelection?.selectionTarget ?? current.selectionTarget);
+
+  return new Promise((resolve) => {
+    let unsubscribe = (): void => {};
+    let settled = false;
+    const finish = (selection: SelectionSlice | null): void => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      unsubscribe();
+      resolve(selection);
+    };
+    const timeout = window.setTimeout(() => finish(latestSelection), selectionSettleTimeoutMs);
+
+    unsubscribe = superdoc.ui.selection.observe((snapshot) => {
+      if (snapshot.selectionTarget) latestSelection = snapshot;
+      if (snapshot.status === 'ready' && (!requiresTarget || snapshot.selectionTarget)) finish(snapshot);
+    });
+    if (settled) unsubscribe();
+  });
+}
+
 addInlineButton.addEventListener('click', async () => {
+  const selection = await readReadySelection();
   const target =
-    latestSelection?.status === 'ready' && latestSelection.empty === false && latestSelection.quotedText === clientName
-      ? latestSelection.selectionTarget
+    selection?.status === 'ready' && selection.empty === false && selection.quotedText === clientName
+      ? selection.selectionTarget
       : null;
   if (!documentApi || !target) {
     status.textContent = 'Select the client name in the document first.';
@@ -95,7 +124,8 @@ addInlineButton.addEventListener('click', async () => {
 });
 
 addBlockButton.addEventListener('click', async () => {
-  const target = latestSelection?.empty === true ? latestSelection.selectionTarget : null;
+  const selection = await readReadySelection();
+  const target = selection?.status === 'ready' && selection.empty === true ? selection.selectionTarget : null;
   const isConfidentialitySlot =
     target?.start.kind === 'text' &&
     target.end.kind === 'text' &&
