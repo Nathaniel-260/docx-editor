@@ -260,34 +260,54 @@ export interface ContentControlsPaginationOptions {
 // A. Core CRUD + Discovery: Input types
 // ---------------------------------------------------------------------------
 
-export interface CreateContentControlInput {
-  kind: NodeKind;
+interface CreateContentControlCommonInput {
   controlType?: ContentControlType;
-  target?: ContentControlTarget;
-  /**
-   * Text range to wrap in the new content control. Mutually exclusive with `target`.
-   * When `content` is also provided, it replaces the selected text inside the new SDT.
-   * When `content` is omitted, the existing text in the range becomes the SDT content.
-   */
-  at?: SelectionTarget;
   tag?: string;
   alias?: string;
   lockMode?: LockMode;
-  content?: string;
-  /**
-   * Structured block preset authored from HTML. Supported only for block
-   * content controls. Mutually exclusive with `content` and `json`.
-   */
-  html?: string;
-  /**
-   * Structured block preset authored from SDFragment-compatible JSON. Legacy
-   * type-discriminated fragment shapes are validated at runtime too.
-   *
-   * Supported only for block content controls. Mutually exclusive with
-   * `content` and `html`.
-   */
-  json?: SDFragment | Record<string, unknown> | Array<Record<string, unknown>>;
 }
+
+type CreateContentControlPlacement =
+  | {
+      /**
+       * Text range to wrap in the new content control. When `content` is also
+       * provided, it replaces the selected text inside the new SDT.
+       */
+      at?: SelectionTarget;
+      target?: never;
+    }
+  | {
+      /** Existing content control after which the new control is inserted. */
+      target?: ContentControlTarget;
+      at?: never;
+    };
+
+type CreateContentControlPayload =
+  | {
+      kind: NodeKind;
+      /** Plain-text initial content. */
+      content?: string;
+      html?: never;
+      json?: never;
+    }
+  | {
+      kind: Extract<NodeKind, 'block'>;
+      content?: never;
+      /** Initial block content authored from HTML. */
+      html: string;
+      json?: never;
+    }
+  | {
+      kind: Extract<NodeKind, 'block'>;
+      content?: never;
+      html?: never;
+      /** Initial block content authored from an SDFragment-compatible value. */
+      json: SDFragment | Record<string, unknown> | Array<Record<string, unknown>>;
+    };
+
+export type CreateContentControlInput = CreateContentControlCommonInput &
+  CreateContentControlPlacement &
+  CreateContentControlPayload;
 
 export interface ContentControlsListQuery extends ContentControlsPaginationOptions {
   controlType?: ContentControlType;

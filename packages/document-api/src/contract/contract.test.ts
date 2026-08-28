@@ -598,6 +598,7 @@ describe('document-api contract catalog', () => {
     const createContentControlInput = schemas.operations['create.contentControl'].input as {
       properties?: Record<string, unknown>;
       required?: string[];
+      allOf?: Array<Record<string, unknown>>;
     };
     const contentControlInfo = schemas.operations['contentControls.get'].output as {
       properties?: Record<string, unknown>;
@@ -611,6 +612,18 @@ describe('document-api contract catalog', () => {
     expect(createContentControlInput.required).toEqual(['kind']);
     expect((createContentControlInput.properties?.html as { type?: string }).type).toBe('string');
     expect(createContentControlInput.properties).toHaveProperty('json');
+    expect(createContentControlInput.allOf).toEqual([
+      { not: { required: ['at', 'target'] } },
+      {
+        not: {
+          anyOf: [{ required: ['content', 'html'] }, { required: ['content', 'json'] }, { required: ['html', 'json'] }],
+        },
+      },
+      {
+        if: { properties: { kind: { const: 'inline' } }, required: ['kind'] },
+        then: { not: { anyOf: [{ required: ['html'] }, { required: ['json'] }] } },
+      },
+    ]);
     expect(contentControlInfo.properties).toHaveProperty('selectionTarget');
     expect(contentControlInfo.properties).toHaveProperty('isEmpty', { type: 'boolean' });
   });

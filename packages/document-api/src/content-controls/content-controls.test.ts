@@ -696,6 +696,13 @@ describe('create.contentControl validation', () => {
     expect(() =>
       executeCreateContentControl(createAdapter, {
         kind: 'block',
+        content: 'plain',
+        json: { type: 'paragraph', content: [{ type: 'text', text: 'json' }] },
+      } as any),
+    ).toThrow(/mutually exclusive/);
+    expect(() =>
+      executeCreateContentControl(createAdapter, {
+        kind: 'block',
         html: '<p>html</p>',
         json: { type: 'paragraph', content: [{ type: 'text', text: 'json' }] },
       } as any),
@@ -707,6 +714,12 @@ describe('create.contentControl validation', () => {
       executeCreateContentControl(createAdapter, {
         kind: 'inline',
         html: '<p>Block only</p>',
+      } as any),
+    ).toThrow(/supported only for block content controls/);
+    expect(() =>
+      executeCreateContentControl(createAdapter, {
+        kind: 'inline',
+        json: { type: 'paragraph', content: [{ type: 'text', text: 'Block only' }] },
       } as any),
     ).toThrow(/supported only for block content controls/);
   });

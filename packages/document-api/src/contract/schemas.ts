@@ -3282,21 +3282,39 @@ function buildContentControlSchemas(): Record<ContentControlOperationId, Operati
   };
   return {
     'create.contentControl': {
-      input: objectSchema(
-        {
-          kind: { enum: ['block', 'inline'] },
-          controlType: { type: 'string' },
-          target: contentControlTargetSchema,
-          at: selectionTargetSchema,
-          tag: { type: 'string' },
-          alias: { type: 'string' },
-          lockMode: { enum: ['unlocked', 'sdtLocked', 'contentLocked', 'sdtContentLocked'] },
-          content: { type: 'string' },
-          html: { type: 'string' },
-          json: sdFragmentSchema,
-        },
-        ['kind'],
-      ),
+      input: {
+        ...objectSchema(
+          {
+            kind: { enum: ['block', 'inline'] },
+            controlType: { type: 'string' },
+            target: contentControlTargetSchema,
+            at: selectionTargetSchema,
+            tag: { type: 'string' },
+            alias: { type: 'string' },
+            lockMode: { enum: ['unlocked', 'sdtLocked', 'contentLocked', 'sdtContentLocked'] },
+            content: { type: 'string' },
+            html: { type: 'string' },
+            json: sdFragmentSchema,
+          },
+          ['kind'],
+        ),
+        allOf: [
+          { not: { required: ['at', 'target'] } },
+          {
+            not: {
+              anyOf: [
+                { required: ['content', 'html'] },
+                { required: ['content', 'json'] },
+                { required: ['html', 'json'] },
+              ],
+            },
+          },
+          {
+            if: { properties: { kind: { const: 'inline' } }, required: ['kind'] },
+            then: { not: { anyOf: [{ required: ['html'] }, { required: ['json'] }] } },
+          },
+        ],
+      },
       output: ccMutationResultSchema(),
       success: contentControlMutationSuccessSchema,
       failure: contentControlMutationFailureSchema,
