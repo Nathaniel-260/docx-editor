@@ -24,6 +24,7 @@
     "examples/react": { "path": "examples/react" },
     "examples/search": { "path": "examples/search" },
     "examples/sveltekit": { "path": "examples/sveltekit" },
+    "examples/template-population": { "path": "examples/content-controls" },
     "examples/vanilla": { "path": "examples/vanilla" },
     "examples/version-history": { "path": "examples/version-history" },
     "grading-papers": { "path": "go-links/unavailable" },

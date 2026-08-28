@@ -1,6 +1,6 @@
-# Add content controls to a DOCX template
+# Work with content controls
 
-Create an inline text field and a block clause field from document selections, then export the authored DOCX.
+Use one example to add fields to a DOCX template or fill prepared fields from application data.
 
 ## Run it
 
@@ -11,7 +11,8 @@ pnpm install
 pnpm dev
 ```
 
-Select the client name to create an inline field. Place the caret below **Confidentiality** to insert a block field.
+Choose **Add fields** to create inline and block fields from document selections. Choose **Fill fields** to update
+repeated text fields and a checkbox in a prepared template. Each workflow loads its own service-agreement fixture.
 
 ## Verify it
 
@@ -22,6 +23,8 @@ pnpm browsers
 pnpm test
 ```
 
-The browser test creates both fields, exports the DOCX, and reopens it to verify their structure and metadata.
+The tests export and reopen both workflows. They verify field structure, metadata, repeated values, occurrence navigation,
+and checkbox state.
 
-See [Add fields to a DOCX template](https://docs.superdoc.dev/editor/content-controls/add-fields-to-a-docx-template) for the complete walkthrough.
+See [Add fields to a DOCX template](https://docs.superdoc.dev/editor/content-controls/add-fields-to-a-docx-template) or
+[Fill a DOCX template](https://docs.superdoc.dev/editor/content-controls/fill-a-docx-template) for a focused walkthrough.

@@ -163,6 +163,25 @@ test('the tracked-changes fixture keeps its tracked change', async () => {
   assert.ok(/<w:ins\b/.test(document), 'tracked-changes.docx must retain its tracked insertion');
 });
 
+test('the service-agreement template keeps its field map and matches the runnable example', async () => {
+  const { bytes, document, core, app } = await openFixture('service-agreement-template.docx');
+  const example = await readFile(
+    new URL('../../../examples/content-controls/public/service-agreement-template.docx', import.meta.url),
+  );
+
+  assert.deepEqual(bytes, example);
+  assert.equal(document.match(/<w:tag w:val="client\.legalName"\/>/g)?.length, 3);
+  assert.equal(document.match(/<w:tag w:val="agreement\.effectiveDate"\/>/g)?.length, 2);
+  assert.match(document, /<w:tag w:val="client\.address"\/>/);
+  assert.match(document, /<w:tag w:val="agreement\.autoRenew"\/>/);
+  assert.match(document, /<w14:checkbox>/);
+  assert.match(document, /<w14:checked w14:val="0"\/>/);
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+});
+
 /**
  * The custom UI overview's fixture exists to be short. If it grows into another
  * contract, the page's one instruction — select a sentence, press Bold — ends up

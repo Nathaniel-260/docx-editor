@@ -4,11 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" />
-    <title>SuperDoc content-control authoring</title>
+    <title>SuperDoc content controls</title>
   </head>
   <body>
-    <main class="authoring-shell">
-      <aside class="authoring-panel">
+    <header class="workflow-header">
+      <strong>Content controls</strong>
+      <nav aria-label="Choose a workflow">
+        <a href="./?workflow=add" data-workflow-link="add">Add fields</a>
+        <a href="./?workflow=fill" data-workflow-link="fill">Fill fields</a>
+      </nav>
+    </header>
+
+    <main class="example-shell">
+      <aside id="authoring-panel" class="side-panel">
         <header>
           <h1>Add template fields</h1>
           <p>Select document content, then turn it into a field.</p>
@@ -39,9 +47,52 @@
           </ul>
         </div>
 
-        <p id="status" role="status">Opening document...</p>
+        <p id="authoring-status" class="status" role="status">Opening document...</p>
         <button id="export-docx" class="primary" type="button" disabled>Export template</button>
       </aside>
+
+      <form id="filling-panel" class="side-panel" aria-label="Template fields" onsubmit="return false" hidden>
+        <header>
+          <h1>Fill template fields</h1>
+          <p>Update the application data, then export the DOCX.</p>
+        </header>
+
+        <div class="field-row" data-field="clientLegalName">
+          <label for="client-legal-name">Client legal name</label>
+          <input id="client-legal-name" type="text" disabled />
+          <div class="field-meta">
+            <code>client.legalName</code>
+            <span class="occurrence-nav" hidden>
+              <button id="previous-client-name" type="button" aria-label="Previous client legal name occurrence">‹</button>
+              <span id="client-name-position"></span>
+              <button id="next-client-name" type="button" aria-label="Next client legal name occurrence">›</button>
+            </span>
+          </div>
+        </div>
+
+        <div class="field-row" data-field="clientAddress">
+          <label for="client-address">Client address</label>
+          <input id="client-address" type="text" disabled />
+          <code>client.address</code>
+        </div>
+
+        <div class="field-row" data-field="effectiveDate">
+          <label for="effective-date">Effective date</label>
+          <input id="effective-date" type="text" disabled />
+          <code>agreement.effectiveDate</code>
+        </div>
+
+        <label class="field-row checkbox-row" data-field="autoRenew">
+          <span><input id="auto-renew" type="checkbox" disabled /> Auto-renew</span>
+          <code>agreement.autoRenew</code>
+        </label>
+
+        <p id="filling-status" class="status" role="status">Opening template...</p>
+        <div class="form-actions">
+          <button id="reset-template" type="button">Reset</button>
+          <button id="export-filled-docx" class="primary" type="button" disabled>Export DOCX</button>
+        </div>
+      </form>
 
       <div id="editor" aria-label="Service agreement document"></div>
     </main>

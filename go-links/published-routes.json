@@ -17,6 +17,7 @@
   "examples/react",
   "examples/search",
   "examples/sveltekit",
+  "examples/template-population",
   "examples/vanilla",
   "examples/version-history",
   "grading-papers",

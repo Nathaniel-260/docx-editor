@@ -56,29 +56,58 @@ async function clickEmptyClauseLine(page: Page): Promise<void> {
   await page.mouse.click(headingBox.x + 4, (headingBox.y + headingBox.height + nextHeadingBox.y) / 2);
 }
 
+test('routes between the add and fill workflows', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#authoring-panel')).toBeVisible();
+  await expect(page.locator('#filling-panel')).toBeHidden();
+  await expect(page.getByRole('link', { name: 'Add fields' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('link', { name: 'Fill fields' })).not.toHaveAttribute('aria-current', 'page');
+
+  await page.goto('/?workflow=fill');
+  await expect(page.locator('#authoring-panel')).toBeHidden();
+  await expect(page.locator('#filling-panel')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Add fields' })).not.toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('link', { name: 'Fill fields' })).toHaveAttribute('aria-current', 'page');
+});
+
+test('reports a workflow chunk that cannot be loaded', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+  await page.route('**/assets/authoring-*.js', (route) => route.abort('failed'));
+
+  await page.goto('/?workflow=add');
+
+  await expect(page.locator('#authoring-status')).toHaveText(
+    'The Add fields workflow could not be loaded. Reload to try again.',
+  );
+  expect(errors).toEqual([]);
+});
+
 test('rejects selections outside the authoring slots', async ({ page }) => {
   test.setTimeout(300_000);
   await page.goto('/');
-  await expect(page.locator('#status')).toHaveText('Select the client name to add the first field.', {
+  await expect(page.locator('#authoring-status')).toHaveText('Select the client name to add the first field.', {
     timeout: 120_000,
   });
 
   await selectText(page, 'Provider will deliver product design');
   await page.getByRole('button', { name: 'Add inline field' }).click();
-  await expect(page.locator('#status')).toHaveText('Select the client name in the document first.');
+  await expect(page.locator('#authoring-status')).toHaveText('Select the client name in the document first.');
   await expect(page.locator('#detected-controls')).toHaveText('No fields yet.');
 
   await page.reload();
-  await expect(page.locator('#status')).toHaveText('Select the client name to add the first field.', {
+  await expect(page.locator('#authoring-status')).toHaveText('Select the client name to add the first field.', {
     timeout: 120_000,
   });
   await page.getByRole('button', { name: 'Add inline field' }).click();
-  await expect(page.locator('#status')).toHaveText('Select the client name in the document first.');
+  await expect(page.locator('#authoring-status')).toHaveText('Select the client name in the document first.');
   await expect(page.locator('#detected-controls')).toHaveText('No fields yet.');
 
   await page.locator('.superdoc-line', { hasText: 'Provider will deliver product design' }).first().click();
   await page.getByRole('button', { name: 'Add block field' }).click();
-  await expect(page.locator('#status')).toHaveText('Place the caret on the empty line under Confidentiality first.');
+  await expect(page.locator('#authoring-status')).toHaveText(
+    'Place the caret on the empty line under Confidentiality first.',
+  );
   await expect(page.locator('#detected-controls')).toHaveText('No fields yet.');
 });
 
@@ -90,14 +119,14 @@ test('authors, exports, and reopens inline and block fields', async ({ page }) =
   });
   page.on('pageerror', (error) => errors.push(String(error)));
 
-  await page.goto('/');
-  await expect(page.locator('#status')).toHaveText('Select the client name to add the first field.', {
+  await page.goto('/?workflow=add');
+  await expect(page.locator('#authoring-status')).toHaveText('Select the client name to add the first field.', {
     timeout: 120_000,
   });
 
   await selectText(page, clientName);
   await page.getByRole('button', { name: 'Add inline field' }).click();
-  await expect(page.locator('#status')).toHaveText('Added the client name field.', { timeout: 120_000 });
+  await expect(page.locator('#authoring-status')).toHaveText('Added the client name field.', { timeout: 120_000 });
   await expect(page.locator('#detected-controls')).toContainText('client.legalName');
   await expect(page.locator('#detected-controls')).toContainText('inline · text');
   await expect(page.getByRole('button', { name: 'Add inline field' })).toBeDisabled();
@@ -105,12 +134,26 @@ test('authors, exports, and reopens inline and block fields', async ({ page }) =
 
   await clickEmptyClauseLine(page);
   await page.getByRole('button', { name: 'Add block field' }).click();
-  await expect(page.locator('#status')).toHaveText('Added the confidentiality clause field.', { timeout: 120_000 });
+  await expect(page.locator('#authoring-status')).toHaveText('Added the confidentiality clause field.', {
+    timeout: 120_000,
+  });
   await expect(page.locator('#detected-controls')).toContainText('agreement.confidentiality');
   await expect(page.locator('#detected-controls')).toContainText('block · richText');
   await expect(page.locator('#editor')).toContainText(confidentialityClause);
   await expect(page.getByRole('button', { name: 'Add block field' })).toBeDisabled();
   await expect(page.locator('#detected-controls code', { hasText: 'agreement.confidentiality' })).toHaveCount(1);
+
+  await page.evaluate(() => {
+    const createObjectURL = URL.createObjectURL;
+    URL.createObjectURL = () => {
+      URL.createObjectURL = createObjectURL;
+      throw new Error('Blocked template download.');
+    };
+  });
+  await page.getByRole('button', { name: 'Export template' }).click();
+  await expect(page.locator('#authoring-status')).toHaveText('The template could not be exported.');
+  await expect(page.getByRole('button', { name: 'Export template' })).toBeEnabled();
+  expect(errors).toEqual([]);
 
   const download = page.waitForEvent('download', { timeout: 120_000 });
   await page.getByRole('button', { name: 'Export template' }).click();
