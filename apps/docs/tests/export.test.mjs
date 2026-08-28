@@ -36,6 +36,11 @@ const routes = [
   ['editor/built-in-ui/content-controls/index.html', 'Show content-control chrome'],
   ['editor/built-in-ui/ruler/index.html', 'Show the ruler'],
   ['editor/built-in-ui/responsive-layout/index.html', 'Build a responsive Editor layout'],
+  ['editor/content-controls/index.html', 'Content controls'],
+  ['editor/content-controls/add-fields-to-a-docx-template/index.html', 'Add fields to a DOCX template'],
+  ['editor/content-controls/fill-a-docx-template/index.html', 'Fill a DOCX template'],
+  ['editor/content-controls/replace-clauses-from-your-application/index.html', 'Replace clauses from your application'],
+  ['editor/content-controls/lock-template-fields/index.html', 'Lock template fields'],
   ['editor/custom-ui/overview/index.html', 'Custom UI overview'],
   ['editor/custom-ui/controller-setup/index.html', 'Custom UI controller setup'],
   ['editor/custom-ui/react-setup/index.html', 'React custom UI setup'],
@@ -330,6 +335,82 @@ test('exports the focused ruler sample document', async () => {
 
 test('exports the focused search sample document', async () => {
   const fixture = await stat(new URL('../out/fixtures/search-sample.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
+test('exports the Content controls feature and its pattern map for agents', async () => {
+  const article = await readFile(new URL('../out/editor/content-controls/index.html', import.meta.url), 'utf8');
+  const markdown = await readFile(new URL('../out/md/editor/content-controls.md', import.meta.url), 'utf8');
+
+  assert.match(article, /Content controls/u);
+  assert.match(article, /sd-content-control-patterns/u);
+  assert.match(markdown, /Content-control shapes/u);
+  assert.match(markdown, /Repeating section/u);
+  assert.doesNotMatch(markdown, /<ContentControlPatterns/u);
+});
+
+test('exports the Content controls workflow guides and interactive-demo fallbacks', async () => {
+  const authoring = await readFile(
+    new URL('../out/editor/content-controls/add-fields-to-a-docx-template/index.html', import.meta.url),
+    'utf8',
+  );
+  const fill = await readFile(
+    new URL('../out/editor/content-controls/fill-a-docx-template/index.html', import.meta.url),
+    'utf8',
+  );
+  const clauses = await readFile(
+    new URL('../out/editor/content-controls/replace-clauses-from-your-application/index.html', import.meta.url),
+    'utf8',
+  );
+  const locks = await readFile(
+    new URL('../out/editor/content-controls/lock-template-fields/index.html', import.meta.url),
+    'utf8',
+  );
+  const authoringMarkdown = await readFile(
+    new URL('../out/md/editor/content-controls/add-fields-to-a-docx-template.md', import.meta.url),
+    'utf8',
+  );
+  const populationMarkdown = await readFile(
+    new URL('../out/md/editor/content-controls/fill-a-docx-template.md', import.meta.url),
+    'utf8',
+  );
+  const clauseMarkdown = await readFile(
+    new URL('../out/md/editor/content-controls/replace-clauses-from-your-application.md', import.meta.url),
+    'utf8',
+  );
+  const lockMarkdown = await readFile(
+    new URL('../out/md/editor/content-controls/lock-template-fields.md', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(authoring, /sd-content-control-authoring-demo/u);
+  assert.match(fill, /sd-template-population-demo/u);
+  assert.match(clauses, /sd-clause-library-demo/u);
+  assert.match(locks, /sd-content-control-locks-demo/u);
+  assert.match(authoringMarkdown, /Interactive editor: add template fields/u);
+  assert.match(populationMarkdown, /Interactive editor: Fill the template/u);
+  assert.match(populationMarkdown, /one form value updates 3 document occurrences/u);
+  assert.match(clauseMarkdown, /Interactive editor: Choose a confidentiality clause/u);
+  assert.match(lockMarkdown, /Interactive editor: Lock a template field/u);
+  assert.match(lockMarkdown, /Content control cannot be deleted/u);
+  assert.doesNotMatch(authoringMarkdown, /<ContentControlAuthoringDemo/u);
+  assert.doesNotMatch(populationMarkdown, /<TemplatePopulationDemo/u);
+  assert.doesNotMatch(clauseMarkdown, /<ClauseLibraryDemo/u);
+  assert.doesNotMatch(lockMarkdown, /<ContentControlLocksDemo/u);
+});
+
+test('exports the content-control authoring document', async () => {
+  const fixture = await stat(new URL('../out/fixtures/service-agreement-draft.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
+test('exports the service-agreement template', async () => {
+  const fixture = await stat(new URL('../out/fixtures/service-agreement-template.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
+test('exports the clause-library document', async () => {
+  const fixture = await stat(new URL('../out/fixtures/clause-library-sample.docx', import.meta.url));
   assert.ok(fixture.size > 0);
 });
 

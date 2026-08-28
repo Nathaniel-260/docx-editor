@@ -5,6 +5,10 @@ import { ImageZoom } from 'fumadocs-ui/components/image-zoom';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { CommandStateDemo } from '@/components/embeds/command-state-demo';
 import { BuiltInUiMap } from '@/components/embeds/built-in-ui-map';
+import { ClauseLibraryDemo } from '@/components/embeds/clause-library-demo';
+import { ContentControlAuthoringDemo } from '@/components/embeds/content-control-authoring-demo';
+import { ContentControlLocksDemo } from '@/components/embeds/content-control-locks-demo';
+import { ContentControlPatterns } from '@/components/embeds/content-control-patterns';
 import { CustomBoldDemo } from '@/components/embeds/custom-bold-demo';
 import { CustomUiArchitecture } from '@/components/embeds/custom-ui-architecture';
 import { DocumentPreview } from '@/components/embeds/document-preview';
@@ -29,6 +33,7 @@ import { RuntimeExample, RuntimeExampleTabs } from '@/components/mdx/runtime-exa
 import { RulerConfigReference } from '@/components/mdx/ruler-config-reference';
 import { SearchConfigReference } from '@/components/mdx/search-config-reference';
 import { ToolbarConfigReference } from '@/components/mdx/toolbar-config-reference';
+import { TemplatePopulationDemo } from '@/components/embeds/template-population-demo';
 import {
   DocumentApiNamespace,
   DocumentApiOperation,
@@ -55,10 +60,14 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     ...defaultMdxComponents,
     Callout,
     BuiltInUiMap,
+    ClauseLibraryDemo,
+    ContentControlAuthoringDemo,
+    ContentControlLocksDemo,
     CommentsConfigReference,
     ConfigReference,
     ContextMenuConfigReference,
     CommandStateDemo,
+    ContentControlPatterns,
     CustomBoldDemo,
     CustomUiArchitecture,
     DocumentPreview,
@@ -85,6 +94,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     RulerConfigReference,
     SearchConfigReference,
     ToolbarConfigReference,
+    TemplatePopulationDemo,
     img: DocsImage,
     ...components,
   };

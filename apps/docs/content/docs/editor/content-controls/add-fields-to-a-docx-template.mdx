@@ -1,0 +1,39 @@
+---
+title: Add fields to a DOCX template
+navTitle: Add fields
+description: Turn document selections into tagged inline and block-level content controls.
+---
+
+Use an inline field for content inside a paragraph. Use a block field for one or more whole paragraphs, such as a clause
+slot.
+
+## Add both field shapes
+
+Select the client name and add the inline field. Then place the caret on the empty line below **Confidentiality** and add
+the block field.
+
+<ContentControlAuthoringDemo />
+
+## Create the fields
+
+Pass the current selection target to `create.contentControl()`. Here, the inline call wraps a text selection. The block
+call targets an empty paragraph and replaces it with the supplied HTML content:
+
+<include>../../../../snippets/editor/add-template-fields.ts</include>
+
+`kind` controls placement. `controlType` controls field behavior:
+
+| Property      | This example         | Meaning                                          |
+| ------------- | -------------------- | ------------------------------------------------ |
+| `kind`        | `inline`, `block`    | Where the control sits in the document structure |
+| `controlType` | `text`, `richText`   | Which content-control operations apply           |
+| `tag`         | `client.legalName`   | Application lookup and grouping key              |
+| `alias`       | `Client legal name`  | Readable title stored in the DOCX                |
+| `id`          | Assigned on creation | One control occurrence in the document           |
+
+The [content-controls example](https://go.superdoc.dev/examples/content-controls?workflow=add) contains the complete
+Vanilla TypeScript workflow and verifies both fields after export and reopen.
+
+Continue with [Fill a DOCX template](/editor/content-controls/fill-a-docx-template) to update fields from application
+data. Use the [`create.contentControl()` reference](/document-api/reference/content-controls/create/) for every input
+shape.

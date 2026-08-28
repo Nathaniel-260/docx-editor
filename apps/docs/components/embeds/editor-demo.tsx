@@ -1,6 +1,6 @@
 'use client';
 
-import { Bold, Check, Expand, Italic, Minus, Plus, RotateCcw, Shrink, Underline, Undo2, X } from 'lucide-react';
+import { Bold, Check, Italic, RotateCcw, Underline, Undo2, X } from 'lucide-react';
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
 import type {
   Config,
@@ -29,6 +29,7 @@ import {
   type ToolbarDemoStrategy,
 } from '@/lib/built-in-editor-demos';
 import { CollapsibleEditorPreview } from './collapsible-editor-preview';
+import { EditorDemoViewControls } from './editor-demo-view-controls';
 import { createRuntimeEditor, loadRuntime, loadUIModule, type SuperDocInstance } from './superdoc-runtime';
 
 const zoomStep = 10;
@@ -168,67 +169,6 @@ function DemoConfigGroup<T extends string>({ disabled, label, onChange, options,
           </button>
         ))}
       </div>
-    </div>
-  );
-}
-
-type DemoViewControlsProps = {
-  disabled: boolean;
-  fitActive: boolean;
-  isFullscreen: boolean;
-  onFit(): void;
-  onFullscreen(): void;
-  onZoom(direction: -1 | 1): void;
-  zoom: ZoomSlice;
-};
-
-function DemoViewControls({
-  disabled,
-  fitActive,
-  isFullscreen,
-  onFit,
-  onFullscreen,
-  onZoom,
-  zoom,
-}: DemoViewControlsProps) {
-  return (
-    <div className='sd-editor-demo-toolbar-group sd-editor-demo-view-controls' role='group' aria-label='View'>
-      <div className='sd-editor-demo-zoom-control'>
-        <button
-          type='button'
-          aria-label='Zoom out'
-          disabled={disabled || zoom.value <= zoom.min}
-          onClick={() => onZoom(-1)}
-        >
-          <Minus aria-hidden='true' />
-        </button>
-        <button
-          className='sd-editor-demo-fit-button'
-          type='button'
-          aria-label='Fit document to width'
-          aria-pressed={fitActive}
-          disabled={disabled}
-          onClick={onFit}
-        >
-          {fitActive ? 'Fit' : `${Math.round(zoom.value)}%`}
-        </button>
-        <button
-          type='button'
-          aria-label='Zoom in'
-          disabled={disabled || zoom.value >= zoom.max}
-          onClick={() => onZoom(1)}
-        >
-          <Plus aria-hidden='true' />
-        </button>
-      </div>
-      <button
-        type='button'
-        aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        disabled={disabled}
-        onClick={onFullscreen}
-      >
-        {isFullscreen ? <Shrink aria-hidden='true' /> : <Expand aria-hidden='true' />}
-      </button>
     </div>
   );
 }
@@ -1189,7 +1129,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
               />
             </>
           ) : null}
-          <DemoViewControls
+          <EditorDemoViewControls
             disabled={state !== 'ready' || modeResetBusy}
             fitActive={fitActive}
             isFullscreen={isFullscreen}
@@ -1321,7 +1261,7 @@ export function EditorDemo({ allowLocalFile = false, fixture, preset, title }: E
             </div>
           ) : null}
           {preset !== 'document-modes' ? (
-            <DemoViewControls
+            <EditorDemoViewControls
               disabled={state !== 'ready'}
               fitActive={fitActive}
               isFullscreen={isFullscreen}

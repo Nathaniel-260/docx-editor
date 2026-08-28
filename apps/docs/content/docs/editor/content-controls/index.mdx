@@ -1,0 +1,60 @@
+---
+title: Content controls
+navTitle: Overview
+description: Use structured DOCX regions for fields, clauses, repeating content, and application-owned workflows.
+---
+
+Content controls are structured regions stored as `w:sdt` elements in a DOCX. They let your application find and change
+document content by metadata instead of matching the visible text.
+
+<ContentControlPatterns />
+
+## Choose a workflow
+
+<Cards>
+  <Card
+    title='Add fields to a DOCX template'
+    description='Turn selected content into tagged inline and block-level fields.'
+    href='/editor/content-controls/add-fields-to-a-docx-template'
+  />
+  <Card
+    title='Fill a DOCX template'
+    description='Connect application data to repeated values and typed controls.'
+    href='/editor/content-controls/fill-a-docx-template'
+  />
+  <Card
+    title='Replace clauses from your application'
+    description='Use tagged block-level fields as application-managed clause slots.'
+    href='/editor/content-controls/replace-clauses-from-your-application'
+  />
+  <Card
+    title='Lock template fields'
+    description='Keep a field, its contents, or both from being changed during normal DOCX editing.'
+    href='/editor/content-controls/lock-template-fields'
+  />
+</Cards>
+
+Beyond these workflows, content controls support:
+
+- **Typed inputs:** Use text, checkbox, date, and choice controls for values with known input behavior.
+- **Repeating records:** Add, clone, and remove repeating-section items for lists such as line items or questionnaire
+  responses.
+- **Custom field UI:** Build a field list, navigation panel, or workflow around the controls in the open document.
+
+Use the [Document API reference](/document-api/reference/content-controls/) for the complete operation set. Use
+[custom content-control UI](/editor/custom-ui/content-controls) to connect document selection and navigation to your
+application.
+
+## Identify a control
+
+Use a tag as the application lookup key. The alias gives people a readable title, while the ID identifies one occurrence
+inside the document.
+
+| Word property | SuperDoc value     | Use it for                                                                                  |
+| ------------- | ------------------ | ------------------------------------------------------------------------------------------- |
+| Tag           | `properties.tag`   | Connect one application field to every matching control. Multiple controls can share a tag. |
+| Title         | `properties.alias` | Show a human-readable field name in Word or your application UI.                            |
+| ID            | `id`               | Address one occurrence of the field in the DOCX.                                            |
+
+A shared tag groups controls for lookup. It does not synchronize their content. Your application decides how values flow
+between its data and each document occurrence.

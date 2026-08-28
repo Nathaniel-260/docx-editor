@@ -1,0 +1,38 @@
+---
+title: Fill a DOCX template
+navTitle: Fill fields
+description: Update every content-control occurrence that represents an application field, then export the DOCX.
+---
+
+Treat your application data as the source of truth. Find controls by tag, update every returned target, and inspect each
+mutation receipt before reporting success.
+
+## Try the workflow
+
+Change the client name. All three occurrences update. Toggle auto-renew to change the Word checkbox stored in the DOCX.
+
+<TemplatePopulationDemo />
+
+## Define the field map
+
+Keep business-field keys in application code. A tag connects one field to one or more controls in the document:
+
+<include>../../../../../../examples/content-controls/src/field-schema.ts</include>
+
+## Update every occurrence
+
+`selectByTag()` returns each matching control. Update them one at a time so the result can distinguish complete,
+partial, and failed updates:
+
+<include>../../../../../../examples/content-controls/src/template-fields.ts</include>
+
+Use the same lookup and receipt pattern for other supported field types. Check `controlType`, call the matching typed
+operation, and use the returned receipt to decide what the application reports.
+
+The [content-controls example](https://go.superdoc.dev/examples/content-controls?workflow=fill) contains the complete
+Vanilla TypeScript workflow. It also focuses repeated occurrences, exports the DOCX, and verifies the result after
+reopening it.
+
+Continue with [Replace clauses from your application](/editor/content-controls/replace-clauses-from-your-application)
+for block-level content. Use [custom content-control UI](/editor/custom-ui/content-controls) when your application needs
+a persistent field list or richer navigation.

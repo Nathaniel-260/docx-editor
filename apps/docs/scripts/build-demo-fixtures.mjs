@@ -8,6 +8,7 @@
  * - `public/fixtures/hyperlinks-sample.docx`
  * - `public/fixtures/context-menu-sample.docx`
  * - `public/fixtures/content-controls-sample.docx`
+ * - `public/fixtures/clause-library-sample.docx`
  *
  * The other two fixtures are full synthetic NDAs, sized for guides that need a
  * realistic contract. These demos need the opposite: each reader has one job,
@@ -24,7 +25,8 @@
  * contains one real external hyperlink. The context-menu fixture keeps one
  * selectable instruction sentence in view. The content-controls fixture has
  * one text control and one checkbox so readers can inspect the built-in chrome
- * and the metadata reported when they click a control.
+ * and the metadata reported when they click a control. The clause-library
+ * fixture has one block-level control whose paragraph can be replaced.
  *
  * Written as a minimal OOXML package rather than through a library so the bytes
  * are stable: no timestamps, no generated ids, no zip metadata that changes
@@ -152,6 +154,9 @@ const HYPERLINKS_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="ye
 const CONTENT_CONTROLS_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" mc:Ignorable="w14"><w:body><w:p><w:r><w:t>Content controls</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Client name: </w:t></w:r><w:sdt><w:sdtPr><w:alias w:val="Client name"/><w:tag w:val="client-name"/><w:id w:val="2001"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Acme Inc.</w:t></w:r></w:sdtContent></w:sdt></w:p><w:p><w:sdt><w:sdtPr><w:alias w:val="Review approved"/><w:tag w:val="review-approved"/><w:id w:val="2002"/><w14:checkbox><w14:checked w14:val="0"/><w14:checkedState w14:font="MS Gothic" w14:val="2612"/><w14:uncheckedState w14:font="MS Gothic" w14:val="2610"/></w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>☐</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> Approved for review</w:t></w:r></w:p><w:p><w:r><w:t>Click either field to inspect its DOCX metadata.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
 
+const CLAUSE_LIBRARY_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Confidentiality</w:t></w:r></w:p><w:sdt><w:sdtPr><w:alias w:val="Confidentiality clause"/><w:tag w:val="agreement.confidentiality"/><w:id w:val="2601"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Each party must protect the other party's confidential information and use it only to perform this agreement.</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>These obligations survive termination for three years.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+
 /**
  * Every core property stays empty, including title and description.
  *
@@ -236,4 +241,14 @@ await writeDocx('content-controls-sample.docx', [
   ['word/styles.xml', STYLES],
   ['docProps/core.xml', CORE_PROPERTIES],
   ['docProps/app.xml', appProperties(4)],
+]);
+
+await writeDocx('clause-library-sample.docx', [
+  ['[Content_Types].xml', CONTENT_TYPES],
+  ['_rels/.rels', ROOT_RELS],
+  ['word/document.xml', CLAUSE_LIBRARY_DOCUMENT],
+  ['word/_rels/document.xml.rels', DOCUMENT_RELS],
+  ['word/styles.xml', STYLES],
+  ['docProps/core.xml', CORE_PROPERTIES],
+  ['docProps/app.xml', appProperties(3)],
 ]);

@@ -1,0 +1,30 @@
+---
+title: Replace clauses from your application
+navTitle: Replace clauses
+description: Replace a tagged block-level field from application-owned UI.
+---
+
+Use a block-level content control as a clause slot. The DOCX owns where the clause appears. Your application owns the
+available clauses and chooses which content fills that slot.
+
+## Try a clause slot
+
+Choose a clause below. The Editor replaces the paragraph inside the control tagged `agreement.confidentiality`.
+
+<ClauseLibraryDemo />
+
+## Replace the clause
+
+Find the slot by tag, require one block-level control, then replace its content:
+
+<include>../../../../snippets/editor/replace-clause.ts</include>
+
+`replaceContent()` changes the content inside the control. Its tag and ID remain attached to the slot. Inspect the
+mutation receipt before updating your application UI.
+
+In the current Editor, replacement content is rebuilt as text. Keep each replaceable clause to one paragraph. Your
+application can store approval state, versions, and clause metadata outside the DOCX.
+
+Continue with [Lock template fields](/editor/content-controls/lock-template-fields) to keep a clause slot or its contents
+from being removed. Use the [Document API reference](/document-api/reference/content-controls/) for every
+content-control operation.

@@ -10,6 +10,10 @@ import { hyperlinksConfigExplorer } from './hyperlinks-config-explorer';
 import { loadingConfigExplorer } from './loading-config-explorer';
 import { renderBuiltInUiMapMarkdown } from './built-in-ui-map';
 import { renderBuiltInEditorDemoMarkdown } from './built-in-editor-demos';
+import { renderClauseLibraryMarkdown } from './clause-library';
+import { renderContentControlAuthoringMarkdown } from './content-control-authoring';
+import { renderContentControlLocksMarkdown } from './content-control-locks';
+import { renderContentControlPatternsMarkdown } from './content-control-patterns';
 import { renderLifecycleJourneyMarkdown } from './lifecycle-journey';
 import { commentsConfigExplorer } from './comments-config-explorer';
 import { editorConfigExplorer } from './editor-config-explorer';
@@ -17,13 +21,18 @@ import { proofingConfigExplorer } from './proofing-config-explorer';
 import { rulerConfigExplorer } from './ruler-config-explorer';
 import { searchConfigExplorer } from './search-config-explorer';
 import { toolbarConfigExplorer } from './toolbar-config-explorer';
+import { renderTemplatePopulationMarkdown } from './template-population';
 
 export const llmPlaceholderComponents = [
   'Callout',
   'BuiltInUiMap',
   'Card',
   'Cards',
+  'ClauseLibraryDemo',
   'CommandStateDemo',
+  'ContentControlAuthoringDemo',
+  'ContentControlLocksDemo',
+  'ContentControlPatterns',
   'CommentsConfigReference',
   'ConfigReference',
   'ContextMenuConfigReference',
@@ -50,6 +59,7 @@ export const llmPlaceholderComponents = [
   'RulerConfigReference',
   'SearchConfigReference',
   'ToolbarConfigReference',
+  'TemplatePopulationDemo',
   'MigrationExample',
   'MigrationExampleTabs',
   'img',
@@ -100,6 +110,9 @@ export function renderLLMMarkdown(markdown: string) {
     BuiltInUiMap() {
       return renderBuiltInUiMapMarkdown();
     },
+    ClauseLibraryDemo() {
+      return renderClauseLibraryMarkdown();
+    },
     Card({ attributes }) {
       const title = textAttribute(attributes, 'title') ?? 'Related guide';
       const description = textAttribute(attributes, 'description');
@@ -117,6 +130,15 @@ export function renderLLMMarkdown(markdown: string) {
         '> The sample selection is simulated. Normal text reports `enabled: true` and `active: false`. Bold text reports `enabled: true` and `active: true`. A locked heading reports `enabled: false`, `active: false`, and a disabled reason. In an application, the real `superdoc/ui` controller derives these values from the active Editor selection.',
         '',
       ].join('\n');
+    },
+    ContentControlAuthoringDemo() {
+      return renderContentControlAuthoringMarkdown();
+    },
+    ContentControlLocksDemo() {
+      return renderContentControlLocksMarkdown();
+    },
+    ContentControlPatterns() {
+      return renderContentControlPatternsMarkdown();
     },
     CommentsConfigReference() {
       return renderConfigReferenceMarkdown(commentsConfigExplorer);
@@ -217,6 +239,9 @@ export function renderLLMMarkdown(markdown: string) {
       ].filter((value): value is string => Boolean(value));
 
       return `${quoteMarkdown(`**Interactive editor: ${title}**\n\n${details.join('\n\n')}`)}\n`;
+    },
+    TemplatePopulationDemo() {
+      return renderTemplatePopulationMarkdown();
     },
     FileDownload({ attributes }) {
       const label = textAttribute(attributes, 'label') ?? 'Download file';

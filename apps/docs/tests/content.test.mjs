@@ -18,6 +18,27 @@ const docsHomeUrl = new URL('../components/docs-home.tsx', import.meta.url);
 const builtInUiMetaUrl = new URL('../content/docs/editor/built-in-ui/meta.json', import.meta.url);
 const builtInUiMapUrl = new URL('../components/embeds/built-in-ui-map.tsx', import.meta.url);
 const editorDemoUrl = new URL('../components/embeds/editor-demo.tsx', import.meta.url);
+const templatePopulationDemoUrl = new URL(
+  '../components/embeds/template-population-demo.tsx',
+  import.meta.url,
+);
+const contentControlAuthoringDemoUrl = new URL(
+  '../components/embeds/content-control-authoring-demo.tsx',
+  import.meta.url,
+);
+const contentControlAuthoringFixtureUrl = new URL('../public/fixtures/service-agreement-draft.docx', import.meta.url);
+const contentControlAuthoringExampleFixtureUrl = new URL(
+  '../../../examples/content-controls/public/service-agreement-draft.docx',
+  import.meta.url,
+);
+const contentControlLocksDemoUrl = new URL(
+  '../components/embeds/content-control-locks-demo.tsx',
+  import.meta.url,
+);
+const editorDemoViewControlsUrl = new URL(
+  '../components/embeds/editor-demo-view-controls.tsx',
+  import.meta.url,
+);
 const docsComponentsCssUrl = new URL('../components/docs-components.css', import.meta.url);
 const pinnedV2MajorPackageInstall =
   /\b(?:pnpm add(?:\s+--global)?|npm (?:install|i|add)|yarn add|bun add)[^\n]*\s(?:superdoc|@superdoc\/[a-z0-9-]+)@(?:\^|~)?2(?:[.\w-]*)?(?=\s|$)/mu;
@@ -104,7 +125,11 @@ const registeredComponents = new Set([
   'Cards',
   'Callout',
   'BuiltInUiMap',
+  'ClauseLibraryDemo',
   'CommandStateDemo',
+  'ContentControlAuthoringDemo',
+  'ContentControlLocksDemo',
+  'ContentControlPatterns',
   'CommentsConfigReference',
   'ConfigReference',
   'ContextMenuConfigReference',
@@ -134,6 +159,7 @@ const registeredComponents = new Set([
   'RulerConfigReference',
   'SearchConfigReference',
   'ToolbarConfigReference',
+  'TemplatePopulationDemo',
 ]);
 const editorDemoPresets = new Set([
   'comments',
@@ -548,7 +574,87 @@ test('the built-in Editor demos keep focused controls and restart-safe configura
   assert.match(demo, /label='Ruler'[\s\S]*label='Measurements'/u);
   assert.match(demo, /label='Replace controls'/u);
   assert.match(demo, /label='Tracked deletions'/u);
-  assert.equal([...demo.matchAll(/<DemoViewControls\b/gu)].length, 2);
+});
+
+test('the shared Editor demo view controls preserve every interaction contract', async () => {
+  const { Window } = await import('happy-dom');
+  const browserWindow = new Window({ url: 'https://docs.superdoc.dev/' });
+  const globalNames = ['window', 'document', 'navigator', 'IS_REACT_ACT_ENVIRONMENT'];
+  const originalGlobals = new Map(globalNames.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: browserWindow },
+    document: { configurable: true, value: browserWindow.document },
+    navigator: { configurable: true, value: browserWindow.navigator },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  });
+
+  const [{ act, createElement }, { createRoot }, { EditorDemoViewControls }] = await Promise.all([
+    import('react'),
+    import('react-dom/client'),
+    import(editorDemoViewControlsUrl),
+  ]);
+  const interactions = [];
+  const container = browserWindow.document.createElement('div');
+  browserWindow.document.body.append(container);
+  const root = createRoot(container);
+
+  const render = async (overrides = {}) => {
+    await act(async () =>
+      root.render(
+        createElement(EditorDemoViewControls, {
+      disabled: false,
+      fitActive: false,
+      isFullscreen: false,
+      onFit: () => interactions.push('fit'),
+      onFullscreen: () => interactions.push('fullscreen'),
+      onZoom: (direction) => interactions.push(direction),
+      zoom: { max: 150, min: 50, mode: 'manual', value: 100 },
+      ...overrides,
+        }),
+      ),
+    );
+  };
+  const button = (label) => {
+    const match = container.querySelector(`button[aria-label='${label}']`);
+    assert.ok(match instanceof browserWindow.HTMLButtonElement, `Missing ${label} button.`);
+    return match;
+  };
+  const click = (label) => act(async () => button(label).click());
+
+  try {
+    await render();
+    await click('Zoom out');
+    await click('Fit document to width');
+    await click('Zoom in');
+    await click('Enter fullscreen');
+
+    assert.deepEqual(interactions, [-1, 'fit', 1, 'fullscreen']);
+    assert.equal(button('Fit document to width').getAttribute('aria-pressed'), 'false');
+    assert.equal(button('Fit document to width').textContent, '100%');
+
+    await render({ fitActive: true, isFullscreen: true });
+    assert.equal(button('Fit document to width').getAttribute('aria-pressed'), 'true');
+    assert.equal(button('Fit document to width').textContent, 'Fit');
+    button('Exit fullscreen');
+
+    await render({ zoom: { max: 150, min: 50, mode: 'manual', value: 50 } });
+    assert.equal(button('Zoom out').disabled, true);
+    assert.equal(button('Zoom in').disabled, false);
+
+    await render({ zoom: { max: 150, min: 50, mode: 'manual', value: 150 } });
+    assert.equal(button('Zoom out').disabled, false);
+    assert.equal(button('Zoom in').disabled, true);
+
+    await render({ disabled: true });
+    assert.ok([...container.querySelectorAll('button')].every((control) => control.disabled));
+  } finally {
+    await act(async () => root.unmount());
+    browserWindow.close();
+    for (const [name, descriptor] of originalGlobals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    }
+  }
 });
 
 test('the Ruler demo derives its live hint from the current selection', async () => {
@@ -1159,6 +1265,224 @@ test('MDX components and demo presets use the supported authoring vocabulary', a
   }
 
   assert.deepEqual(unsupported, []);
+});
+
+test('the Content controls feature maps control shapes to focused workflows', async () => {
+  const page = await readFile(new URL('../content/docs/editor/content-controls/index.mdx', import.meta.url), 'utf8');
+  const { contentControlPatterns, renderContentControlPatternsMarkdown } = await import(
+    '../lib/content-control-patterns.ts',
+  );
+  const markdown = renderContentControlPatternsMarkdown();
+
+  assert.deepEqual(
+    contentControlPatterns.map(({ id }) => id),
+    ['inline', 'block', 'repeating'],
+  );
+  assert.match(page, /<ContentControlPatterns \/>/u);
+  assert.match(page, /\/editor\/content-controls\/add-fields-to-a-docx-template/u);
+  assert.match(page, /\/editor\/content-controls\/fill-a-docx-template/u);
+  assert.match(page, /\/editor\/content-controls\/replace-clauses-from-your-application/u);
+  assert.match(page, /\/editor\/content-controls\/lock-template-fields/u);
+  assert.match(page, /\/editor\/custom-ui\/content-controls/u);
+  assert.match(markdown, /Block-level/u);
+  assert.match(markdown, /Repeating section/u);
+  assert.doesNotMatch(markdown, /<ContentControlPatterns/u);
+});
+
+test('the Content controls template guides stay focused and agent-readable', async () => {
+  const authoring = await readFile(
+    new URL('../content/docs/editor/content-controls/add-fields-to-a-docx-template.mdx', import.meta.url),
+    'utf8',
+  );
+  const fill = await readFile(
+    new URL('../content/docs/editor/content-controls/fill-a-docx-template.mdx', import.meta.url),
+    'utf8',
+  );
+  const clauses = await readFile(
+    new URL('../content/docs/editor/content-controls/replace-clauses-from-your-application.mdx', import.meta.url),
+    'utf8',
+  );
+  const locks = await readFile(
+    new URL('../content/docs/editor/content-controls/lock-template-fields.mdx', import.meta.url),
+    'utf8',
+  );
+  const { renderClauseLibraryMarkdown } = await import('../lib/clause-library.ts');
+  const { contentControlLockModes, getContentControlLockMode, renderContentControlLocksMarkdown } = await import(
+    '../lib/content-control-locks.ts'
+  );
+  const { renderContentControlAuthoringMarkdown } = await import('../lib/content-control-authoring.ts');
+  const { renderTemplatePopulationMarkdown, templatePopulationFields } = await import('../lib/template-population.ts');
+  const authoringMarkdown = renderContentControlAuthoringMarkdown();
+  const populationMarkdown = renderTemplatePopulationMarkdown();
+  const clauseMarkdown = renderClauseLibraryMarkdown();
+  const lockMarkdown = renderContentControlLocksMarkdown();
+
+  assert.match(authoring, /<ContentControlAuthoringDemo \/>/u);
+  assert.match(authoring, /snippets\/editor\/add-template-fields\.ts/u);
+  assert.match(authoring, /examples\/content-controls/u);
+  assert.match(fill, /<TemplatePopulationDemo \/>/u);
+  assert.match(fill, /examples\/content-controls\/src\/field-schema\.ts/u);
+  assert.match(fill, /examples\/content-controls\/src\/template-fields\.ts/u);
+  assert.doesNotMatch(fill, /examples\/template-population/u);
+  assert.match(clauses, /<ClauseLibraryDemo \/>/u);
+  assert.match(clauses, /snippets\/editor\/replace-clause\.ts/u);
+  assert.match(locks, /<ContentControlLocksDemo \/>/u);
+  assert.match(locks, /snippets\/editor\/set-template-field-lock\.ts/u);
+  assert.match(authoringMarkdown, /`client\.legalName`/u);
+  assert.match(authoringMarkdown, /inline text field/u);
+  assert.match(populationMarkdown, /`client\.legalName`/u);
+  assert.match(
+    populationMarkdown,
+    new RegExp(`${templatePopulationFields.clientLegalName.occurrences} document occurrences`),
+  );
+  assert.match(clauseMarkdown, /`agreement\.confidentiality`/u);
+  assert.deepEqual(
+    contentControlLockModes.map(({ lockMode }) => lockMode),
+    ['unlocked', 'sdtLocked', 'contentLocked', 'sdtContentLocked'],
+  );
+  assert.equal(getContentControlLockMode({ cannotDelete: true, cannotEdit: false }), 'sdtLocked');
+  assert.equal(getContentControlLockMode({ cannotDelete: false, cannotEdit: true }), 'contentLocked');
+  assert.match(lockMarkdown, /Content control cannot be deleted/u);
+  assert.match(lockMarkdown, /Contents cannot be edited/u);
+  assert.doesNotMatch(authoringMarkdown, /<ContentControlAuthoringDemo/u);
+  assert.doesNotMatch(populationMarkdown, /<TemplatePopulationDemo/u);
+  assert.doesNotMatch(clauseMarkdown, /<ClauseLibraryDemo/u);
+  assert.doesNotMatch(lockMarkdown, /<ContentControlLocksDemo/u);
+});
+
+test('the content-control authoring demo uses real Document API mutations', async () => {
+  const demo = await readFile(contentControlAuthoringDemoUrl, 'utf8');
+  const { getReadyAuthoringTarget } = await import('../lib/content-control-authoring.ts');
+  const selectionTarget = {
+    kind: 'selection',
+    start: { kind: 'text', blockId: 'client-name', offset: 0 },
+    end: { kind: 'text', blockId: 'client-name', offset: 19 },
+  };
+
+  assert.match(demo, /create\.contentControl/u);
+  assert.match(demo, /kind: 'inline'/u);
+  assert.match(demo, /kind: 'block'/u);
+  assert.match(demo, /service-agreement-draft\.docx/u);
+  assert.match(demo, /const canExport = hasClientField && hasClauseField;/u);
+  assert.match(demo, /disabled=\{disabled \|\| !canExport\} onClick=\{\(\) => void exportDocument\(\)\}/u);
+  assert.match(demo, /createdTags\.has\('client\.legalName'\) \|\|\s+controls\.some/u);
+  assert.match(demo, /createdTags\.has\('agreement\.confidentiality'\) \|\|\s+controls\.some/u);
+  for (const [handler, nextHandler, tag] of [
+    ['addInlineField', 'addBlockField', 'client.legalName'],
+    ['addBlockField', 'changeZoom', 'agreement.confidentiality'],
+  ]) {
+    const body = demo.slice(demo.indexOf(`async function ${handler}()`), demo.indexOf(`function ${nextHandler}(`));
+    const receipt = body.indexOf('if (!receipt.success)');
+    const lock = body.indexOf(`setCreatedTags((current) => new Set(current).add('${tag}'))`);
+    const refresh = body.indexOf('await refreshControls()');
+
+    assert.ok(receipt >= 0 && receipt < lock && lock < refresh, `${handler} must lock its tag before refresh`);
+    assert.match(body, /field added, but the detected-fields list could not be refreshed\./u);
+  }
+  assert.match(
+    demo,
+    /selection\.observe\(\(snapshot\) => \{\s*latestSelectionRef\.current = snapshot;\s*\}\)/u,
+    'the observer must replace the cached selection even when the snapshot is stale or targetless',
+  );
+  assert.equal(
+    getReadyAuthoringTarget({ status: 'pending', empty: false, selectionTarget }, false),
+    null,
+  );
+  assert.equal(
+    getReadyAuthoringTarget({ status: 'stale', empty: false, selectionTarget }, false),
+    null,
+  );
+  assert.equal(
+    getReadyAuthoringTarget({ status: 'ready', empty: false, selectionTarget }, false),
+    selectionTarget,
+  );
+  assert.equal(
+    getReadyAuthoringTarget({ status: 'ready', empty: true, selectionTarget }, true),
+    selectionTarget,
+  );
+  assert.equal(getReadyAuthoringTarget({ status: 'ready', empty: false, selectionTarget }, true), null);
+  assert.deepEqual(
+    await readFile(contentControlAuthoringFixtureUrl),
+    await readFile(contentControlAuthoringExampleFixtureUrl),
+  );
+});
+
+test('the content-control lock demo uses real Document API mutations', async () => {
+  const demo = await readFile(contentControlLocksDemoUrl, 'utf8');
+
+  assert.match(demo, /contentControls\.setLockMode/u);
+  assert.match(demo, /contentControls\.text\.setValue/u);
+  assert.match(demo, /contentControls\.delete/u);
+  assert.match(demo, /fieldTag = 'client\.address'/u);
+  assert.match(demo, /service-agreement-template\.docx/u);
+});
+
+test('the template population demo flushes document updates before export', async () => {
+  const demo = await readFile(templatePopulationDemoUrl, 'utf8');
+  const exportBody = demo.match(/async function exportDocument\(\) \{([\s\S]*?)\n  \}/u)?.[1] ?? '';
+
+  const flush = exportBody.indexOf('flushTextUpdate()');
+  const wait = exportBody.indexOf('await updateQueueRef.current.wait()');
+  const failureGate = exportBody.indexOf('updateQueueRef.current.hasFailures()');
+  const download = exportBody.indexOf('await instance.export');
+
+  assert.ok(flush >= 0 && flush < wait && wait < failureGate && failureGate < download);
+  assert.match(demo, /inputTimerRef\.current = window\.setTimeout\(flushTextUpdate, 250\)/u);
+  assert.match(demo, /await queueUpdate\('autoRenew', \(context\) => updateAutoRenew\(context, checked\)\)/u);
+  assert.match(demo, /updateQueueRef\.current\.activate\(doc\)/u);
+  assert.match(demo, /function resetDocument\(\) \{\s+updateQueueRef\.current\.invalidate\(\)/u);
+  assert.match(demo, /if \(!isCurrent\(\)\) return false;/u);
+  assert.match(demo, /inputTimerRef\.current = null;\s+pendingTextRef\.current = null;\s+destroyEditor\(\)/u);
+});
+
+test('the template population update queue drops reset-era work and retains failures until retry', async () => {
+  const { createTemplatePopulationUpdateQueue } = await import('../lib/template-population.ts');
+  const updates = createTemplatePopulationUpdateQueue();
+  const originalDocument = { id: 'original' };
+  const replacementDocument = { id: 'replacement' };
+  let releaseFirstUpdate;
+  const firstUpdateBlocked = new Promise((resolve) => {
+    releaseFirstUpdate = resolve;
+  });
+  let firstUpdateStarted;
+  const firstUpdateDidStart = new Promise((resolve) => {
+    firstUpdateStarted = resolve;
+  });
+  const mutatedDocuments = [];
+
+  updates.activate(originalDocument);
+  const firstUpdate = updates.enqueue('clientLegalName', async ({ document, isCurrent }) => {
+    firstUpdateStarted();
+    await firstUpdateBlocked;
+    if (!isCurrent()) return false;
+    mutatedDocuments.push(document);
+    return true;
+  });
+  const staleCheckboxUpdate = updates.enqueue('autoRenew', async ({ document }) => {
+    mutatedDocuments.push(document);
+    return true;
+  });
+
+  await firstUpdateDidStart;
+  updates.invalidate();
+  updates.activate(replacementDocument);
+  releaseFirstUpdate();
+  await Promise.all([firstUpdate, staleCheckboxUpdate]);
+
+  assert.deepEqual(mutatedDocuments, [], 'queued work from the old document must not run after reset');
+
+  await updates.enqueue('autoRenew', async () => {
+    throw new Error('selection failed');
+  });
+  await updates.wait();
+  assert.equal(updates.hasFailures(), true, 'a rejected document update must keep export blocked');
+
+  await updates.enqueue('autoRenew', async ({ document }) => {
+    mutatedDocuments.push(document);
+    return true;
+  });
+  assert.equal(updates.hasFailures(), false, 'a successful retry must clear the failed field');
+  assert.deepEqual(mutatedDocuments, [replacementDocument]);
 });
 
 test('the built-in UI map follows its section navigation', async () => {

@@ -1,0 +1,11 @@
+{
+  "title": "Content controls",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "add-fields-to-a-docx-template",
+    "fill-a-docx-template",
+    "replace-clauses-from-your-application",
+    "lock-template-fields"
+  ]
+}

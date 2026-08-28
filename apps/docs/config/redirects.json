@@ -104,6 +104,21 @@
       "source": "/editor/built-in-ui/structured-content/",
       "destination": "/editor/built-in-ui/configure-the-toolbar/",
       "reason": "Toolbar configuration owns image, table, and link actions; content controls now have a focused guide."
+    },
+    {
+      "source": "/editor/content-controls/prepare-a-docx-template/",
+      "destination": "/editor/content-controls/",
+      "reason": "The Content controls overview now explains the supported template patterns without a separate preparation guide."
+    },
+    {
+      "source": "/editor/content-controls/populate-a-docx-template/",
+      "destination": "/editor/content-controls/fill-a-docx-template/",
+      "reason": "The task title now uses the direct verb developers use for supplying template values."
+    },
+    {
+      "source": "/editor/content-controls/build-a-clause-library/",
+      "destination": "/editor/content-controls/replace-clauses-from-your-application/",
+      "reason": "The guide now names the document operation instead of implying that SuperDoc owns the clause library."
     }
   ],
   "redirects": [

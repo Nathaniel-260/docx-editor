@@ -182,6 +182,25 @@ test('the service-agreement template keeps its field map and matches the runnabl
   assert.match(app, /<Manager><\/Manager>/);
 });
 
+test('the clause-library fixture keeps one block-level replacement slot', async () => {
+  const { document, core, app } = await openFixture('clause-library-sample.docx');
+  const compact = document.replaceAll(/>\s+</g, '><');
+
+  assert.equal(document.match(/<w:sdt>/g)?.length, 1);
+  assert.equal(document.match(/<w:tag\b/g)?.length, 1);
+  assert.match(document, /<w:alias w:val="Confidentiality clause"\/>/);
+  assert.match(document, /<w:tag w:val="agreement\.confidentiality"\/>/);
+  assert.match(document, /<w:id w:val="2601"\/>/);
+  assert.match(compact, /<\/w:p><w:sdt><w:sdtPr>/);
+  assert.match(compact, /<\/w:sdtPr><w:sdtContent><w:p>/);
+  assert.doesNotMatch(document, /<w:text\/>/);
+  assert.doesNotMatch(document, /<(?:w:ins|w:del|w:commentReference)\b/);
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+});
+
 /**
  * The custom UI overview's fixture exists to be short. If it grows into another
  * contract, the page's one instruction — select a sentence, press Bold — ends up

@@ -1,0 +1,40 @@
+---
+title: Lock template fields
+navTitle: Lock template fields
+description: Keep a content control, its contents, or both from being changed during normal DOCX editing.
+---
+
+Content-control locks use the same two choices as Word. Protect the field wrapper when it must remain in the template,
+and protect its contents when people should not change the value.
+
+## Try both locks
+
+Expand the editor, toggle either lock, then click the client address and type. Use **Delete field** to test whether the
+control itself can be removed.
+
+<ContentControlLocksDemo />
+
+## Set the lock mode
+
+Find the field by tag and apply the matching DOCX lock:
+
+<include>../../../../snippets/editor/set-template-field-lock.ts</include>
+
+| Content control cannot be deleted | Contents cannot be edited | `lockMode`         |
+| --------------------------------- | ------------------------- | ------------------ |
+| Off                               | Off                       | `unlocked`         |
+| On                                | Off                       | `sdtLocked`        |
+| Off                               | On                        | `contentLocked`    |
+| On                                | On                        | `sdtContentLocked` |
+
+Set a content lock after filling the field. `contentLocked` and `sdtContentLocked` reject text changes inside the
+control.
+
+## Keep authorization separate
+
+Locks travel with the DOCX and constrain normal editing in SuperDoc and Word. They do not authenticate users or decide
+who may access or save the file. Enforce those permissions in a trusted backend. See
+[Secure your integration](/editor/secure-integration).
+
+Use the [`contentControls.setLockMode()` reference](/document-api/reference/content-controls/set-lock-mode/) for the
+complete operation contract.
