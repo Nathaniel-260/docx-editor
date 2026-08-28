@@ -3364,8 +3364,43 @@ export async function incrementalLayout(
   let footnoteReservePassReuseAttempts = 0;
   let footnoteReservePassReuseHits = 0;
   let footnotePreferredTrialsDeferred = 0;
-  let currentFootnoteLayoutReserves =
-    seededInitialLayout && warmSeedUsable && warmSeed ? warmSeed.reserves.slice() : [];
+  const normalizeSeparatorSpacingBefore = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const initialFootnoteLayoutInput = isFootnotesLayoutInput(initialBodyLayoutOptions.footnotes)
+    ? initialBodyLayoutOptions.footnotes
+    : null;
+  let currentFootnoteSeparatorSpacingBefore = normalizeSeparatorSpacingBefore(
+    initialFootnoteLayoutInput?.separatorSpacingBefore,
+  );
+  let sameInvocationReserveCheckpointEligible: boolean | null = null;
+  let sameInvocationBodyIndex: Map<string, number> | null = null;
+  let sameInvocationStableBlockIds: Set<string> | null = null;
+  const canCheckpointSameInvocationReservePass = (): boolean => {
+    if (sameInvocationReserveCheckpointEligible == null) {
+      sameInvocationReserveCheckpointEligible = !currentBlocks.some(
+        (block) => 'anchor' in block && block.anchor?.isAnchored === true && isPageRelativeAnchor(block),
+      );
+    }
+    return sameInvocationReserveCheckpointEligible;
+  };
+  const getSameInvocationBodyIndex = (): {
+    blockIndexById: Map<string, number>;
+    stableBlockIds: Set<string>;
+  } => {
+    if (!sameInvocationBodyIndex || !sameInvocationStableBlockIds) {
+      sameInvocationBodyIndex = new Map(currentBlocks.map((block, index) => [block.id, index] as const));
+      sameInvocationStableBlockIds = new Set(sameInvocationBodyIndex.keys());
+    }
+    return {
+      blockIndexById: sameInvocationBodyIndex,
+      stableBlockIds: sameInvocationStableBlockIds,
+    };
+  };
+  let currentFootnoteLayoutReserves = Array.isArray(initialBodyLayoutOptions.footnoteReservedByPageIndex)
+    ? initialBodyLayoutOptions.footnoteReservedByPageIndex.slice()
+    : seededInitialLayout && warmSeedUsable && warmSeed
+      ? warmSeed.reserves.slice()
+      : [];
   let footnotePaginationTime = 0;
   const footnoteRelayoutBreakdown = {
     reserve: 0,
@@ -4421,6 +4456,12 @@ export async function incrementalLayout(
             lineRegions?: readonly (readonly ParagraphLineRegion[])[],
           ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
         };
+        const nextFootnoteLayoutInput = isFootnotesLayoutInput(footnoteLayoutOptions.footnotes)
+          ? footnoteLayoutOptions.footnotes
+          : null;
+        const nextFootnoteSeparatorSpacingBefore = normalizeSeparatorSpacingBefore(
+          nextFootnoteLayoutInput?.separatorSpacingBefore,
+        );
         const reserveDiffPageIndex = (() => {
           const length = Math.max(currentFootnoteLayoutReserves.length, footnoteReservedByPageIndex.length);
           for (let pageIndex = 0; pageIndex < length; pageIndex += 1) {
@@ -4433,14 +4474,17 @@ export async function incrementalLayout(
         const tryInternalReservePassReuse = async (): Promise<Layout | null> => {
           if (
             reserveDiffPageIndex == null ||
-            !layoutReuse?.dependencyProof ||
+            reserveDiffPageIndex <= 0 ||
             layout.pages.length === 0 ||
-            reserveDiffPageIndex >= layout.pages.length
+            reserveDiffPageIndex >= layout.pages.length ||
+            !canCheckpointSameInvocationReservePass() ||
+            nextFootnoteSeparatorSpacingBefore !== currentFootnoteSeparatorSpacingBefore
           ) {
             return null;
           }
 
-          const currentBlockIndexById = new Map(currentBlocks.map((block, index) => [block.id, index] as const));
+          const { blockIndexById: currentBlockIndexById, stableBlockIds } = getSameInvocationBodyIndex();
+          if (currentBlockIndexById.size !== currentBlocks.length) return null;
           let dirtyBlockId: string | null = null;
           for (
             let pageIndex = reserveDiffPageIndex;
@@ -4466,9 +4510,10 @@ export async function incrementalLayout(
               else previousBlockPageIndex.set(fragment.blockId, { firstPage: pageIndex, lastPage: pageIndex });
             }
           }
-          const previousPageStartKeys = layout.pages.map((page) => buildPageStartKey(page));
-          const stableBlockIds = new Set(currentBlocks.map((block) => block.id));
-          stableBlockIds.delete(dirtyBlockId);
+          // Same-invocation reserve reuse never adopts a retained tail, so it
+          // does not consult convergence keys. Preserve only the required
+          // page-count shape instead of rebuilding every finalized key.
+          const previousPageStartKeys = layout.pages.map(() => '');
           const provedDirtyRegion: ReturnType<typeof computeDirtyRegions> = {
             firstDirtyIndex: dirtyBlockIndex,
             lastStableIndex: dirtyBlockIndex - 1,
@@ -4479,19 +4524,27 @@ export async function incrementalLayout(
           };
           const sourceEpoch = Number.isFinite(layout.layoutEpoch) ? layout.layoutEpoch! : 0;
           const previousLayout = { ...layout, layoutEpoch: sourceEpoch };
+          const sameInvocationReserveRelayout = issueSameInvocationReserveRelayoutProof({
+            previousLayout,
+            blocks: currentBlocks,
+            measures: currentMeasures,
+            previousReserves: currentFootnoteLayoutReserves,
+            firstChangedPageIndex: reserveDiffPageIndex,
+            pageRelativeAnchorsAbsent: true,
+          });
           const internalReuse: IncrementalLayoutReuseOptions = {
             previousLayout,
             retainedMetadataSourceLayoutEpoch: sourceEpoch,
             previousPageStartKeys,
-            previousPageStartKeyIndex: buildPageStartKeyIndex(previousPageStartKeys),
+            previousPageStartKeyIndex: new Map(),
             previousBlockPageIndex,
             previousBlockIndexById: currentBlockIndexById,
             currentBlockIndexById,
-            dependencyProof: layoutReuse.dependencyProof,
+            dependencyProof: layoutReuse?.dependencyProof,
             provedDirtyRegion,
             dirtyBlockIds: [dirtyBlockId],
-            maxRelaidPages: layoutReuse.maxRelaidPages,
-            requireDocumentStartCheckpoint: layoutReuse.requireDocumentStartCheckpoint,
+            maxRelaidPages: layoutReuse?.maxRelaidPages,
+            requireDocumentStartCheckpoint: layoutReuse?.requireDocumentStartCheckpoint,
           };
           footnoteReservePassReuseAttempts += 1;
           const internalTiming = { layoutDocumentMs: 0, layoutDocumentCalls: 0 };
@@ -4505,6 +4558,7 @@ export async function incrementalLayout(
               dirty: provedDirtyRegion,
               stableBlockIds,
               reuse: internalReuse,
+              sameInvocationReserveRelayout,
               relayoutProvedPrefixToDocumentEndOnBoundedConvergenceFailure: true,
               timing: internalTiming,
               execution: layoutExecution,
@@ -4515,7 +4569,10 @@ export async function incrementalLayout(
             footnoteFullRelayoutPerformed = true;
           } else {
             footnoteReservePassReuseHits += 1;
-            if (!layoutReuseSummary.reason.startsWith('m4-footnote-reserve-localized;')) {
+            if (
+              layoutReuseSummary.mode !== 'full' &&
+              !layoutReuseSummary.reason.startsWith('m4-footnote-reserve-localized;')
+            ) {
               layoutReuseSummary = {
                 ...layoutReuseSummary,
                 reason: `m4-footnote-reserve-localized;${layoutReuseSummary.reason}`,
@@ -4527,6 +4584,7 @@ export async function incrementalLayout(
         const internalReserveLayout = await tryInternalReservePassReuse();
         if (internalReserveLayout) {
           currentFootnoteLayoutReserves = footnoteReservedByPageIndex.slice();
+          currentFootnoteSeparatorSpacingBefore = nextFootnoteSeparatorSpacingBefore;
           return internalReserveLayout;
         }
         if (layoutReuse && layoutReuseSummary.mode !== 'full') {
@@ -4565,11 +4623,13 @@ export async function incrementalLayout(
               adoptedPagesGuardedForFinalizers = true;
             }
             currentFootnoteLayoutReserves = footnoteReservedByPageIndex.slice();
+            currentFootnoteSeparatorSpacingBefore = nextFootnoteSeparatorSpacingBefore;
             return localizedLayout;
           }
           layoutReuseSummary = localized.reuse;
           footnoteFullRelayoutPerformed = true;
           currentFootnoteLayoutReserves = footnoteReservedByPageIndex.slice();
+          currentFootnoteSeparatorSpacingBefore = nextFootnoteSeparatorSpacingBefore;
           return localized.layout;
         }
         footnoteFullRelayoutPerformed = true;
@@ -4579,6 +4639,7 @@ export async function incrementalLayout(
             : layoutDocument(currentBlocks, currentMeasures, footnoteLayoutOptions),
         );
         currentFootnoteLayoutReserves = footnoteReservedByPageIndex.slice();
+        currentFootnoteSeparatorSpacingBefore = nextFootnoteSeparatorSpacingBefore;
         return fullLayout;
       };
 
@@ -4960,6 +5021,7 @@ export async function incrementalLayout(
               const beforeFullRelayoutPerformed = footnoteFullRelayoutPerformed;
               const beforeAdoptedPagesGuarded = adoptedPagesGuardedForFinalizers;
               const beforeCurrentFootnoteLayoutReserves = currentFootnoteLayoutReserves;
+              const beforeCurrentFootnoteSeparatorSpacingBefore = currentFootnoteSeparatorSpacingBefore;
               const beforeLedgers = buildFootnoteLedgers(beforePlan, beforeReserves, beforeLayout.pages.length);
               const candidate = getPreferredReserveCandidates(beforeLedgers).find(
                 (entry) => !rejectedPreferredPages.has(entry.pageIndex),
@@ -5047,6 +5109,7 @@ export async function incrementalLayout(
                 footnoteFullRelayoutPerformed = beforeFullRelayoutPerformed;
                 adoptedPagesGuardedForFinalizers = beforeAdoptedPagesGuarded;
                 currentFootnoteLayoutReserves = beforeCurrentFootnoteLayoutReserves;
+                currentFootnoteSeparatorSpacingBefore = beforeCurrentFootnoteSeparatorSpacingBefore;
                 footnoteRevertSnapshotsRestored += 1;
               }
 
@@ -6388,6 +6451,71 @@ function createSplicedTableResumeCheckpointMap(input: {
   return combined;
 }
 
+type SameInvocationReserveRelayoutProof = Readonly<{
+  previousLayout: Layout;
+  blocks: readonly FlowBlock[];
+  measures: readonly Measure[];
+  previousReserves: readonly number[];
+  firstChangedPageIndex: number;
+  pageRelativeAnchorsAbsent: true;
+}>;
+
+const issuedSameInvocationReserveRelayoutProofs = new WeakSet<object>();
+
+function issueSameInvocationReserveRelayoutProof(
+  proof: SameInvocationReserveRelayoutProof,
+): SameInvocationReserveRelayoutProof {
+  const issued = Object.freeze(proof);
+  issuedSameInvocationReserveRelayoutProofs.add(issued);
+  return issued;
+}
+
+function validateSameInvocationReserveRelayoutProof(input: {
+  proof: SameInvocationReserveRelayoutProof;
+  previousLayout: Layout;
+  previousBlocks: readonly FlowBlock[];
+  blocks: readonly FlowBlock[];
+  previousMeasures: readonly Measure[] | null | undefined;
+  measures: readonly Measure[];
+  currentReserves: readonly number[] | undefined;
+}): string | null {
+  const { proof } = input;
+  if (!issuedSameInvocationReserveRelayoutProofs.has(proof)) return 'reserve-proof-not-issued';
+  if (
+    proof.previousLayout !== input.previousLayout ||
+    proof.blocks !== input.previousBlocks ||
+    proof.blocks !== input.blocks ||
+    proof.measures !== input.previousMeasures ||
+    proof.measures !== input.measures ||
+    proof.pageRelativeAnchorsAbsent !== true
+  ) {
+    return 'reserve-proof-input-identity-mismatch';
+  }
+  const firstChangedPageIndex = proof.firstChangedPageIndex;
+  if (
+    !Number.isInteger(firstChangedPageIndex) ||
+    firstChangedPageIndex <= 0 ||
+    firstChangedPageIndex >= input.previousLayout.pages.length ||
+    !input.currentReserves
+  ) {
+    return 'reserve-proof-boundary-invalid';
+  }
+  for (let pageIndex = 0; pageIndex < firstChangedPageIndex; pageIndex += 1) {
+    const previousReserve = proof.previousReserves[pageIndex] ?? 0;
+    // `page.footnoteReserved` is finalizer-owned metadata: the body paginator
+    // consumes the reserve vector but does not stamp it on each page. Prove
+    // the unchanged prefix against the exact previous and current paginator
+    // inputs instead of metadata that may still be absent between passes.
+    if (previousReserve !== (input.currentReserves[pageIndex] ?? 0)) {
+      return 'reserve-proof-prefix-mismatch';
+    }
+  }
+  if ((proof.previousReserves[firstChangedPageIndex] ?? 0) === (input.currentReserves[firstChangedPageIndex] ?? 0)) {
+    return 'reserve-proof-change-missing';
+  }
+  return null;
+}
+
 async function layoutWithOptionalReuse(input: {
   previousBlocks: readonly FlowBlock[];
   blocks: FlowBlock[];
@@ -6399,6 +6527,7 @@ async function layoutWithOptionalReuse(input: {
   reuse?: IncrementalLayoutReuseOptions;
   preparedNoteOnly?: PreparedNoteOnlyLayoutReuse;
   preparedHeaderFooterOnly?: PreparedHeaderFooterOnlyLayoutReuse;
+  sameInvocationReserveRelayout?: SameInvocationReserveRelayoutProof;
   relayoutProvedPrefixToDocumentEndOnBoundedConvergenceFailure?: boolean;
   timing: { layoutDocumentMs: number; layoutDocumentCalls: number };
   execution?: LayoutExecutionControl;
@@ -6478,6 +6607,21 @@ async function layoutWithOptionalReuse(input: {
   if (reuse.previousPageStartKeys.length !== previousPages.length) {
     return full('m4-layout-reuse-invalid-retained-page-key-count');
   }
+  const sameInvocationReserveProofFailure = input.sameInvocationReserveRelayout
+    ? validateSameInvocationReserveRelayoutProof({
+        proof: input.sameInvocationReserveRelayout,
+        previousLayout,
+        previousBlocks: input.previousBlocks,
+        blocks: input.blocks,
+        previousMeasures: input.previousMeasures,
+        measures: input.measures,
+        currentReserves: input.options.footnoteReservedByPageIndex,
+      })
+    : null;
+  if (sameInvocationReserveProofFailure) {
+    return full(`m4-layout-reuse-disabled-${sameInvocationReserveProofFailure}`);
+  }
+  const sameInvocationReserveRelayout = input.sameInvocationReserveRelayout != null;
   const provedHeaderFooterOnlyResult = reuse.provedHeaderFooterOnlyRefresh
     ? tryBuildProvedHeaderFooterOnlyLayoutReuse({
         previousLayout,
@@ -6491,13 +6635,15 @@ async function layoutWithOptionalReuse(input: {
       })
     : null;
   if (provedHeaderFooterOnlyResult) return provedHeaderFooterOnlyResult;
-  const warmProofFailure = validateProvedWarmPaginationInputs(reuse, input.blocks, input.dirty);
+  const warmProofFailure = sameInvocationReserveRelayout
+    ? null
+    : validateProvedWarmPaginationInputs(reuse, input.blocks, input.dirty);
   if (warmProofFailure) return full(`m4-layout-reuse-disabled-${warmProofFailure}`);
   const dependencyProof = reuse.dependencyProof;
-  if (!dependencyProof) {
+  if (!sameInvocationReserveRelayout && !dependencyProof) {
     return full('m4-layout-reuse-disabled-dependency-proof-missing');
   }
-  const unsupportedDependency = validateIncrementalPaginationProof(dependencyProof);
+  const unsupportedDependency = dependencyProof ? validateIncrementalPaginationProof(dependencyProof) : null;
   if (unsupportedDependency) {
     return full(`m4-layout-reuse-disabled-${unsupportedDependency}`);
   }
@@ -6506,6 +6652,7 @@ async function layoutWithOptionalReuse(input: {
   // selection below is fenced strictly after it, so pagination must encounter
   // and finalize every balanced section before it can adopt retained pages.
   const scopedBalanceableBoundaryBlockId =
+    dependencyProof != null &&
     dependencyProof.profile !== 'single-section-local-text' &&
     dependencyProof.multiColumnSectionsProvedNonBalanceable !== true
       ? (dependencyProof.balanceableSectionsBoundaryBlockId ?? null)
@@ -6539,7 +6686,7 @@ async function layoutWithOptionalReuse(input: {
     scopedBalanceableBoundaryCurrentBlockIndex = currentBoundaryBlockIndex!;
   }
   const scopedVAlignBoundaryBlockId =
-    dependencyProof.profile !== 'single-section-local-text'
+    dependencyProof != null && dependencyProof.profile !== 'single-section-local-text'
       ? (dependencyProof.vAlignSectionsBoundaryBlockId ?? null)
       : null;
   let scopedVAlignBoundaryPages: { firstPage: number; lastPage: number } | null = null;
@@ -6547,8 +6694,8 @@ async function layoutWithOptionalReuse(input: {
   let scopedVAlignReplayThroughPageIndex: number | null = null;
   if (scopedVAlignBoundaryBlockId != null) {
     const replayThroughBoundary =
-      dependencyProof.profile !== 'single-section-local-text' &&
-      dependencyProof.vAlignSectionsReplayThroughBoundary === true;
+      dependencyProof?.profile !== 'single-section-local-text' &&
+      dependencyProof?.vAlignSectionsReplayThroughBoundary === true;
     if (replayThroughBoundary && reuse.requireDocumentStartCheckpoint !== true) {
       return full('m5-layout-reuse-disabled-valign-scope-requires-document-start');
     }
@@ -6599,7 +6746,7 @@ async function layoutWithOptionalReuse(input: {
   // start-key-proved adopted tail — no reuse boundary crosses them
   // unverified.
   const scopedPageRelativeAnchorBoundary =
-    dependencyProof.profile !== 'single-section-local-text'
+    dependencyProof != null && dependencyProof.profile !== 'single-section-local-text'
       ? (dependencyProof.pageRelativeAnchorsScopedBoundary ?? null)
       : null;
   if (scopedPageRelativeAnchorBoundary != null) {
@@ -6635,9 +6782,7 @@ async function layoutWithOptionalReuse(input: {
     }
   }
   const admittedCheckpointDependencies =
-    reuse.dependencyProof?.profile === 'page-checkpoint-local-text'
-      ? reuse.dependencyProof.admittedDependencyClasses
-      : null;
+    dependencyProof?.profile === 'page-checkpoint-local-text' ? dependencyProof.admittedDependencyClasses : null;
   const footnoteDependencyInput = isFootnotesLayoutInput(input.options.footnotes) ? input.options.footnotes : null;
   // The page-checkpoint class list is a proof boundary, not descriptive
   // telemetry. When the bridge can observe a dependency directly without a
@@ -6655,11 +6800,12 @@ async function layoutWithOptionalReuse(input: {
     return full('m4-layout-reuse-disabled-footnote-dependency-class-missing');
   }
   const footnoteFinalizerFragmentsAreExternal =
-    footnoteDependencyInput != null &&
-    (reuse.dependencyProof?.profile === 'document-start-local-text' ||
-      (reuse.dependencyProof?.profile === 'page-checkpoint-local-text' &&
-        reuse.dependencyProof.admittedDependencyClasses.includes('footnotes')));
-  if (reuse.dependencyProof?.profile === 'document-start-local-text' && reuse.requireDocumentStartCheckpoint !== true) {
+    sameInvocationReserveRelayout ||
+    (footnoteDependencyInput != null &&
+      (dependencyProof?.profile === 'document-start-local-text' ||
+        (dependencyProof?.profile === 'page-checkpoint-local-text' &&
+          dependencyProof.admittedDependencyClasses.includes('footnotes'))));
+  if (dependencyProof?.profile === 'document-start-local-text' && reuse.requireDocumentStartCheckpoint !== true) {
     return full('m4-layout-reuse-disabled-document-start-checkpoint-required');
   }
   const previousPageStartKeys = reuse.previousPageStartKeys;
@@ -6691,15 +6837,17 @@ async function layoutWithOptionalReuse(input: {
     return full('m4-layout-reuse-disabled-dirty-set-empty');
   }
   let tableLocality: TableLayoutLocality | null = null;
-  const pageRelativeAnchorProofFailure = validateNonFlowingPageRelativeAnchorDependency({
-    proof: reuse.dependencyProof,
-    previousLayout,
-    blocks: input.blocks,
-    currentBlockIndexById: reuse.currentBlockIndexById,
-    previousBlockPageIndex: reuse.previousBlockPageIndex,
-    blockIdRewrites: reuse.blockIdRewrites,
-    dirtyBlockIds,
-  });
+  const pageRelativeAnchorProofFailure = sameInvocationReserveRelayout
+    ? null
+    : validateNonFlowingPageRelativeAnchorDependency({
+        proof: dependencyProof,
+        previousLayout,
+        blocks: input.blocks,
+        currentBlockIndexById: reuse.currentBlockIndexById,
+        previousBlockPageIndex: reuse.previousBlockPageIndex,
+        blockIdRewrites: reuse.blockIdRewrites,
+        dirtyBlockIds,
+      });
   if (pageRelativeAnchorProofFailure) {
     return full(`m4-layout-reuse-disabled-${pageRelativeAnchorProofFailure}`);
   }
@@ -6713,14 +6861,16 @@ async function layoutWithOptionalReuse(input: {
   ) {
     return full('m4-layout-reuse-disabled-table-dependency-class-missing');
   }
-  tableLocality = resolveDirtyTableLocality({
-    previousBlocks: input.previousBlocks,
-    blocks: input.blocks,
-    measures: input.measures,
-    previousMeasures: input.previousMeasures,
-    dirtyBlockIds,
-    reuse,
-  });
+  tableLocality = sameInvocationReserveRelayout
+    ? null
+    : resolveDirtyTableLocality({
+        previousBlocks: input.previousBlocks,
+        blocks: input.blocks,
+        measures: input.measures,
+        previousMeasures: input.previousMeasures,
+        dirtyBlockIds,
+        reuse,
+      });
   const provedNoteOnlyResult = reuse.provedNoteOnlyRefresh
     ? tryBuildProvedNoteOnlyLayoutReuse({
         previousLayout,
@@ -6873,6 +7023,7 @@ async function layoutWithOptionalReuse(input: {
   }
 
   const partialPageCheckpointResult =
+    !sameInvocationReserveRelayout &&
     reuse.requireDocumentStartCheckpoint !== true &&
     dirtyBlockIds.length === 1 &&
     input.dirty.insertedBlockIds.length === 0
@@ -6906,6 +7057,42 @@ async function layoutWithOptionalReuse(input: {
   if (!partialPageCheckpoint) {
     while (checkpointPageIndex > 0 && !pageStartsAtCleanBlockBoundary(previousPages[checkpointPageIndex])) {
       checkpointPageIndex -= 1;
+    }
+  }
+  if (sameInvocationReserveRelayout) {
+    // A keep-next chain can pull its predecessor from the retained page into
+    // the changed-reserve page. Rewind until no such chain crosses the page
+    // checkpoint; unchanged pages before that boundary are then independent.
+    while (checkpointPageIndex > 0) {
+      const checkpointStartBlockId = readFirstPageBlockId(previousPages[checkpointPageIndex]);
+      const checkpointStartBlockIndex = checkpointStartBlockId
+        ? reuse.currentBlockIndexById?.get(checkpointStartBlockId)
+        : null;
+      if (!Number.isInteger(checkpointStartBlockIndex)) {
+        return full('m4-layout-reuse-disabled-reserve-checkpoint-block-unresolved');
+      }
+      if (checkpointStartBlockIndex! <= 0) break;
+      let keepChainStartBlockIndex = checkpointStartBlockIndex!;
+      while (keepChainStartBlockIndex > 0) {
+        const predecessor = input.blocks[keepChainStartBlockIndex - 1];
+        if (predecessor?.kind !== 'paragraph' || predecessor.attrs?.keepNext !== true) break;
+        keepChainStartBlockIndex -= 1;
+      }
+      if (keepChainStartBlockIndex === checkpointStartBlockIndex) break;
+      const keepChainStartPage = reuse.previousBlockPageIndex.get(
+        input.blocks[keepChainStartBlockIndex]!.id,
+      )?.firstPage;
+      if (!Number.isInteger(keepChainStartPage) || keepChainStartPage! < 0) {
+        return full('m4-layout-reuse-disabled-reserve-keep-chain-page-unresolved');
+      }
+      if (keepChainStartPage! >= checkpointPageIndex) break;
+      checkpointPageIndex = keepChainStartPage!;
+      while (checkpointPageIndex > 0 && !pageStartsAtCleanBlockBoundary(previousPages[checkpointPageIndex])) {
+        checkpointPageIndex -= 1;
+      }
+    }
+    if (checkpointPageIndex === 0) {
+      return full('m4-layout-reuse-disabled-reserve-checkpoint-has-no-stable-prefix');
     }
   }
   if (
@@ -6968,7 +7155,9 @@ async function layoutWithOptionalReuse(input: {
   const balanceableFencePageHorizon = scopedBalanceableBoundaryPages
     ? Math.max(1, scopedBalanceableBoundaryPages.lastPage + 2 - sourceAffectedFrontierPageIndex)
     : 1;
-  const initialRelaidPageHorizon = Math.max(requestedRelaidPageHorizon, balanceableFencePageHorizon);
+  const initialRelaidPageHorizon = sameInvocationReserveRelayout
+    ? previousPages.length
+    : Math.max(requestedRelaidPageHorizon, balanceableFencePageHorizon);
   let convergenceProbePageHorizon = initialRelaidPageHorizon;
   let terminalSuffixRelayoutAttempted = false;
   let reuseProbePagesPaginated = 0;
@@ -7095,14 +7284,16 @@ async function layoutWithOptionalReuse(input: {
         ? Math.max(6, sourceAffectedFrontierPageIndex - checkpointPageIndex + maxRelaidPages + 2)
         : Math.max(4, sourceAffectedFrontierPageIndex - checkpointPageIndex + maxRelaidPages + 1);
     const suffixFootnotesInput = isFootnotesLayoutInput(input.options.footnotes)
-      ? (() => {
-          const suffixBlockIds = new Set(suffixBlocks.map((block) => block.id));
-          if (input.options.footnotes!.refs.some((reference) => typeof reference.blockId !== 'string')) return null;
-          return {
-            ...input.options.footnotes!,
-            refs: input.options.footnotes!.refs.filter((reference) => suffixBlockIds.has(reference.blockId!)),
-          };
-        })()
+      ? sameInvocationReserveRelayout
+        ? input.options.footnotes
+        : (() => {
+            const suffixBlockIds = new Set(suffixBlocks.map((block) => block.id));
+            if (input.options.footnotes!.refs.some((reference) => typeof reference.blockId !== 'string')) return null;
+            return {
+              ...input.options.footnotes!,
+              refs: input.options.footnotes!.refs.filter((reference) => suffixBlockIds.has(reference.blockId!)),
+            };
+          })()
       : undefined;
     if (isFootnotesLayoutInput(input.options.footnotes) && suffixFootnotesInput == null) {
       return full('m4-layout-reuse-disabled-footnote-reference-block-id-missing');
@@ -7176,6 +7367,10 @@ async function layoutWithOptionalReuse(input: {
       }
     }
     for (let completedPageIndex = 0; completedPageIndex < suffixLayout.pages.length; completedPageIndex += 1) {
+      // The same-invocation certificate proves only the unchanged prefix.
+      // It never authorizes adopting a retained tail: every page from the
+      // checkpoint through document end must come from this exact pass.
+      if (sameInvocationReserveRelayout) break;
       if (paginationPrefix) {
         checkpointConvergenceRejection = 'same-pass-pagination-prefix-has-no-retained-tail';
         continue;

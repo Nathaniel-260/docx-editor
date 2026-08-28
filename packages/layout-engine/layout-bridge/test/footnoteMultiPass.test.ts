@@ -60,6 +60,161 @@ const makeMultiLineMeasure = (lineHeight: number, lineCount: number): Measure =>
  * reserve vector used for layout when max passes hit).
  */
 describe('Footnote multi-pass reserve loop', () => {
+  it('reuses the stable page prefix across cold reserve convergence passes', async () => {
+    const BODY_LINE_HEIGHT = 20;
+    const FOOTNOTE_LINE_HEIGHT = 12;
+    const BODY_PARAGRAPHS = 72;
+    const FOOTNOTE_LINES = 5;
+
+    let pos = 0;
+    const bodyBlocks: FlowBlock[] = [];
+    for (let i = 0; i < BODY_PARAGRAPHS; i += 1) {
+      const text = `Line ${i + 1}.`;
+      bodyBlocks.push(makeParagraph(`body-${i}`, text, pos));
+      pos += text.length + 1;
+    }
+    const referenceBlock = bodyBlocks[55]!;
+    const referenceRun = referenceBlock.kind === 'paragraph' ? referenceBlock.runs[0] : null;
+    const refPos = referenceRun && 'pmEnd' in referenceRun ? referenceRun.pmEnd! - 1 : pos - 2;
+    const footnoteBlock = makeParagraph(
+      'footnote-1-0-paragraph',
+      'Footnote content that spans multiple lines here.',
+      0,
+    );
+    const measureBlock = vi.fn(async (block: FlowBlock) => {
+      if (block.id.startsWith('footnote-')) {
+        return makeMultiLineMeasure(FOOTNOTE_LINE_HEIGHT, FOOTNOTE_LINES);
+      }
+      const textLength = block.kind === 'paragraph' ? (block.runs?.[0]?.text?.length ?? 1) : 1;
+      return makeMeasure(BODY_LINE_HEIGHT, textLength);
+    });
+    const margins = { top: 72, right: 72, bottom: 72, left: 72 };
+    const pageHeight = 240 + margins.top + margins.bottom;
+    const refs = [{ id: '1', pos: refPos, blockId: referenceBlock.id }];
+    const footnotes = {
+      refs,
+      blocksById: new Map([['1', [footnoteBlock]]]),
+      topPadding: 4,
+      dividerHeight: 2,
+    };
+    const layoutDocSpy = vi.spyOn(layoutEngine, 'layoutDocument');
+
+    const result = await incrementalLayout(
+      [],
+      null,
+      bodyBlocks,
+      {
+        pageSize: { w: 612, h: pageHeight },
+        margins,
+        footnotes,
+      },
+      measureBlock,
+    );
+
+    const reserveRelayoutCalls = layoutDocSpy.mock.calls.filter((call) =>
+      (call[2] as { footnoteReservedByPageIndex?: number[] })?.footnoteReservedByPageIndex?.some(
+        (height) => height > 0,
+      ),
+    );
+    const localizedReserveRelayoutCalls = reserveRelayoutCalls.filter(([blocks]) => blocks.length < bodyBlocks.length);
+    layoutDocSpy.mockRestore();
+
+    expect(result.bridgeTiming.counters.footnoteRelayouts).toBeGreaterThan(0);
+    expect(result.bridgeTiming.counters.footnoteReservePassReuseAttempts).toBeGreaterThan(0);
+    expect(result.bridgeTiming.counters.footnoteReservePassReuseHits).toBe(
+      result.bridgeTiming.counters.footnoteReservePassReuseAttempts,
+    );
+    expect(reserveRelayoutCalls.length).toBeGreaterThan(0);
+    expect(localizedReserveRelayoutCalls).toHaveLength(result.bridgeTiming.counters.footnoteReservePassReuseHits);
+    expect(reserveRelayoutCalls.length - localizedReserveRelayoutCalls.length).toBeLessThan(
+      reserveRelayoutCalls.length,
+    );
+
+    const footnotePageIndex = result.layout.pages.findIndex((page) =>
+      page.fragments.some((fragment) => fragment.blockId === footnoteBlock.id),
+    );
+    const referencePageIndex = result.layout.pages.findIndex((page) =>
+      page.fragments.some((fragment) => fragment.blockId === referenceBlock.id),
+    );
+    expect(footnotePageIndex).toBe(referencePageIndex);
+    expect(footnotePageIndex).toBeGreaterThan(0);
+    expect(result.layout.pages[footnotePageIndex]?.footnoteReserved).toBeGreaterThan(0);
+
+    const finalReserves = result.layout.pages.map((page) => page.footnoteReserved ?? 0);
+    const canonicalLayout = layoutEngine.layoutDocument(
+      bodyBlocks,
+      bodyBlocks.map((block) => {
+        const textLength = block.kind === 'paragraph' ? (block.runs?.[0]?.text?.length ?? 1) : 1;
+        return makeMeasure(BODY_LINE_HEIGHT, textLength);
+      }),
+      {
+        pageSize: { w: 612, h: pageHeight },
+        margins,
+        footnoteReservedByPageIndex: finalReserves,
+        footnotes: {
+          ...footnotes,
+          bodyHeightById: new Map([['1', FOOTNOTE_LINE_HEIGHT * FOOTNOTE_LINES]]),
+          firstLineHeightById: new Map([['1', FOOTNOTE_LINE_HEIGHT]]),
+        },
+      },
+    );
+    const bodyBlockIds = new Set(bodyBlocks.map((block) => block.id));
+    const bodyGeometry = (pages: typeof result.layout.pages) =>
+      pages.map((page) => ({
+        number: page.number,
+        sectionIndex: page.sectionIndex,
+        sectionPageNumber: page.sectionPageNumber,
+        displayNumber: page.displayNumber,
+        size: page.size,
+        margins: page.margins,
+        fragments: page.fragments.filter((fragment) => bodyBlockIds.has(fragment.blockId)),
+      }));
+    expect(bodyGeometry(result.layout.pages)).toEqual(bodyGeometry(canonicalLayout.pages));
+
+    const pageRelativeAnchor: FlowBlock = {
+      kind: 'drawing',
+      id: 'page-relative-anchor',
+      drawingKind: 'vectorShape',
+      geometry: { width: 10, height: 10 },
+      attrs: { anchorParagraphId: bodyBlocks[0]!.id },
+      anchor: {
+        isAnchored: true,
+        hRelativeFrom: 'page',
+        vRelativeFrom: 'page',
+        offsetH: 0,
+        offsetV: 0,
+      },
+      wrap: { type: 'None', behindDoc: true },
+    };
+    const guardedResult = await incrementalLayout(
+      [],
+      null,
+      [...bodyBlocks, pageRelativeAnchor],
+      {
+        pageSize: { w: 612, h: pageHeight },
+        margins,
+        footnotes,
+      },
+      async (block) => {
+        if (block.kind === 'drawing') {
+          return {
+            kind: 'drawing',
+            drawingKind: 'vectorShape',
+            width: 10,
+            height: 10,
+            scale: 1,
+            naturalWidth: 10,
+            naturalHeight: 10,
+            geometry: { width: 10, height: 10 },
+          };
+        }
+        return measureBlock(block);
+      },
+    );
+    expect(guardedResult.bridgeTiming.counters.footnoteRelayouts).toBeGreaterThan(0);
+    expect(guardedResult.bridgeTiming.counters.footnoteReservePassReuseAttempts).toBe(0);
+  });
+
   it('runs multiple layout passes when footnotes shift pages and stabilizes correctly', async () => {
     const BODY_LINE_HEIGHT = 20;
     const FOOTNOTE_LINE_HEIGHT = 12;
