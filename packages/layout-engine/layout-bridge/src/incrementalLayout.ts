@@ -1807,6 +1807,7 @@ async function measureNoteBlocks(
   constraints: { maxWidth: number; maxHeight: number },
   measureBlock: (block: FlowBlock, constraints: { maxWidth: number; maxHeight: number }) => Promise<Measure>,
   fontSignature: string,
+  invocationMeasures: Map<string, Measure>,
 ): Promise<{ blocks: FlowBlock[]; measuresById: Map<string, Measure> }> {
   const needed = new Map<string, FlowBlock>();
   ids.forEach((id) => {
@@ -1822,18 +1823,29 @@ async function measureNoteBlocks(
   const measuresById = new Map<string, Measure>();
   await Promise.all(
     blocks.map(async (block) => {
+      const retained = invocationMeasures.get(block.id);
+      if (retained) {
+        hydrateTabRunWidthsFromMeasure(block, retained);
+        measuresById.set(block.id, retained);
+        return;
+      }
       const cached = measureCache.get(block, constraints.maxWidth, constraints.maxHeight, fontSignature);
       if (cached) {
         hydrateTabRunWidthsFromMeasure(block, cached);
+        invocationMeasures.set(block.id, cached);
         measuresById.set(block.id, cached);
         return;
       }
       const measurement = await measureBlock(block, constraints);
       measureCache.set(block, constraints.maxWidth, constraints.maxHeight, measurement, fontSignature);
+      invocationMeasures.set(block.id, measurement);
       measuresById.set(block.id, measurement);
     }),
   );
-  return { blocks, measuresById };
+  return {
+    blocks,
+    measuresById: measuresById.size === invocationMeasures.size ? invocationMeasures : measuresById,
+  };
 }
 
 function validateRetainedNoteMeasurePlane(
@@ -2996,6 +3008,11 @@ export async function incrementalLayout(
   const retainedNoteMeasures = warmSeedBaseUsable
     ? validateRetainedNoteMeasurePlane(earlyFootnotesInput!.blocksById, warmSeed!)
     : null;
+  // SD-4692: footnote convergence may request the same immutable note story
+  // dozens of times during one incrementalLayout call. Keep that invocation's
+  // exact measure plane independently of the bounded cross-call LRU, whose
+  // eviction limit can be smaller than a very large document's note story.
+  const invocationNoteMeasures = retainedNoteMeasures ?? new Map<string, Measure>();
   const retainedNoteMeasurePlaneExact =
     warmStart?.noteMeasurePlaneRetainedExact === true && retainedNoteMeasures !== null;
   // The proved dirty-measure lane deliberately skips the O(document) section
@@ -3054,6 +3071,7 @@ export async function incrementalLayout(
             { maxWidth: earlyFootnoteWidth, maxHeight: measurementHeight },
             measureBlock,
             fontSignature,
+            invocationNoteMeasures,
           )
         ).measuresById;
       preparedWarmNoteMeasures = measuresById;
@@ -3413,37 +3431,14 @@ export async function incrementalLayout(
 
       const measureFootnoteBlocks = async (ids: Set<string>) => {
         try {
-          if (!retainedNoteMeasures) {
-            return await measureNoteBlocks(
-              ids,
-              footnotesInput.blocksById,
-              footnoteConstraints,
-              measureBlock,
-              fontSignature,
-            );
-          }
-          const blocks: FlowBlock[] = [];
-          const measuresById = new Map<string, Measure>();
-          for (const id of ids) {
-            for (const block of footnotesInput.blocksById.get(id) ?? []) {
-              const measure = retainedNoteMeasures.get(block.id);
-              if (!measure) {
-                return await measureNoteBlocks(
-                  ids,
-                  footnotesInput.blocksById,
-                  footnoteConstraints,
-                  measureBlock,
-                  fontSignature,
-                );
-              }
-              blocks.push(block);
-              measuresById.set(block.id, measure);
-            }
-          }
-          return {
-            blocks,
-            measuresById: measuresById.size === retainedNoteMeasures.size ? retainedNoteMeasures : measuresById,
-          };
+          return await measureNoteBlocks(
+            ids,
+            footnotesInput.blocksById,
+            footnoteConstraints,
+            measureBlock,
+            fontSignature,
+            invocationNoteMeasures,
+          );
         } catch (error) {
           throw markPostBodyLayoutFailure(error);
         }
