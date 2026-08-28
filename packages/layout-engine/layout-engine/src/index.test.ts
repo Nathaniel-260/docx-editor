@@ -2166,6 +2166,40 @@ describe('layoutDocument', () => {
       },
     );
 
+    it('does not insert a parity filler after a fixed-height cover table when restart numbering has no physical parity requirement', () => {
+      const sectionBreak: FlowBlock = {
+        kind: 'sectionBreak',
+        id: 'sb-cover-to-body',
+        type: 'nextPage',
+        margins: { top: 40, right: 30, bottom: 40, left: 30 },
+        numbering: { start: 11 },
+        attrs: { source: 'sectPr', sectionIndex: 1 },
+      };
+      const blocks: FlowBlock[] = [
+        makeTableBlock('cover-table', 1),
+        sectionBreak,
+        { kind: 'paragraph', id: 'second-section-body', runs: [{ text: 'Second section' }] },
+      ];
+      const measures: Measure[] = [makeTableMeasure([340], [320]), { kind: 'sectionBreak' }, makeMeasure([40])];
+
+      const layout = layoutDocument(blocks, measures, {
+        pageSize: { w: 400, h: 400 },
+        margins: { top: 40, right: 30, bottom: 40, left: 30 },
+        alternateHeaders: true,
+      });
+
+      expect(layout.pages).toHaveLength(2);
+      expect(pageContainsBlock(layout.pages[0]!, 'cover-table')).toBe(true);
+      expect(pageContainsBlock(layout.pages[1]!, 'second-section-body')).toBe(true);
+      expect(layout.pages[1]).toMatchObject({
+        number: 2,
+        sectionIndex: 1,
+        sectionPageNumber: 1,
+        displayNumber: 11,
+      });
+      expect(layout.pages[1]?.suppressHeaderFooter).toBeUndefined();
+    });
+
     it('evenPage type: forces break to even page number', () => {
       const sectionBreak: FlowBlock = {
         kind: 'sectionBreak',
