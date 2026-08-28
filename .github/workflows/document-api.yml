@@ -11,9 +11,9 @@ on:
 
 concurrency:
   # The workflow also runs as a child of Validate. Including the caller name
-  # keeps that required run from cancelling a standalone focused run.
+  # keeps that required run from blocking a standalone focused run.
   group: ${{ github.workflow }}-ci-document-api-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   detect:
