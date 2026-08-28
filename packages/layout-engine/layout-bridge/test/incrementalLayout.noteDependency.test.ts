@@ -274,6 +274,178 @@ describe('incrementalLayout note dependency closure (plan 10)', () => {
     expect(reuse.pagesPaginated!).toBeLessThanOrEqual(6);
   });
 
+  it('reuses the retained assignment certificate without reading every stable reference', async () => {
+    const repeatedReferenceCount = 512;
+    const assignmentOptions = {
+      ...NOTE_OPTIONS,
+      footnotes: {
+        ...NOTE_OPTIONS.footnotes,
+        referenceTopologyRevision: 'note-1@p6/v1',
+        refs: Array.from({ length: repeatedReferenceCount }, (_, index) => ({
+          id: '1',
+          pos: 1 + 6 * 20 + 2 + index,
+          blockId: NOTE_REF_BLOCK,
+        })),
+      },
+    };
+    const previousBlocks = paragraphs(36);
+    const previous = await incrementalLayout([], null, previousBlocks, assignmentOptions, measureBlock);
+    previous.layout.layoutEpoch = 1;
+    expect(previous.extraBlocks).toBeTruthy();
+    expect(previous.extraMeasures).toBeTruthy();
+
+    const edit = previousBlocks[20]!;
+    const nextBlocks = applyOrdinaryTextEdit(previousBlocks, edit);
+    const incremental = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      assignmentOptions,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      {
+        footnoteReserveSeed: previous.footnoteReserveSeed,
+        noteMeasurePlaneRetainedExact: true,
+        retainedFootnoteExtras: {
+          blocks: previous.extraBlocks!,
+          measures: previous.extraMeasures!,
+        },
+      },
+      buildNoteReuse(previousBlocks, nextBlocks, previous.layout, edit.runs[0]!.pmEnd!, true),
+    );
+
+    const assignmentWork = incremental.bridgeTiming.counters;
+    expect(incremental.layoutReuse).toMatchObject({ mode: 'tail-splice' });
+    expect(assignmentWork.footnoteAssignmentReferencesRead).toBe(0);
+    expect(assignmentWork.footnoteAssignmentReferencesReused).toBe(repeatedReferenceCount);
+
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, nextBlocks, assignmentOptions, measureBlock);
+    expect(json(incremental.layout)).toEqual(json(cold.layout));
+
+    const changedTopologyOptions = {
+      ...assignmentOptions,
+      footnotes: {
+        ...assignmentOptions.footnotes,
+        referenceTopologyRevision: 'note-1@p7/v2',
+      },
+    };
+    const invalidated = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      changedTopologyOptions,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      {
+        footnoteReserveSeed: previous.footnoteReserveSeed,
+        noteMeasurePlaneRetainedExact: true,
+        retainedFootnoteExtras: {
+          blocks: previous.extraBlocks!,
+          measures: previous.extraMeasures!,
+        },
+      },
+      buildNoteReuse(previousBlocks, nextBlocks, previous.layout, edit.runs[0]!.pmEnd!, true),
+    );
+    const invalidatedWork = invalidated.bridgeTiming.counters;
+    expect(invalidatedWork.footnoteAssignmentReferencesRead).toBeGreaterThanOrEqual(repeatedReferenceCount);
+    expect(invalidatedWork.footnoteAssignmentReferencesReused).toBe(0);
+    expect(invalidatedWork.footnoteAssignmentPagesIndexed).toBeGreaterThan(0);
+    expect(invalidatedWork.footnoteAssignmentFragmentsIndexed).toBeGreaterThan(0);
+    expect(invalidatedWork.footnoteAssignmentFragmentsIndexed).toBeLessThan(
+      invalidatedWork.footnoteAssignmentReferencesRead,
+    );
+
+    for (const refs of [
+      assignmentOptions.footnotes.refs.slice(1),
+      [
+        ...assignmentOptions.footnotes.refs,
+        { id: '1', pos: 1 + 6 * 20 + repeatedReferenceCount + 2, blockId: NOTE_REF_BLOCK },
+      ],
+    ]) {
+      const referenceCountInvalidated = await incrementalLayout(
+        previousBlocks,
+        previous.layout,
+        nextBlocks,
+        {
+          ...assignmentOptions,
+          footnotes: { ...assignmentOptions.footnotes, refs },
+        },
+        measureBlock,
+        undefined,
+        previous.measures,
+        undefined,
+        {
+          footnoteReserveSeed: previous.footnoteReserveSeed,
+          noteMeasurePlaneRetainedExact: true,
+          retainedFootnoteExtras: {
+            blocks: previous.extraBlocks!,
+            measures: previous.extraMeasures!,
+          },
+        },
+        buildNoteReuse(previousBlocks, nextBlocks, previous.layout, edit.runs[0]!.pmEnd!, true),
+      );
+      expect(referenceCountInvalidated.bridgeTiming.counters.footnoteAssignmentReferencesRead).toBeGreaterThanOrEqual(
+        refs.length,
+      );
+      expect(referenceCountInvalidated.bridgeTiming.counters.footnoteAssignmentReferencesReused).toBe(0);
+    }
+
+    const referenceEdit = previousBlocks[6]!;
+    const referenceEditBlocks = applyOrdinaryTextEdit(previousBlocks, referenceEdit);
+    const referencePageInvalidated = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      referenceEditBlocks,
+      assignmentOptions,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      {
+        footnoteReserveSeed: previous.footnoteReserveSeed,
+        noteMeasurePlaneRetainedExact: true,
+        retainedFootnoteExtras: {
+          blocks: previous.extraBlocks!,
+          measures: previous.extraMeasures!,
+        },
+      },
+      buildNoteReuse(previousBlocks, referenceEditBlocks, previous.layout, referenceEdit.runs[0]!.pmEnd!, true),
+    );
+    expect(referencePageInvalidated.bridgeTiming.counters.footnoteAssignmentReferencesRead).toBeGreaterThanOrEqual(
+      repeatedReferenceCount,
+    );
+    expect(referencePageInvalidated.bridgeTiming.counters.footnoteAssignmentReferencesReused).toBe(0);
+
+    const notePlaneInvalidated = await incrementalLayout(
+      previousBlocks,
+      previous.layout,
+      nextBlocks,
+      assignmentOptions,
+      measureBlock,
+      undefined,
+      previous.measures,
+      undefined,
+      {
+        footnoteReserveSeed: previous.footnoteReserveSeed,
+        noteMeasurePlaneRetainedExact: false,
+        retainedFootnoteExtras: {
+          blocks: previous.extraBlocks!,
+          measures: previous.extraMeasures!,
+        },
+      },
+      buildNoteReuse(previousBlocks, nextBlocks, previous.layout, edit.runs[0]!.pmEnd!, true),
+    );
+    expect(notePlaneInvalidated.bridgeTiming.counters.footnoteAssignmentReferencesRead).toBeGreaterThanOrEqual(
+      repeatedReferenceCount,
+    );
+    expect(notePlaneInvalidated.bridgeTiming.counters.footnoteAssignmentReferencesReused).toBe(0);
+  });
+
   it('keeps external note fragments bounded from a document-start checkpoint', async () => {
     const previousBlocks = paragraphs(36);
     const previous = await incrementalLayout([], null, previousBlocks, NOTE_OPTIONS, measureBlock);
@@ -559,6 +731,10 @@ describe('incrementalLayout note dependency closure (plan 10)', () => {
       tailDisposition: 'relaid-to-document-end',
       tailAdoption: null,
     });
+    expect(expanded.bridgeTiming.counters.footnoteReservePassReuseAttempts).toBeGreaterThan(0);
+    expect(expanded.bridgeTiming.counters.footnoteReservePassReuseHits).toBe(
+      expanded.bridgeTiming.counters.footnoteReservePassReuseAttempts,
+    );
 
     clearIncrementalModuleState();
     const expandedCold = await incrementalLayout([], null, blocks, expandedOptions, noteMeasureBlock);

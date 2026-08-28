@@ -4,6 +4,7 @@ import {
   getPreferredReserveCandidates,
   getPreferredReserveTrialTargets,
   scoreFootnoteWindow,
+  shouldRunPreferredReserveTrials,
   shouldAbsorbOneLineFootnoteWidow,
   summarizeFootnoteWindow,
 } from '../src/footnote-scorer';
@@ -35,6 +36,13 @@ const makeLayout = (pageCount: number, ledgers: FootnotePageLedger[]): Layout =>
   }) as Layout;
 
 describe('SD-2656 footnote preferred-reserve scorer', () => {
+  it('defers optional preferred trials only for broad warm reflows', () => {
+    expect(shouldRunPreferredReserveTrials('full', 500, 64)).toBe(true);
+    expect(shouldRunPreferredReserveTrials('tail-splice', null, 64)).toBe(true);
+    expect(shouldRunPreferredReserveTrials('tail-splice', 64, 64)).toBe(true);
+    expect(shouldRunPreferredReserveTrials('tail-splice', 65, 64)).toBe(false);
+  });
+
   it('selects only mandatory-only pages as preferred-reserve candidates', () => {
     const ledgers = [
       makeLedger(0, {

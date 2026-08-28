@@ -176,6 +176,12 @@ export const collectFootnoteLedgers = (layout: Layout): FootnotePageLedger[] => 
   return layout.pages.flatMap((page) => (page.footnoteLedger ? [page.footnoteLedger] : []));
 };
 
+export const shouldRunPreferredReserveTrials = (
+  layoutMode: 'full' | 'prefix-resume' | 'tail-splice',
+  pagesPaginated: number | null,
+  maxWarmRelaidPages: number,
+): boolean => layoutMode === 'full' || pagesPaginated == null || pagesPaginated <= maxWarmRelaidPages;
+
 const getWindowBounds = (layout: Layout, candidatePageIndex: number, windowAhead: number) => ({
   windowStart: Math.max(0, candidatePageIndex),
   windowEnd: Math.min(layout.pages.length - 1, candidatePageIndex + Math.max(0, windowAhead)),
