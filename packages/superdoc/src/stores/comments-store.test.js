@@ -299,7 +299,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   if (typeof window !== 'undefined') {
-    delete window.__labsSuperDocV2PreviewDebug;
+    delete window.__labsSuperDocV2BenchmarkDebug;
   }
 });
 

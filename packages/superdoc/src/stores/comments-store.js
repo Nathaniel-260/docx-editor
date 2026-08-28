@@ -253,14 +253,14 @@ export const useCommentsStore = defineStore('comments', () => {
   const importedTrackedChangeBootstrapTasks = new Map();
   let importedTrackedChangeBootstrapGeneration = 0;
 
-  const isPreviewCommentsDebugEnabled = () => {
+  const isBenchmarkCommentsDebugEnabled = () => {
     if (isDebugging) return true;
     if (typeof window === 'undefined') return false;
-    return '__labsSuperDocV2PreviewDebug' in window;
+    return '__labsSuperDocV2BenchmarkDebug' in window;
   };
 
-  const tracePreviewComments = (label, payload = null) => {
-    if (!isPreviewCommentsDebugEnabled()) return;
+  const traceBenchmarkComments = (label, payload = null) => {
+    if (!isBenchmarkCommentsDebugEnabled()) return;
     if (payload !== null) {
       console.debug('[SuperDoc][comments-store]', label, payload);
       return;
@@ -3054,7 +3054,7 @@ export const useCommentsStore = defineStore('comments', () => {
               String(input.commentId),
               String(input.trackedChangeThreadParentId),
             );
-            tracePreviewComments('hydrate:drop-v2-sidecar-comment', {
+            traceBenchmarkComments('hydrate:drop-v2-sidecar-comment', {
               commentId: input.commentId ?? null,
               importedId: input.importedId ?? null,
               parentCommentId: input.parentCommentId ?? null,
