@@ -1,51 +1,160 @@
 import { SuperDoc } from 'superdoc';
-import type { ContentControlInfo } from 'superdoc/ui';
+import type { BrowserDocumentApi, ContentControlInfo, SelectionSlice } from 'superdoc/ui';
 import 'superdoc/style.css';
+import './style.css';
 
-const fieldValue = document.querySelector<HTMLInputElement>('#field-value');
-const updateButton = document.querySelector<HTMLButtonElement>('#update-field');
-const exportButton = document.querySelector<HTMLButtonElement>('#export-docx');
-const status = document.querySelector<HTMLSpanElement>('#status');
+const addInlineButton = requireElement<HTMLButtonElement>('#add-inline-field');
+const addBlockButton = requireElement<HTMLButtonElement>('#add-block-field');
+const controlsList = requireElement<HTMLUListElement>('#detected-controls');
+const exportButton = requireElement<HTMLButtonElement>('#export-docx');
+const status = requireElement<HTMLParagraphElement>('#status');
 
-if (!fieldValue || !updateButton || !exportButton || !status) {
-  throw new Error('The content control inputs are missing.');
+let documentApi: BrowserDocumentApi | null = null;
+let latestSelection: SelectionSlice | null = null;
+let detectedControls: readonly ContentControlInfo[] = [];
+let selectionCleanup: (() => void) | null = null;
+const clientName = 'Acme Products, Inc.';
+const confidentialitySlotBlockId = 'A100000B';
+
+function requireElement<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) throw new Error(`Missing ${selector}.`);
+  return element;
 }
+
+function hasTag(tag: string): boolean {
+  return detectedControls.some((control) => control.properties.tag === tag);
+}
+
+function renderControls(items: readonly ContentControlInfo[]): void {
+  controlsList.replaceChildren();
+  if (items.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'empty-state';
+    empty.textContent = 'No fields yet.';
+    controlsList.append(empty);
+  } else {
+    for (const control of items) {
+      const item = document.createElement('li');
+      const name = document.createElement('strong');
+      const tag = document.createElement('code');
+      const shape = document.createElement('span');
+      name.textContent = control.properties.alias ?? 'Untitled field';
+      tag.textContent = control.properties.tag ?? 'No tag';
+      shape.textContent = `${control.kind} · ${control.controlType}`;
+      item.append(name, tag, shape);
+      controlsList.append(item);
+    }
+  }
+
+  addInlineButton.disabled = !documentApi || hasTag('client.legalName');
+  addBlockButton.disabled = !documentApi || hasTag('agreement.confidentiality');
+  exportButton.disabled = !documentApi || items.length === 0;
+}
+
+function mutationFailure(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return 'The field could not be added.';
+}
+
+async function refreshControls(): Promise<void> {
+  if (!documentApi) return;
+  const result = await documentApi.contentControls.list();
+  detectedControls = result.items;
+  renderControls(result.items);
+}
+
+addInlineButton.addEventListener('click', async () => {
+  const target =
+    latestSelection?.status === 'ready' && latestSelection.empty === false && latestSelection.quotedText === clientName
+      ? latestSelection.selectionTarget
+      : null;
+  if (!documentApi || !target) {
+    status.textContent = 'Select the client name in the document first.';
+    return;
+  }
+
+  addInlineButton.disabled = true;
+  try {
+    const receipt = await documentApi.create.contentControl({
+      kind: 'inline',
+      controlType: 'text',
+      tag: 'client.legalName',
+      alias: 'Client legal name',
+      at: target,
+    });
+    if (receipt.success) {
+      await refreshControls();
+      status.textContent = 'Added the client name field.';
+    } else {
+      status.textContent = receipt.failure.message;
+    }
+  } catch (error) {
+    status.textContent = mutationFailure(error);
+  } finally {
+    renderControls(detectedControls);
+  }
+});
+
+addBlockButton.addEventListener('click', async () => {
+  const target = latestSelection?.empty === true ? latestSelection.selectionTarget : null;
+  const isConfidentialitySlot =
+    target?.start.kind === 'text' &&
+    target.end.kind === 'text' &&
+    target.start.blockId === confidentialitySlotBlockId &&
+    target.end.blockId === confidentialitySlotBlockId;
+  if (!documentApi || !target || !isConfidentialitySlot) {
+    status.textContent = 'Place the caret on the empty line under Confidentiality first.';
+    return;
+  }
+
+  addBlockButton.disabled = true;
+  try {
+    const receipt = await documentApi.create.contentControl({
+      kind: 'block',
+      controlType: 'richText',
+      tag: 'agreement.confidentiality',
+      alias: 'Confidentiality clause',
+      html: '<p>Each party will protect confidential information with reasonable care and use it only to perform this agreement.</p>',
+      at: target,
+    });
+    if (receipt.success) {
+      await refreshControls();
+      status.textContent = 'Added the confidentiality clause field.';
+    } else {
+      status.textContent = receipt.failure.message;
+    }
+  } catch (error) {
+    status.textContent = mutationFailure(error);
+  } finally {
+    renderControls(detectedControls);
+  }
+});
 
 const superdoc = new SuperDoc({
   selector: '#editor',
-  document: '/content-control.docx',
+  document: '/service-agreement-draft.docx',
+  ui: {
+    comments: false,
+    toolbar: false,
+  },
   onReady: ({ superdoc: readySuperDoc }) => {
-    const doc = readySuperDoc.activeEditor?.doc;
-    if (!doc) throw new Error('The Document API is not ready.');
+    documentApi = readySuperDoc.activeEditor?.doc ?? null;
+    if (!documentApi) {
+      status.textContent = 'The Document API is not ready.';
+      return;
+    }
 
-    const controls = readySuperDoc.ui.contentControls;
-    let control: ContentControlInfo | null = null;
-    let fieldDirty = false;
-    fieldValue.addEventListener('input', () => {
-      fieldDirty = true;
+    selectionCleanup = readySuperDoc.ui.selection.observe((snapshot) => {
+      if (snapshot.selectionTarget) latestSelection = snapshot;
     });
-
-    const stop = controls.observe((snapshot) => {
-      const nextControl = snapshot.items.find((item) => item.properties.tag === 'company-name');
-      if (!nextControl || nextControl.controlType !== 'text') return;
-
-      control = nextControl;
-      if (!fieldDirty) fieldValue.value = control.text ?? '';
-      fieldValue.disabled = false;
-      updateButton.disabled = false;
-      exportButton.disabled = false;
-      if (status.textContent === 'Opening document...') status.textContent = 'Field ready.';
-    });
-
-    updateButton.addEventListener('click', async () => {
-      if (!control) return;
-      const receipt = await doc.contentControls.text.setValue({ target: control.target, value: fieldValue.value });
-      if (receipt.success) fieldDirty = false;
-      status.textContent = receipt.success ? 'Field updated.' : receipt.failure.message;
-    });
-
-    controls.list();
-    window.addEventListener('beforeunload', stop, { once: true });
+    void refreshControls()
+      .then(() => {
+        status.textContent = 'Select the client name to add the first field.';
+      })
+      .catch((error: unknown) => {
+        status.textContent = mutationFailure(error);
+      });
   },
   onException: ({ error }) => {
     status.textContent = 'The document could not be opened.';
@@ -56,10 +165,13 @@ const superdoc = new SuperDoc({
 exportButton.addEventListener('click', async () => {
   exportButton.disabled = true;
   try {
-    await superdoc.export({ exportType: ['docx'], exportedName: 'content-controls' });
+    await superdoc.export({ exportType: ['docx'], exportedName: 'service-agreement-template' });
   } finally {
-    exportButton.disabled = false;
+    renderControls(detectedControls);
   }
 });
 
-window.addEventListener('beforeunload', () => superdoc.destroy());
+window.addEventListener('beforeunload', () => {
+  selectionCleanup?.();
+  superdoc.destroy();
+});

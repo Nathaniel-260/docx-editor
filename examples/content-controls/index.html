@@ -3,14 +3,48 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SuperDoc content controls</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" />
+    <title>SuperDoc content-control authoring</title>
   </head>
   <body>
-    <label>Company name <input id="field-value" type="text" disabled /></label>
-    <button id="update-field" type="button" disabled>Update field</button>
-    <button id="export-docx" type="button" disabled>Export DOCX</button>
-    <span id="status" role="status">Opening document...</span>
-    <div id="editor"></div>
+    <main class="authoring-shell">
+      <aside class="authoring-panel">
+        <header>
+          <h1>Add template fields</h1>
+          <p>Select document content, then turn it into a field.</p>
+        </header>
+
+        <section>
+          <span class="step">1</span>
+          <div>
+            <h2>Client name</h2>
+            <p>Select <strong>Acme Products, Inc.</strong></p>
+            <button id="add-inline-field" type="button" disabled>Add inline field</button>
+          </div>
+        </section>
+
+        <section>
+          <span class="step">2</span>
+          <div>
+            <h2>Confidentiality clause</h2>
+            <p>Place the caret on the empty line under the heading.</p>
+            <button id="add-block-field" type="button" disabled>Add block field</button>
+          </div>
+        </section>
+
+        <div class="detected">
+          <h2>Detected fields</h2>
+          <ul id="detected-controls">
+            <li class="empty-state">Opening document...</li>
+          </ul>
+        </div>
+
+        <p id="status" role="status">Opening document...</p>
+        <button id="export-docx" class="primary" type="button" disabled>Export template</button>
+      </aside>
+
+      <div id="editor" aria-label="Service agreement document"></div>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -16,7 +16,7 @@ Every example is typechecked and has a behavior test for the outcome its README 
 
 - [Version history](https://go.superdoc.dev/examples/version-history) — save and restore browser-owned DOCX snapshots.
 - [Custom UI](https://go.superdoc.dev/examples/custom-ui) — format a document from an application-owned control.
-- [Content controls](https://go.superdoc.dev/examples/content-controls) — update a Word text content control.
+- [Content controls](https://go.superdoc.dev/examples/content-controls) — add inline and block fields to a DOCX template.
 - [Document modes](https://go.superdoc.dev/examples/document-modes) — switch between viewing, editing, and suggesting.
 - [Search](https://go.superdoc.dev/examples/search) — enable the built-in find surface and navigate matches.
 - [Proofing](https://go.superdoc.dev/examples/proofing) — add local spell checking with suggestions and Ignore.

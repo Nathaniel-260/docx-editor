@@ -1,8 +1,6 @@
-# Content controls
+# Add content controls to a DOCX template
 
-List a Word text content control, update its value, and export the DOCX with the control intact.
-
-The sample document contains one synthetic field tagged `company-name`.
+Create an inline text field and a block clause field from document selections, then export the authored DOCX.
 
 ## Run it
 
@@ -13,7 +11,7 @@ pnpm install
 pnpm dev
 ```
 
-Change the company name, choose **Update field**, and export the DOCX.
+Select the client name to create an inline field. Place the caret below **Confidentiality** to insert a block field.
 
 ## Verify it
 
@@ -24,6 +22,6 @@ pnpm browsers
 pnpm test
 ```
 
-The browser test updates the real Word content control and verifies that its tag and new value remain in `word/document.xml`.
+The browser test creates both fields, exports the DOCX, and reopens it to verify their structure and metadata.
 
-See [Build a content-control panel](https://docs.superdoc.dev/editor/custom-ui/content-controls) for additional control types and navigation.
+See [Add fields to a DOCX template](https://docs.superdoc.dev/editor/content-controls/add-fields-to-a-docx-template) for the complete walkthrough.
