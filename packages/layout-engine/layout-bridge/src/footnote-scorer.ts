@@ -163,6 +163,24 @@ export const getPreferredReserveTrialTargets = (
     .slice(0, Math.max(1, maxTargets));
 };
 
+/**
+ * A single remaining range cannot increase the candidate's rendered-line
+ * count unless the trial reserve can fit that whole range after the content
+ * already in the band. Multi-range continuations stay speculative because
+ * the ledger does not expose the first remaining range's individual height.
+ */
+export const canPreferredReserveTargetImproveCandidate = (
+  candidate: FootnotePreferredReserveCandidate,
+  continuation: FootnotePageLedger['continuationOut'][number] | undefined,
+  targetReservePx: number,
+  epsilon = 0.01,
+): boolean => {
+  if (!continuation || continuation.remainingRangeCount !== 1) return true;
+  if (!Number.isFinite(continuation.remainingHeightPx) || continuation.remainingHeightPx <= 0) return true;
+  if (!Number.isFinite(candidate.actualBandHeightPx) || !Number.isFinite(targetReservePx)) return true;
+  return targetReservePx + epsilon >= candidate.actualBandHeightPx + continuation.remainingHeightPx;
+};
+
 export const shouldAbsorbOneLineFootnoteWidow = (
   ledger: FootnotePageLedger,
   tailPx: number,

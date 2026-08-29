@@ -99,6 +99,7 @@ import {
   resolveLiveCrossReferences,
 } from './resolveLiveCrossReferences';
 import {
+  canPreferredReserveTargetImproveCandidate,
   getPreferredReserveCandidates,
   getPreferredReserveTrialTargets,
   scoreFootnoteWindow,
@@ -284,6 +285,7 @@ export type IncrementalLayoutBridgeTiming = {
     footnoteReservePassReuseAttempts: number;
     footnoteReservePassReuseHits: number;
     footnotePreferredTrialsDeferred: number;
+    footnotePreferredUnimprovableTargetsSkipped: number;
   };
 };
 
@@ -3364,6 +3366,7 @@ export async function incrementalLayout(
   let footnoteReservePassReuseAttempts = 0;
   let footnoteReservePassReuseHits = 0;
   let footnotePreferredTrialsDeferred = 0;
+  let footnotePreferredUnimprovableTargetsSkipped = 0;
   const normalizeSeparatorSpacingBefore = (value: unknown): number | null =>
     typeof value === 'number' && Number.isFinite(value) ? value : null;
   const initialFootnoteLayoutInput = isFootnotesLayoutInput(initialBodyLayoutOptions.footnotes)
@@ -5032,6 +5035,11 @@ export async function incrementalLayout(
                 candidate,
                 beforeReserves[candidate.pageIndex] ?? 0,
               );
+              const candidateAnchorId = candidate.anchorIds[candidate.anchorIds.length - 1];
+              const candidateLedger = beforeLedgers.find((ledger) => ledger.pageIndex === candidate.pageIndex);
+              const candidateContinuation = candidateLedger?.continuationOut.find(
+                (continuation) => continuation.id === candidateAnchorId,
+              );
               const triedCappedReserves = new Set<number>();
               let acceptedCandidate = false;
 
@@ -5048,6 +5056,12 @@ export async function incrementalLayout(
                   continue;
                 }
                 triedCappedReserves.add(cappedPreferredReserve);
+                if (
+                  !canPreferredReserveTargetImproveCandidate(candidate, candidateContinuation, cappedPreferredReserve)
+                ) {
+                  footnotePreferredUnimprovableTargetsSkipped += 1;
+                  continue;
+                }
                 trialReserves[candidate.pageIndex] = Math.max(
                   trialReserves[candidate.pageIndex] ?? 0,
                   cappedPreferredReserve,
@@ -5628,6 +5642,7 @@ export async function incrementalLayout(
       footnoteReservePassReuseAttempts,
       footnoteReservePassReuseHits,
       footnotePreferredTrialsDeferred,
+      footnotePreferredUnimprovableTargetsSkipped,
     },
   };
 

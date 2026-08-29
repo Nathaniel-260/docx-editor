@@ -48,6 +48,21 @@ const makeMultiLineMeasure = (lineHeight: number, lineCount: number): Measure =>
   };
 };
 
+const makeVariableLineMeasure = (lineHeights: number[]): Measure => ({
+  kind: 'paragraph',
+  lines: lineHeights.map((lineHeight, index) => ({
+    fromRun: 0,
+    fromChar: index,
+    toRun: 0,
+    toChar: index + 1,
+    width: 200,
+    ascent: lineHeight * 0.8,
+    descent: lineHeight * 0.2,
+    lineHeight,
+  })),
+  totalHeight: lineHeights.reduce((total, lineHeight) => total + lineHeight, 0),
+});
+
 /**
  * Scenario that forces the footnote reserve loop to run multiple passes:
  * - Content height is small (240px). Body has 12 one-line blocks (20px each) so they
@@ -213,6 +228,49 @@ describe('Footnote multi-pass reserve loop', () => {
     );
     expect(guardedResult.bridgeTiming.counters.footnoteRelayouts).toBeGreaterThan(0);
     expect(guardedResult.bridgeTiming.counters.footnoteReservePassReuseAttempts).toBe(0);
+  });
+
+  it('skips preferred trials that cannot fit the only remaining footnote range', async () => {
+    const bodyBlocks = Array.from({ length: 50 }, (_, index) =>
+      makeParagraph(`body-${index}`, `Body paragraph ${index}.`, index * 20),
+    );
+    const bodyBlock = bodyBlocks[0]!;
+    const footnoteBlock = makeParagraph('footnote-1-paragraph', 'Large footnote.', 0);
+    const margins = { top: 72, right: 72, bottom: 72, left: 72 };
+    const contentHeight = 887;
+    const result = await incrementalLayout(
+      [],
+      null,
+      bodyBlocks,
+      {
+        pageSize: { w: 612, h: contentHeight + margins.top + margins.bottom },
+        margins,
+        footnotes: {
+          refs: [{ id: '1', pos: 1, blockId: bodyBlock.id }],
+          blocksById: new Map([['1', [footnoteBlock]]]),
+          topPadding: 4,
+          dividerHeight: 2,
+        },
+      },
+      async (block) =>
+        block.id === footnoteBlock.id
+          ? makeVariableLineMeasure([...Array<number>(59).fill(14), 70])
+          : makeMeasure(20, 17),
+    );
+
+    expect(result.bridgeTiming.counters.footnotePreferredUnimprovableTargetsSkipped).toBeGreaterThan(0);
+    expect(result.bridgeTiming.counters.footnotePreferredRelayouts).toBe(0);
+    expect(result.layout.pages[0]?.footnoteLedger?.continuationOut).toEqual([
+      { id: '1', remainingRangeCount: 1, remainingHeightPx: 70 },
+    ]);
+    expect(result.layout.pages[0]?.footnoteLedger?.actualBandHeightPx).toBe(846);
+    expect(result.layout.pages[1]?.footnoteLedger?.continuationIn).toEqual([
+      { id: '1', remainingRangeCount: 1, remainingHeightPx: 70 },
+    ]);
+    const footnoteRendered = result.layout.pages
+      .flatMap((page) => page.fragments)
+      .some((fragment) => fragment.blockId === footnoteBlock.id);
+    expect(footnoteRendered).toBe(true);
   });
 
   it('runs multiple layout passes when footnotes shift pages and stabilizes correctly', async () => {

@@ -93,7 +93,8 @@ describe('SD-3050: continuation-aware body pagination', () => {
 
     const counters = result.bridgeTiming.counters;
     expect(counters.footnoteRelayouts).toBeGreaterThan(0);
-    expect(counters.footnoteRevertSnapshotsRestored).toBeGreaterThan(0);
+    expect(counters.footnotePreferredUnimprovableTargetsSkipped).toBeGreaterThan(0);
+    expect(counters.footnoteRevertSnapshotsRestored).toBe(0);
     expect(counters.footnoteRevertRelayouts).toBe(0);
     expect(counters.paginationPasses).toBe(1 + counters.pageTokenRelayouts + counters.footnoteRelayouts);
     expect(

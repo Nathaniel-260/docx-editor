@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vite-plus/test';
 import type { FootnotePageLedger, Layout } from '@superdoc/contracts';
 import {
+  canPreferredReserveTargetImproveCandidate,
   getPreferredReserveCandidates,
   getPreferredReserveTrialTargets,
   scoreFootnoteWindow,
@@ -208,6 +209,25 @@ describe('SD-2656 footnote preferred-reserve scorer', () => {
     expect(targets).toContain(367);
     expect(targets).toContain(229);
     expect(targets.every((target) => target > 133 && target <= 601)).toBe(true);
+  });
+
+  it("skips a capped trial that cannot fit the candidate anchor's single remaining range", () => {
+    const candidate = {
+      pageIndex: 152,
+      anchorIds: ['last-anchor'],
+      mandatoryReservePx: 34,
+      preferredReservePx: 903,
+      reserveDeltaPx: 869,
+      actualBandHeightPx: 833,
+      lastAnchorRenderedLines: 58,
+    };
+    const continuation = { id: 'last-anchor', remainingRangeCount: 1, remainingHeightPx: 70 };
+
+    expect(canPreferredReserveTargetImproveCandidate(candidate, continuation, 863)).toBe(false);
+    expect(canPreferredReserveTargetImproveCandidate(candidate, continuation, 903)).toBe(true);
+    expect(canPreferredReserveTargetImproveCandidate(candidate, { ...continuation, remainingRangeCount: 2 }, 863)).toBe(
+      true,
+    );
   });
 
   it('absorbs one-line widows only for single-anchor pages', () => {
