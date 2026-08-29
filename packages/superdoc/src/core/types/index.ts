@@ -2585,9 +2585,15 @@ export interface Modules {
    * @deprecated replaceWith=`ui.toolbar.customItems` with application-owned model requests and `doc.insert` or `doc.replace` removeIn=v3.0
    */
   ai?: {
-    /** Harbour API key for AI features. */
+    /**
+     * Harbour API key used by the previous built-in AI Writer.
+     * @deprecated replaceWith=`credentials in your application-owned model integration` removeIn=v3.0
+     */
     apiKey?: string;
-    /** Custom endpoint URL for AI services. */
+    /**
+     * Service endpoint used by the previous built-in AI Writer.
+     * @deprecated replaceWith=`endpoint in your application-owned model integration` removeIn=v3.0
+     */
     endpoint?: string;
   } & Record<string, unknown>;
   /** PDF module configuration. */
