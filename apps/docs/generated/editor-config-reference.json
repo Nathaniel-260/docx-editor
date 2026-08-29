@@ -171,42 +171,6 @@
       "group": "other"
     },
     {
-      "name": "toolbar",
-      "type": "string | HTMLElement",
-      "required": false,
-      "description": "Where to render the built-in toolbar. Either an `HTMLElement`, or a selector string in one of the supported forms: an id selector (`#toolbar`), a class selector (`.toolbar`), or a bare element id (`toolbar`). Other CSS selector syntax is not supported — an attribute or descendant selector such as `[data-toolbar]` resolves to nothing and leaves the toolbar unrendered. SuperDoc renders into the resolved element but does not manage its placement, and never includes it in the `contained` layout calculation. Where the application puts it therefore decides the space it needs: a sibling of a 400px `contained` Editor adds its own height alongside it, while a toolbar placed inside that host consumes part of the 400px and can overflow it. Omitting this field (and `modules.toolbar.selector`) renders no toolbar. `modules.toolbar: true` on its own does not render one either — it creates the `superdoc.toolbar` handle without a mount target. See {@link Modules.toolbar}.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "ui.toolbar.container"
-    },
-    {
-      "name": "toolbarGroups",
-      "type": "string[]",
-      "required": false,
-      "description": "Toolbar groups to show.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "ui.toolbar.items"
-    },
-    {
-      "name": "toolbarIcons",
-      "type": "object",
-      "required": false,
-      "description": "Icons to show in the toolbar.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "ui.toolbar.icons"
-    },
-    {
-      "name": "toolbarTexts",
-      "type": "object",
-      "required": false,
-      "description": "Texts to override in the toolbar.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "ui.toolbar.strings"
-    },
-    {
       "name": "uiDisplayFallbackFont",
       "type": "string",
       "required": false,
@@ -236,22 +200,6 @@
       "group": "other"
     },
     {
-      "name": "experimental",
-      "type": "{\n  unifiedHistory?: boolean;\n  v2Host?: boolean;\n  v2WebSurface?: \"dense-control\" | \"retained-dom\";\n  deferDerivedInvalidations?: boolean;\n}",
-      "typeName": "{ unifiedHistory?: boolean; v2Host?: boolean; v2WebSurface?: \"dense-control\" | \"retained-dom\"; deferDerivedInvalidations?: boolean; }",
-      "required": false,
-      "description": "Advanced DocumentRendererRuntime feature toggles. `unifiedHistory` is enabled by default; set it to `false` to force legacy active-surface undo routing. `v2Host` enables the experimental mode-aware v2 DOCX shell path.",
-      "group": "other"
-    },
-    {
-      "name": "onEditorBeforeCreate",
-      "type": "(params: {\n  editor: Editor;\n}) => void",
-      "typeName": "(params: SuperDocEditorPayload) => void",
-      "required": false,
-      "description": "Callback before an editor is created. Receives a wrapper carrying the editor.",
-      "group": "other"
-    },
-    {
       "name": "onEditorCreate",
       "type": "(params: {\n  editor: Editor;\n}) => void",
       "typeName": "(params: SuperDocEditorPayload) => void",
@@ -271,21 +219,6 @@
       "type": "() => void",
       "required": false,
       "description": "Callback when v2 source signals finish building (fires after onSourceComplete; diff.capture is synchronously safe).",
-      "group": "other"
-    },
-    {
-      "name": "onTransaction",
-      "type": "(params: {\n  editor: Editor;\n  sourceEditor: Editor;\n  transaction: EditorTransactionLike;\n  duration?: number;\n  surface: \"body\" | \"header\" | \"footer\";\n  headerId?: null | string;\n  sectionType?: null | string;\n}) => void",
-      "typeName": "(params: EditorTransactionEvent) => void",
-      "required": false,
-      "description": "Callback when a transaction is made.",
-      "group": "other"
-    },
-    {
-      "name": "onEditorDestroy",
-      "type": "() => void",
-      "required": false,
-      "description": "Callback after an editor is destroyed.",
       "group": "other"
     },
     {
@@ -311,16 +244,6 @@
       "required": false,
       "description": "Callback when comments are updated.",
       "group": "other"
-    },
-    {
-      "name": "onContentControlActiveChange",
-      "type": "(params: {\n  active: null | ContentControlRef;\n  previous: null | ContentControlRef;\n  activePath: ContentControlRef[];\n  source: \"keyboard\" | \"pointer\";\n}) => void",
-      "typeName": "(params: ContentControlActiveChangePayload) => void",
-      "required": false,
-      "description": "Callback when the selection enters, leaves, or moves between content controls.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "superdoc.ui.contentControls.observe"
     },
     {
       "name": "onContentControlClick",
@@ -408,13 +331,6 @@
       "group": "other"
     },
     {
-      "name": "onListDefinitionsChange",
-      "type": "(params: ListDefinitionsPayload) => void",
-      "required": false,
-      "description": "Callback when the list definitions change.",
-      "group": "other"
-    },
-    {
       "name": "onZoomChange",
       "type": "(params: {\n  zoom: number;\n  mode: \"manual\" | \"fit-width\";\n}) => void",
       "typeName": "(params: SuperDocZoomPayload) => void",
@@ -439,72 +355,31 @@
       "group": "other"
     },
     {
-      "name": "format",
-      "type": "string",
-      "required": false,
-      "description": "The format of the document (docx, pdf, html).",
-      "group": "other"
-    },
-    {
-      "name": "editorExtensions",
-      "type": "object[]",
-      "required": false,
-      "description": "Legacy v1 ProseMirror extensions. `editorExtensions` is a v1/ProseMirror concept and is IGNORED by `superdoc@2`: these objects are never loaded into the v2 runtime. Passing `editorExtensions` records a clear console diagnostic at construction. For v2, use {@link Config.extensions} with `defineSuperDocExtension`; the two are not interchangeable.",
-      "group": "other"
-    },
-    {
       "name": "extensions",
       "type": "SuperDocExtension<Record<string, unknown>>[]",
       "required": false,
-      "description": "v2 SuperDoc extensions, created with `defineSuperDocExtension`. `superdoc@2` IS the v2 editor, so these activate unconditionally — there is no `editorVersion` / `editorIntegration` selector. Each extension owns isolated storage, named events, commands, anchors, and render-only decorations, and mutates the document exclusively through the guarded Document API (`ctx.doc.*`). This is the v2 replacement for the v1/ProseMirror `editorExtensions` path; the two are not interchangeable. Extension arrays are mount-time config: changing the array reference requires a remount to take effect.",
+      "description": "SuperDoc v2 extensions created with `defineSuperDocExtension`. These extensions activate without an `editorVersion` or `editorIntegration` selector. Each extension owns isolated storage, named events, commands, anchors, and render-only decorations, and mutates the document exclusively through the guarded Document API (`ctx.doc.*`). This is the v2 replacement for the v1/ProseMirror `editorExtensions` path; the two are not interchangeable. Extension arrays are mount-time config: changing the array reference requires a remount to take effect.",
       "group": "other"
     },
     {
       "name": "isInternal",
       "type": "boolean",
       "required": false,
-      "description": "Whether the SuperDoc is internal.",
+      "description": "Whether the current user is internal. This affects comment visibility, new-comment metadata, and the default permission decision. It is not an authorization boundary.",
       "group": "other"
     },
     {
       "name": "title",
       "type": "string",
       "required": false,
-      "description": "The title of the SuperDoc.",
+      "description": "Fallback filename for `export()` when `exportedName` is omitted.",
       "group": "other"
-    },
-    {
-      "name": "conversations",
-      "type": "object[]",
-      "required": false,
-      "description": "The conversations to load.",
-      "group": "other"
-    },
-    {
-      "name": "comments",
-      "type": "{\n  visible?: boolean;\n}",
-      "typeName": "ViewingVisibilityConfig",
-      "required": false,
-      "description": "Toggle comment visibility when `documentMode` is `viewing`.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "viewing.comments"
-    },
-    {
-      "name": "trackChanges",
-      "type": "{\n  visible?: boolean;\n}",
-      "typeName": "ViewingVisibilityConfig",
-      "required": false,
-      "description": "Toggle tracked-change visibility when `documentMode` is `viewing`.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "viewing.trackedChanges"
     },
     {
       "name": "isLocked",
       "type": "boolean",
       "required": false,
-      "description": "Whether the SuperDoc is locked.",
+      "description": "Initial shared lock metadata. This value does not make the document read-only. Use `documentMode` or interaction policy to restrict editing in the client.",
       "group": "other"
     },
     {
@@ -520,76 +395,7 @@
       "type": "{\n  id?: null | string;\n  name?: null | string;\n  email?: null | string;\n  image?: null | string;\n}",
       "typeName": "User",
       "required": false,
-      "description": "The user who locked the SuperDoc.",
-      "group": "other"
-    },
-    {
-      "name": "rulers",
-      "type": "boolean",
-      "required": false,
-      "description": "Whether to show the ruler in the editor.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "ui.ruler"
-    },
-    {
-      "name": "rulerContainer",
-      "type": "string | HTMLElement",
-      "required": false,
-      "description": "Element or selector the ruler mounts into. Omit to render it inline above the editor.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "ui.ruler.container"
-    },
-    {
-      "name": "suppressDefaultDocxStyles",
-      "type": "boolean",
-      "required": false,
-      "description": "Whether to suppress default styles in docx mode.",
-      "group": "other"
-    },
-    {
-      "name": "jsonOverride",
-      "type": "object",
-      "required": false,
-      "description": "Provided JSON to override content with.",
-      "group": "other"
-    },
-    {
-      "name": "disableContextMenu",
-      "type": "boolean",
-      "required": false,
-      "description": "Whether to disable the built-in context menu.",
-      "group": "other",
-      "deprecated": true,
-      "deprecatedReplacement": "ui.contextMenu"
-    },
-    {
-      "name": "html",
-      "type": "string",
-      "required": false,
-      "description": "HTML content to initialize the editor with.",
-      "group": "other"
-    },
-    {
-      "name": "markdown",
-      "type": "string",
-      "required": false,
-      "description": "Markdown content to initialize the editor with.",
-      "group": "other"
-    },
-    {
-      "name": "onUnsupportedContent",
-      "type": "(items: { tagName: string; outerHTML: string; count: number; }[]) => void | null",
-      "required": false,
-      "description": "Callback invoked with unsupported HTML elements dropped during import. When provided, console.warn is NOT emitted.",
-      "group": "other"
-    },
-    {
-      "name": "warnOnUnsupportedContent",
-      "type": "boolean",
-      "required": false,
-      "description": "When true and no onUnsupportedContent callback is provided, emits a console.warn with unsupported items.",
+      "description": "User associated with the initial shared lock metadata.",
       "group": "other"
     },
     {
@@ -670,7 +476,7 @@
       "name": "useLayoutEngine",
       "type": "boolean",
       "required": false,
-      "description": "Compatibility toggle retained for existing configurations. V2 always uses the OOXML kernel; `viewOptions.layout` selects the mounted renderer.",
+      "description": "Whether `layoutEngineOptions` are passed when a DOCX editor opens. Set to `false` to omit `layoutEngineOptions` and use CSS fallback styling for the initial non-default zoom. This does not select a different DOCX renderer. `viewOptions.layout` separately selects print or web layout.",
       "group": "other"
     },
     {
@@ -686,14 +492,6 @@
       "type": "\"in\" | \"cm\"",
       "required": false,
       "description": "Starting measurement unit for rulers and measurement fields (Word's \"measurement units\" preference). Defaults to `'in'` (Word's en-US default). Change it at runtime with `setMeasurementUnit()`. See `SuperDocMeasurementUnit`.",
-      "group": "other"
-    },
-    {
-      "name": "onFontsResolved",
-      "type": "(payload: {\n  report?: FontResolutionRecord[];\n  missingFonts?: string[];\n  documentFonts?: string[];\n  documentFontOptions?: DocumentFontOption[];\n}) => void",
-      "typeName": "(payload: FontsResolvedPayload) => void",
-      "required": false,
-      "description": "Callback fired after the editor reports `fonts-resolved`. The payload contains `documentFonts` and `unsupportedFonts` arrays so hosts can fall back, warn, or block printing on unsupported faces. LEGACY/EARLY: this fires once before fonts load and is not substitution-aware (`unsupportedFonts` over-reports families that render via a bundled substitute). For the authoritative, load-settled picture use {@link onFontsChanged}.",
       "group": "other"
     },
     {

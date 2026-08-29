@@ -2579,7 +2579,11 @@ export interface Modules {
          */
         compactBreakpointPx?: number;
       } & Record<string, unknown>);
-  /** AI module configuration. */
+  /**
+   * Previous built-in AI Writer configuration.
+   *
+   * @deprecated replaceWith=`ui.toolbar.customItems` with application-owned model requests and `doc.insert` or `doc.replace` removeIn=v3.0
+   */
   ai?: {
     /** Harbour API key for AI features. */
     apiKey?: string;
@@ -4312,13 +4316,17 @@ export interface Config {
    * margins, virtualization, zoom, debug label, etc.).
    */
   layoutEngineOptions?: SuperDocLayoutEngineOptions;
-  /**
-   * Advanced DocumentRendererRuntime feature toggles. `unifiedHistory` is enabled
-   * by default; set it to `false` to force legacy active-surface undo
-   * routing. `v2Host` enables the experimental mode-aware v2 DOCX shell path.
-   */
+  /** Experimental v2 behavior. These options can change without a major release. */
   experimental?: {
+    /**
+     * Previous undo-routing switch. V2 owns history routing.
+     * @deprecated replaceWith=`remove this option; SuperDoc 2 owns history routing` removeIn=v3.0
+     */
     unifiedHistory?: boolean;
+    /**
+     * Previous v2 shell rollout switch. SuperDoc 2 always uses the v2 shell.
+     * @deprecated replaceWith=`remove this option; SuperDoc 2 always uses the v2 shell` removeIn=v3.0
+     */
     v2Host?: boolean;
     /**
      * Temporary V2 web-surface rollout control. The value is snapshotted at
@@ -4328,12 +4336,15 @@ export interface Config {
     /**
      * Derived-invalidation deferral for direct single-paragraph edits (v2
      * engine only). Field display text settles off the keystroke path under
-     * the engine's settlement contract. DEFAULT TRUE — this is the engine's
-     * standard behavior; set `false` only as an emergency kill switch.
+     * the engine's settlement contract. Defaults to `true`. Set it to `false`
+     * only as an emergency kill switch.
      */
     deferDerivedInvalidations?: boolean;
   };
-  /** Callback before an editor is created. Receives a wrapper carrying the editor. */
+  /**
+   * Previous pre-create callback. SuperDoc 2 does not emit this callback.
+   * @deprecated replaceWith=`application setup before new SuperDoc()` removeIn=v3.0
+   */
   onEditorBeforeCreate?: (params: SuperDocEditorPayload) => void;
   /** Callback after an editor is created. Receives a wrapper carrying the editor. */
   onEditorCreate?: (params: SuperDocEditorPayload) => void;
@@ -4341,9 +4352,15 @@ export interface Config {
   onSourceComplete?: () => void;
   /** Callback when v2 source signals finish building (fires after onSourceComplete; diff.capture is synchronously safe). */
   onSourceSignalsComplete?: () => void;
-  /** Callback when a transaction is made. */
+  /**
+   * Previous ProseMirror transaction callback. SuperDoc 2 does not emit it.
+   * @deprecated replaceWith=`defineSuperDocExtension` with `ctx.onMutation` removeIn=v3.0
+   */
   onTransaction?: (params: EditorTransactionEvent) => void;
-  /** Callback after an editor is destroyed. */
+  /**
+   * Previous post-destroy callback. SuperDoc 2 does not emit this callback.
+   * @deprecated replaceWith=`application cleanup after superdoc.destroy()` removeIn=v3.0
+   */
   onEditorDestroy?: () => void;
   /**
    * Callback when an editor reports a content error (parse failure, doc
@@ -4414,7 +4431,10 @@ export interface Config {
    * with the current page count).
    */
   onPaginationUpdate?: (params: { totalPages: number; superdoc: SuperDoc }) => void;
-  /** Callback when the list definitions change. */
+  /**
+   * Previous list-definition callback. SuperDoc 2 does not emit this callback.
+   * @deprecated replaceWith=`onEditorUpdate` and `doc.lists.list` removeIn=v3.0
+   */
   onListDefinitionsChange?: (params: ListDefinitionsPayload) => void;
   /**
    * Callback when the zoom level changes. Fires for every zoom source:
@@ -4431,21 +4451,25 @@ export interface Config {
   onViewportChange?: (params: SuperDocViewportChangePayload) => void;
   /** Callback after a ruler drag changes the active section's left or right page margin. */
   onPageMarginsChange?: (params: SuperDocPageMarginsChangePayload) => void;
-  /** The format of the document (docx, pdf, html). */
+  /**
+   * Previous input-format hint. SuperDoc 2 opens DOCX sources from `document`.
+   * @deprecated replaceWith=`document` removeIn=v3.0
+   */
   format?: string;
   /**
-   * Legacy v1 ProseMirror extensions. `editorExtensions` is a v1/ProseMirror
-   * concept and is IGNORED by `superdoc@2`: these objects are never loaded into
-   * the v2 runtime. Passing `editorExtensions` records a clear console
-   * diagnostic at construction. For v2, use {@link Config.extensions} with
-   * `defineSuperDocExtension`; the two are not interchangeable.
+   * ProseMirror extensions accepted by SuperDoc v1. SuperDoc v2 ignores these
+   * objects and logs a warning during construction. Use
+   * {@link Config.extensions} with `defineSuperDocExtension` instead; the two
+   * extension formats are not interchangeable.
+   *
+   * @deprecated replaceWith=`extensions` removeIn=v3.0
    */
   editorExtensions?: object[];
   /**
-   * v2 SuperDoc extensions, created with `defineSuperDocExtension`. `superdoc@2`
-   * IS the v2 editor, so these activate unconditionally — there is no
-   * `editorVersion` / `editorIntegration` selector. Each extension owns
-   * isolated storage, named events, commands, anchors, and render-only
+   * SuperDoc v2 extensions created with `defineSuperDocExtension`. These
+   * extensions activate without an `editorVersion` or `editorIntegration`
+   * selector. Each extension owns isolated storage, named events, commands,
+   * anchors, and render-only
    * decorations, and mutates the document exclusively through the guarded
    * Document API (`ctx.doc.*`). This is the v2 replacement for the
    * v1/ProseMirror `editorExtensions` path; the two are not interchangeable.
@@ -4453,11 +4477,18 @@ export interface Config {
    * requires a remount to take effect.
    */
   extensions?: SuperDocExtension[];
-  /** Whether the SuperDoc is internal. */
+  /**
+   * Whether the current user is internal. This affects comment visibility,
+   * new-comment metadata, and the default permission decision. It is not an
+   * authorization boundary.
+   */
   isInternal?: boolean;
-  /** The title of the SuperDoc. */
+  /** Fallback filename for `export()` when `exportedName` is omitted. */
   title?: string;
-  /** The conversations to load. */
+  /**
+   * Previous external conversation input. SuperDoc 2 reads comments from the DOCX.
+   * @deprecated replaceWith=`doc.comments` removeIn=v3.0
+   */
   conversations?: object[];
   /**
    * Toggle comment visibility when `documentMode` is `viewing`.
@@ -4469,11 +4500,14 @@ export interface Config {
    * @deprecated replaceWith=`viewing.trackedChanges` compat-indefinitely=v2 configuration compatibility
    */
   trackChanges?: ViewingVisibilityConfig;
-  /** Whether the SuperDoc is locked. */
+  /**
+   * Initial shared lock metadata. This value does not make the document read-only.
+   * Use `documentMode` or interaction policy to restrict editing in the client.
+   */
   isLocked?: boolean;
   /** The function to handle image uploads. */
   handleImageUpload?: (file: globalThis.File) => Promise<string>;
-  /** The user who locked the SuperDoc. */
+  /** User associated with the initial shared lock metadata. */
   lockedBy?: User;
   /**
    * Whether to show the ruler in the editor.
@@ -4488,27 +4522,39 @@ export interface Config {
    * still honors it, and the canonical value wins when both are set.
    */
   rulerContainer?: string | HTMLElement;
-  /** Whether to suppress default styles in docx mode. */
+  /**
+   * Previous default-style switch. SuperDoc 2 uses the styles stored in the DOCX.
+   * @deprecated replaceWith=`styles stored in the DOCX` removeIn=v3.0
+   */
   suppressDefaultDocxStyles?: boolean;
-  /** Provided JSON to override content with. */
+  /**
+   * Previous imported-content override. SuperDoc 2 ignores this field.
+   * @deprecated replaceWith=`document and the Document API` removeIn=v3.0
+   */
   jsonOverride?: object;
   /**
    * Whether to disable the built-in context menu.
    * @deprecated replaceWith=`ui.contextMenu` removeIn=v3.0
    */
   disableContextMenu?: boolean;
-  /** HTML content to initialize the editor with. */
+  /**
+   * Previous HTML initialization field.
+   * @deprecated replaceWith=`doc.replace({ target: { kind: 'story', storyType: 'body' }, type: 'html', value }) after onReady` removeIn=v3.0
+   */
   html?: string;
-  /** Markdown content to initialize the editor with. */
+  /**
+   * Previous Markdown initialization field.
+   * @deprecated replaceWith=`doc.replace({ target: { kind: 'story', storyType: 'body' }, type: 'markdown', value }) after onReady` removeIn=v3.0
+   */
   markdown?: string;
   /**
-   * Callback invoked with unsupported HTML elements dropped during import.
-   * When provided, console.warn is NOT emitted.
+   * Previous callback for unsupported HTML imported through `html`.
+   * @deprecated replaceWith=`doc.htmlToFragment() diagnostics` removeIn=v3.0
    */
   onUnsupportedContent?: ((items: Array<{ tagName: string; outerHTML: string; count: number }>) => void) | null;
   /**
-   * When true and no onUnsupportedContent callback is provided, emits a
-   * console.warn with unsupported items.
+   * Previous console-warning switch for HTML imported through `html`.
+   * @deprecated replaceWith=`doc.htmlToFragment() diagnostics` removeIn=v3.0
    */
   warnOnUnsupportedContent?: boolean;
   /** Whether to enable debug mode. */
@@ -4573,8 +4619,11 @@ export interface Config {
    */
   workerStartupTimeoutMs?: number;
   /**
-   * Compatibility toggle retained for existing configurations. V2 always
-   * uses the OOXML kernel; `viewOptions.layout` selects the mounted renderer.
+   * Whether `layoutEngineOptions` are passed when a DOCX editor opens.
+   *
+   * Set to `false` to omit `layoutEngineOptions` and use CSS fallback styling for the
+   * initial non-default zoom. This does not select a different DOCX renderer.
+   * `viewOptions.layout` separately selects print or web layout.
    */
   useLayoutEngine?: boolean;
   // V2 branch: `editorVersion`, `v2Integration`, and `v2` are intentionally NOT
@@ -4603,6 +4652,8 @@ export interface Config {
    * LEGACY/EARLY: this fires once before fonts load and is not substitution-aware
    * (`unsupportedFonts` over-reports families that render via a bundled substitute).
    * For the authoritative, load-settled picture use {@link onFontsChanged}.
+   *
+   * @deprecated replaceWith=`onFontsChanged` removeIn=v3.0
    */
   onFontsResolved?: (payload: FontsResolvedPayload) => void;
   /**

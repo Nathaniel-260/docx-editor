@@ -1076,11 +1076,56 @@ test('the Editor configuration reference starts with concise essential fields', 
   const interactionType = editorConfigExplorer.fields.find((field) => field.name === 'interaction')?.type ?? '';
   assert.match(interactionType, /comments\?: \{ level\?: CommentInteractionLevel; \}/u);
   assert.doesNotMatch(interactionType, /CommentInteractionConfig|readOnly|allowResolve/u);
+  const fieldNames = new Set(editorConfigExplorer.fields.map((field) => field.name));
+  for (const legacyField of [
+    'comments',
+    'conversations',
+    'editorExtensions',
+    'format',
+    'html',
+    'jsonOverride',
+    'markdown',
+    'onEditorBeforeCreate',
+    'onEditorDestroy',
+    'onFontsResolved',
+    'onListDefinitionsChange',
+    'onTransaction',
+    'onUnsupportedContent',
+    'rulerContainer',
+    'rulers',
+    'suppressDefaultDocxStyles',
+    'trackChanges',
+    'warnOnUnsupportedContent',
+  ]) {
+    assert.equal(fieldNames.has(legacyField), false, `${legacyField} should not appear in the current Config Explorer`);
+  }
+  assert.equal(fieldNames.has('experimental'), false);
+  const useLayoutEngine = editorConfigExplorer.fields.find((field) => field.name === 'useLayoutEngine');
+  assert.equal(useLayoutEngine?.type, 'boolean');
+  assert.match(useLayoutEngine?.description ?? '', /omit `layoutEngineOptions`/u);
+  assert.match(useLayoutEngine?.description ?? '', /initial non-default zoom/u);
+  assert.match(useLayoutEngine?.description ?? '', /does not select a different DOCX renderer/u);
+  assert.doesNotMatch(useLayoutEngine?.description ?? '', /Whether DOCX documents use the layout engine/u);
+  assert.equal(useLayoutEngine?.deprecated, undefined);
   assert.equal(
-    editorConfigExplorer.fields.find((field) => field.name === 'rulerContainer')?.deprecatedReplacement,
-    'ui.ruler.container',
+    editorConfigExplorer.fields.find((field) => field.name === 'modules')?.type,
+    '{\n  trackChanges?: TrackChangesModuleConfig;\n}',
   );
-  assert.match(renderConfigReferenceMarkdown(editorConfigExplorer), /Deprecated\. Use `ui\.ruler\.container` instead/u);
+  assert.doesNotMatch(renderConfigReferenceMarkdown(editorConfigExplorer), /Deprecated\./u);
+});
+
+test('deprecated HTML and Markdown initializers name complete body replacements', async () => {
+  const superdocTypes = await readFile(superdocCoreTypesUrl, 'utf8');
+  assert.ok(
+    superdocTypes.includes(
+      "@deprecated replaceWith=`doc.replace({ target: { kind: 'story', storyType: 'body' }, type: 'html', value }) after onReady` removeIn=v3.0",
+    ),
+  );
+  assert.ok(
+    superdocTypes.includes(
+      "@deprecated replaceWith=`doc.replace({ target: { kind: 'story', storyType: 'body' }, type: 'markdown', value }) after onReady` removeIn=v3.0",
+    ),
+  );
 });
 
 test('the lifecycle journey maps the application states to public Editor signals', async () => {

@@ -1020,7 +1020,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     user: { ...DEFAULT_USER },
     layoutEngineOptions: {},
 
-    modules: {}, // Optional: Modules to load. Use modules.ai.{your_key} to pass in your key
+    modules: {},
 
     // License key (resolved downstream; undefined means "not explicitly set")
     licenseKey: undefined,
@@ -1188,7 +1188,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     // instance-level runtime evidence; any legacy `config.editorVersion` input
     // is ignored and cannot select a legacy runtime.
     this.editorVersion = 2;
-    this.#validateExtensionConfig();
+    this.#validateLegacyConfig();
 
     this.config.user = normalizeSuperDocUser(this.config.user);
 
@@ -2734,23 +2734,23 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     this.emit('sidebar-toggle', isOpened);
   }
 
-  /**
-   * Validate the legacy/current extension config split and emit a clear diagnostic for
-   * the legacy combination on this v2-only branch:
-   *  - `editorExtensions` (legacy ProseMirror) is never loaded into the v2 runtime.
-   *
-   * The field is left in place but recorded as unsupported so it is not
-   * silently treated as a v2 extension. The v2 `extensions` field is the
-   * supported path and is always consumed because `superdoc@2` is v2.
-   */
-  #validateExtensionConfig(): void {
+  /** Warn when deprecated configuration has no current runtime behavior. */
+  #validateLegacyConfig(): void {
     const hasLegacyExtensions = Array.isArray(this.config.editorExtensions) && this.config.editorExtensions.length > 0;
 
     if (hasLegacyExtensions) {
       console.warn(
-        '[SuperDoc] `editorExtensions` is a legacy ProseMirror concept and is ignored by superdoc@2. ' +
-          'Use `extensions` with `defineSuperDocExtension`; legacy ProseMirror extensions (Node.create, ' +
-          'Mark.create, addPmPlugins, custom schema) do not run in v2.',
+        '[SuperDoc] `editorExtensions` is ignored by superdoc@2. ' +
+          'Use `extensions` with `defineSuperDocExtension`. ProseMirror APIs such as `Node.create`, ' +
+          '`Mark.create`, `addPmPlugins`, and custom schemas do not run in v2.',
+      );
+    }
+
+    if (this.config.modules.ai) {
+      console.warn(
+        '[SuperDoc] `modules.ai` is deprecated and will be removed in v3. ' +
+          'Use `ui.toolbar.customItems` for the action, make the model request in your application, ' +
+          'and apply the result with `doc.insert()` or `doc.replace()`.',
       );
     }
   }

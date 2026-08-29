@@ -246,14 +246,14 @@ const REMOVED_ROOT_EXPORTS: MigrationEntry[] = [
   {
     id: 'root.AIWriter',
     v1: 'AIWriter',
-    v2: 'config.modules.ai',
+    v2: 'ui.toolbar.customItems + Document API',
     disposition: 'redesign',
     failureMode: 'missing-export',
     surface: 'custom-ui',
     symptom:
       'ESM and TypeScript reject the import. A CommonJS `require` binds `undefined` instead, so the failure surfaces later at the call site.',
     notes:
-      'The built-in toolbar renders the AI writer when `modules.ai` is configured, and applies generated text through the Document API.',
+      'Add an application-owned toolbar action with `ui.toolbar.customItems`. Send the model request from your application, then apply the result with `doc.insert()` or `doc.replace()`.',
   },
   {
     id: 'root.Extensions',

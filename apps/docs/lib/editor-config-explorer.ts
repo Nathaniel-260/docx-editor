@@ -130,7 +130,7 @@ const summaries = {
   ui: 'Choose which built-in interface parts SuperDoc renders.',
   interaction: 'Set what people can do through Editor interactions.',
   surfaces: 'Configure dialogs and floating overlays.',
-  modules: 'Enable and configure Editor modules.',
+  modules: 'Configure document features that do not belong to the built-in interface.',
   permissionResolver: 'Override permission checks for protected content.',
   toolbar: 'Choose where the built-in toolbar renders.',
   toolbarGroups: 'Choose which toolbar groups appear.',
@@ -169,13 +169,13 @@ const summaries = {
   format: 'Declare the input document format.',
   editorExtensions: 'Legacy v1 extension field. SuperDoc v2 ignores it.',
   extensions: 'Add extensions created with `defineSuperDocExtension`.',
-  isInternal: 'Mark this instance as internal.',
-  title: 'Set the Editor title.',
+  isInternal: 'Set whether the current user creates and reviews internal comments.',
+  title: 'Set the fallback filename used when exporting.',
   conversations: 'Load conversation data.',
   comments: 'Legacy comment visibility setting.',
   hyperlinks: 'Choose what happens when a person activates a hyperlink.',
   trackChanges: 'Legacy tracked-change visibility setting.',
-  isLocked: 'Start the Editor in a locked state.',
+  isLocked: 'Set the initial shared lock metadata.',
   handleImageUpload: 'Store images inserted into the document.',
   lockedBy: 'Identify the user who locked the Editor.',
   rulers: 'Show the measurement ruler.',
@@ -197,7 +197,7 @@ const summaries = {
   fonts: 'Configure document fonts and font asset loading.',
   workerUrls: 'Load browser workers from same-origin URLs.',
   workerStartupTimeoutMs: 'Set how long the document worker may take to start.',
-  useLayoutEngine: 'Keep compatibility with configurations that set this field.',
+  useLayoutEngine: 'Pass or omit layout engine options when a DOCX editor opens.',
   zoom: 'Set the initial zoom and fit-to-width behavior.',
   measurementUnit: 'Set the ruler and measurement unit.',
   onFontsResolved: 'Receive the early font-resolution report.',
@@ -313,6 +313,7 @@ const presentation = {
     guide: { label: 'Ruler', href: '/editor/built-in-ui/ruler' },
   },
   modules: {
+    type: '{\n  trackChanges?: TrackChangesModuleConfig;\n}',
     example: { value: '{ trackChanges: … }', code: 'modules: { trackChanges: { enabled: true } }' },
     guide: { label: 'Track changes', href: '/editor/track-changes' },
   },
@@ -383,20 +384,17 @@ const presentation = {
 
 const configPresentation: Partial<Record<ConfigFieldName, ConfigPresentation>> = presentation;
 const generated = generatedEditorConfig as ConfigExplorerData;
+const generatedFieldNames = new Set(generated.fields.map((field) => field.name));
 const groupByField = new Map<ConfigFieldName, ConfigGroupId>();
 const orderByField = new Map<ConfigFieldName, number>();
 
 for (const [group, fields] of Object.entries(fieldsByGroup) as Array<[ConfigGroupId, readonly ConfigFieldName[]]>) {
   for (const field of fields) {
+    if (!generatedFieldNames.has(field)) continue;
     if (groupByField.has(field)) throw new Error(`Config field ${field} appears in more than one group.`);
     groupByField.set(field, group);
     orderByField.set(field, orderByField.size);
   }
-}
-
-const generatedFieldNames = new Set(generated.fields.map((field) => field.name));
-for (const field of groupByField.keys()) {
-  if (!generatedFieldNames.has(field)) throw new Error(`Config group contains unknown field ${field}.`);
 }
 
 export const editorConfigExplorer: ConfigExplorerData = {

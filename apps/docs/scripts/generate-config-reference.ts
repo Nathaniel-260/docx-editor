@@ -26,6 +26,8 @@ const references: ReferenceDefinition[] = [
     root: 'config',
     label: 'editor config',
     syntax: 'typed-variable',
+    excludeDeprecated: true,
+    excludeFields: ['experimental'],
     groups: [
       { id: 'essentials', label: 'Essentials' },
       { id: 'document', label: 'Document' },

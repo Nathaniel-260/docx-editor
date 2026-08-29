@@ -32,6 +32,13 @@ test('catalog records the v1 version it was derived from', () => {
   assert.equal(MIGRATION_CATALOG.v1Version, v1Surface.version);
 });
 
+test('AI Writer migration points to an application-owned integration', () => {
+  const entry = catalogById.get('root.AIWriter');
+
+  assert.equal(entry?.v2, 'ui.toolbar.customItems + Document API');
+  assert.match(entry?.notes ?? '', /`doc\.insert\(\)` or `doc\.replace\(\)`/u);
+});
+
 // Prose in the generated page quotes these counts. Pinning them to the snapshot
 // stops the page from asserting a v1 surface the snapshot does not describe.
 test('catalog v1 counts match the committed v1 surface', () => {
