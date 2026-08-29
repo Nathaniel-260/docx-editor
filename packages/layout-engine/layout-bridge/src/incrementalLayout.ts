@@ -980,6 +980,61 @@ type FootnotesLayoutInput = {
   separatorSpacingBefore?: number;
 };
 
+type FootnoteGrowConvergenceState = {
+  appliedReserves: readonly number[];
+  plannedReserves: readonly number[];
+  pageCount: number;
+};
+
+type FootnoteGrowConvergenceInput = {
+  maxPasses: number;
+  maxAcceptedPageCount?: number;
+  readState: () => FootnoteGrowConvergenceState;
+  applyReserves: (target: number[], label: string) => Promise<void>;
+};
+
+async function growFootnoteReserves({
+  maxPasses,
+  maxAcceptedPageCount,
+  readState,
+  applyReserves,
+}: FootnoteGrowConvergenceInput): Promise<boolean> {
+  const vectorsEqual = (a: readonly number[], b: readonly number[]): boolean => {
+    for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+      if ((a[index] ?? 0) !== (b[index] ?? 0)) return false;
+    }
+    return true;
+  };
+  const seen: number[][] = [readState().appliedReserves.slice()];
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const state = readState();
+    const target = state.appliedReserves.slice();
+    let grew = false;
+    for (let index = 0; index < Math.max(target.length, state.plannedReserves.length); index += 1) {
+      if ((state.plannedReserves[index] ?? 0) > (target[index] ?? 0)) {
+        target[index] = state.plannedReserves[index];
+        grew = true;
+      }
+    }
+    if (!grew) return true;
+    let next = target;
+    if (seen.some((previous) => vectorsEqual(previous, target))) {
+      const last = seen[seen.length - 1];
+      next = target.map((value, index) => Math.max(value, last[index] ?? 0));
+      if (vectorsEqual(next, state.appliedReserves)) return true;
+    }
+    await applyReserves(next, `grow-pass-${pass + 1}`);
+    // Tighten/widow callers reject any trial that grows beyond their accepted
+    // layout. Later grow passes cannot make that trial admissible, so return
+    // immediately and let the caller restore its safe reserve vector.
+    if (maxAcceptedPageCount != null && readState().pageCount > maxAcceptedPageCount) return false;
+    seen.push(next);
+  }
+  return false;
+}
+
+export const __test_only_growFootnoteReserves = growFootnoteReserves;
+
 type ProvedNoteOnlyLayoutFinalization = {
   extraBlocks: FlowBlock[];
   extraMeasures: Measure[];
@@ -4887,12 +4942,6 @@ export async function incrementalLayout(
             assignedFootnoteCount: collectFootnoteIdsByColumn(finalIdsByColumn).size,
           });
 
-          const vectorsEqual = (a: number[], b: number[]): boolean => {
-            for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-              if ((a[i] ?? 0) !== (b[i] ?? 0)) return false;
-            }
-            return true;
-          };
           const applyReserves = async (target: number[], label = 'apply-reserves') => {
             // Planner sized the band with the measured separator spacing; the
             // body slicer must match or it packs too much and the band overflows.
@@ -4965,30 +5014,17 @@ export async function incrementalLayout(
           // several passes for growth on one page to propagate to the pages it
           // spills into. If a target cycles back to one we've tried, we merge
           // element-wise with the last applied target to force progress.
-          const growReserves = async (maxPasses: number): Promise<boolean> => {
-            const seen: number[][] = [reservesAppliedToLayout.slice()];
-            for (let pass = 0; pass < maxPasses; pass += 1) {
-              const target = reservesAppliedToLayout.slice();
-              const plan = finalPlan.reserves;
-              let grew = false;
-              for (let i = 0; i < Math.max(target.length, plan.length); i += 1) {
-                if ((plan[i] ?? 0) > (target[i] ?? 0)) {
-                  target[i] = plan[i];
-                  grew = true;
-                }
-              }
-              if (!grew) return true;
-              let next = target;
-              if (seen.some((prev) => vectorsEqual(prev, target))) {
-                const last = seen[seen.length - 1];
-                next = target.map((v, i) => Math.max(v, last[i] ?? 0));
-                if (vectorsEqual(next, reservesAppliedToLayout)) return true;
-              }
-              await applyReserves(next, `grow-pass-${pass + 1}`);
-              seen.push(next);
-            }
-            return false;
-          };
+          const growReserves = (maxPasses: number, maxAcceptedPageCount?: number): Promise<boolean> =>
+            growFootnoteReserves({
+              maxPasses,
+              maxAcceptedPageCount,
+              readState: () => ({
+                appliedReserves: reservesAppliedToLayout,
+                plannedReserves: finalPlan.reserves,
+                pageCount: layout.pages.length,
+              }),
+              applyReserves,
+            });
 
           const GROW_MAX_PASSES = 10;
           const PREFERRED_RESERVE_MAX_CANDIDATES = 12;
@@ -5205,7 +5241,7 @@ export async function incrementalLayout(
               const tightened = reservesAppliedToLayout.slice();
               for (const { i, target } of pagesToTighten) tightened[i] = target;
               await applyReserves(tightened, `tighten-pass-${iteration + 1}`);
-              if (!(await growReserves(GROW_MAX_PASSES)) || layout.pages.length > safePageCount) {
+              if (!(await growReserves(GROW_MAX_PASSES, safePageCount)) || layout.pages.length > safePageCount) {
                 await applyReserves(safeApplied, `tighten-revert-${iteration + 1}`);
                 break;
               }
@@ -5240,7 +5276,7 @@ export async function incrementalLayout(
             const safeApplied = reservesAppliedToLayout.slice();
             const safePageCount = layout.pages.length;
             await applyReserves(target, 'widow-orphan-absorb');
-            if (!(await growReserves(GROW_MAX_PASSES)) || layout.pages.length > safePageCount) {
+            if (!(await growReserves(GROW_MAX_PASSES, safePageCount)) || layout.pages.length > safePageCount) {
               await applyReserves(safeApplied, 'widow-orphan-revert');
             }
           };

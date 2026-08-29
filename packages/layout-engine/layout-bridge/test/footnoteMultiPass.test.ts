@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure } from '@superdoc/contracts';
 import * as layoutEngine from '@superdoc/layout-engine';
-import { incrementalLayout } from '../src/incrementalLayout';
+import { __test_only_growFootnoteReserves, incrementalLayout } from '../src/incrementalLayout';
 
 /**
  * Builds a paragraph with pmStart/pmEnd so footnote ref position can be resolved to a page.
@@ -378,6 +378,43 @@ describe('Footnote multi-pass reserve loop', () => {
     // bottom margin / footer region).
     const physicalBottom = (page2.size?.h ?? pageHeight) - (margins.bottom ?? 72);
     expect(bodyMaxY + (page2.footnoteReserved ?? 0)).toBeLessThanOrEqual(physicalBottom + 1);
+  });
+
+  it('stops a doomed tighten regrow at the accepted page-count ceiling', async () => {
+    let state = { appliedReserves: [0], plannedReserves: [10], pageCount: 100 };
+    const applied: Array<{ target: number[]; label: string }> = [];
+    const converged = await __test_only_growFootnoteReserves({
+      maxPasses: 10,
+      maxAcceptedPageCount: 100,
+      readState: () => state,
+      applyReserves: async (target, label) => {
+        applied.push({ target, label });
+        state = { appliedReserves: target, plannedReserves: [20], pageCount: 101 };
+      },
+    });
+
+    expect(converged).toBe(false);
+    expect(applied).toEqual([{ target: [10], label: 'grow-pass-1' }]);
+
+    state = { appliedReserves: [0], plannedReserves: [10], pageCount: 100 };
+    applied.length = 0;
+    const unboundedConverged = await __test_only_growFootnoteReserves({
+      maxPasses: 10,
+      readState: () => state,
+      applyReserves: async (target, label) => {
+        applied.push({ target, label });
+        state = {
+          appliedReserves: target,
+          plannedReserves: [20],
+          pageCount: 100 + applied.length,
+        };
+      },
+    });
+    expect(unboundedConverged).toBe(true);
+    expect(applied).toEqual([
+      { target: [10], label: 'grow-pass-1' },
+      { target: [20], label: 'grow-pass-2' },
+    ]);
   });
 
   it('does not exhaust max reserve passes when reserves oscillate between pages', async () => {
