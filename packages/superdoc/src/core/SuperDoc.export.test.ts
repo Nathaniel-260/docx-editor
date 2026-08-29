@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+import { DOCX } from '@superdoc/common';
 import { SuperDoc } from './SuperDoc.js';
 import type { ExportParams } from './types/index.js';
 
@@ -21,6 +22,20 @@ function createDocxBlob(): Blob {
   });
 }
 
+function createForeignByteSource(kind: 'ArrayBuffer' | 'Uint8Array'): ArrayBuffer | Uint8Array {
+  const iframe = document.createElement('iframe');
+  document.body.append(iframe);
+  const foreignWindow = iframe.contentWindow!;
+  return kind === 'ArrayBuffer' ? new foreignWindow.ArrayBuffer(4) : new foreignWindow.Uint8Array([1, 2, 3, 4]);
+}
+
+function createForeignDocxBlob(): Blob {
+  const iframe = document.createElement('iframe');
+  document.body.append(iframe);
+  const foreignWindow = iframe.contentWindow!;
+  return new foreignWindow.Blob([new foreignWindow.Uint8Array([0x50, 0x4b, 0x03, 0x04])], { type: DOCX });
+}
+
 afterEach(() => {
   for (const instance of mountedInstances.splice(0)) instance.destroy();
   document.body.innerHTML = '';
@@ -28,6 +43,71 @@ afterEach(() => {
 });
 
 describe('SuperDoc.export', () => {
+  it.each([
+    ['File', new File(['content'], 'contract.docx', { type: DOCX })],
+    ['Blob', new Blob(['content'], { type: DOCX })],
+  ])('uses a local %s as the DOCX export fallback', async (_label, data) => {
+    const instance = createInstance();
+    (instance as unknown as { superdocStore: { documents: unknown[] } }).superdocStore = {
+      documents: [{ id: 'contract-1', type: DOCX, data, getEditor: () => null }],
+    };
+
+    await expect(instance.exportEditorsToDOCX()).resolves.toEqual([data]);
+  });
+
+  it.each(['ArrayBuffer', 'Uint8Array'] as const)('uses a cross-realm %s as the DOCX export fallback', async (kind) => {
+    const instance = createInstance();
+    const data = createForeignByteSource(kind);
+    (instance as unknown as { superdocStore: { documents: unknown[] } }).superdocStore = {
+      documents: [{ id: 'foreign-docx', type: DOCX, data, getEditor: () => null }],
+    };
+
+    const [exported] = await instance.exportEditorsToDOCX();
+
+    expect(exported).toBeInstanceOf(Blob);
+    expect(exported.type).toBe(DOCX);
+    expect(exported.size).toBe(4);
+  });
+
+  it('preserves a cross-realm Blob as the DOCX export fallback', async () => {
+    const instance = createInstance();
+    const data = createForeignDocxBlob();
+    expect(data).not.toBeInstanceOf(Blob);
+    (instance as unknown as { superdocStore: { documents: unknown[] } }).superdocStore = {
+      documents: [{ id: 'foreign-docx', type: DOCX, data, getEditor: () => null }],
+    };
+
+    const [exported] = await instance.exportEditorsToDOCX();
+
+    expect(exported).toBe(data);
+  });
+
+  it('downloads a cross-realm Blob through the default export path', async () => {
+    const instance = createInstance();
+    const data = createForeignDocxBlob();
+    expect(data).not.toBeInstanceOf(Blob);
+    (instance as unknown as { superdocStore: { documents: unknown[] } }).superdocStore = {
+      documents: [{ id: 'foreign-docx', type: DOCX, data, getEditor: () => null }],
+    };
+
+    const exported = await instance.export({ exportedName: 'foreign-docx' });
+
+    expect(exported).toBeInstanceOf(Blob);
+    expect(exported).not.toBe(data);
+    expect(exported.type).toBe(DOCX);
+    expect(exported.size).toBe(data.size);
+  });
+
+  it('rejects a plain object that mimics a DOCX Blob', async () => {
+    const instance = createInstance();
+    const data = { size: 4, type: DOCX, arrayBuffer: async () => new ArrayBuffer(4) };
+    (instance as unknown as { superdocStore: { documents: unknown[] } }).superdocStore = {
+      documents: [{ id: 'fake-docx', type: DOCX, data, getEditor: () => null }],
+    };
+
+    await expect(instance.exportEditorsToDOCX()).resolves.toEqual([]);
+  });
+
   it.each([
     ['pdf only', ['pdf']],
     ['HTML only', ['html']],

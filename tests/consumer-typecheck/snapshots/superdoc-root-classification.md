@@ -1,22 +1,22 @@
 # SD-3212 A1 — root classification
 
 Generated: derived from superdoc-root-classification.json (aligned with current root export inventory)
-Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (243 names)
+Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (253 names)
 
 ## Summary
 
 | Bucket | Count |
 |---|---|
-| supported-root | 240 |
+| supported-root | 250 |
 | legacy-root | 3 |
 | move-to-subpath | 0 |
 | internal-candidate | 0 |
 | NEEDS-REVIEW | 0 |
-| **total** | **243** |
+| **total** | **253** |
 
-Confidence: high=195, medium=48, low=0, needs-review=0.
+Confidence: high=205, medium=48, low=0, needs-review=0.
 
-## supported-root (240)
+## supported-root (250)
 
 | Name | Confidence | Source | Rationale |
 |---|---|---|---|
@@ -26,6 +26,7 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `BlocksListResult` | high | doc-api | Document API result type returned by activeEditor.doc.blocks.list(); useful for consumers typing block-listing workflows from the root package. |
 | `BookmarkAddress` | high | doc-api | Document API navigation/address/selection type. Promoted into the root facade by SD-3185. |
 | `BookmarkInfo` | high | doc-api | Document API result type returned by activeEditor.doc.bookmarks.get(); useful for consumers typing bookmark workflows from the root package. |
+| `BorrowedSuperDocUI` | high | surface | Public type of SuperDoc.ui. Omits destroy because the SuperDoc instance owns controller teardown. |
 | `BuiltInCommandId` | high | toolbar-config | Exact ids for commands built into the SuperDoc UI controller. Gives consumers autocomplete and a closed type when they do not use registered application commands. |
 | `CanPerformPermissionParams` | high | config-supported | Configuration type for a supported feature. Input shape for SuperDoc#canPerformPermission, promoted from an anonymous inline parameter to a named public type so consumers get IDE help and the contract is stable across migrations. |
 | `CollaborationConfig` | medium | config-supported | Configuration type for a supported feature. |
@@ -51,12 +52,18 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `ContextMenuSelectPayload` | high | context-menu | Argument type of ContextMenuItem.onSelect. Supported root: a consumer extracting the handler into a typed function needs it by name. |
 | `ContextMenuSelectReadiness` | high | context-menu | Repaint coordination carried on the onSelect document result. Supported root: reachable from ContextMenuSelectPayload. |
 | `DOCX` | high | locked | Content-format constant. Heavily documented (133 doc mentions). Customer-facing. |
+| `DiffApplyOperationReceipt` | high | doc-api | Document API receipt returned for one applied diff operation. |
+| `DiffApplyResult` | high | doc-api | Document API result returned after applying a diff. |
+| `DiffApplyReviewItem` | high | doc-api | Document API review item returned when a diff produces tracked changes. |
 | `DirectSurfaceRequest` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
 | `DocRange` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 | `Document` | high | core | Customer-facing core API type or runtime export. Consumer-supplied document descriptor used in Config.documents and now SuperDocState.documents; the public counterpart to the internal RuntimeDocument (which carries runtime-only fields and stays internal). |
 | `DocumentApi` | high | doc-api | Customer-facing Document API handle type exposed through activeEditor.doc and used by public examples that type programmatic document operations from the root package. |
+| `DocumentDataSource` | high | config-supported | File and byte inputs accepted by Document.data and structured Config.document sources. |
 | `DocumentMode` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 | `DocumentProtectionState` | high | doc-api | Document API result type returned by activeEditor.doc.protection.get(); useful for consumers typing document-protection workflows from the root package. |
+| `DocumentSource` | high | config-supported | Canonical input accepted by Config.document, covering URL, file, byte, uploader, and structured sources. |
+| `DocumentUploadSource` | high | config-supported | Compatibility shape for common uploader wrappers accepted by document normalization. |
 | `EditorSurface` | medium | surface | Headless Surface API type. Public extension surface for custom UI integrations. |
 | `EditorTransactionEvent` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 | `EditorUpdateEvent` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
@@ -104,6 +111,7 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `ResolveRangeOutput` | high | doc-api | Document API ranges.resolve result type implemented by the v2 range resolver adapter; useful for consumers typing range handles, targets, and preview metadata from the root package. |
 | `ResolvedFindReplaceTexts` | medium | find-replace | FindReplace surface API type. Public. |
 | `ResolvedPasswordPromptTexts` | medium | password-prompt | PasswordPrompt surface API type. Public. |
+| `RulerConfig` | high | config-supported | Canonical startup options for the built-in Ruler surface. |
 | `SdtRef` | high | config-supported | Deprecated alias retained for v2 source compatibility; use ContentControlRef. |
 | `SearchConfig` | high | config-supported | Canonical startup options for the built-in Search surface. |
 | `SearchFloatingConfig` | high | config-supported | Position and focus options used by SearchConfig. |
@@ -112,6 +120,7 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `SelectionHandle` | high | ui-controller | v2-native superdoc/ui selection handle type with current/capture/restore/anchor-rect methods; the supported migration path for deferred selection UI flows. |
 | `SelectionInfo` | high | doc-api | Document API selection result returned by doc.selection.current(); v2 host and adapter expose the shape for selection-aware custom UI, comments, and extension workflows. |
 | `StoryLocator` | high | doc-api | Document API navigation/address/selection type. Promoted into the root facade by SD-3185. |
+| `StructuredDocumentSource` | high | config-supported | Metadata-bearing document source used for names, passwords, and v2 collaboration. |
 | `SuperDoc` | medium | core | Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities. |
 | `SuperDocActiveEditorExtensions` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocActiveEditorExtensionsCommands` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
@@ -174,6 +183,7 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `SuperDocMutationEvent` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocMutationFilter` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocMutationOrigin` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
+| `SuperDocPageMarginsChangePayload` | high | core | Payload emitted after a ruler drag changes a section's page margins and passed to Config.onPageMarginsChange. |
 | `SuperDocPaintEvent` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocReadyPayload` | high | core | Payload emitted with the ready event and passed to Config.onReady; promoted to a named public type for consistency with the other event payloads. |
 | `SuperDocReceiptSuccess` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
@@ -295,6 +305,7 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `BlocksListResult` | ✓ | ✓ |   |   |
 | `BookmarkAddress` | ✓ | ✓ |   |   |
 | `BookmarkInfo` | ✓ | ✓ |   |   |
+| `BorrowedSuperDocUI` | ✓ | ✓ |   |   |
 | `BuiltInCommandId` | ✓ | ✓ |   |   |
 | `CanPerformPermissionParams` | ✓ | ✓ |   |   |
 | `CollaborationConfig` | ✓ | ✓ |   |   |
@@ -320,12 +331,18 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `ContextMenuSelectPayload` | ✓ | ✓ |   |   |
 | `ContextMenuSelectReadiness` | ✓ | ✓ |   |   |
 | `DOCX` | ✓ | ✓ | ✓ | ✓ |
+| `DiffApplyOperationReceipt` | ✓ | ✓ |   |   |
+| `DiffApplyResult` | ✓ | ✓ |   |   |
+| `DiffApplyReviewItem` | ✓ | ✓ |   |   |
 | `DirectSurfaceRequest` | ✓ | ✓ |   |   |
 | `DocRange` | ✓ | ✓ |   |   |
 | `Document` | ✓ | ✓ |   |   |
 | `DocumentApi` | ✓ | ✓ |   |   |
+| `DocumentDataSource` | ✓ | ✓ |   |   |
 | `DocumentMode` | ✓ | ✓ |   |   |
 | `DocumentProtectionState` | ✓ | ✓ |   |   |
+| `DocumentSource` | ✓ | ✓ |   |   |
+| `DocumentUploadSource` | ✓ | ✓ |   |   |
 | `EditorSurface` | ✓ | ✓ |   |   |
 | `EditorTransactionEvent` | ✓ | ✓ |   |   |
 | `EditorUpdateEvent` | ✓ | ✓ |   |   |
@@ -374,6 +391,7 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `ResolveRangeOutput` | ✓ | ✓ |   |   |
 | `ResolvedFindReplaceTexts` | ✓ | ✓ |   |   |
 | `ResolvedPasswordPromptTexts` | ✓ | ✓ |   |   |
+| `RulerConfig` | ✓ | ✓ |   |   |
 | `SdtRef` | ✓ | ✓ |   |   |
 | `SearchConfig` | ✓ | ✓ |   |   |
 | `SearchFloatingConfig` | ✓ | ✓ |   |   |
@@ -382,6 +400,7 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `SelectionHandle` | ✓ | ✓ |   |   |
 | `SelectionInfo` | ✓ | ✓ |   |   |
 | `StoryLocator` | ✓ | ✓ |   |   |
+| `StructuredDocumentSource` | ✓ | ✓ |   |   |
 | `SuperDoc` | ✓ | ✓ | ✓ | ✓ |
 | `SuperDocActiveEditorExtensions` | ✓ | ✓ |   |   |
 | `SuperDocActiveEditorExtensionsCommands` | ✓ | ✓ |   |   |
@@ -444,6 +463,7 @@ Confidence: high=195, medium=48, low=0, needs-review=0.
 | `SuperDocMutationEvent` | ✓ | ✓ |   |   |
 | `SuperDocMutationFilter` | ✓ | ✓ |   |   |
 | `SuperDocMutationOrigin` | ✓ | ✓ |   |   |
+| `SuperDocPageMarginsChangePayload` | ✓ | ✓ |   |   |
 | `SuperDocPaintEvent` | ✓ | ✓ |   |   |
 | `SuperDocReadyPayload` | ✓ | ✓ |   |   |
 | `SuperDocReceiptSuccess` | ✓ | ✓ |   |   |

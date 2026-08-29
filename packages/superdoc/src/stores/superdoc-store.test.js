@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
 import { createPinia, setActivePinia } from 'pinia';
 import { useSuperdocStore } from './superdoc-store.js';
-import { DOCX, PDF } from '@superdoc/common';
+import { DOCX, PDF, HTML, getFileObject } from '@superdoc/common';
 
 // Mock getFileObject while keeping the rest of the module's exports intact
 vi.mock('@superdoc/common', async (importOriginal) => {
@@ -149,6 +149,18 @@ describe('SuperDoc Store - Blob Support', () => {
 
       const document = store.documents[0];
       expect(document.data.type).toBe(DOCX);
+    });
+
+    it('should canonicalize an HTML shorthand before fetching a URL', async () => {
+      const file = new File(['test content'], 'test.html', { type: HTML });
+      getFileObject.mockResolvedValueOnce(file);
+
+      const config = createTestConfig([{ url: 'https://example.com/test.html', name: 'test.html', type: 'html' }]);
+
+      await store.init(config);
+
+      expect(getFileObject).toHaveBeenCalledWith('https://example.com/test.html', 'test.html', HTML);
+      expect(store.documents[0]).toMatchObject({ type: HTML, data: file });
     });
 
     it('should handle mixed File and Blob objects', async () => {

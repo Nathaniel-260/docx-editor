@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-27T13:36:48.030Z
+Generated: 2026-08-28T20:23:20.683Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 249 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 249 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 253 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 253 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **249** |
+| **union** |  | **253** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 239
+- typed but no runtime export (phantom risk): 243
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -63,8 +63,11 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `DocRange`
 - `Document`
 - `DocumentApi`
+- `DocumentDataSource`
 - `DocumentMode`
 - `DocumentProtectionState`
+- `DocumentSource`
+- `DocumentUploadSource`
 - `EditorSurface`
 - `EditorTransactionEvent`
 - `EditorUpdateEvent`
@@ -120,6 +123,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `SelectionHandle`
 - `SelectionInfo`
 - `StoryLocator`
+- `StructuredDocumentSource`
 - `SuperDocActiveEditorExtensions`
 - `SuperDocActiveEditorExtensionsCommands`
 - `SuperDocActiveEditorExtensionsDiagnostics`
@@ -286,7 +290,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `CommentsLayout` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsResponsiveConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsType` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Config` | ✓ | ✓ |   |   | 24 |   | 7 | 3 | 0 |
+| `Config` | ✓ | ✓ |   |   | 26 |   | 7 | 3 | 0 |
 | `ContentControlActiveChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContentControlClickPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContentControlRef` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -301,16 +305,19 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `ContextMenuSelectContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuSelectPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContextMenuSelectReadiness` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 276 | 43 | 0 |
+| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 300 | 55 | 0 |
 | `DiffApplyOperationReceipt` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DiffApplyResult` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DiffApplyReviewItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DirectSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DocRange` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Document` | ✓ | ✓ |   |   | 2 |   | 94 | 6 | 0 |
+| `Document` | ✓ | ✓ |   |   | 3 |   | 101 | 9 | 0 |
 | `DocumentApi` | ✓ | ✓ |   |   | 3 |   | 2 | 0 | 0 |
+| `DocumentDataSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `DocumentMode` | ✓ | ✓ |   |   | 3 |   | 1 | 2 | 0 |
 | `DocumentProtectionState` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `DocumentSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `DocumentUploadSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `EditorSurface` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `EditorTransactionEvent` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `EditorUpdateEvent` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -327,7 +334,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `FlowBlock` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `FlowMode` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `FontFamilyOption` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `HTML` | ✓ | ✓ | ✓ | ✓ | 1 |   | 45 | 0 | 0 |
+| `HTML` | ✓ | ✓ | ✓ | ✓ | 1 |   | 51 | 0 | 0 |
 | `HyperlinkActivationContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkActivationHandler` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkActivationResult` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -336,7 +343,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `HyperlinksConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `IntentSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `InteractionConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `Layout` | ✓ | ✓ |   |   | 1 |   | 5 | 0 | 0 |
+| `Layout` | ✓ | ✓ |   |   | 1 |   | 3 | 0 | 0 |
 | `LayoutEngineOptions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `LayoutFragment` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `LayoutMetrics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -366,9 +373,10 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SearchMatch` | ✓ | ✓ |   |   | 3 |   | 0 | 0 | 0 |
 | `SearchStrings` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SelectionHandle` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 2 | 0 | 0 |
-| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 24 |   | 246 | 37 | 0 |
+| `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 1 | 0 | 0 |
+| `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 4 | 0 | 0 |
+| `StructuredDocumentSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 25 |   | 249 | 40 | 0 |
 | `SuperDocActiveEditorExtensions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsCommands` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsDiagnostics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -468,9 +476,9 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SurfaceResolver` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SurfacesConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SurfacesModuleConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `TextAddress` | ✓ | ✓ |   |   | 1 |   | 7 | 0 | 0 |
+| `TextAddress` | ✓ | ✓ |   |   | 1 |   | 9 | 0 | 0 |
 | `TextSegment` | ✓ | ✓ |   |   | 1 |   | 1 | 0 | 0 |
-| `TextTarget` | ✓ | ✓ |   |   | 1 |   | 11 | 0 | 0 |
+| `TextTarget` | ✓ | ✓ |   |   | 1 |   | 13 | 0 | 0 |
 | `ToolbarCommandId` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ToolbarConfig` | ✓ | ✓ |   |   | 3 |   | 1 | 0 | 0 |
 | `ToolbarCustomButton` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |

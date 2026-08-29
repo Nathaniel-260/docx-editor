@@ -1028,12 +1028,27 @@ export interface AwarenessState extends User {
   [key: string]: unknown;
 }
 
+/** File-like objects exposed by common browser upload components. */
+export type DocumentUploadSource = {
+  uid?: string | number;
+  name?: string;
+  originFileObj?: globalThis.File | globalThis.Blob;
+  file?: globalThis.File | globalThis.Blob;
+  raw?: globalThis.File | globalThis.Blob;
+};
+
+/** File, byte, or upload-wrapper data accepted as a document source. */
+export type DocumentDataSource = globalThis.File | globalThis.Blob | ArrayBuffer | Uint8Array | DocumentUploadSource;
+
 export interface Document {
   /** The ID of the document. */
   id?: string;
-  /** The type of the document. */
+  /** Document type as a MIME type or shorthand such as `docx`. */
   type: string;
-  /** The initial data of the document (File, Blob, or null). */
+  /**
+   * File or Blob exposed by `SuperDoc.state` after source normalization.
+   * Direct byte sources appear as a Blob in this public view.
+   */
   data?: globalThis.File | globalThis.Blob | null;
   /** The name of the document. */
   name?: string;
@@ -1041,6 +1056,8 @@ export interface Document {
   url?: string;
   /** Whether the document is a new file. */
   isNewFile?: boolean;
+  /** Password for this encrypted DOCX. Overrides top-level `Config.password`. */
+  password?: string;
   /** The Yjs document for collaboration. */
   ydoc?: YDoc;
   /**
@@ -1060,6 +1077,19 @@ export interface Document {
    */
   v2Collaboration?: V2CollaborationConfig | null;
 }
+
+type DocumentSourceOptions = Omit<Document, 'data' | 'type' | 'url'>;
+
+/**
+ * A document source with optional metadata. Provide `data` or `url`, but not
+ * both. SuperDoc infers the type from file metadata and otherwise uses DOCX.
+ */
+export type StructuredDocumentSource =
+  | (DocumentSourceOptions & { data: DocumentDataSource; type?: string; url?: never })
+  | (DocumentSourceOptions & { data?: never; type?: string; url: string });
+
+/** Document input accepted by `Config.document`. */
+export type DocumentSource = string | DocumentDataSource | StructuredDocumentSource | Document;
 
 /**
  * Public snapshot shape returned by `SuperDoc#state`. Always reflects
@@ -4168,24 +4198,14 @@ export interface Config {
   /** The role of the user in this SuperDoc. */
   role?: 'editor' | 'viewer' | 'suggester';
   /**
-   * The document to load. If a string, it will be treated as a URL. If a File
-   * or Blob, it will be used directly. For a v2 collaboration room, pass a
-   * structured document carrying `v2Collaboration`.
-   *
-   * Omitting this field and `documents` mounts a blank DOCX, so the Editor
-   * opens a real document rather than an empty surface. The blank document is
-   * a supported v2 source; it is seeded before mount and behaves like any
-   * other opened DOCX, including export.
-   *
-   * Setting the v1 `modules.collaboration` field also suppresses that seeding,
-   * but it is not a supported v2 path: the runtime fails closed with
-   * `collaboration-v1-config-unsupported` and mounts only enough state to
-   * report that error.
+   * Document to open. Pass a URL, file, byte source, or structured source.
+   * Use a structured document carrying `v2Collaboration` for collaboration,
+   * or a structured source for other metadata. Omit it to open a blank DOCX.
    */
-  document?: object | string | globalThis.File | globalThis.Blob;
+  document?: DocumentSource | null;
   /** Password for encrypted DOCX files. Forwarded during document load. */
   password?: string;
-  /** The documents to load → soon to be deprecated. */
+  /** Documents to load. */
   documents?: Document[];
   /**
    * The current user of this SuperDoc. Typed as `AwarenessUser` (an
@@ -4368,15 +4388,7 @@ export interface Config {
    * @deprecated replaceWith=`application cleanup after superdoc.destroy()` removeIn=v3.0
    */
   onEditorDestroy?: () => void;
-  /**
-   * Callback when an editor reports a content error (parse failure, doc
-   * import error, etc.). `error` is widened to `unknown` because the
-   * document editor side mostly normalizes to `Error` but some emitters
-   * (e.g. `insertContentAt`) forward the original caught value. `file`
-   * matches `Document.data` (`File | Blob | null | undefined`) since
-   * the document can be loaded from any of those shapes. `documentId`
-   * is guaranteed at runtime by `#initDocuments`.
-   */
+  /** Called when the editor cannot read or update document content. */
   onContentError?: (params: {
     error: unknown;
     editor: Editor;

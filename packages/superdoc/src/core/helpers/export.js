@@ -12,10 +12,27 @@ const getMimeType = (extension) => {
   return MIME_TYPES[extension.toLowerCase()] || 'application/octet-stream';
 };
 
-const ensureBlob = (data, extension) => {
-  if (data instanceof Blob) return data;
+const blobSizeGetter =
+  typeof Blob === 'function' ? Object.getOwnPropertyDescriptor(Blob.prototype, 'size')?.get : undefined;
 
+const isBlob = (value) => {
+  if (!blobSizeGetter) return false;
+
+  try {
+    blobSizeGetter.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const ensureBlob = (data, extension) => {
   const mimeType = getMimeType(extension);
+
+  if (isBlob(data)) {
+    if (data instanceof Blob) return data;
+    return new Blob([data], { type: data.type || mimeType });
+  }
 
   if (data instanceof ArrayBuffer) {
     return new Blob([data], { type: mimeType });

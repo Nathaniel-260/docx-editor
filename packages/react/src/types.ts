@@ -81,9 +81,7 @@ export type SuperDocTransactionEvent = Parameters<NonNullable<SuperDocConfig['on
  * Event passed to onContentError callback. Re-derived from the core
  * `SuperDocConfig['onContentError']` parameter so the React wrapper
  * cannot drift from the core contract: any widening or tightening
- * upstream surfaces here automatically. See the core
- * `Config.onContentError` JSDoc for the field semantics
- * (`error: unknown`, `file: File | Blob | null | undefined`).
+ * upstream surfaces here automatically.
  */
 export type SuperDocContentErrorEvent = Parameters<NonNullable<SuperDocConfig['onContentError']>>[0];
 

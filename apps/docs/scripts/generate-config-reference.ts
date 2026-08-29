@@ -15,6 +15,7 @@ type ReferenceDefinition = Omit<ConfigExplorerData, 'fields'> & {
   excludeDeprecated?: boolean;
   excludeFields?: readonly string[];
   includeFields?: readonly string[];
+  typeOverrides?: Readonly<Record<string, string>>;
 };
 
 const references: ReferenceDefinition[] = [
@@ -28,6 +29,7 @@ const references: ReferenceDefinition[] = [
     syntax: 'typed-variable',
     excludeDeprecated: true,
     excludeFields: ['experimental'],
+    typeOverrides: { document: 'DocumentSource | null' },
     groups: [
       { id: 'essentials', label: 'Essentials' },
       { id: 'document', label: 'Document' },
@@ -255,7 +257,15 @@ async function generateReference(definition: ReferenceDefinition) {
 
   if (!document) throw new Error(`${definition.typeName} was not exported by ${sourcePath}`);
 
-  const { outputFile, typeName: _typeName, excludeDeprecated, excludeFields, includeFields, ...metadata } = definition;
+  const {
+    outputFile,
+    typeName: _typeName,
+    excludeDeprecated,
+    excludeFields,
+    includeFields,
+    typeOverrides,
+    ...metadata
+  } = definition;
   const includedFieldNames = includeFields ? new Set(includeFields) : undefined;
   const fields = document.entries
     .map(toField)
@@ -281,12 +291,12 @@ async function generateReference(definition: ReferenceDefinition) {
   console.log(`Generated ${data.name} reference: ${data.fields.length} fields.`);
 
   function toField(entry: DocEntry): ConfigField {
-    const type = generatedTypes.get(entry.name);
+    const type = typeOverrides?.[entry.name] ?? generatedTypes.get(entry.name);
     if (!type) throw new Error(`No generated type for ${definition.typeName}.${entry.name}`);
     return {
       name: entry.name,
       type,
-      typeName: generatedTypeNames.get(entry.name),
+      typeName: typeOverrides?.[entry.name] ? undefined : generatedTypeNames.get(entry.name),
       required: entry.required,
       description: entry.description.replace(/\s+/gu, ' ').trim(),
       default: fieldDefaults.get(entry.name),

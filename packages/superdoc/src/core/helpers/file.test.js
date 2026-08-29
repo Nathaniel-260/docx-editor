@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vite-plus/test';
 import { extractBrowserFile, normalizeDocumentEntry } from './file.js';
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const HTML = 'text/html';
+const PDF = 'application/pdf';
 
 describe('extractBrowserFile', () => {
   it('returns the same File instance when given a File', () => {
@@ -56,8 +58,6 @@ describe('normalizeDocumentEntry', () => {
       name: 'doc.docx',
       type: DOCX,
     });
-    // isNewFile is not set by normalizeDocumentEntry - the Editor determines this
-    // automatically based on whether content was provided
     expect(out.isNewFile).toBeUndefined();
     expect(out.data).toBeInstanceOf(File);
     expect(out.data).toBe(f);
@@ -86,6 +86,39 @@ describe('normalizeDocumentEntry', () => {
     expect(out.name).toBe('x.docx');
   });
 
+  it('uses an upload wrapper name when its Blob has no native name', () => {
+    const uploadFile = {
+      uid: 'u2',
+      name: 'report.pdf',
+      originFileObj: new Blob(['%PDF'], { type: '' }),
+    };
+
+    const out = normalizeDocumentEntry(uploadFile);
+
+    expect(out.data).toBeInstanceOf(File);
+    expect(out.data.name).toBe('report.pdf');
+    expect(out.name).toBe('report.pdf');
+    expect(out.type).toBe(PDF);
+  });
+
+  it.each([
+    ['report.pdf', PDF],
+    ['report.html', HTML],
+  ])('uses the wrapper filename when the uploaded File has a generic MIME (%s)', (name, type) => {
+    const uploadFile = {
+      name,
+      originFileObj: new File(['content'], 'upload.bin', { type: 'application/octet-stream' }),
+    };
+
+    const out = normalizeDocumentEntry(uploadFile);
+
+    expect(out.type).toBe(type);
+    expect(out.name).toBe(name);
+    expect(out.data).toBeInstanceOf(File);
+    expect(out.data.name).toBe(name);
+    expect(out.data.type).toBe(type);
+  });
+
   it('normalizes config objects with `data` wrapper', () => {
     const inner = new File([new Blob(['x'], { type: DOCX })], 'wrapped.docx', { type: DOCX });
     const cfg = { data: { originFileObj: inner }, name: 'prefer-this-name.docx', password: 'secret' };
@@ -96,9 +129,144 @@ describe('normalizeDocumentEntry', () => {
     expect(out.password).toBe('secret');
   });
 
-  it('passes through URL-based entries unchanged', () => {
-    const cfg = { url: 'https://example.com/test.docx', type: 'docx', name: 'url.docx' };
+  it('uses a structured name when its Blob has no native name or type', () => {
+    const out = normalizeDocumentEntry({
+      data: new Blob(['%PDF'], { type: '' }),
+      name: 'report.pdf',
+    });
+
+    expect(out.data).toBeInstanceOf(File);
+    expect(out.data.name).toBe('report.pdf');
+    expect(out.data.type).toBe(PDF);
+    expect(out.name).toBe('report.pdf');
+    expect(out.type).toBe(PDF);
+  });
+
+  it.each([
+    ['pdf', PDF],
+    ['html', HTML],
+  ])('uses an explicit %s type instead of a generic File MIME', (shorthand, type) => {
+    const data = new File(['content'], `document.${shorthand}`, { type: 'application/octet-stream' });
+
+    const out = normalizeDocumentEntry({ data, type: shorthand });
+
+    expect(out.type).toBe(type);
+    expect(out.data).toBeInstanceOf(File);
+    expect(out.data.type).toBe(type);
+  });
+
+  it.each([
+    [DOCX.toUpperCase(), DOCX, Uint8Array],
+    [PDF.toUpperCase(), PDF, Blob],
+    [HTML.toUpperCase(), HTML, Blob],
+  ])('canonicalizes the supported MIME type %s', (inputType, type, dataType) => {
+    const out = normalizeDocumentEntry({ data: new Uint8Array([1, 2, 3, 4]), type: inputType });
+
+    expect(out.type).toBe(type);
+    expect(out.data).toBeInstanceOf(dataType);
+  });
+
+  it.each([
+    ['ArrayBuffer', new Uint8Array([1, 2, 3, 4]).buffer, false],
+    ['Uint8Array', new Uint8Array([1, 2, 3, 4]), true],
+  ])('normalizes a direct %s as DOCX data', (_label, data, preservesIdentity) => {
+    const out = normalizeDocumentEntry(data);
+
+    expect(out).toMatchObject({
+      type: DOCX,
+      name: 'document.docx',
+    });
+    expect(out.data).toBeInstanceOf(Uint8Array);
+    if (preservesIdentity) expect(out.data).toBe(data);
+    else expect(out.data).not.toBe(data);
+    expect(out.data).toEqual(new Uint8Array([1, 2, 3, 4]));
+  });
+
+  it('preserves structured metadata and localized DOCX bytes', () => {
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const entry = { data, type: DOCX, name: 'contract.docx', password: 'secret' };
+    const out = normalizeDocumentEntry(entry);
+
+    expect(out).toMatchObject({ type: DOCX, name: 'contract.docx', password: 'secret' });
+    expect(out.data).toBeInstanceOf(Uint8Array);
+    expect(out.data).toBe(data);
+    expect(out.data).toEqual(data);
+  });
+
+  it.each([
+    ['report.pdf', PDF],
+    ['report.html', HTML],
+    ['report.htm', HTML],
+  ])('infers %s structured byte data from its filename', async (name, type) => {
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const out = normalizeDocumentEntry({ data, name });
+
+    expect(out.type).toBe(type);
+    expect(out.name).toBe(name);
+    expect(out.data).toBeInstanceOf(Blob);
+    expect(out.data.type).toBe(type);
+    expect(new Uint8Array(await out.data.arrayBuffer())).toEqual(data);
+  });
+
+  it('reuses localized DOCX bytes on subsequent normalization passes', () => {
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const first = normalizeDocumentEntry({ data, type: DOCX, name: 'contract.docx' });
+    const second = normalizeDocumentEntry(first);
+
+    expect(first.data).toBe(data);
+    expect(second.data).toBe(first.data);
+  });
+
+  it.each([
+    ['HTML', HTML],
+    ['PDF', PDF],
+  ])('converts structured byte data to a Blob for the %s renderer', async (_label, type) => {
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const out = normalizeDocumentEntry({ data, type, name: `document.${_label.toLowerCase()}` });
+
+    expect(out.type).toBe(type);
+    expect(out.data).toBeInstanceOf(Blob);
+    expect(new Uint8Array(await out.data.arrayBuffer())).toEqual(data);
+  });
+
+  it.each([
+    ['docx', DOCX, Uint8Array],
+    ['pdf', PDF, Blob],
+    ['html', HTML, Blob],
+  ])('canonicalizes the %s shorthand for structured byte data', async (shorthand, type, DataType) => {
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const out = normalizeDocumentEntry({ data, type: shorthand, name: `document.${shorthand}` });
+
+    expect(out.type).toBe(type);
+    expect(out.data).toBeInstanceOf(DataType);
+    const bytes = out.data instanceof Blob ? new Uint8Array(await out.data.arrayBuffer()) : out.data;
+    expect(bytes).toEqual(data);
+  });
+
+  it.each([
+    ['DoCx', DOCX],
+    ['PDF', PDF],
+    ['HtMl', HTML],
+  ])('canonicalizes the %s shorthand case-insensitively', (shorthand, type) => {
+    const out = normalizeDocumentEntry({ data: new Uint8Array([1]), type: shorthand });
+
+    expect(out.type).toBe(type);
+  });
+
+  it.each([
+    ['docx', 'document.docx'],
+    ['pdf', 'document.pdf'],
+    ['html', 'document.html'],
+  ])('uses a matching default filename for %s byte data', (type, name) => {
+    const out = normalizeDocumentEntry({ data: new Uint8Array([1]), type });
+
+    expect(out.name).toBe(name);
+  });
+
+  it('canonicalizes shorthand types for URL-based entries', () => {
+    const cfg = { url: 'https://example.com/test.html', type: 'html', name: 'url.html' };
     const out = normalizeDocumentEntry(cfg);
-    expect(out).toBe(cfg);
+
+    expect(out).toMatchObject({ url: cfg.url, type: HTML, name: cfg.name });
   });
 });

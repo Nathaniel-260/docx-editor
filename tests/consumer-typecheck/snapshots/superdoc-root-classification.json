@@ -1,14 +1,14 @@
 {
-  "generatedAt": "2026-06-23T01:53:02.997Z",
+  "generatedAt": "2026-08-28T20:14:32.300Z",
   "summary": {
-    "total": 245,
+    "total": 253,
     "byBucket": {
-      "supported-root": 242,
+      "supported-root": 250,
       "legacy-root": 3
     },
     "byConfidence": {
       "medium": 48,
-      "high": 194
+      "high": 205
     }
   },
   "rows": [
@@ -84,6 +84,17 @@
       "rationale": "Document API result type returned by activeEditor.doc.bookmarks.get(); useful for consumers typing bookmark workflows from the root package.",
       "confidence": "high",
       "source": "doc-api",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "BorrowedSuperDocUI",
+      "bucket": "supported-root",
+      "rationale": "Public type of SuperDoc.ui. Omits destroy because the SuperDoc instance owns controller teardown.",
+      "confidence": "high",
+      "source": "surface",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,
@@ -376,6 +387,39 @@
       "inCjs": true
     },
     {
+      "name": "DiffApplyOperationReceipt",
+      "bucket": "supported-root",
+      "rationale": "Document API receipt returned for one applied diff operation.",
+      "confidence": "high",
+      "source": "doc-api",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "DiffApplyResult",
+      "bucket": "supported-root",
+      "rationale": "Document API result returned after applying a diff.",
+      "confidence": "high",
+      "source": "doc-api",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "DiffApplyReviewItem",
+      "bucket": "supported-root",
+      "rationale": "Document API review item returned when a diff produces tracked changes.",
+      "confidence": "high",
+      "source": "doc-api",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "DirectSurfaceRequest",
       "bucket": "supported-root",
       "rationale": "Headless Surface API type. Public extension surface for custom UI integrations.",
@@ -420,11 +464,44 @@
       "inCjs": false
     },
     {
+      "name": "DocumentDataSource",
+      "bucket": "supported-root",
+      "rationale": "File and byte inputs accepted by Document.data and structured Config.document sources.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "DocumentMode",
       "bucket": "supported-root",
       "rationale": "Customer-facing core API type or runtime export. Type-reachable through documented config / callback / event / method surfaces; runtime exports are documented utilities.",
       "confidence": "medium",
       "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "DocumentSource",
+      "bucket": "supported-root",
+      "rationale": "Canonical input accepted by Config.document, covering URL, file, byte, uploader, and structured sources.",
+      "confidence": "high",
+      "source": "config-supported",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "DocumentUploadSource",
+      "bucket": "supported-root",
+      "rationale": "Compatibility shape for common uploader wrappers accepted by document normalization.",
+      "confidence": "high",
+      "source": "config-supported",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,
@@ -2053,6 +2130,17 @@
       "rationale": "Return type of getZoomState(); snapshot of mode, value, fit zoom, and effective bounds for zoom UI.",
       "confidence": "high",
       "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "StructuredDocumentSource",
+      "bucket": "supported-root",
+      "rationale": "Metadata-bearing document source used for names, passwords, and v2 collaboration.",
+      "confidence": "high",
+      "source": "config-supported",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,

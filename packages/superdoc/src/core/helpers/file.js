@@ -13,47 +13,113 @@ import { DOCX, PDF, HTML } from '@superdoc/common';
  * @typedef {Object} DocumentEntry
  * @property {string} [type] Mime type or shorthand ('docx' | 'pdf' | 'html')
  * @property {string} [name] Filename to display
- * @property {File|Blob|UploadWrapper} [data] File-like data; normalized to File when available, otherwise Blob
+ * @property {File|Blob|ArrayBuffer|Uint8Array|UploadWrapper} [data] Document data
  * @property {string} [url] Remote URL to fetch; left as-is for URL flows
  * @property {boolean} [isNewFile]
  */
 
 /**
- * Extract a native File from various wrapper shapes used by UI uploader libraries.
- * Safely handles common wrapper keys or plain Blob/File inputs.
+ * Extract a File or Blob from common browser upload values.
  *
- * @param {File|Blob|UploadWrapper|any} input File-like object or an uploader wrapper
- * @returns {File|Blob|null} Extracted native File/Blob or null if not resolvable
+ * @param {File|Blob|UploadWrapper|any} input File-like object or upload wrapper
+ * @param {string} [fallbackName] Name to use when a Blob has none
+ * @returns {File|Blob|null}
  */
-export const extractBrowserFile = (input) => {
+export const extractBrowserFile = (input, fallbackName = 'document') => {
   if (!input) return null;
 
-  // Already a File
   if (typeof File === 'function' && input instanceof File) return input;
 
-  // Blob without name → wrap as File with a default name
   if (typeof Blob === 'function' && input instanceof Blob) {
     const hasFileCtor = typeof File === 'function';
     if (hasFileCtor) {
-      const name = input.name || 'document';
+      const name = input.name || fallbackName;
       return new File([input], name, { type: input.type });
     }
-    // In Node.js without File constructor, return the Blob as-is
     return input;
   }
 
-  // Common: real file often lives in `originFileObj`
-  if (input.originFileObj) return extractBrowserFile(input.originFileObj);
+  if (input.originFileObj) return extractBrowserFile(input.originFileObj, input.name || fallbackName);
 
-  // Other libraries sometimes use `file` or `raw`
-  if (input.file) return extractBrowserFile(input.file);
-  if (input.raw) return extractBrowserFile(input.raw);
+  if (input.file) return extractBrowserFile(input.file, input.name || fallbackName);
+  if (input.raw) return extractBrowserFile(input.raw, input.name || fallbackName);
 
   return null;
 };
 
+const arrayBufferByteLengthGetter = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength')?.get;
+const typedArrayTagGetter = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  Symbol.toStringTag,
+)?.get;
+
 /**
- * Infer a mime type from filename when missing
+ * Recognize byte sources across browser realms by checking their internal
+ * slots instead of realm-local constructors.
+ *
+ * @param {unknown} input
+ * @returns {input is ArrayBuffer|Uint8Array}
+ */
+export const isDocumentByteSource = (input) => {
+  if (ArrayBuffer.isView(input)) return typedArrayTagGetter?.call(input) === 'Uint8Array';
+  if (!arrayBufferByteLengthGetter) return false;
+
+  try {
+    arrayBufferByteLengthGetter.call(input);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Copy a byte source into this browser realm when needed.
+ *
+ * @param {ArrayBuffer|Uint8Array} input
+ * @returns {Uint8Array}
+ */
+const documentByteSourceToUint8Array = (input) => {
+  if (input instanceof Uint8Array) return input;
+
+  const bytes = ArrayBuffer.isView(input) ? input : new Uint8Array(/** @type {ArrayBuffer} */ (input));
+  return Uint8Array.from(/** @type {Uint8Array} */ (bytes));
+};
+
+/**
+ * Convert a byte source into a Blob from this browser realm.
+ *
+ * @param {ArrayBuffer|Uint8Array} input
+ * @param {string} type
+ * @returns {Blob}
+ */
+export const documentByteSourceToBlob = (input, type) => {
+  return new Blob([documentByteSourceToUint8Array(input)], { type });
+};
+
+/**
+ * Expand supported document type shorthands to MIME types.
+ *
+ * @param {string} type
+ * @returns {string}
+ */
+const canonicalizeDocumentType = (type) => {
+  switch (type.toLowerCase()) {
+    case 'docx':
+    case DOCX:
+      return DOCX;
+    case 'pdf':
+    case PDF:
+      return PDF;
+    case 'html':
+    case HTML:
+      return HTML;
+    default:
+      return type;
+  }
+};
+
+/**
+ * Infer a MIME type from a filename.
  * @param {string} [name]
  * @returns {string}
  */
@@ -66,41 +132,89 @@ const inferTypeFromName = (name = '') => {
   return '';
 };
 
+const getDefaultDocumentName = (type) => {
+  if (type === DOCX) return 'document.docx';
+  if (type === PDF) return 'document.pdf';
+  if (type === HTML) return 'document.html';
+  return 'document';
+};
+
+const GENERIC_BINARY_MIME = 'application/octet-stream';
+
 /**
- * Normalize any supported document input into SuperDoc's expected shape.
- * Accepts File/Blob/uploader wrappers directly, or a config-like object with a `data` field.
- * URL-based entries are returned unchanged for downstream handling.
+ * Normalize a supported document input into a structured source.
  *
  * @param {File|Blob|UploadWrapper|DocumentEntry|any} entry
- * @returns {DocumentEntry|any} Normalized document entry or the original value when unchanged
+ * @returns {DocumentEntry|any} A normalized entry, or the original value when it is unsupported or unchanged
  */
 export const normalizeDocumentEntry = (entry) => {
-  // Direct file-like input (e.g., uploader wrapper or File)
+  if (isDocumentByteSource(entry)) {
+    return {
+      type: DOCX,
+      data: documentByteSourceToUint8Array(entry),
+      name: 'document.docx',
+    };
+  }
+
   const maybeFile = extractBrowserFile(entry);
   if (maybeFile) {
-    const name = /** @type {any} */ (maybeFile).name || (entry && entry.name) || 'document';
-    const type = maybeFile.type || inferTypeFromName(name) || DOCX;
+    const entryName = entry && typeof entry.name === 'string' ? entry.name : '';
+    const fileName = /** @type {any} */ (maybeFile).name || '';
+    const entryType = inferTypeFromName(entryName);
+    const inferredType = entryType || inferTypeFromName(fileName);
+    const hasGenericType = maybeFile.type.toLowerCase() === GENERIC_BINARY_MIME;
+    const name = hasGenericType && entryType ? entryName : fileName || entryName || 'document';
+    const type = hasGenericType && inferredType ? inferredType : maybeFile.type || inferredType || DOCX;
+    let data = maybeFile;
+
+    if (hasGenericType && inferredType && typeof File === 'function' && maybeFile instanceof File) {
+      data = new File([maybeFile], name, { type, lastModified: maybeFile.lastModified });
+    } else if (hasGenericType && inferredType && typeof Blob === 'function' && maybeFile instanceof Blob) {
+      data = new Blob([maybeFile], { type });
+    }
+
     return {
       type,
-      data: maybeFile,
+      data,
       name,
     };
   }
 
-  // Config object with a `data` property that could be file-like
   if (entry && typeof entry === 'object' && 'data' in entry) {
-    const file = extractBrowserFile(entry.data);
-    if (file) {
-      const type = entry.type || file.type || inferTypeFromName(file.name) || DOCX;
+    if (isDocumentByteSource(entry.data)) {
+      const type = canonicalizeDocumentType(entry.type || inferTypeFromName(entry.name) || DOCX);
       return {
         ...entry,
         type,
-        data: file,
+        data: type === DOCX ? documentByteSourceToUint8Array(entry.data) : documentByteSourceToBlob(entry.data, type),
+        name: entry.name || getDefaultDocumentName(type),
+      };
+    }
+
+    const file = extractBrowserFile(entry.data, entry.name);
+    if (file) {
+      const declaredType = typeof entry.type === 'string' && entry.type ? canonicalizeDocumentType(entry.type) : '';
+      const type = declaredType || file.type || inferTypeFromName(file.name) || DOCX;
+      const shouldSetDataType = !file.type || Boolean(declaredType && file.type !== declaredType);
+      let data = file;
+      if (shouldSetDataType && typeof File === 'function' && file instanceof File) {
+        data = new File([file], file.name, { type, lastModified: file.lastModified });
+      } else if (shouldSetDataType && typeof Blob === 'function' && file instanceof Blob) {
+        data = new Blob([file], { type });
+      }
+      return {
+        ...entry,
+        type,
+        data,
         name: entry.name || file.name || 'document',
       };
     }
   }
 
-  // Unchanged (e.g., URL-based configs handled later)
+  if (entry && typeof entry === 'object' && 'url' in entry && typeof entry.type === 'string') {
+    const type = canonicalizeDocumentType(entry.type);
+    if (type !== entry.type) return { ...entry, type };
+  }
+
   return entry;
 };

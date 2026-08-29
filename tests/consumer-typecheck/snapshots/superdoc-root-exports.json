@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-27T13:36:48.030Z",
+  "generatedAt": "2026-08-28T20:23:20.683Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -55,8 +55,11 @@
         "DocRange",
         "Document",
         "DocumentApi",
+        "DocumentDataSource",
         "DocumentMode",
         "DocumentProtectionState",
+        "DocumentSource",
+        "DocumentUploadSource",
         "EditorSurface",
         "EditorTransactionEvent",
         "EditorUpdateEvent",
@@ -114,6 +117,7 @@
         "SelectionHandle",
         "SelectionInfo",
         "StoryLocator",
+        "StructuredDocumentSource",
         "SuperDoc",
         "SuperDocActiveEditorExtensions",
         "SuperDocActiveEditorExtensionsCommands",
@@ -310,8 +314,11 @@
         "DocRange",
         "Document",
         "DocumentApi",
+        "DocumentDataSource",
         "DocumentMode",
         "DocumentProtectionState",
+        "DocumentSource",
+        "DocumentUploadSource",
         "EditorSurface",
         "EditorTransactionEvent",
         "EditorUpdateEvent",
@@ -369,6 +376,7 @@
         "SelectionHandle",
         "SelectionInfo",
         "StoryLocator",
+        "StructuredDocumentSource",
         "SuperDoc",
         "SuperDocActiveEditorExtensions",
         "SuperDocActiveEditorExtensionsCommands",
@@ -555,11 +563,11 @@
     }
   },
   "counts": {
-    "types.import": 249,
-    "types.require": 249,
+    "types.import": 253,
+    "types.require": 253,
     "import": 10,
     "require": 10,
-    "union": 249
+    "union": 253
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -611,8 +619,11 @@
         "DocRange",
         "Document",
         "DocumentApi",
+        "DocumentDataSource",
         "DocumentMode",
         "DocumentProtectionState",
+        "DocumentSource",
+        "DocumentUploadSource",
         "EditorSurface",
         "EditorTransactionEvent",
         "EditorUpdateEvent",
@@ -668,6 +679,7 @@
         "SelectionHandle",
         "SelectionInfo",
         "StoryLocator",
+        "StructuredDocumentSource",
         "SuperDocActiveEditorExtensions",
         "SuperDocActiveEditorExtensionsCommands",
         "SuperDocActiveEditorExtensionsDiagnostics",

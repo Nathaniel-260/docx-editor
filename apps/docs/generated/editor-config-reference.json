@@ -80,10 +80,9 @@
     },
     {
       "name": "document",
-      "type": "string | object | {\n  lastModified: number;\n  name: string;\n  webkitRelativePath: string;\n  size: number;\n  type: string;\n  arrayBuffer: () => Promise<ArrayBuffer>;\n  bytes: () => Promise<Uint8Array<ArrayBuffer>>;\n  slice: (start: number | undefined, end: number | undefined, contentType: string | undefined) => Blob;\n  stream: () => ReadableStream<Uint8Array<ArrayBuffer>>;\n  text: () => Promise<string>;\n} | {\n  size: number;\n  type: string;\n  arrayBuffer: () => Promise<ArrayBuffer>;\n  bytes: () => Promise<Uint8Array<ArrayBuffer>>;\n  slice: (start: number | undefined, end: number | undefined, contentType: string | undefined) => Blob;\n  stream: () => ReadableStream<Uint8Array<ArrayBuffer>>;\n  text: () => Promise<string>;\n}",
-      "typeName": "string | object | File | Blob",
+      "type": "DocumentSource | null",
       "required": false,
-      "description": "The document to load. If a string, it will be treated as a URL. If a File or Blob, it will be used directly. For a v2 collaboration room, pass a structured document carrying `v2Collaboration`. Omitting this field and `documents` mounts a blank DOCX, so the Editor opens a real document rather than an empty surface. The blank document is a supported v2 source; it is seeded before mount and behaves like any other opened DOCX, including export. Setting the v1 `modules.collaboration` field also suppresses that seeding, but it is not a supported v2 path: the runtime fails closed with `collaboration-v1-config-unsupported` and mounts only enough state to report that error.",
+      "description": "Document to open. Pass a URL, file, byte source, or structured source. Use a structured document carrying `v2Collaboration` for collaboration, or a structured source for other metadata. Omit it to open a blank DOCX.",
       "group": "other"
     },
     {
@@ -97,7 +96,7 @@
       "name": "documents",
       "type": "Document[]",
       "required": false,
-      "description": "The documents to load → soon to be deprecated.",
+      "description": "Documents to load.",
       "group": "other"
     },
     {
@@ -226,7 +225,7 @@
       "type": "(params: {\n  error: unknown;\n  editor: Editor;\n  documentId: string;\n  file: null | File | Blob;\n}) => void",
       "typeName": "(params: { error: unknown; editor: Editor; documentId: string; file: globalThis.File | globalThis.Blob | null | undefined; }) => void",
       "required": false,
-      "description": "Callback when an editor reports a content error (parse failure, doc import error, etc.). `error` is widened to `unknown` because the document editor side mostly normalizes to `Error` but some emitters (e.g. `insertContentAt`) forward the original caught value. `file` matches `Document.data` (`File | Blob | null | undefined`) since the document can be loaded from any of those shapes. `documentId` is guaranteed at runtime by `#initDocuments`.",
+      "description": "Called when the editor cannot read or update document content.",
       "group": "other"
     },
     {

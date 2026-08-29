@@ -30,6 +30,7 @@ import type {
   BlocksListResult,
   BookmarkAddress,
   BookmarkInfo,
+  BorrowedSuperDocUI,
   CanPerformPermissionParams,
   CollaborationConfig,
   V2CollaborationConfig,
@@ -53,9 +54,15 @@ import type {
   ContextMenuSelectContext,
   ContextMenuSelectPayload,
   ContextMenuSelectReadiness,
+  DiffApplyOperationReceipt,
+  DiffApplyResult,
+  DiffApplyReviewItem,
   DirectSurfaceRequest,
   DocRange,
   Document,
+  DocumentDataSource,
+  DocumentSource,
+  DocumentUploadSource,
   DocumentApi,
   DocumentMode,
   DocumentProtectionState,
@@ -239,6 +246,7 @@ import type {
   SurfaceRequest,
   SurfaceResolution,
   SurfaceResolver,
+  StructuredDocumentSource,
   SurfacesModuleConfig,
   TextAddress,
   TextSegment,
@@ -274,6 +282,7 @@ const _real_BlockNavigationAddress: AssertNotAny<BlockNavigationAddress> = true;
 const _real_BlocksListResult: AssertNotAny<BlocksListResult> = true;
 const _real_BookmarkAddress: AssertNotAny<BookmarkAddress> = true;
 const _real_BookmarkInfo: AssertNotAny<BookmarkInfo> = true;
+const _real_BorrowedSuperDocUI: AssertNotAny<BorrowedSuperDocUI> = true;
 const _real_CanPerformPermissionParams: AssertNotAny<CanPerformPermissionParams> = true;
 const _real_CollaborationConfig: AssertNotAny<CollaborationConfig> = true;
 const _real_V2CollaborationConfig: AssertNotAny<V2CollaborationConfig> = true;
@@ -297,9 +306,15 @@ const _real_ContextMenuSection: AssertNotAny<ContextMenuSection> = true;
 const _real_ContextMenuSelectContext: AssertNotAny<ContextMenuSelectContext> = true;
 const _real_ContextMenuSelectPayload: AssertNotAny<ContextMenuSelectPayload> = true;
 const _real_ContextMenuSelectReadiness: AssertNotAny<ContextMenuSelectReadiness> = true;
+const _real_DiffApplyOperationReceipt: AssertNotAny<DiffApplyOperationReceipt> = true;
+const _real_DiffApplyResult: AssertNotAny<DiffApplyResult> = true;
+const _real_DiffApplyReviewItem: AssertNotAny<DiffApplyReviewItem> = true;
 const _real_DirectSurfaceRequest: AssertNotAny<DirectSurfaceRequest> = true;
 const _real_DocRange: AssertNotAny<DocRange> = true;
 const _real_Document: AssertNotAny<Document> = true;
+const _real_DocumentDataSource: AssertNotAny<DocumentDataSource> = true;
+const _real_DocumentSource: AssertNotAny<DocumentSource> = true;
+const _real_DocumentUploadSource: AssertNotAny<DocumentUploadSource> = true;
 const _real_DocumentApi: AssertNotAny<DocumentApi> = true;
 const _real_DocumentMode: AssertNotAny<DocumentMode> = true;
 const _real_DocumentProtectionState: AssertNotAny<DocumentProtectionState> = true;
@@ -483,6 +498,7 @@ const _real_SurfaceOutcome: AssertNotAny<SurfaceOutcome> = true;
 const _real_SurfaceRequest: AssertNotAny<SurfaceRequest> = true;
 const _real_SurfaceResolution: AssertNotAny<SurfaceResolution> = true;
 const _real_SurfaceResolver: AssertNotAny<SurfaceResolver> = true;
+const _real_StructuredDocumentSource: AssertNotAny<StructuredDocumentSource> = true;
 const _real_SurfacesModuleConfig: AssertNotAny<SurfacesModuleConfig> = true;
 const _real_TextAddress: AssertNotAny<TextAddress> = true;
 const _real_TextSegment: AssertNotAny<TextSegment> = true;

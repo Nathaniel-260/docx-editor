@@ -22,7 +22,7 @@ import {
   type NormalizedV2CollaborationTarget,
 } from './collaboration/resolve-v2-collaboration-target.js';
 import { createV2AwarenessDiffer, type V2AwarenessSnapshotLike } from './collaboration/v2-awareness-bridge.js';
-import { normalizeDocumentEntry } from './helpers/file.js';
+import { documentByteSourceToBlob, isDocumentByteSource, normalizeDocumentEntry } from './helpers/file.js';
 import { isAllowed } from './collaboration/permissions.js';
 import { Whiteboard } from './whiteboard/Whiteboard';
 import { WhiteboardRenderer } from './whiteboard/WhiteboardRenderer';
@@ -54,6 +54,20 @@ const STRUCTURED_CONTENT_FRAME_SELECTOR = [
 ].join(', ');
 
 const CONTENT_CONTROL_POINTER_END_WINDOW_MS = 800;
+
+const nativeBlobSizeGetter =
+  typeof Blob === 'function' ? Object.getOwnPropertyDescriptor(Blob.prototype, 'size')?.get : undefined;
+
+const isBlobAcrossRealms = (value: unknown): value is Blob => {
+  if (!nativeBlobSizeGetter) return false;
+
+  try {
+    nativeBlobSizeGetter.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 function isContentControlNonSelectionKeyDown(event: KeyboardEvent): boolean {
   if (event.key === 'Alt' || event.key === 'Control' || event.key === 'Meta' || event.key === 'Shift') return true;
@@ -999,7 +1013,6 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     documentMode: 'editing',
     allowSelectionInViewMode: false,
     role: 'editor',
-    document: {},
     documents: [],
     editorExtensions: [],
 
@@ -1601,8 +1614,17 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
    * rely on the richer runtime fields (`getEditor`, etc.).
    */
   get state(): SuperDocState {
+    const documents = this.#requireSuperdocStore('state').documents.map((document: RuntimeDocument) => {
+      if (!isDocumentByteSource(document.data)) return document;
+
+      return {
+        ...document,
+        data: documentByteSourceToBlob(document.data, document.type || DOCX),
+      };
+    });
+
     return {
-      documents: this.#requireSuperdocStore('state').documents,
+      documents,
       users: this.users,
     };
   }
@@ -1660,21 +1682,18 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
 
   #initDocuments() {
     const doc = this.config.document;
-    // Pass the narrowed `doc` to `Object.keys` so the `!!doc && typeof doc === 'object'`
-    // gate carries through; refetching `this.config.document` re-widens to
-    // `string | object | File | Blob | undefined` and trips the overload.
-    const hasDocumentConfig = !!doc && typeof doc === 'object' && Object.keys(doc)?.length;
-    const hasDocumentUrl = !!doc && typeof doc === 'string' && doc.length > 0;
-    const hasDocumentFile = !!doc && typeof File === 'function' && doc instanceof File;
-    const hasDocumentBlob = !!doc && doc instanceof Blob && !(doc instanceof File);
+    const hasDocumentObject =
+      !!doc &&
+      typeof doc === 'object' &&
+      (isDocumentByteSource(doc) || (typeof Blob === 'function' && doc instanceof Blob) || Object.keys(doc).length > 0);
+    const hasDocumentUrl = typeof doc === 'string' && doc.length > 0;
     const hasListOfDocuments = this.config.documents && this.config.documents?.length;
-    if (hasDocumentConfig && hasListOfDocuments) {
+    if ((hasDocumentObject || hasDocumentUrl) && hasListOfDocuments) {
       console.warn('🦋 [superdoc] You can only provide one of document or documents');
     }
 
-    if (hasDocumentConfig) {
-      // If an uploader-specific wrapper was passed, normalize it.
-      const normalized = normalizeDocumentEntry(this.config.document);
+    if (hasDocumentObject) {
+      const normalized = normalizeDocumentEntry(doc);
       this.config.documents = [
         {
           id: uuidv4(),
@@ -1688,22 +1707,6 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
           type: DOCX,
           url: this.config.document as string,
           name: 'document.docx',
-        },
-      ];
-    } else if (hasDocumentFile) {
-      const normalized = normalizeDocumentEntry(this.config.document);
-      this.config.documents = [
-        {
-          id: uuidv4(),
-          ...normalized,
-        },
-      ];
-    } else if (hasDocumentBlob) {
-      const normalized = normalizeDocumentEntry(this.config.document);
-      this.config.documents = [
-        {
-          id: uuidv4(),
-          ...normalized,
         },
       ];
     }
@@ -2277,20 +2280,13 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     const storeDoc = this.superdocStore?.documents.find((d: RuntimeDocument) => d.id === configDoc.id) ?? null;
     const source = storeDoc?.data ?? configDoc.data;
     if (source instanceof Blob) return source;
-    if (source instanceof Uint8Array || source instanceof ArrayBuffer) return this.#savedDocxToBlob(source);
+    if (isDocumentByteSource(source)) return this.#savedDocxToBlob(source);
     throw new Error('SuperDoc: upgradeToCollaboration() requires a live v2 editor save or DOCX Blob source');
   }
 
   #savedDocxToBlob(saved: unknown): Blob {
     if (saved instanceof Blob) return saved;
-    if (saved instanceof Uint8Array) {
-      const bytes = new Uint8Array(saved.byteLength);
-      bytes.set(saved);
-      return new Blob([bytes], { type: DOCX });
-    }
-    if (saved instanceof ArrayBuffer) {
-      return new Blob([saved], { type: DOCX });
-    }
+    if (isDocumentByteSource(saved)) return documentByteSourceToBlob(saved, DOCX);
     throw new Error('SuperDoc: active v2 editor returned an unsupported DOCX save payload');
   }
 
@@ -2590,39 +2586,27 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
     });
   }
 
-  /**
-   * Forward the editor's raw content-error to the consumer callback,
-   * enriching with documentId and the source file. `error` is widened
-   * to `unknown` because editor emitters do not normalize to
-   * `Error` consistently (e.g. `insertContentAt` forwards the original
-   * caught value).
-   *
-   */
+  /** Report an editor content error with its document ID and source file. */
   onContentError({ error, editor }: { error: unknown; editor: Editor }) {
     const documentId = editor.options?.documentId;
-    // The errored editor came from `superdocStore.documents`, so the find by
-    // its `documentId` is expected to hit — but a torn-down or foreign editor
-    // can miss, so narrow for real instead of asserting.
+    // Teardown or a foreign editor can make the expected store lookup miss.
     const doc = this.#requireSuperdocStore('onContentError').documents.find(
       (d: RuntimeDocument) => d.id === documentId,
     );
-    // `onContentError` is typed as optional on the public Config typedef
-    // because consumers don't have to wire a handler. The class field
-    // initializer installs a `() => null` default, but `#init` spreads
-    // the consumer-supplied config over it (`{ ...this.config, ...config }`),
-    // so an explicit `onContentError: undefined` can still strip the
-    // default. The optional chain keeps the call safe in that case.
-    //
-    // `documentId` is `string` on the public callback (runtime-guaranteed by
-    // `#initDocuments` for store-managed documents); when the store lookup
-    // missed, fall back to the editor's own id so the consumer still hears
-    // about the error rather than losing it.
     const resolvedId = typeof doc?.id === 'string' ? doc.id : typeof documentId === 'string' ? documentId : '';
+    const source = doc?.data;
+    const file = isBlobAcrossRealms(source)
+      ? source
+      : isDocumentByteSource(source)
+        ? this.#savedDocxToBlob(source)
+        : source == null
+          ? source
+          : undefined;
     this.config.onContentError?.({
       error,
       editor,
       documentId: resolvedId,
-      file: doc?.data,
+      file,
     });
   }
 
@@ -4155,9 +4139,12 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
 
           const editor = typeof doc.getEditor === 'function' ? doc.getEditor() : null;
           const fallbackDocx = () => {
-            if (!doc.data) return null;
-            if (doc.data.type && doc.data.type !== DOCX) return null;
-            return doc.data;
+            if (isBlobAcrossRealms(doc.data)) {
+              if (doc.data.type && doc.data.type !== DOCX) return null;
+              return doc.data;
+            }
+            if (isDocumentByteSource(doc.data)) return this.#savedDocxToBlob(doc.data);
+            return null;
           };
 
           if (!editor || typeof editor.exportDocx !== 'function') return fallbackDocx();
