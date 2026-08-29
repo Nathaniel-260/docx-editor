@@ -33,6 +33,26 @@ Maintainers squash-merge contributions to `main`; that reviewed merge is the
 approval signal used to synchronize eligible source, test, and documentation
 changes into SuperDoc's canonical source history.
 
+## Contributor License Agreement
+
+Before we can merge your first pull request, you need to agree to the SuperDoc
+[Contributor License Agreement](CLA.md) (CLA). It applies to every contribution
+to a SuperDoc repository, including code, documentation, and examples. You keep
+ownership of your work. The CLA gives SuperDoc the rights it needs to include,
+maintain, and distribute your contribution under the project's open source and
+commercial licenses. You sign once for all future contributions from the same
+GitHub account.
+
+An automated CLA assistant comments on your first pull request with a link to
+the agreement and an acceptance phrase. Review the agreement, then reply to the
+pull request with that phrase. To arrange another way to sign, email
+[legal@superdoc.dev](mailto:legal@superdoc.dev).
+
+If your employer may own work you create, make sure you have permission to
+contribute or ask your employer to sign a Corporate CLA with us. Contact
+[legal@superdoc.dev](mailto:legal@superdoc.dev) to arrange it. See Section 4 of
+the [CLA](CLA.md).
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 22, pinned in `.nvmrc`
