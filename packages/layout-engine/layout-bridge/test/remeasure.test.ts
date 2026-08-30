@@ -540,13 +540,16 @@ describe('remeasureParagraph', () => {
     it('advances cursor to correct position for tab at explicit stop', () => {
       // Tab at 48px (720 TWIPS = 0.5 inch)
       const tabStop: TabStop = { pos: 720, val: 'start' };
-      const block = createBlock([textRun('A'), tabRun(), textRun('B')], { tabs: [tabStop] });
+      const explicitTab = tabRun();
+      const block = createBlock([textRun('A'), explicitTab, textRun('B')], { tabs: [tabStop] });
       const measure = remeasureParagraph(block, 200);
 
       expect(measure.lines).toHaveLength(1);
       // "A" = 10px, tab advances to 48px, "B" starts at 48px
-      // Total width should be ~48px + 10px = 58px
-      expect(measure.lines[0].width).toBeGreaterThan(48);
+      const trailingText = measure.lines[0].segments?.find((segment) => segment.runIndex === 2);
+      expect((explicitTab as { width?: number }).width).toBeCloseTo(38, 5);
+      expect(trailingText?.x).toBeCloseTo(DEFAULT_TAB_INTERVAL_PX, 5);
+      expect(measure.lines[0].width).toBeCloseTo(58, 5);
       expect(measure.lines[0].hasExplicitTabStops).toBe(true);
     });
 
@@ -606,14 +609,14 @@ describe('remeasureParagraph', () => {
     });
 
     it('falls back to default tab interval when explicit tabs are exhausted', () => {
-      // One explicit tab at 48px, then default interval of 48px after that
       const tabStop: TabStop = { pos: 720, val: 'start' }; // 48px
+      const fallbackTab = tabRun();
       const block = createBlock(
         [
           textRun('A'), // 0-10px
           tabRun(), // advances to 48px (explicit)
           textRun('B'), // 48-58px
-          tabRun(), // advances to 48+48=96px (default interval)
+          fallbackTab, // advances to the 96px default grid position
           textRun('C'), // 96-106px
         ],
         { tabs: [tabStop], tabIntervalTwips: DEFAULT_TAB_INTERVAL_TWIPS },
@@ -621,8 +624,10 @@ describe('remeasureParagraph', () => {
       const measure = remeasureParagraph(block, 200);
 
       expect(measure.lines).toHaveLength(1);
-      // Width should reflect tab advancing by default interval
-      expect(measure.lines[0].width).toBeGreaterThan(96);
+      const trailingText = measure.lines[0].segments?.find((segment) => segment.runIndex === 4);
+      expect((fallbackTab as { width?: number }).width).toBeCloseTo(DEFAULT_TAB_INTERVAL_PX - CHAR_WIDTH, 5);
+      expect(trailingText?.x).toBeCloseTo(DEFAULT_TAB_INTERVAL_PX * 2, 5);
+      expect(measure.lines[0].width).toBeCloseTo(DEFAULT_TAB_INTERVAL_PX * 2 + CHAR_WIDTH, 5);
     });
 
     it('uses default tab interval when no explicit tabs are defined', () => {

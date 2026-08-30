@@ -734,15 +734,18 @@ const getNextTabStopPx = (
   tabStops: TabStopPx[],
   startIndex: number,
 ): { target: number; nextIndex: number; stop?: TabStopPx } => {
-  let index = startIndex;
-  while (index < tabStops.length && tabStops[index].pos <= currentX + TAB_EPSILON) {
-    index += 1;
+  while (startIndex < tabStops.length && tabStops[startIndex].pos <= currentX + TAB_EPSILON) {
+    startIndex += 1;
   }
-  if (index < tabStops.length) {
-    return { target: tabStops[index].pos, nextIndex: index + 1, stop: tabStops[index] };
+  if (startIndex < tabStops.length) {
+    return {
+      target: tabStops[startIndex].pos,
+      nextIndex: startIndex + 1,
+      stop: tabStops[startIndex],
+    };
   }
   // default tab advance if we've exhausted explicit stops
-  return { target: currentX + twipsToPx(DEFAULT_TAB_INTERVAL_TWIPS), nextIndex: index };
+  return { target: currentX + _DEFAULT_TAB_INTERVAL_PX, nextIndex: startIndex };
 };
 
 /**
