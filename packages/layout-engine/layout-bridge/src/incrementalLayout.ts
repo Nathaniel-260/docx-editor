@@ -76,6 +76,7 @@ import {
   type TableLayoutLocality,
 } from './table-layout-locality';
 import { MeasureCache, hashMeasureContent } from './cache';
+import { retainUnchangedFootnoteBand } from './retained-footnote-band';
 import {
   layoutHeaderFooterWithCache,
   HeaderFooterLayoutCache,
@@ -1865,6 +1866,7 @@ async function measureNoteBlocks(
   measureBlock: (block: FlowBlock, constraints: { maxWidth: number; maxHeight: number }) => Promise<Measure>,
   fontSignature: string,
   invocationMeasures: Map<string, Measure>,
+  retainedSeed: FootnoteReserveSeed | null,
 ): Promise<{ blocks: FlowBlock[]; measuresById: Map<string, Measure> }> {
   const needed = new Map<string, FlowBlock>();
   ids.forEach((id) => {
@@ -1878,11 +1880,24 @@ async function measureNoteBlocks(
 
   const blocks = Array.from(needed.values());
   const measuresById = new Map<string, Measure>();
+  // One changed note invalidates the complete-plane proof, not the exact
+  // measurements of its unchanged neighbours. Keep those independent of
+  // eviction from the bounded shared cache; changed objects or constraints
+  // still take the ordinary content-addressed measurement path.
+  const canRetainMeasurements =
+    retainedSeed?.fontSignature === fontSignature &&
+    retainedSeed.footnoteMeasurementWidth === constraints.maxWidth &&
+    retainedSeed.measurementHeight === constraints.maxHeight;
   await Promise.all(
     blocks.map(async (block) => {
-      const retained = invocationMeasures.get(block.id);
+      const retained =
+        invocationMeasures.get(block.id) ??
+        (canRetainMeasurements && retainedSeed.noteBlocksByBlockId?.get(block.id) === block
+          ? retainedSeed.noteMeasuresByBlockId?.get(block.id)
+          : undefined);
       if (retained) {
         hydrateTabRunWidthsFromMeasure(block, retained);
+        invocationMeasures.set(block.id, retained);
         measuresById.set(block.id, retained);
         return;
       }
@@ -3129,6 +3144,7 @@ export async function incrementalLayout(
             measureBlock,
             fontSignature,
             invocationNoteMeasures,
+            warmSeed,
           )
         ).measuresById;
       preparedWarmNoteMeasures = measuresById;
@@ -3531,6 +3547,7 @@ export async function incrementalLayout(
             measureBlock,
             fontSignature,
             invocationNoteMeasures,
+            warmSeed,
           );
         } catch (error) {
           throw markPostBodyLayoutFailure(error);
@@ -4627,13 +4644,29 @@ export async function incrementalLayout(
             footnoteFullRelayoutPerformed = true;
           } else {
             footnoteReservePassReuseHits += 1;
-            if (
-              layoutReuseSummary.mode !== 'full' &&
-              !layoutReuseSummary.reason.startsWith('m4-footnote-reserve-localized;')
-            ) {
+            if (layoutReuseSummary.mode !== 'full') {
+              // The reserve pass reuses the intermediate layout's prefix, not
+              // the source generation's tail. Publish the union of both changed
+              // ranges: otherwise finalizers skip rebuilt pages and consumers
+              // apply a stale tail certificate (including its page count).
+              const checkpointPageIndex = Math.min(
+                layoutReuseSummary.checkpointPageIndex ?? 0,
+                localized.reuse.checkpointPageIndex ?? 0,
+              );
               layoutReuseSummary = {
-                ...layoutReuseSummary,
-                reason: `m4-footnote-reserve-localized;${layoutReuseSummary.reason}`,
+                mode: 'tail-splice',
+                reason: layoutReuseSummary.reason.startsWith('m4-footnote-reserve-localized;')
+                  ? layoutReuseSummary.reason
+                  : `m4-footnote-reserve-localized;${layoutReuseSummary.reason}`,
+                tailDisposition: 'relaid-to-document-end',
+                checkpointPageIndex,
+                affectedFrontierPageIndex: localized.layout.pages.length - 1,
+                sourceAffectedFrontierPageIndex: (layoutReuse?.previousLayout?.pages.length ?? 0) - 1,
+                convergencePageIndex: null,
+                sourceConvergencePageIndex: null,
+                pagesPaginated: (layoutReuseSummary.pagesPaginated ?? 0) + (localized.reuse.pagesPaginated ?? 0),
+                pagesSplicedByReuse: checkpointPageIndex,
+                tailAdoption: null,
               };
             }
           }
@@ -4713,13 +4746,22 @@ export async function incrementalLayout(
         const adoption = layoutReuseSummary.tailAdoption;
         const retainedExtras = warmStart?.retainedFootnoteExtras;
         const checkpointPageIndex = layoutReuseSummary.checkpointPageIndex;
+        // A proved complete terminal suffix has no adopted tail. If its page
+        // count is unchanged, validate each rebuilt band up to document end
+        // instead of requiring a later page that cannot exist.
+        const localPageEnd =
+          adoption?.startPageIndex ??
+          (layoutReuseSummary.tailDisposition === 'relaid-to-document-end' &&
+          layout.pages.length === _previousLayout?.pages.length
+            ? layout.pages.length
+            : null);
         const previousNotePageIndexes = new Set(warmSeed?.notePageIndexes ?? []);
         warmSeed?.reserves.forEach((reserve, pageIndex) => {
           if (reserve > 0) previousNotePageIndexes.add(pageIndex);
         });
         const retainedFootnotePlaneBaseAdoptable =
-          adoption != null &&
-          adoption.pageIndexDelta === 0 &&
+          localPageEnd != null &&
+          (adoption == null || adoption.pageIndexDelta === 0) &&
           Number.isInteger(checkpointPageIndex) &&
           checkpointPageIndex! >= 0 &&
           warmSeedBaseUsable &&
@@ -4729,7 +4771,7 @@ export async function incrementalLayout(
           retainedExtras.blocks.length > 0 &&
           retainedExtras.blocks.length === retainedExtras.measures.length &&
           Array.isArray(warmSeed?.notePageIndexes);
-        const adoptRetainedFootnotePlane = () => {
+        const adoptRetainedFootnotePlane = (retainedLocalPages?: Map<number, Page>) => {
           // All note anchors and emitted note pages live in the retained prefix
           // or the exact same-index adopted tail. The guarded page sequence has
           // already rekeyed body ids/PM coordinates, while note bodies and
@@ -4737,8 +4779,9 @@ export async function incrementalLayout(
           extraBlocks = retainedExtras!.blocks;
           extraMeasures = retainedExtras!.measures;
           nextFootnoteReserveSeed = warmSeed;
-          const localPageReplacements = new Map<number, Page>();
-          for (let pageIndex = checkpointPageIndex!; pageIndex < adoption!.startPageIndex; pageIndex += 1) {
+          const localPageReplacements = retainedLocalPages ?? new Map<number, Page>();
+          for (let pageIndex = checkpointPageIndex!; pageIndex < localPageEnd!; pageIndex += 1) {
+            if (localPageReplacements.has(pageIndex)) continue;
             const page = layout.pages[pageIndex];
             if (!page) continue;
             localPageReplacements.set(pageIndex, {
@@ -4768,6 +4811,7 @@ export async function incrementalLayout(
         };
         const retainedFootnoteAssignmentAdoptable =
           retainedFootnotePlaneBaseAdoptable &&
+          adoption != null &&
           retainedFootnoteAssignment != null &&
           retainedFootnoteAssignment.assignedNoteIdCount === retainedFootnoteAssignment.noteIdCount &&
           retainedFootnoteAssignment.referencePageIndexes.every(
@@ -4786,6 +4830,7 @@ export async function incrementalLayout(
         const assignedFootnoteIds = collectFootnoteIdsByColumn(idsByColumn);
         const retainedFootnotePlaneAdoptable =
           retainedFootnotePlaneBaseAdoptable &&
+          adoption != null &&
           assignedFootnoteIds.size === allFootnoteIds.size &&
           [...idsByColumn.keys()].every(
             (pageIndex) => pageIndex < checkpointPageIndex! || pageIndex >= adoption!.startPageIndex,
@@ -4796,6 +4841,44 @@ export async function incrementalLayout(
         if (retainedFootnotePlaneAdoptable) {
           adoptRetainedFootnotePlane();
           break footnoteFinalization;
+        }
+        if (
+          retainedFootnotePlaneBaseAdoptable &&
+          seededInitialLayout &&
+          retainedNoteMeasurePlaneExact &&
+          assignedFootnoteIds.size === allFootnoteIds.size &&
+          _previousLayout &&
+          layout.pages.length === _previousLayout.pages.length &&
+          layoutReuse?.previousBlockIndexById &&
+          layoutReuse.currentBlockIndexById
+        ) {
+          // A body edit need not reopen the global reserve fixed-point search
+          // when every rebuilt page still owns the same complete note band.
+          const retainedExtraIds = new Set(retainedExtras!.blocks.map((block) => block.id));
+          const retainedLocalPages = new Map<number, Page>();
+          for (let pageIndex = checkpointPageIndex!; pageIndex < localPageEnd!; pageIndex += 1) {
+            const previousPage = _previousLayout.pages[pageIndex];
+            const currentPage = layout.pages[pageIndex];
+            if (!previousPage || !currentPage) break;
+            const page = retainUnchangedFootnoteBand({
+              previous: previousPage,
+              current: currentPage,
+              pageIndex,
+              pageSize: layout.pageSize,
+              columnCount: pageColumns.get(pageIndex)?.count ?? 0,
+              appliedReserve: currentFootnoteLayoutReserves[pageIndex] ?? 0,
+              anchorIds: idsByColumn.get(pageIndex)?.get(0) ?? [],
+              previousBodyIndex: layoutReuse.previousBlockIndexById,
+              currentBodyIndex: layoutReuse.currentBlockIndexById,
+              retainedExtraIds,
+            });
+            if (!page) break;
+            retainedLocalPages.set(pageIndex, page);
+          }
+          if (retainedLocalPages.size === localPageEnd! - checkpointPageIndex!) {
+            adoptRetainedFootnotePlane(retainedLocalPages);
+            break footnoteFinalization;
+          }
         }
         let { measuresById } = await measureFootnoteBlocks(allFootnoteIds);
         refreshBodyHeights(measuresById);
@@ -5377,9 +5460,13 @@ export async function incrementalLayout(
           // The exactness check below is diagnostics only: `exact=true` means
           // the next identical run will pass-1-validate (the steady state).
           if (reservesAppliedToLayout.some((h) => h > 0)) {
+            // Convergence can grow or remove pages after a reserve vector is
+            // chosen. Publish the reserves of the actual output pages, not
+            // obsolete trailing entries or an incomplete pre-growth vector.
+            const publishedReserves = layout.pages.map((page) => page.footnoteReserved ?? 0);
             nextFootnoteReserveSeed = {
-              reserves: reservesAppliedToLayout.slice(),
-              notePageIndexes: [...collectFootnoteOutputPageIndexes(finalPlan, reservesAppliedToLayout)].sort(
+              reserves: publishedReserves,
+              notePageIndexes: [...collectFootnoteOutputPageIndexes(finalPlan, publishedReserves)].sort(
                 (left, right) => left - right,
               ),
               ...(typeof footnotesInput.referenceTopologyRevision === 'string' &&
@@ -5763,6 +5850,28 @@ function validateProvedDirtyMeasurePacket(input: {
     )
       return null;
     measureSplice = { atIndex: deletedIndex!, deleteCount: 1, insertCount: 0 };
+  } else if (
+    isContiguousParagraphCollapse(
+      input.previousBlocks,
+      input.blocks,
+      input.dirty,
+      input,
+      input.currentToPreviousBlockId,
+    )
+  ) {
+    measureSplice = {
+      atIndex: input.previousBlockIndexById!.get(deleted[0]!)!,
+      deleteCount: deleted.length,
+      insertCount: 0,
+    };
+  } else if (
+    isContiguousParagraphRestore(input.previousBlocks, input.blocks, input.dirty, input, input.currentToPreviousBlockId)
+  ) {
+    measureSplice = {
+      atIndex: input.currentBlockIndexById.get(inserted[0]!)!,
+      deleteCount: 0,
+      insertCount: inserted.length,
+    };
   } else if (inserted.length === 1 && deleted.length >= 1) {
     if (input.blocks.length !== input.previousBlocks.length - deleted.length + 1 || !input.previousBlockIndexById)
       return null;
@@ -6082,10 +6191,11 @@ function tryBuildProvedNoteOnlyLayoutReuse(input: {
     return reject('retained-note-seed-incomplete');
   }
 
-  const referencedNoteIds = [...new Set(currentRefs.map((reference) => reference.id))];
+  const referencedNoteIdSet = new Set(currentRefs.map((reference) => reference.id));
+  const referencedNoteIds = [...referencedNoteIdSet];
   if (
     referencedNoteIds.length !== prepared.footnotes.blocksById.size ||
-    [...prepared.footnotes.blocksById.keys()].some((noteId) => !referencedNoteIds.includes(noteId)) ||
+    [...prepared.footnotes.blocksById.keys()].some((noteId) => !referencedNoteIdSet.has(noteId)) ||
     proof.noteIds.some((noteId) => !prepared.footnotes.blocksById.has(noteId))
   ) {
     return reject('current-note-inventory-mismatch');
@@ -6127,6 +6237,9 @@ function tryBuildProvedNoteOnlyLayoutReuse(input: {
     );
   }
 
+  // The range/height helpers only read this plane. Copy it once per refresh,
+  // not once per note, so validating N notes does not copy N squared entries.
+  const currentNoteMeasures = new Map(prepared.currentNoteMeasures);
   const currentRangesByNoteId = new Map<string, FootnoteRange[]>();
   for (const noteId of referencedNoteIds) {
     const currentBlocks = prepared.footnotes.blocksById.get(noteId)!;
@@ -6136,7 +6249,7 @@ function tryBuildProvedNoteOnlyLayoutReuse(input: {
       if (!retainedBlock) return reject(`retained-note-block-missing:${block.id}`);
       retainedBlocks.push(retainedBlock);
     }
-    const currentRanges = buildFootnoteRanges(currentBlocks, new Map(prepared.currentNoteMeasures));
+    const currentRanges = buildFootnoteRanges(currentBlocks, currentNoteMeasures);
     currentRangesByNoteId.set(noteId, currentRanges);
     if (
       refreshedNoteIds.has(noteId) &&
@@ -6145,7 +6258,7 @@ function tryBuildProvedNoteOnlyLayoutReuse(input: {
       return reject(`refreshed-note-layout-geometry-changed:${noteId}`);
     }
   }
-  const currentHeights = computeNoteBodyHeights(prepared.footnotes, new Map(prepared.currentNoteMeasures));
+  const currentHeights = computeNoteBodyHeights(prepared.footnotes, currentNoteMeasures);
   if (
     referencedNoteIds.some(
       (noteId) =>
@@ -6157,7 +6270,7 @@ function tryBuildProvedNoteOnlyLayoutReuse(input: {
   }
   const currentSeparatorSpacingBefore = resolveSeparatorSpacingBefore(
     currentRangesByNoteId,
-    new Map(prepared.currentNoteMeasures),
+    currentNoteMeasures,
     prepared.footnotes.separatorSpacingBefore,
     DEFAULT_FOOTNOTE_SEPARATOR_SPACING_BEFORE,
   );
@@ -6865,10 +6978,24 @@ async function layoutWithOptionalReuse(input: {
   if (hasBlockCountChange) {
     const oneSplit = input.dirty.insertedBlockIds.length === 1 && input.dirty.deletedBlockIds.length === 0;
     const oneMerge = input.dirty.insertedBlockIds.length === 0 && input.dirty.deletedBlockIds.length === 1;
+    const rangeCollapse = isContiguousParagraphCollapse(
+      input.previousBlocks,
+      input.blocks,
+      input.dirty,
+      reuse,
+      reuse.blockIdRewrites?.currentToPrevious ?? null,
+    );
+    const rangeRestore = isContiguousParagraphRestore(
+      input.previousBlocks,
+      input.blocks,
+      input.dirty,
+      reuse,
+      reuse.blockIdRewrites?.currentToPrevious ?? null,
+    );
     const oneReplacement = input.dirty.insertedBlockIds.length === 1 && input.dirty.deletedBlockIds.length >= 1;
     if (
       reuse.allowBlockIdChurn !== true ||
-      (!oneSplit && !oneMerge && !oneReplacement) ||
+      (!oneSplit && !oneMerge && !oneReplacement && !rangeCollapse && !rangeRestore) ||
       !reuse.previousBlockIndexById ||
       !reuse.blockIdRewrites
     ) {
@@ -9147,6 +9274,97 @@ function buildDisplayPageNumberTransform(
     break;
   }
   return { startSectionIndex, endSectionIndexExclusive, delta };
+}
+
+/** Admit a larger collapse only when the retained head and every removed paragraph align. */
+function isContiguousParagraphCollapse(
+  previousBlocks: readonly FlowBlock[],
+  blocks: readonly FlowBlock[],
+  dirty: ReturnType<typeof computeDirtyRegions>,
+  reuse: {
+    previousBlockIndexById?: ReadonlyMap<string, number> | null;
+    currentBlockIndexById?: ReadonlyMap<string, number> | null;
+  },
+  currentToPreviousBlockId: ReadonlyMap<string, string> | null,
+): boolean {
+  if (
+    dirty.insertedBlockIds.length !== 0 ||
+    dirty.deletedBlockIds.length < 2 ||
+    dirty.changedBlockIds.length !== 1 ||
+    previousBlocks.length - dirty.deletedBlockIds.length !== blocks.length ||
+    !reuse.previousBlockIndexById ||
+    !reuse.currentBlockIndexById ||
+    !currentToPreviousBlockId
+  )
+    return false;
+  const headId = dirty.changedBlockIds[0]!;
+  const sourceHeadId = currentToPreviousBlockId.get(headId) ?? headId;
+  const headIndex = reuse.previousBlockIndexById.get(sourceHeadId);
+  if (
+    !Number.isInteger(headIndex) ||
+    headIndex! < 0 ||
+    reuse.currentBlockIndexById.get(headId) !== headIndex ||
+    previousBlocks[headIndex!]?.id !== sourceHeadId ||
+    previousBlocks[headIndex!]?.kind !== 'paragraph' ||
+    blocks[headIndex!]?.id !== headId ||
+    blocks[headIndex!]?.kind !== 'paragraph'
+  )
+    return false;
+  return dirty.deletedBlockIds.every((id, offset) => {
+    const index = headIndex! + offset + 1;
+    return (
+      reuse.previousBlockIndexById!.get(id) === index &&
+      previousBlocks[index]?.id === id &&
+      previousBlocks[index]?.kind === 'paragraph' &&
+      !reuse.currentBlockIndexById!.has(id)
+    );
+  });
+}
+
+/** Restore only an ordered paragraph range behind the same retained head. */
+function isContiguousParagraphRestore(
+  previousBlocks: readonly FlowBlock[],
+  blocks: readonly FlowBlock[],
+  dirty: ReturnType<typeof computeDirtyRegions>,
+  reuse: {
+    previousBlockIndexById?: ReadonlyMap<string, number> | null;
+    currentBlockIndexById?: ReadonlyMap<string, number> | null;
+  },
+  currentToPreviousBlockId: ReadonlyMap<string, string> | null,
+): boolean {
+  const inserted = dirty.insertedBlockIds;
+  if (
+    inserted.length < 2 ||
+    dirty.deletedBlockIds.length !== 0 ||
+    previousBlocks.length + inserted.length !== blocks.length ||
+    !reuse.previousBlockIndexById ||
+    !reuse.currentBlockIndexById ||
+    !currentToPreviousBlockId
+  )
+    return false;
+  const firstInsertedIndex = reuse.currentBlockIndexById.get(inserted[0]!);
+  if (!Number.isInteger(firstInsertedIndex) || firstInsertedIndex! <= 0) return false;
+  const headIndex = firstInsertedIndex! - 1;
+  const head = blocks[headIndex];
+  if (!head || head.kind !== 'paragraph') return false;
+  const sourceHeadId = currentToPreviousBlockId.get(head.id) ?? head.id;
+  if (
+    reuse.previousBlockIndexById.get(sourceHeadId) !== headIndex ||
+    previousBlocks[headIndex]?.id !== sourceHeadId ||
+    previousBlocks[headIndex]?.kind !== 'paragraph' ||
+    !haveExactUniqueIdSet(dirty.changedBlockIds, [head.id, ...inserted])
+  )
+    return false;
+  return inserted.every((id, offset) => {
+    const index = firstInsertedIndex! + offset;
+    return (
+      reuse.currentBlockIndexById!.get(id) === index &&
+      blocks[index]?.id === id &&
+      blocks[index]?.kind === 'paragraph' &&
+      !reuse.previousBlockIndexById!.has(id) &&
+      !currentToPreviousBlockId.has(id)
+    );
+  });
 }
 
 function validateProvedWarmPaginationInputs(

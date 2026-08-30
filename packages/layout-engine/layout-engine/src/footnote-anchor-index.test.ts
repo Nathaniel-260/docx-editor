@@ -120,6 +120,40 @@ const makeFootnotes = (
 });
 
 describe('buildFootnoteAnchorIndexSteps', () => {
+  it.each([1, 8, 16])(
+    'bounds scalar preflight work without a scheduler resumption per lookup (block cadence %i)',
+    (cadence) => {
+      const blocks = Array.from({ length: 64 }, (_, blockIndex) => ({
+        kind: 'paragraph',
+        id: `block-${blockIndex}`,
+        runs: Array.from({ length: 256 }, (_, runIndex) => ({
+          text: 'x',
+          pmStart: blockIndex * 256 + runIndex,
+          pmEnd: blockIndex * 256 + runIndex + 1,
+        })),
+      })) as FlowBlock[];
+      const footnotes = makeFootnotes(
+        Array.from({ length: 4096 }, (_, index) => ({ id: `ref-${index}`, pos: index * 4 + 1 })),
+      );
+      const steps = buildFootnoteAnchorIndexSteps(blocks, footnotes, cadence);
+      const checkpoints: number[] = [];
+      let step = steps.next();
+      while (!step.done) {
+        checkpoints.push(step.value.index);
+        step = steps.next();
+      }
+
+      expect(step.value).toEqual(legacyAnchorIndex(blocks, footnotes).result);
+      expect(checkpoints[0]).toBe(0);
+      expect(checkpoints.length).toBeGreaterThan(100);
+      expect(checkpoints.length).toBeLessThan(3000);
+      for (let index = 1; index < checkpoints.length; index += 1) {
+        expect(checkpoints[index]! - checkpoints[index - 1]!).toBeGreaterThan(0);
+        expect(checkpoints[index]! - checkpoints[index - 1]!).toBeLessThanOrEqual(64);
+      }
+    },
+  );
+
   it('anchors an exact diagnostic-owned reference without adding model positions to the block', () => {
     const diagnostic = paragraph('__superdoc_v2_render_diagnostic__/body/1-2');
     Object.defineProperty(diagnostic, Symbol.for('superdoc.v2.render-diagnostic.block'), {

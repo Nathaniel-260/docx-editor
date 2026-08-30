@@ -19,6 +19,10 @@ export type FootnoteAnchorIndexDiagnostics = {
 type PmRange = { pmStart: number; pmEnd: number };
 
 const MAX_SYNCHRONOUS_SORT_ITEMS = 1024;
+// These work units are scalar lookups/comparisons, not measured body blocks.
+// Yielding after each one makes scheduling dominate large reference indexes.
+// Keep batches bounded without changing the paginator's block/page cadence.
+const MIN_SCALAR_CHECKPOINT_INTERVAL = 64;
 
 const validBodyHeight = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value > 0;
@@ -42,10 +46,12 @@ export function* buildFootnoteAnchorIndexSteps(
   if (!Array.isArray(refs) || refs.length === 0 || !bodyHeights) return out;
 
   let operationIndex = 0;
+  const scalarCheckpointInterval =
+    checkpointEveryBlocks == null ? null : Math.max(MIN_SCALAR_CHECKPOINT_INTERVAL, checkpointEveryBlocks);
   const nextCheckpoint = (): LayoutWorkCheckpoint | null => {
     const index = operationIndex;
     operationIndex += 1;
-    return checkpointEveryBlocks != null && index % checkpointEveryBlocks === 0 ? { index } : null;
+    return scalarCheckpointInterval != null && index % scalarCheckpointInterval === 0 ? { index } : null;
   };
 
   function* sortAscendingSteps<T>(

@@ -19,7 +19,7 @@
 import { describe, it, expect, vi } from 'vite-plus/test';
 import type { FlowBlock, Measure } from '@superdoc/contracts';
 import * as layoutEngine from '@superdoc/layout-engine';
-import { incrementalLayout, type FootnoteReserveSeed } from '../src/incrementalLayout';
+import { clearIncrementalModuleState, incrementalLayout, type FootnoteReserveSeed } from '../src/incrementalLayout';
 
 const makeParagraph = (id: string, text: string, pmStart: number): FlowBlock => ({
   kind: 'paragraph',
@@ -194,15 +194,81 @@ describe('footnote convergence warm-start (SD-3432)', () => {
     expect(layoutJson(warm)).toEqual(layoutJson(cold));
   });
 
-  it('stale seed across a page-count change: warm equals cold', async () => {
-    const small = makeScenario(20);
-    const seed = (await run(small.bodyBlocks, small.options, small.measureBlock)).footnoteReserveSeed!;
+  it.each([
+    [20, 45],
+    [45, 20],
+  ])(
+    'stale seed across a page-count change from %i to %i paragraphs: warm equals cold',
+    async (beforeCount, afterCount) => {
+      const before = makeScenario(beforeCount);
+      const seed = (await run(before.bodyBlocks, before.options, before.measureBlock)).footnoteReserveSeed!;
 
-    const big = makeScenario(45);
-    const warm = await run(big.bodyBlocks, big.options, big.measureBlock, seed);
-    const cold = await run(big.bodyBlocks, big.options, big.measureBlock);
+      const after = makeScenario(afterCount);
+      const warm = await run(after.bodyBlocks, after.options, after.measureBlock, seed);
+      const cold = await run(after.bodyBlocks, after.options, after.measureBlock);
+
+      expect(layoutJson(warm)).toEqual(layoutJson(cold));
+      expect(warm.footnoteReserveSeed!.reserves).toHaveLength(warm.layout.pages.length);
+      expect(warm.footnoteReserveSeed!.notePageIndexes!.every((index) => index < warm.layout.pages.length)).toBe(true);
+      warm.layout.pages.forEach((page, index) => {
+        expect(warm.footnoteReserveSeed!.reserves[index]).toBe(page.footnoteReserved ?? 0);
+      });
+    },
+  );
+
+  it('captures only actual page reserves after a zero-padded convergence vector', async () => {
+    const { bodyBlocks, options, measureBlock } = makeScenario();
+    const cold = await run(bodyBlocks, options, measureBlock);
+    const seed = {
+      ...cold.footnoteReserveSeed!,
+      reserves: [...cold.footnoteReserveSeed!.reserves, 0, 0, 0],
+    };
+    const warm = await run(bodyBlocks, options, measureBlock, seed);
 
     expect(layoutJson(warm)).toEqual(layoutJson(cold));
+    expect(warm.footnoteReserveSeed!.reserves).toHaveLength(warm.layout.pages.length);
+    expect(warm.footnoteReserveSeed!.notePageIndexes).toEqual(cold.footnoteReserveSeed!.notePageIndexes);
+    warm.layout.pages.forEach((page, index) => {
+      expect(warm.footnoteReserveSeed!.reserves[index]).toBe(page.footnoteReserved ?? 0);
+    });
+  });
+
+  it('captures reserves only for final pages after dense footnote convergence', async () => {
+    clearIncrementalModuleState();
+    const scenario = makeScenario(50);
+    const noteOrdinals = Array.from({ length: 96 }, (_, index) => 2 + Math.floor(index / 4) * 2);
+    const notes = noteOrdinals.map((_, index) => makeParagraph(`footnote-${index}-0-paragraph`, 'note content', 0));
+    const options = {
+      ...scenario.options,
+      footnotes: {
+        ...scenario.options.footnotes,
+        refs: noteOrdinals.map((ordinal, index) => ({
+          id: String(index),
+          blockId: scenario.bodyBlocks[ordinal]!.id,
+          pos: (scenario.bodyBlocks[ordinal] as Extract<FlowBlock, { kind: 'paragraph' }>).runs[0]!.pmStart! + 2,
+        })),
+        blocksById: new Map(notes.map((block, index) => [String(index), [block]])),
+      },
+    };
+    const measure = async (block: FlowBlock): Promise<Measure> => {
+      const index = Number(block.id.split('-')[1]);
+      return block.id.startsWith('footnote-')
+        ? makeMultiLineMeasure(FOOTNOTE_LINE_HEIGHT, 1 + ((index + 3) % 9))
+        : makeMultiLineMeasure(BODY_LINE_HEIGHT, 1 + (index % 4));
+    };
+    try {
+      const result = await run(scenario.bodyBlocks, options, measure);
+      expect(result.footnoteReserveSeed).toBeTruthy();
+      expect(result.footnoteReserveSeed!.reserves).toHaveLength(result.layout.pages.length);
+      expect(result.footnoteReserveSeed!.notePageIndexes!.every((index) => index < result.layout.pages.length)).toBe(
+        true,
+      );
+      result.layout.pages.forEach((page, index) => {
+        expect(result.footnoteReserveSeed!.reserves[index]).toBe(page.footnoteReserved ?? 0);
+      });
+    } finally {
+      clearIncrementalModuleState();
+    }
   });
 
   it('foreign seed (font signature mismatch) is ignored: warm equals cold and re-captures', async () => {

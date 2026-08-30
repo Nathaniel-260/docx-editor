@@ -191,6 +191,150 @@ function geometry(layout: Layout): unknown {
   }));
 }
 
+describe('contiguous paragraph-range layout reuse', () => {
+  beforeEach(() => measureCache.clear());
+
+  it.each([2, 5].flatMap((removedCount) => [false, true].map((churn) => ({ removedCount, churn }))))(
+    'reuses layout and measurements after $removedCount paragraphs collapse (id churn: $churn)',
+    async ({ removedCount, churn }) => {
+      const before = documentBlocks(60);
+      const head = 8;
+      // Each single line fills most of a page: both range sizes have an exact
+      // shifted tail boundary, independent of half-page line wrapping.
+      const measureRangeBlock = async (block: FlowBlock): Promise<ParagraphMeasure> => {
+        const measured = measureFor(block);
+        return { ...measured, totalHeight: 60, lines: measured.lines.map((line) => ({ ...line, lineHeight: 60 })) };
+      };
+      const previous = await incrementalLayout([], null, before, options, measureRangeBlock);
+      const previousToCurrent = new Map<string, string>();
+      const currentToPrevious = new Map<string, string>();
+      const after = [
+        ...before.slice(0, head),
+        paragraph(`p${head}`, 'merged', 1 + head * 20),
+        ...before.slice(head + removedCount + 1).map((block) => {
+          const currentId = churn ? `${block.id}-shifted` : block.id;
+          if (currentId !== block.id) {
+            previousToCurrent.set(block.id, currentId);
+            currentToPrevious.set(currentId, block.id);
+          }
+          return paragraph(currentId, block.runs[0]!.text, block.runs[0]!.pmStart! - removedCount * 20);
+        }),
+      ];
+      const reuse = {
+        ...provedReuse(before, after, previous.layout),
+        allowBlockIdChurn: true,
+        previousBlockIndexById: new Map(before.map((block, index) => [block.id, index])),
+        blockIdRewrites: { previousToCurrent, currentToPrevious },
+        dirtyBlockIds: [before[head]!.id],
+        provedDirtyRegion: {
+          firstDirtyIndex: head,
+          lastStableIndex: head - 1,
+          insertedBlockIds: [],
+          deletedBlockIds: before.slice(head + 1, head + removedCount + 1).map((block) => block.id),
+          changedBlockIds: [before[head]!.id],
+          stableBlockIds: new Set(after.filter((_, index) => index !== head).map((block) => block.id)),
+        },
+        pmShift: { atChar: before[head + removedCount + 1]!.runs[0]!.pmStart!, delta: -removedCount * 20 },
+      };
+
+      const result = await incrementalLayout(
+        before,
+        previous.layout,
+        after,
+        options,
+        measureRangeBlock,
+        undefined,
+        previous.measures,
+        undefined,
+        undefined,
+        reuse,
+      );
+      const cold = await incrementalLayout([], null, after, options, measureRangeBlock);
+
+      expect(result.layoutReuse.mode, JSON.stringify(result.layoutReuse)).toBe('tail-splice');
+      expect(result.layoutReuse.pagesPaginated).toBeLessThan(previous.layout.pages.length);
+      expect(geometry(result.layout)).toEqual(geometry(cold.layout));
+      expect(result.measureReuse).toMatchObject({ mode: 'proved-dirty-only', blocksMeasured: 1 });
+      expect(result.bridgeTiming.counters.bodyMeasureCacheKeyComputations).toBe(1);
+      expect(result.bridgeTiming.counters.measureContentSignatureComputations).toBe(0);
+      result.measures.forEach((measurement, index) => {
+        if (index !== head) expect(measurement).toBe(previous.measures[index < head ? index : index + removedCount]);
+      });
+
+      // Undo restores the exact ordered range, not just the first paragraph.
+      // Keep both the untouched measure plane and cold-layout geometry exact.
+      const restoredIds = before.slice(head + 1, head + removedCount + 1).map((block) => block.id);
+      const restoredDirty = [before[head]!.id, ...restoredIds];
+      const restoreReuse = {
+        ...provedReuse(after, before, result.layout),
+        allowBlockIdChurn: true,
+        // This miniature puts each restored paragraph on its own page. Give
+        // the bounded probe room to pass the genuinely changed range.
+        maxRelaidPages: removedCount + 2,
+        previousBlockIndexById: new Map(after.map((block, index) => [block.id, index])),
+        blockIdRewrites: { previousToCurrent: currentToPrevious, currentToPrevious: previousToCurrent },
+        dirtyBlockIds: restoredDirty,
+        provedDirtyRegion: {
+          firstDirtyIndex: head,
+          lastStableIndex: head - 1,
+          insertedBlockIds: restoredIds,
+          deletedBlockIds: [],
+          changedBlockIds: restoredDirty,
+          stableBlockIds: new Set(
+            before.filter((_, index) => index < head || index > head + removedCount).map((block) => block.id),
+          ),
+        },
+        pmShift: { atChar: after[head + 1]!.runs[0]!.pmStart!, delta: removedCount * 20 },
+      };
+      const restored = await incrementalLayout(
+        after,
+        result.layout,
+        before,
+        options,
+        measureRangeBlock,
+        undefined,
+        result.measures,
+        undefined,
+        undefined,
+        restoreReuse,
+      );
+      expect(restored.layoutReuse.mode, JSON.stringify(restored.layoutReuse)).toBe('tail-splice');
+      expect(restored.layoutReuse.pagesPaginated).toBeLessThan(previous.layout.pages.length);
+      expect(geometry(restored.layout)).toEqual(geometry(previous.layout));
+      expect(restored.measureReuse.mode).toBe('proved-dirty-only');
+      expect(restored.bridgeTiming.counters.bodyMeasureCacheKeyComputations).toBe(removedCount + 1);
+      expect(restored.bridgeTiming.counters.measureContentSignatureComputations).toBe(0);
+      restored.measures.forEach((measurement, index) => {
+        if (index < head || index > head + removedCount) {
+          expect(measurement).toBe(result.measures[index < head ? index : index - removedCount]);
+        }
+      });
+
+      for (const insertedBlockIds of [
+        [...restoredIds].reverse(),
+        [restoredIds[0]!, ...restoredIds.slice(0, -1)],
+        [...restoredIds.slice(0, -1), before[head + removedCount + 2]!.id],
+      ]) {
+        const rejected = await incrementalLayout(
+          after,
+          result.layout,
+          before,
+          options,
+          measureRangeBlock,
+          undefined,
+          result.measures,
+          undefined,
+          undefined,
+          { ...restoreReuse, provedDirtyRegion: { ...restoreReuse.provedDirtyRegion, insertedBlockIds } },
+        );
+        expect(rejected.layoutReuse.mode).toBe('full');
+        expect(rejected.measureReuse.mode).toBe('full-scan');
+        expect(geometry(rejected.layout)).toEqual(geometry(previous.layout));
+      }
+    },
+  );
+});
+
 function paginationGeometry(layout: Layout): unknown {
   return layout.pages.map((page) => ({
     size: page.size,
@@ -778,6 +922,113 @@ describe('incrementalLayout affected frontier', () => {
     const full = await incrementalLayout([], null, nextBlocks, options, measureNext);
     expect(paginationGeometry(warm.layout)).toEqual(paginationGeometry(full.layout));
   });
+
+  it.each(
+    [16, 29].flatMap((changedIndex) =>
+      (['unchanged', 'note-source-changed', 'render-inputs-changed'] as const).map((change) => ({
+        changedIndex,
+        change,
+      })),
+    ),
+  )(
+    'reuses a complete local note band only with exact ownership at paragraph $changedIndex: $change',
+    async ({ changedIndex, change }) => {
+      const previousBlocks = documentBlocks(30);
+      const footnoteOptions = {
+        ...options,
+        pageSize: { w: 200, h: 240 },
+        footnotes: {
+          refs: [6, 16, 26].map((index) => ({
+            id: String(index),
+            pos: Number.MAX_SAFE_INTEGER,
+            blockId: previousBlocks[index]!.id,
+          })),
+          blocksById: new Map(
+            [6, 16, 26].map((index) => [
+              String(index),
+              [paragraph(`footnote-${index}-0-paragraph`, 'unchanged note', 0)],
+            ]),
+          ),
+          topPadding: 4,
+          dividerHeight: 2,
+        },
+      };
+      const previous = await incrementalLayout([], null, previousBlocks, footnoteOptions, async (block) =>
+        measureFor(block),
+      );
+      previous.layout.layoutEpoch = 1;
+      const nextBlocks = replaceParagraphText(previousBlocks, changedIndex, `text-${changedIndex}!`);
+      const dirtyIds = [`p${changedIndex}`];
+      const currentFootnoteOptions =
+        change === 'note-source-changed'
+          ? {
+              ...footnoteOptions,
+              footnotes: {
+                ...footnoteOptions.footnotes,
+                blocksById: new Map(footnoteOptions.footnotes.blocksById).set('16', [
+                  paragraph('footnote-16-0-paragraph', 'changed note body', 0),
+                ]),
+              },
+            }
+          : footnoteOptions;
+      const warm = await incrementalLayout(
+        previousBlocks,
+        previous.layout,
+        nextBlocks,
+        currentFootnoteOptions,
+        async (block) => measureFor(block),
+        undefined,
+        previous.measures,
+        undefined,
+        {
+          footnoteReserveSeed: previous.footnoteReserveSeed!,
+          noteMeasurePlaneRetainedExact: change !== 'note-source-changed',
+          retainedFootnoteExtras: { blocks: previous.extraBlocks!, measures: previous.extraMeasures! },
+        },
+        {
+          ...provedReuse(previousBlocks, nextBlocks, previous.layout),
+          previousBlockIndexById: new Map(previousBlocks.map((block, index) => [block.id, index])),
+          dependencyProof: {
+            profile: 'page-checkpoint-local-text',
+            blockIdsUnchanged: true,
+            blockIdsUnique: true,
+            globalDependenciesAbsent: false,
+            globalDependenciesFencedByPageCheckpoint: true,
+            admittedDependencyClasses: ['footnotes'],
+            renderInputsUnchanged: change !== 'render-inputs-changed',
+            pageReferencesAbsent: true,
+            multiColumnSectionsProvedNonBalanceable: true,
+          },
+          dirtyBlockIds: dirtyIds,
+          provedDirtyMeasureConstraints: new Map(dirtyIds.map((id) => [id, { maxWidth: 180, maxHeight: 220 }])),
+          maxRelaidPages: 3,
+          requireDocumentStartCheckpoint: false,
+          pmShift: { atChar: previousBlocks[changedIndex]!.runs[0]!.pmEnd!, delta: 1 },
+        },
+      );
+
+      if (change === 'unchanged') {
+        expect(warm.layoutReuse).toMatchObject({
+          mode: 'tail-splice',
+          tailDisposition: changedIndex === 29 ? 'relaid-to-document-end' : 'adopted-source-tail',
+        });
+        expect(warm.bridgeTiming.counters.footnoteRelayouts).toBe(0);
+        expect(warm.extraBlocks).toBe(previous.extraBlocks);
+        expect(warm.extraMeasures).toBe(previous.extraMeasures);
+      } else {
+        expect(warm.extraBlocks).not.toBe(previous.extraBlocks);
+      }
+      expect(
+        previous.layout.pages[blockPageIndex(previous.layout).get('p16')!.firstPage]!.footnoteLedger?.anchorIds,
+      ).toContain('16');
+      measureCache.clear();
+      const cold = await incrementalLayout([], null, nextBlocks, currentFootnoteOptions, async (block) =>
+        measureFor(block),
+      );
+      expect(json(warm.layout)).toEqual(json(cold.layout));
+      expect(json(warm.extraBlocks)).toEqual(json(cold.extraBlocks));
+    },
+  );
 
   it('preserves retained footnotes when exact dirty measurement derives a different global height', async () => {
     const previousBlocks = Array.from({ length: 18 }, (_, index) =>

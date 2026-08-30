@@ -274,6 +274,49 @@ describe('incrementalLayout note dependency closure (plan 10)', () => {
     expect(reuse.pagesPaginated!).toBeLessThanOrEqual(6);
   });
 
+  it.each([6, 20])(
+    'keeps the final reuse range exact after refining a stale reserve seed in p%s',
+    async (editIndex) => {
+      const previousBlocks = paragraphs(36);
+      const edit = previousBlocks[editIndex]!;
+      const previous = await incrementalLayout([], null, previousBlocks, NOTE_OPTIONS, measureBlock);
+      previous.layout.layoutEpoch = 1;
+      const nextBlocks = applyOrdinaryTextEdit(previousBlocks, edit);
+      const seed = previous.footnoteReserveSeed!;
+      const staleSeed = {
+        ...seed,
+        reserves: seed.reserves.map((reserve, index) => (index === 6 ? reserve + 30 : reserve)),
+      };
+
+      const incremental = await incrementalLayout(
+        previousBlocks,
+        previous.layout,
+        nextBlocks,
+        NOTE_OPTIONS,
+        measureBlock,
+        undefined,
+        previous.measures,
+        undefined,
+        { footnoteReserveSeed: staleSeed, noteMeasurePlaneRetainedExact: true },
+        buildNoteReuse(previousBlocks, nextBlocks, previous.layout, edit.runs[0]!.pmEnd!, true),
+      );
+
+      expect(incremental.bridgeTiming.counters.footnoteReservePassReuseHits).toBeGreaterThan(0);
+      if (editIndex === 6) {
+        expect(incremental.layoutReuse).toMatchObject({
+          tailDisposition: 'relaid-to-document-end',
+          tailAdoption: null,
+        });
+      }
+      expect(incremental.layoutReuse!.checkpointPageIndex).toBeLessThanOrEqual(
+        blockPageIndex(previous.layout).get(edit.id)!.firstPage,
+      );
+      clearIncrementalModuleState();
+      const cold = await incrementalLayout([], null, nextBlocks, NOTE_OPTIONS, measureBlock);
+      expect(json(incremental.layout)).toEqual(json(cold.layout));
+    },
+  );
+
   it('reuses the retained assignment certificate without reading every stable reference', async () => {
     const repeatedReferenceCount = 512;
     const assignmentOptions = {
@@ -740,6 +783,118 @@ describe('incrementalLayout note dependency closure (plan 10)', () => {
     const expandedCold = await incrementalLayout([], null, blocks, expandedOptions, noteMeasureBlock);
     expandedCold.layout.layoutEpoch = expanded.layout.layoutEpoch;
     expect(json(expanded.layout)).toEqual(json(expandedCold.layout));
+  });
+
+  it.each([16, 64])('reuses unchanged measurements from a %i-note plane after cache eviction', async (noteCount) => {
+    const blocks = paragraphs(noteCount * 8 + 24);
+    const noteBlocks = Array.from({ length: noteCount }, (_, index) =>
+      paragraph(`footnote-${index + 1}-0-paragraph`, 'note', 0),
+    );
+    const previousOptions = {
+      ...NOTE_OPTIONS,
+      footnotes: {
+        ...NOTE_OPTIONS.footnotes,
+        refs: noteBlocks.map((_, index) => ({
+          id: String(index + 1),
+          blockId: `p${6 + index * 8}`,
+          pos: 1 + (6 + index * 8) * 20 + 2,
+        })),
+        blocksById: new Map(noteBlocks.map((block, index) => [String(index + 1), [block]])),
+      },
+    };
+    const currentNote = paragraph(noteBlocks[0]!.id, 'note!', 0);
+    const currentOptions = {
+      ...previousOptions,
+      footnotes: {
+        ...previousOptions.footnotes,
+        blocksById: new Map(previousOptions.footnotes.blocksById).set('1', [currentNote]),
+      },
+    };
+    const measure = async (block: FlowBlock): Promise<Measure> => {
+      const result = await measureBlock(block);
+      if (result.kind !== 'paragraph' || block.kind !== 'paragraph' || !block.id.startsWith('footnote-')) {
+        return result;
+      }
+      const length = block.runs.reduce((sum, run) => sum + ('text' in run ? run.text.length : 0), 0);
+      return { ...result, lines: result.lines.map((line) => ({ ...line, toChar: length })) };
+    };
+    const previous = await incrementalLayout([], null, blocks, previousOptions, measure);
+    previous.layout.layoutEpoch = 1;
+    const reuse = buildProvedNoteOnlyReuse(blocks, previous.layout);
+    // The per-document plane must survive eviction from the bounded shared
+    // cache, as it does for the complete 18,104-note customer document.
+    clearIncrementalModuleState();
+    measureBlock.mockClear();
+    const originalIterator = Map.prototype[Symbol.iterator];
+    let measurePlaneTraversals = 0;
+    const iteratorSpy = vi.spyOn(Map.prototype, Symbol.iterator).mockImplementation(function () {
+      const firstMeasure = this.get(noteBlocks[0]!.id);
+      if (this.size === noteCount && firstMeasure?.kind === 'paragraph' && Array.isArray(firstMeasure.lines)) {
+        measurePlaneTraversals += 1;
+      }
+      return originalIterator.call(this);
+    });
+    let incremental: Awaited<ReturnType<typeof incrementalLayout>>;
+    try {
+      incremental = await incrementalLayout(
+        blocks,
+        previous.layout,
+        blocks,
+        currentOptions,
+        measure,
+        undefined,
+        previous.measures,
+        undefined,
+        { footnoteReserveSeed: previous.footnoteReserveSeed, noteMeasurePlaneRetainedExact: true },
+        reuse,
+        reuse,
+      );
+    } finally {
+      iteratorSpy.mockRestore();
+    }
+    expect(incremental.layoutReuse).toMatchObject({
+      reason: 'm4-note-only-geometry-stable-tail-adopted',
+      pagesPaginated: 0,
+    });
+    expect(incremental.extraBlocks).toContain(currentNote);
+    expect(measurePlaneTraversals).toBeLessThanOrEqual(8);
+    expect(
+      measureBlock.mock.calls.filter(([block]) => block.id.startsWith('footnote-')).map(([block]) => block),
+    ).toEqual([currentNote]);
+    clearIncrementalModuleState();
+    const cold = await incrementalLayout([], null, blocks, currentOptions, measure);
+    cold.layout.layoutEpoch = incremental.layout.layoutEpoch;
+    expect(json(incremental.layout)).toEqual(json(cold.layout));
+
+    for (const incompatibleSeed of [
+      { ...previous.footnoteReserveSeed!, fontSignature: 'different-fonts' },
+      {
+        ...previous.footnoteReserveSeed!,
+        footnoteMeasurementWidth: previous.footnoteReserveSeed!.footnoteMeasurementWidth! + 1,
+      },
+      { ...previous.footnoteReserveSeed!, measurementHeight: previous.footnoteReserveSeed!.measurementHeight + 1 },
+    ]) {
+      clearIncrementalModuleState();
+      measureBlock.mockClear();
+      const remeasured = await incrementalLayout(
+        [],
+        null,
+        blocks,
+        currentOptions,
+        measure,
+        undefined,
+        undefined,
+        undefined,
+        // A changed measurement context cannot carry the unchanged-input
+        // body reuse proof from the positive case above.
+        { footnoteReserveSeed: incompatibleSeed },
+      );
+      const measuredNotes = measureBlock.mock.calls.filter(([block]) => block.id.startsWith('footnote-'));
+      expect(measuredNotes).toHaveLength(noteCount);
+      expect(measuredNotes.map(([block]) => block)).toEqual([currentNote, ...noteBlocks.slice(1)]);
+      remeasured.layout.layoutEpoch = cold.layout.layoutEpoch;
+      expect(json(remeasured.layout)).toEqual(json(cold.layout));
+    }
   });
 
   it('keeps retained-tail checkpoint note anchors cold-exact after a preceding position shift', async () => {
