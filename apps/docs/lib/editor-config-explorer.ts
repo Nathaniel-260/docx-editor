@@ -190,7 +190,7 @@ const summaries = {
   isDebug: 'Enable debug behavior.',
   viewOptions: 'Set DOCX-compatible document view options.',
   contained: 'Keep the Editor inside a fixed-height scrolling container.',
-  cspNonce: 'Apply a Content Security Policy nonce to injected styles.',
+  cspNonce: 'Apply a Content Security Policy nonce to SuperDoc runtime styles.',
   licenseKey: 'Identify the licensed organization.',
   telemetry: 'Enable or disable telemetry.',
   proofing: 'Configure spelling and grammar checks.',

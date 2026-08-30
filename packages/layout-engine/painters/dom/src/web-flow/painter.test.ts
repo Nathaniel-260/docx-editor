@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LAYOUT_BOUNDARY_SCHEMA, type FlowBlock, type ParagraphBlock } from '@superdoc/contracts';
 import { createWebFlowPainter } from './painter.js';
+import { ensureWebFlowStyles } from './styles.js';
 import type { WebFlowPaintItem } from './types.js';
 
 const mounts: HTMLElement[] = [];
@@ -54,6 +55,14 @@ function commit(painter: ReturnType<typeof createWebFlowPainter>, command: Param
 }
 
 describe('WebFlowPainter', () => {
+  it('applies a nonce to its document stylesheet', () => {
+    const doc = document.implementation.createHTMLDocument('web-flow-nonce');
+
+    ensureWebFlowStyles(doc, 'page-nonce');
+
+    expect(doc.head.querySelector<HTMLStyleElement>('style')?.nonce).toBe('page-nonce');
+  });
+
   it('publishes a normal-flow retained root without contenteditable authority', () => {
     const root = mount();
     const painter = createWebFlowPainter(root);

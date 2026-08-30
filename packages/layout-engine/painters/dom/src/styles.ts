@@ -1617,6 +1617,7 @@ const ensureStyleElement = (
   markerAttribute: string,
   cssText: string,
   revision: string,
+  styleNonce?: string,
 ) => {
   if (!doc?.head) return;
   const existing = doc.head.querySelector(`[${markerAttribute}="true"]`);
@@ -1630,6 +1631,7 @@ const ensureStyleElement = (
   const styleEl = doc.createElement('style');
   styleEl.setAttribute(markerAttribute, 'true');
   styleEl.setAttribute(STYLE_REV_ATTRIBUTE, revision);
+  if (styleNonce) styleEl.nonce = styleNonce;
   styleEl.textContent = cssText;
   doc.head.appendChild(styleEl);
 };
@@ -1668,12 +1670,13 @@ export const ensurePrintStyles = (doc: Document | null | undefined) => {
   ensureStyleElement(doc, PRINT_STYLE.markerAttribute, PRINT_STYLE.cssText, PRINT_STYLE.revision);
 };
 
-export const ensureDocumentSurfaceStyles = (doc: Document | null | undefined) => {
+export const ensureDocumentSurfaceStyles = (doc: Document | null | undefined, styleNonce?: string) => {
   ensureStyleElement(
     doc,
     DOCUMENT_SURFACE_STYLE.markerAttribute,
     DOCUMENT_SURFACE_STYLE.cssText,
     DOCUMENT_SURFACE_STYLE.revision,
+    styleNonce,
   );
 };
 
@@ -1786,8 +1789,8 @@ export const SURFACE_STYLE_PREFLIGHT: readonly SurfaceStylePreflightEntry[] = SU
  * to install document-level styles — per-path `ensure*Styles()` call lists
  * are the drift mechanism this helper exists to kill.
  */
-export const ensureSurfaceStylePreflight = (doc: Document | null | undefined): void => {
+export const ensureSurfaceStylePreflight = (doc: Document | null | undefined, styleNonce?: string): void => {
   for (const entry of SURFACE_STYLE_PREFLIGHT_DEFINITIONS) {
-    ensureStyleElement(doc, entry.markerAttribute, entry.cssText, entry.revision);
+    ensureStyleElement(doc, entry.markerAttribute, entry.cssText, entry.revision, styleNonce);
   }
 };

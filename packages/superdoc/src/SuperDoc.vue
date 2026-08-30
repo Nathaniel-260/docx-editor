@@ -2255,6 +2255,7 @@ const editorOptions = (doc) => {
     jsonOverride: proxy.$superdoc.config.jsonOverride,
     viewOptions: proxy.$superdoc.config.viewOptions,
     contained: proxy.$superdoc.config.contained,
+    styleNonce: proxy.$superdoc.config.cspNonce,
     // Presentation only: the shell resolves this to `enabled` and the host
     // keeps owning when the loader would be visible. `false` is what the shell
     // reads as "draw nothing", so pass the flag straight through rather than

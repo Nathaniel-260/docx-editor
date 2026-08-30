@@ -1311,9 +1311,6 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       return;
     }
 
-    // Apply csp nonce if provided
-    if (this.config.cspNonce) this.#patchNaiveUIStyles();
-
     // --- One-time shell setup (survives upgrade) ---
     this.user = this.config.user;
     this.users = this.config.users || [];
@@ -1664,20 +1661,6 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
       return document.querySelector(this.config.selector);
     }
     return this.config.selector;
-  }
-
-  #patchNaiveUIStyles() {
-    const cspNonce = this.config.cspNonce;
-
-    const originalCreateElement = document.createElement;
-    /** @param tagName */
-    document.createElement = function (tagName: string) {
-      const element = originalCreateElement.call(this, tagName);
-      if (tagName.toLowerCase() === 'style') {
-        element.setAttribute('nonce', cspNonce as string);
-      }
-      return element;
-    };
   }
 
   #initDocuments() {

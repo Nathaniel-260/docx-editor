@@ -24,4 +24,30 @@ Treat names and emails supplied in `user` as display identity unless they came f
 
 ## Configure the browser boundary
 
-Use HTTPS, restrictive CORS, and a Content Security Policy that permits only the scripts, workers, connections, images, and fonts your deployment needs. Use `cspNonce` or `buildTheme()` when policy requires nonced styles. Avoid unversioned third-party runtime dependencies, and decide whether Editor assets are self-hosted before production.
+Use HTTPS, restrictive CORS, and a Content Security Policy that permits only the scripts, workers, connections, images, and fonts your deployment needs. Avoid unversioned third-party runtime dependencies, and decide whether Editor assets are self-hosted before production.
+
+## Pass a nonce to runtime styles
+
+Leave `cspNonce` unset unless the page's CSP requires a nonce for `<style>` elements. SuperDoc creates layout and caret styles at runtime. The browser blocks those styles when their nonce does not match the page's policy.
+
+Generate a nonce for each HTML response. Include it in the response policy and pass the same value to every SuperDoc Editor mounted in that browser document, including remounts. The relevant policy directives look like this:
+
+```http
+Content-Security-Policy: style-src-elem 'self' 'nonce-{response-nonce}'; style-src-attr 'unsafe-inline'
+```
+
+Pass the server-provided value when you create the Editor:
+
+```ts
+function createEditor(file: File, responseNonce: string) {
+  return new SuperDoc({
+    selector: '#editor',
+    document: file,
+    cspNonce: responseNonce,
+  });
+}
+```
+
+`cspNonce` applies only to SuperDoc's runtime `<style>` elements. It does not configure CSP, authorize scripts or workers, or apply to styles created by your application. SuperDoc uses inline style attributes for document layout, so account for them in `style-src-attr`. For a custom theme, use [`buildTheme()`](/editor/themes-and-fonts) and inject its CSS with the same nonce.
+
+In the deployed application, confirm that the browser reports no `style-src` violations and that SuperDoc runtime `<style>` elements carry the response nonce.

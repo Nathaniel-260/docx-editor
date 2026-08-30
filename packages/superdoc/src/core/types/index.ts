@@ -4602,7 +4602,10 @@ export interface Config {
    * total. Placed inside the host, it consumes part of the 400px instead.
    */
   contained?: boolean;
-  /** Content Security Policy nonce for dynamically injected styles. */
+  /**
+   * Content Security Policy nonce for SuperDoc runtime styles. Editors that
+   * share a document must use the same nonce.
+   */
   cspNonce?: string;
   /** License key for organization identification. */
   licenseKey?: string;

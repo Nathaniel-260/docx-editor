@@ -4,6 +4,7 @@ import {
   ensureFootnoteStyles,
   ensureLinkStyles,
   ensureSdtContainerStyles,
+  ensureSurfaceStylePreflight,
   ensureTrackChangeStyles,
   lineStyles,
   pageStyles,
@@ -100,6 +101,16 @@ describe('style injection', () => {
     expect(firstDoc.head.querySelectorAll('[data-superdoc-link-styles="true"]')).toHaveLength(1);
     expect(secondDoc.head.querySelectorAll('[data-superdoc-link-styles="true"]')).toHaveLength(1);
     expect(secondDoc.head.querySelectorAll('[data-superdoc-footnote-styles="true"]')).toHaveLength(1);
+  });
+
+  it('applies one nonce to every document-level painter stylesheet', () => {
+    const doc = document.implementation.createHTMLDocument('nonce');
+
+    ensureSurfaceStylePreflight(doc, 'page-nonce');
+
+    const styles = Array.from(doc.head.querySelectorAll<HTMLStyleElement>('style'));
+    expect(styles.length).toBeGreaterThan(0);
+    expect(styles.every((style) => style.nonce === 'page-nonce')).toBe(true);
   });
 });
 

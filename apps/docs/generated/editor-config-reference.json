@@ -423,7 +423,7 @@
       "name": "cspNonce",
       "type": "string",
       "required": false,
-      "description": "Content Security Policy nonce for dynamically injected styles.",
+      "description": "Content Security Policy nonce for SuperDoc runtime styles. Editors that share a document must use the same nonce.",
       "group": "other"
     },
     {

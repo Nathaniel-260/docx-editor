@@ -10,10 +10,11 @@ export const WEB_FLOW_CLASS_NAMES = {
   diagnostic: 'superdoc-web-flow-diagnostic',
 } as const;
 
-export function ensureWebFlowStyles(doc: Document): void {
+export function ensureWebFlowStyles(doc: Document, styleNonce?: string): void {
   if (doc.getElementById(WEB_FLOW_STYLE_ID)) return;
   const style = doc.createElement('style');
   style.id = WEB_FLOW_STYLE_ID;
+  if (styleNonce) style.nonce = styleNonce;
   style.textContent = `
 .${WEB_FLOW_CLASS_NAMES.root} {
   box-sizing: border-box;
