@@ -852,7 +852,7 @@ export function useFindReplace({
           // The one-row find layout (field + query toggles + nav) needs more
           // room than the 360px floating default before queries truncate.
           width: 420,
-          ...(config.floating ?? {}),
+          ...config.floating,
         });
 
       // If there was a previous editor with an open search session, clear it
