@@ -49,12 +49,10 @@ async function attachFinding() {
   //   'tracked'`, and the anchor rewrite searches visible `w:t` runs only, so
   //   the same offsets address different characters.
   //
-  // These guards are necessary but not sufficient. A selection crossing two
-  // `w:t` runs, which is what a bold or italic boundary produces, passes all of
-  // them and still throws: the rewrite requires both offsets inside one run
-  // per segment. Nothing in the public selection shape reports run boundaries,
-  // so the catch below is the only place that case can be handled — the same
-  // is true of a selection crossing a table-cell or section boundary.
+  // These guards are necessary but not sufficient. A selection crossing a
+  // table-cell or section boundary still throws, and nothing in the public
+  // selection shape reports that ahead of time, so the catch below is the
+  // only place that case can be handled.
   if (!doc || !target) return;
   if (target.coordinateSpace === 'tracked') return;
   if (target.segments.length === 0) return;
@@ -63,9 +61,12 @@ async function attachFinding() {
 
   // `attach()` throws for several ordinary cases instead of returning an
   // unsuccessful receipt: when the id already exists (including the second time
-  // this action runs), when a segment crosses two `w:t` runs, when segments
-  // are not contiguous paragraphs (or cross a table-cell/section boundary),
-  // and when a paragraph is not in the main document part.
+  // this action runs), when segments are not contiguous paragraphs (or cross a
+  // table-cell/section boundary), when a segment overlaps a content control,
+  // a hyperlink, or a simple field (`w:fldSimple`, code and cached result
+  // alike — a complex field's cached result text, outside any wrapper, is
+  // the one field-adjacent case that IS attachable), and when a paragraph is
+  // not in the main document part.
   //
   // Use try/catch rather than `.catch()`. This facade is typed `MaybePromise`, so
   // on a synchronous host `attach()` returns the receipt itself and has no
@@ -84,14 +85,6 @@ async function attachFinding() {
   }
 }
 ```
-
-<Callout variant='warning' title='Attaching metadata discards run formatting'>
-  Attaching metadata currently discards the formatting of the text it wraps. The adapter removes the enclosing `w:r` and
-  rebuilds the selected text in a new run without its `w:rPr`, so bold, italic, colour, and character-style formatting
-  are lost from the saved DOCX with no error and no visible failure at attach time. The same rewrite can also drop a
-  space that follows the anchored range, described below. Both are adapter defects rather than intended behaviour, so
-  verify exported files if you anchor into formatted text or at a word boundary.
-</Callout>
 
 Metadata persists with the DOCX but does not add visible styling. Add a render-only extension visual when people need to see the anchored range.
 
@@ -222,13 +215,9 @@ editorShell.addEventListener('pointerdown', async (event) => {
   backend, keyed by the record ID.
 </Callout>
 
-Anchored metadata requires one or more non-empty text ranges, in visible coordinates and each within a single run, anchored in the main document **body**. A single-paragraph target is a `SelectionTarget`, unchanged since v1. A target spanning multiple paragraphs is a `TextTarget` with one segment per paragraph: the segments must be contiguous paragraphs in document order, and none of the boundary they cross may be a table cell, a block-level content control, or a section — a target that crosses any of those is rejected. The adapter resolves every paragraph against the main document part, so a header, footer, or note paragraph is not found, and the anchor rewrite searches visible `w:t` runs, so a selection crossing deleted tracked text addresses different characters than its offsets suggest. Resolve the record again with `doc.metadata.resolve({ id })` after document edits instead of keeping an old range — it returns the same `SelectionTarget | TextTarget` union, narrowing to `TextTarget` only when the anchor spans more than one paragraph.
+Anchored metadata requires one or more non-empty text ranges, in visible coordinates, anchored in the main document **body**. A single-paragraph target is a `SelectionTarget`, unchanged since v1. A target spanning multiple paragraphs is a `TextTarget` with one segment per paragraph: the segments must be contiguous paragraphs in document order, and none of the boundary they cross may be a table cell, a block-level content control, or a section — a target that crosses any of those is rejected. Within a paragraph, a segment may freely cross bold, italic, colour, or character-style boundaries — the anchor preserves each run's own formatting rather than requiring the whole segment to sit in one run — but a segment that overlaps an existing content control, a hyperlink, or a `w:fldSimple` field is rejected, since anchoring inside one of those would either nest content controls or land in text that isn't real anchorable content. A `w:fldSimple` is rejected in full, code and cached result alike; a complex field (`w:fldChar`/`w:instrText`) is different — only its instruction-code runs are rejected, and its cached result text is ordinary anchorable content, same as any other run. The adapter resolves every paragraph against the main document part, so a header, footer, or note paragraph is not found, and the anchor rewrite searches visible `w:t` runs, so a selection crossing deleted tracked text addresses different characters than its offsets suggest. Resolve the record again with `doc.metadata.resolve({ id })` after document edits instead of keeping an old range — it returns the same `SelectionTarget | TextTarget` union, narrowing to `TextTarget` only when the anchor spans more than one paragraph.
 
 The read path carries the same body-only restriction, and gives you nothing to check it with. `contentControls.get()` and `metadata.resolve()` both read the main document part, while painted content-control ids are unique only within that part. A control in a header, footer, note, or textbox that reuses a body anchor's id and tag therefore resolves the body record, and every comparison the example makes succeeds against it. Nothing lets you tell the two apart: `context.position` is always `null` in this release, and `hit.story` is populated only for tracked-change hits, so neither reports the story of a content control.
-
-The single-run requirement is the one that surfaces most often, because a bold or italic word splits a paragraph into several runs and a selection across that boundary throws even though it looks like ordinary text in one paragraph — this applies per segment, so it surfaces just as often inside a multi-paragraph target.
-
-Plain unformatted text is not a safe case either. The rewrite marks the text before the anchor with `xml:space="preserve"` and does not mark the text after it, so anchoring a word that ends right before a space can lose that space when the document is saved and reopened, turning `foo bar` into `foobar`. That is document text changing, not just formatting. Until it is fixed, prefer ranges that do not end next to a space, and check exported files if you anchor at word boundaries.
 
 Anything in a paragraph that is not literal text shifts the two coordinate systems apart. A selection counts a tab, a line break, and an inline image as caret positions, while the anchor rewrite accumulates offsets from `w:t` contents alone. Any of them before or inside the selection makes the stored anchor land later in the paragraph than the user selected, and a long enough run of following text absorbs the difference so the write succeeds instead of failing.
 
