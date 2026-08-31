@@ -223,7 +223,7 @@
     {
       "name": "onContentError",
       "type": "(params: {\n  error: unknown;\n  editor: Editor;\n  documentId: string;\n  file: null | File | Blob;\n}) => void",
-      "typeName": "(params: { error: unknown; editor: Editor; documentId: string; file: globalThis.File | globalThis.Blob | null | undefined; }) => void",
+      "typeName": "(params: SuperDocContentErrorPayload) => void",
       "required": false,
       "description": "Called when the editor cannot read or update document content.",
       "group": "other"
@@ -316,17 +316,17 @@
     {
       "name": "onCommentsListChange",
       "type": "(params: {\n  isRendered: boolean;\n}) => void",
-      "typeName": "(params: { isRendered: boolean; }) => void",
+      "typeName": "(params: SuperDocCommentsListChangePayload) => void",
       "required": false,
-      "description": "Callback when the comments list is rendered.",
+      "description": "Called when the built-in comments list is rendered or removed.",
       "group": "other"
     },
     {
       "name": "onPaginationUpdate",
       "type": "(params: {\n  totalPages: number;\n  superdoc: SuperDocClass;\n}) => void",
-      "typeName": "(params: { totalPages: number; superdoc: SuperDoc; }) => void",
+      "typeName": "(params: SuperDocPaginationUpdatePayload) => void",
       "required": false,
-      "description": "Callback when pagination layout updates (fires after each layout pass with the current page count).",
+      "description": "Called after each pagination layout pass with the current page count.",
       "group": "other"
     },
     {
@@ -496,17 +496,17 @@
     {
       "name": "onPageCountKnown",
       "type": "(payload: {\n  pageCount: number;\n  generation: number;\n}) => void",
-      "typeName": "(payload: { pageCount: number; generation: number; }) => void",
+      "typeName": "(payload: SuperDocPageCountKnownPayload) => void",
       "required": false,
-      "description": "Painter plan P7 §1 (@experimental): fires when the paginated page count changes, at layout-end — before resolve or paint, so page counters and minimaps can trust the number as soon as it is knowable. The payload's `generation` identifies the announcing layout pass (informational; the event is keyed on page-count changes, not generations). v2 vertical pagination only; semantic \"web layout\" surfaces never fire it.",
+      "description": "Experimental callback fired when paginated layout changes the page count. Runs before paint. `generation` identifies the layout pass. Does not fire in web layout.",
       "group": "other"
     },
     {
       "name": "onFontsChanged",
-      "type": "(payload: {\n  source?: string;\n  loadSummary?: null | FontLoadSummary;\n  report?: FontResolutionRecord[];\n  missingFonts?: string[];\n  documentFonts?: string[];\n  documentFontOptions?: DocumentFontOption[];\n}) => void",
+      "type": "(payload: {\n  source?: \"initial\" | \"diagnostic-settle\" | \"config-change\" | \"late-load\" | \"render-change\";\n  loadSummary?: null | FontLoadSummary;\n  report?: FontResolutionRecord[];\n  missingFonts?: string[];\n  documentFonts?: string[];\n  documentFontOptions?: DocumentFontOption[];\n}) => void",
       "typeName": "(payload: FontsChangedPayload) => void",
       "required": false,
-      "description": "Callback fired with the authoritative substitution + load-aware font report: once after the load-before-measure gate settles (`source: 'initial'`), again when a face arrives after a timed-out first paint (`'late-load'`). Each payload carries the full per-font `resolutions`, the genuinely `missingFonts`, and a `loadSummary`. Also available to pull on demand via `superdoc.fonts.getReport()`.",
+      "description": "Called after initial font resolution and whenever substitution or font availability changes. The payload includes the current report, missing fonts, load summary, and the reason for the update. Use `superdoc.fonts.onReport()` for the same subscription at runtime.",
       "group": "other"
     }
   ]

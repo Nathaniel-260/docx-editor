@@ -82,6 +82,9 @@ import type {
   FlowBlock,
   FlowMode,
   FontFamilyOption,
+  FontsChangedPayload,
+  FontsChangedSource,
+  FontsResolvedPayload,
   HyperlinkActivationContext,
   HyperlinkActivationHandler,
   HyperlinkActivationResult,
@@ -164,7 +167,9 @@ import type {
   SuperDocCommandExecuteContext,
   SuperDocCommandState,
   SuperDocCommandStateContext,
+  SuperDocCommentsListChangePayload,
   SuperDocCommentsUpdatePayload,
+  SuperDocContentErrorPayload,
   SuperDocDecoration,
   SuperDocDecorationApi,
   SuperDocDecorationContext,
@@ -173,6 +178,7 @@ import type {
   SuperDocDiagnosticCode,
   SuperDocDiagnosticStage,
   SuperDocDisposableBag,
+  SuperDocDocumentModeChangePayload,
   SuperDocEditorPayload,
   SuperDocExceptionDiagnosticPayload,
   SuperDocExceptionEditorPayload,
@@ -200,6 +206,7 @@ import type {
   SuperDocFontFace,
   SuperDocFontFamily,
   SuperDocFontsApi,
+  SuperDocFormattingMarksChangePayload,
   SuperDocGuardedDoc,
   SuperDocGuardedDocQuery,
   SuperDocGuardedDocSelection,
@@ -210,7 +217,9 @@ import type {
   SuperDocLockedPayload,
   SuperDocMeasurementUnit,
   SuperDocMeasurementUnitChangePayload,
+  SuperDocPageCountKnownPayload,
   SuperDocPageMarginsChangePayload,
+  SuperDocPaginationUpdatePayload,
   SuperDocMutationAffect,
   SuperDocMutationEvent,
   SuperDocMutationFilter,
@@ -335,6 +344,9 @@ const _real_FindReplaceResolution: AssertNotAny<FindReplaceResolution> = true;
 const _real_FlowBlock: AssertNotAny<FlowBlock> = true;
 const _real_FlowMode: AssertNotAny<FlowMode> = true;
 const _real_FontFamilyOption: AssertNotAny<FontFamilyOption> = true;
+const _real_FontsChangedPayload: AssertNotAny<FontsChangedPayload> = true;
+const _real_FontsChangedSource: AssertNotAny<FontsChangedSource> = true;
+const _real_FontsResolvedPayload: AssertNotAny<FontsResolvedPayload> = true;
 const _real_HyperlinkActivationContext: AssertNotAny<HyperlinkActivationContext> = true;
 const _real_HyperlinkActivationHandler: AssertNotAny<HyperlinkActivationHandler> = true;
 const _real_HyperlinkActivationResult: AssertNotAny<HyperlinkActivationResult> = true;
@@ -417,7 +429,9 @@ const _real_SuperDocCommandApi: AssertNotAny<SuperDocCommandApi> = true;
 const _real_SuperDocCommandExecuteContext: AssertNotAny<SuperDocCommandExecuteContext> = true;
 const _real_SuperDocCommandState: AssertNotAny<SuperDocCommandState> = true;
 const _real_SuperDocCommandStateContext: AssertNotAny<SuperDocCommandStateContext> = true;
+const _real_SuperDocCommentsListChangePayload: AssertNotAny<SuperDocCommentsListChangePayload> = true;
 const _real_SuperDocCommentsUpdatePayload: AssertNotAny<SuperDocCommentsUpdatePayload> = true;
+const _real_SuperDocContentErrorPayload: AssertNotAny<SuperDocContentErrorPayload> = true;
 const _real_SuperDocDecoration: AssertNotAny<SuperDocDecoration> = true;
 const _real_SuperDocDecorationApi: AssertNotAny<SuperDocDecorationApi> = true;
 const _real_SuperDocDecorationContext: AssertNotAny<SuperDocDecorationContext> = true;
@@ -426,6 +440,7 @@ const _real_SuperDocDecorationProvider: AssertNotAny<SuperDocDecorationProvider>
 const _real_SuperDocDiagnosticCode: AssertNotAny<SuperDocDiagnosticCode> = true;
 const _real_SuperDocDiagnosticStage: AssertNotAny<SuperDocDiagnosticStage> = true;
 const _real_SuperDocDisposableBag: AssertNotAny<SuperDocDisposableBag> = true;
+const _real_SuperDocDocumentModeChangePayload: AssertNotAny<SuperDocDocumentModeChangePayload> = true;
 const _real_SuperDocEditorPayload: AssertNotAny<SuperDocEditorPayload> = true;
 const _real_SuperDocExceptionDiagnosticPayload: AssertNotAny<SuperDocExceptionDiagnosticPayload> = true;
 const _real_SuperDocExceptionEditorPayload: AssertNotAny<SuperDocExceptionEditorPayload> = true;
@@ -453,6 +468,7 @@ const _real_SuperDocFitWidthOptions: AssertNotAny<SuperDocFitWidthOptions> = tru
 const _real_SuperDocFontFace: AssertNotAny<SuperDocFontFace> = true;
 const _real_SuperDocFontFamily: AssertNotAny<SuperDocFontFamily> = true;
 const _real_SuperDocFontsApi: AssertNotAny<SuperDocFontsApi> = true;
+const _real_SuperDocFormattingMarksChangePayload: AssertNotAny<SuperDocFormattingMarksChangePayload> = true;
 const _real_SuperDocGuardedDoc: AssertNotAny<SuperDocGuardedDoc> = true;
 const _real_SuperDocGuardedDocQuery: AssertNotAny<SuperDocGuardedDocQuery> = true;
 const _real_SuperDocGuardedDocSelection: AssertNotAny<SuperDocGuardedDocSelection> = true;
@@ -460,7 +476,9 @@ const _real_SuperDocLayoutEngineOptions: AssertNotAny<SuperDocLayoutEngineOption
 const _real_SuperDocLockedPayload: AssertNotAny<SuperDocLockedPayload> = true;
 const _real_SuperDocMeasurementUnit: AssertNotAny<SuperDocMeasurementUnit> = true;
 const _real_SuperDocMeasurementUnitChangePayload: AssertNotAny<SuperDocMeasurementUnitChangePayload> = true;
+const _real_SuperDocPageCountKnownPayload: AssertNotAny<SuperDocPageCountKnownPayload> = true;
 const _real_SuperDocPageMarginsChangePayload: AssertNotAny<SuperDocPageMarginsChangePayload> = true;
+const _real_SuperDocPaginationUpdatePayload: AssertNotAny<SuperDocPaginationUpdatePayload> = true;
 const _real_SuperDocMutationAffect: AssertNotAny<SuperDocMutationAffect> = true;
 const _real_SuperDocMutationEvent: AssertNotAny<SuperDocMutationEvent> = true;
 const _real_SuperDocMutationFilter: AssertNotAny<SuperDocMutationFilter> = true;

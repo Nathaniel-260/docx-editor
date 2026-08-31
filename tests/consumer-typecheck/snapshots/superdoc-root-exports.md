@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-28T21:37:06.281Z
+Generated: 2026-08-28T22:06:13.918Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 254 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 254 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 263 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 263 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **254** |
+| **union** |  | **263** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 244
+- typed but no runtime export (phantom risk): 253
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -84,6 +84,9 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `FlowBlock`
 - `FlowMode`
 - `FontFamilyOption`
+- `FontsChangedPayload`
+- `FontsChangedSource`
+- `FontsResolvedPayload`
 - `HyperlinkActivationContext`
 - `HyperlinkActivationHandler`
 - `HyperlinkActivationResult`
@@ -139,7 +142,9 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `SuperDocCommandExecuteContext`
 - `SuperDocCommandState`
 - `SuperDocCommandStateContext`
+- `SuperDocCommentsListChangePayload`
 - `SuperDocCommentsUpdatePayload`
+- `SuperDocContentErrorPayload`
 - `SuperDocDecoration`
 - `SuperDocDecorationApi`
 - `SuperDocDecorationContext`
@@ -148,6 +153,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `SuperDocDiagnosticCode`
 - `SuperDocDiagnosticStage`
 - `SuperDocDisposableBag`
+- `SuperDocDocumentModeChangePayload`
 - `SuperDocEditorPayload`
 - `SuperDocExceptionDiagnosticPayload`
 - `SuperDocExceptionEditorPayload`
@@ -175,6 +181,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `SuperDocFontFace`
 - `SuperDocFontFamily`
 - `SuperDocFontsApi`
+- `SuperDocFormattingMarksChangePayload`
 - `SuperDocGuardedDoc`
 - `SuperDocGuardedDocQuery`
 - `SuperDocGuardedDocSelection`
@@ -189,7 +196,9 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `SuperDocMutationEvent`
 - `SuperDocMutationFilter`
 - `SuperDocMutationOrigin`
+- `SuperDocPageCountKnownPayload`
 - `SuperDocPageMarginsChangePayload`
+- `SuperDocPaginationUpdatePayload`
 - `SuperDocPaintEvent`
 - `SuperDocReadyPayload`
 - `SuperDocReceiptSuccess`
@@ -291,7 +300,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `CommentsLayout` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsResponsiveConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsType` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Config` | ✓ | ✓ |   |   | 27 |   | 7 | 3 | 0 |
+| `Config` | ✓ | ✓ |   |   | 28 |   | 7 | 3 | 0 |
 | `ContentControlActiveChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContentControlClickPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContentControlRef` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -335,6 +344,9 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `FlowBlock` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `FlowMode` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `FontFamilyOption` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `FontsChangedPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `FontsChangedSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `FontsResolvedPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HTML` | ✓ | ✓ | ✓ | ✓ | 1 |   | 51 | 0 | 0 |
 | `HyperlinkActivationContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkActivationHandler` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -378,7 +390,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 1 | 0 | 0 |
 | `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 4 | 0 | 0 |
 | `StructuredDocumentSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 25 |   | 250 | 40 | 0 |
+| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 26 |   | 250 | 40 | 0 |
 | `SuperDocActiveEditorExtensions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsCommands` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsDiagnostics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -393,7 +405,9 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SuperDocCommandExecuteContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocCommandState` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocCommandStateContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocCommentsListChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocCommentsUpdatePayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocContentErrorPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocDecoration` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocDecorationApi` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocDecorationContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -402,6 +416,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SuperDocDiagnosticCode` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocDiagnosticStage` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocDisposableBag` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocDocumentModeChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocEditorPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocExceptionDiagnosticPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocExceptionEditorPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -429,6 +444,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SuperDocFontFace` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocFontFamily` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocFontsApi` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocFormattingMarksChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocGuardedDoc` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocGuardedDocQuery` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocGuardedDocSelection` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -443,7 +459,9 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SuperDocMutationEvent` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocMutationFilter` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocMutationOrigin` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocPageCountKnownPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocPageMarginsChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `SuperDocPaginationUpdatePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocPaintEvent` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocReadyPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocReceiptSuccess` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |

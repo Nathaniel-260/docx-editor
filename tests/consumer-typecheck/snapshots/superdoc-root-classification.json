@@ -1,14 +1,14 @@
 {
   "generatedAt": "2026-08-28T20:14:32.300Z",
   "summary": {
-    "total": 254,
+    "total": 263,
     "byBucket": {
-      "supported-root": 251,
+      "supported-root": 260,
       "legacy-root": 3
     },
     "byConfidence": {
       "medium": 48,
-      "high": 206
+      "high": 215
     }
   },
   "rows": [
@@ -695,6 +695,39 @@
       "inCjs": false
     },
     {
+      "name": "FontsChangedPayload",
+      "bucket": "supported-root",
+      "rationale": "Payload passed to Config.onFontsChanged, superdoc.fonts.onReport(), and the fonts-changed event.",
+      "confidence": "high",
+      "source": "font-system",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "FontsChangedSource",
+      "bucket": "supported-root",
+      "rationale": "Closed reason union carried by FontsChangedPayload.source so font-report handlers get autocomplete and exhaustive narrowing.",
+      "confidence": "high",
+      "source": "font-system",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "FontsResolvedPayload",
+      "bucket": "supported-root",
+      "rationale": "Initial font report passed to the deprecated Config.onFontsResolved callback and fonts-resolved event.",
+      "confidence": "high",
+      "source": "font-system",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "HTML",
       "bucket": "supported-root",
       "rationale": "Content-format constant. Heavily used (85 docs, 204 demos). Customer-facing.",
@@ -1333,6 +1366,28 @@
       "inCjs": false
     },
     {
+      "name": "SuperDocCommentsListChangePayload",
+      "bucket": "supported-root",
+      "rationale": "Payload passed to Config.onCommentsListChange and emitted with comments-list-change.",
+      "confidence": "high",
+      "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SuperDocContentErrorPayload",
+      "bucket": "supported-root",
+      "rationale": "Enriched document error passed to Config.onContentError, including the editor, document ID, and original source.",
+      "confidence": "high",
+      "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "SuperDocDecoration",
       "bucket": "supported-root",
       "rationale": "v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet.",
@@ -1404,6 +1459,17 @@
       "rationale": "Document-processing pipeline stage a diagnostic was raised from, carried on SuperDocExceptionDiagnosticPayload.diagnosticStage. SuperDoc Diagnostics MVP.",
       "confidence": "high",
       "source": "diagnostics",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SuperDocDocumentModeChangePayload",
+      "bucket": "supported-root",
+      "rationale": "Payload emitted with document-mode-change after role restrictions are applied.",
+      "confidence": "high",
+      "source": "core",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,
@@ -1718,6 +1784,17 @@
       "inCjs": false
     },
     {
+      "name": "SuperDocFormattingMarksChangePayload",
+      "bucket": "supported-root",
+      "rationale": "Payload emitted with formatting-marks-change after nonprinting marks are shown or hidden.",
+      "confidence": "high",
+      "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
       "name": "SuperDocGuardedDoc",
       "bucket": "supported-root",
       "rationale": "v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet.",
@@ -1853,6 +1930,28 @@
       "name": "SuperDocPageMarginsChangePayload",
       "bucket": "supported-root",
       "rationale": "Payload emitted after a ruler drag changes a section's page margins and passed to Config.onPageMarginsChange.",
+      "confidence": "high",
+      "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SuperDocPageCountKnownPayload",
+      "bucket": "supported-root",
+      "rationale": "Payload passed to the experimental Config.onPageCountKnown callback when pagination reports a changed page count.",
+      "confidence": "high",
+      "source": "core",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SuperDocPaginationUpdatePayload",
+      "bucket": "supported-root",
+      "rationale": "Payload passed to Config.onPaginationUpdate and emitted after a pagination layout pass.",
       "confidence": "high",
       "source": "core",
       "inDts": true,

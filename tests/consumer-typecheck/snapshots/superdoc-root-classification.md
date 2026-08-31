@@ -1,22 +1,22 @@
 # SD-3212 A1 — root classification
 
 Generated: derived from superdoc-root-classification.json (aligned with current root export inventory)
-Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (254 names)
+Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (263 names)
 
 ## Summary
 
 | Bucket | Count |
 |---|---|
-| supported-root | 251 |
+| supported-root | 260 |
 | legacy-root | 3 |
 | move-to-subpath | 0 |
 | internal-candidate | 0 |
 | NEEDS-REVIEW | 0 |
-| **total** | **254** |
+| **total** | **263** |
 
-Confidence: high=206, medium=48, low=0, needs-review=0.
+Confidence: high=215, medium=48, low=0, needs-review=0.
 
-## supported-root (251)
+## supported-root (260)
 
 | Name | Confidence | Source | Rationale |
 |---|---|---|---|
@@ -79,6 +79,9 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `FlowBlock` | high | layout-engine | Current shared layout-engine input contract exported from @superdoc/contracts and consumed by the v2 layout adapter, v2 host, layout bridge, and layout-engine tests. Useful for consumers typing custom layout projections and layout-engine integrations. |
 | `FlowMode` | high | layout-engine | Current layout flow-mode union exported from @superdoc/contracts and used by Config.layoutEngineOptions.flowMode and the v2 layout runtime to select paginated versus semantic flow. |
 | `FontFamilyOption` | high | font-system | Typed row accepted by ui.toolbar.fontOptions and returned by superdoc.fonts.getFontFamilyOptions(). |
+| `FontsChangedPayload` | high | font-system | Payload passed to Config.onFontsChanged, superdoc.fonts.onReport(), and the fonts-changed event. |
+| `FontsChangedSource` | high | font-system | Closed reason union carried by FontsChangedPayload.source so font-report handlers get autocomplete and exhaustive narrowing. |
+| `FontsResolvedPayload` | high | font-system | Initial font report passed to the deprecated Config.onFontsResolved callback and fonts-resolved event. |
 | `HTML` | high | locked | Content-format constant. Heavily used (85 docs, 204 demos). Customer-facing. |
 | `HyperlinkActivationContext` | high | hyperlinks | Context for the canonical top-level hyperlink activation handler. |
 | `HyperlinkActivationHandler` | high | hyperlinks | Canonical callback for controlling hyperlink activation behavior. |
@@ -137,7 +140,9 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `SuperDocCommandExecuteContext` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocCommandState` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocCommandStateContext` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
+| `SuperDocCommentsListChangePayload` | high | core | Payload passed to Config.onCommentsListChange and emitted with comments-list-change. |
 | `SuperDocCommentsUpdatePayload` | high | core | Payload emitted with the comments-update event and passed to Config.onCommentsUpdate; promoted to a named public type so callback signatures stop using inline shapes. |
+| `SuperDocContentErrorPayload` | high | core | Enriched document error passed to Config.onContentError, including the editor, document ID, and original source. |
 | `SuperDocDecoration` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocDecorationApi` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocDecorationContext` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
@@ -146,6 +151,7 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `SuperDocDiagnosticCode` | high | diagnostics | Stable public diagnostic taxonomy code carried on SuperDocExceptionDiagnosticPayload.diagnosticCode. SuperDoc Diagnostics MVP. |
 | `SuperDocDiagnosticStage` | high | diagnostics | Document-processing pipeline stage a diagnostic was raised from, carried on SuperDocExceptionDiagnosticPayload.diagnosticStage. SuperDoc Diagnostics MVP. |
 | `SuperDocDisposableBag` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
+| `SuperDocDocumentModeChangePayload` | high | core | Payload emitted with document-mode-change after role restrictions are applied. |
 | `SuperDocEditorPayload` | high | core | Wrapper payload emitted with editorBeforeCreate / editorCreate / collaboration-ready events; promoted to a named public type so callback signatures match the runtime wrapper instead of a bare Editor. |
 | `SuperDocExceptionDiagnosticPayload` | high | diagnostics | Member of the SuperDocExceptionPayload union; structured diagnostic translated from an internal v2-kernel diagnostic. Narrowed by 'diagnosticCode' in payload. SuperDoc Diagnostics MVP. |
 | `SuperDocExceptionEditorPayload` | high | locked | Member of the SuperDocExceptionPayload union; named so consumers can discriminate the editor-lifecycle shape. SD-673 Phase 4D. |
@@ -173,6 +179,7 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `SuperDocFontFace` | high | locked | Public font-face shape for superdoc.fonts.add (URL source + optional weight/style). |
 | `SuperDocFontFamily` | high | locked | Public font-family shape for superdoc.fonts.add (family name + faces). |
 | `SuperDocFontsApi` | high | locked | Return type of the public superdoc.fonts read + write surface (getReport/getMissingFonts/getDocumentFonts/onReport + map/unmap/add/preload). |
+| `SuperDocFormattingMarksChangePayload` | high | core | Payload emitted with formatting-marks-change after nonprinting marks are shown or hidden. |
 | `SuperDocGuardedDoc` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocGuardedDocQuery` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocGuardedDocSelection` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
@@ -184,7 +191,9 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `SuperDocMutationEvent` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocMutationFilter` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocMutationOrigin` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
+| `SuperDocPageCountKnownPayload` | high | core | Payload passed to the experimental Config.onPageCountKnown callback when pagination reports a changed page count. |
 | `SuperDocPageMarginsChangePayload` | high | core | Payload emitted after a ruler drag changes a section's page margins and passed to Config.onPageMarginsChange. |
+| `SuperDocPaginationUpdatePayload` | high | core | Payload passed to Config.onPaginationUpdate and emitted after a pagination layout pass. |
 | `SuperDocPaintEvent` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
 | `SuperDocReadyPayload` | high | core | Payload emitted with the ready event and passed to Config.onReady; promoted to a named public type for consistency with the other event payloads. |
 | `SuperDocReceiptSuccess` | high | core | v2 SuperDoc extension authoring API (defineSuperDocExtension contract). Customer-facing public type exported from src/public/index.ts; reachable through Config.extensions and the activeEditor.extensions facet. |
@@ -360,6 +369,9 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `FlowBlock` | ✓ | ✓ |   |   |
 | `FlowMode` | ✓ | ✓ |   |   |
 | `FontFamilyOption` | ✓ | ✓ |   |   |
+| `FontsChangedPayload` | ✓ | ✓ |   |   |
+| `FontsChangedSource` | ✓ | ✓ |   |   |
+| `FontsResolvedPayload` | ✓ | ✓ |   |   |
 | `HTML` | ✓ | ✓ | ✓ | ✓ |
 | `HyperlinkActivationContext` | ✓ | ✓ |   |   |
 | `HyperlinkActivationHandler` | ✓ | ✓ |   |   |
@@ -418,7 +430,9 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `SuperDocCommandExecuteContext` | ✓ | ✓ |   |   |
 | `SuperDocCommandState` | ✓ | ✓ |   |   |
 | `SuperDocCommandStateContext` | ✓ | ✓ |   |   |
+| `SuperDocCommentsListChangePayload` | ✓ | ✓ |   |   |
 | `SuperDocCommentsUpdatePayload` | ✓ | ✓ |   |   |
+| `SuperDocContentErrorPayload` | ✓ | ✓ |   |   |
 | `SuperDocDecoration` | ✓ | ✓ |   |   |
 | `SuperDocDecorationApi` | ✓ | ✓ |   |   |
 | `SuperDocDecorationContext` | ✓ | ✓ |   |   |
@@ -427,6 +441,7 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `SuperDocDiagnosticCode` | ✓ | ✓ |   |   |
 | `SuperDocDiagnosticStage` | ✓ | ✓ |   |   |
 | `SuperDocDisposableBag` | ✓ | ✓ |   |   |
+| `SuperDocDocumentModeChangePayload` | ✓ | ✓ |   |   |
 | `SuperDocEditorPayload` | ✓ | ✓ |   |   |
 | `SuperDocExceptionDiagnosticPayload` | ✓ | ✓ |   |   |
 | `SuperDocExceptionEditorPayload` | ✓ | ✓ |   |   |
@@ -454,6 +469,7 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `SuperDocFontFace` | ✓ | ✓ |   |   |
 | `SuperDocFontFamily` | ✓ | ✓ |   |   |
 | `SuperDocFontsApi` | ✓ | ✓ |   |   |
+| `SuperDocFormattingMarksChangePayload` | ✓ | ✓ |   |   |
 | `SuperDocGuardedDoc` | ✓ | ✓ |   |   |
 | `SuperDocGuardedDocQuery` | ✓ | ✓ |   |   |
 | `SuperDocGuardedDocSelection` | ✓ | ✓ |   |   |
@@ -465,7 +481,9 @@ Confidence: high=206, medium=48, low=0, needs-review=0.
 | `SuperDocMutationEvent` | ✓ | ✓ |   |   |
 | `SuperDocMutationFilter` | ✓ | ✓ |   |   |
 | `SuperDocMutationOrigin` | ✓ | ✓ |   |   |
+| `SuperDocPageCountKnownPayload` | ✓ | ✓ |   |   |
 | `SuperDocPageMarginsChangePayload` | ✓ | ✓ |   |   |
+| `SuperDocPaginationUpdatePayload` | ✓ | ✓ |   |   |
 | `SuperDocPaintEvent` | ✓ | ✓ |   |   |
 | `SuperDocReadyPayload` | ✓ | ✓ |   |   |
 | `SuperDocReceiptSuccess` | ✓ | ✓ |   |   |

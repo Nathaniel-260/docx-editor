@@ -818,7 +818,13 @@ export interface FontsConfig {
   [key: string]: unknown;
 }
 
+/** Reason a font report changed. */
+export type FontsChangedSource = 'initial' | 'diagnostic-settle' | 'config-change' | 'late-load' | 'render-change';
+
+/** Font report passed to the deprecated `Config.onFontsResolved` callback. */
 export interface FontsResolvedPayload {
+  source?: FontsChangedSource;
+  loadSummary?: FontLoadSummary | null;
   report?: FontResolutionRecord[];
   missingFonts?: string[];
   documentFonts?: string[];
@@ -826,10 +832,8 @@ export interface FontsResolvedPayload {
   [key: string]: unknown;
 }
 
-export interface FontsChangedPayload extends FontsResolvedPayload {
-  source?: string;
-  loadSummary?: FontLoadSummary | null;
-}
+/** Current font report passed to `Config.onFontsChanged` and `fonts-changed`. */
+export interface FontsChangedPayload extends FontsResolvedPayload {}
 
 export interface ListDefinitionsPayload {
   [key: string]: unknown;
@@ -2998,6 +3002,54 @@ export interface SuperDocEditorPayload {
   editor: Editor;
 }
 
+/** Payload emitted when nonprinting formatting marks are shown or hidden. */
+export interface SuperDocFormattingMarksChangePayload {
+  /** Whether nonprinting formatting marks are visible. */
+  showFormattingMarks: boolean;
+  /** SuperDoc instance whose view changed. */
+  superdoc: SuperDoc;
+}
+
+/** Payload emitted after `setDocumentMode()` changes the mode. */
+export interface SuperDocDocumentModeChangePayload {
+  /** Mode after role restrictions are applied. */
+  documentMode: DocumentMode;
+}
+
+/** Payload passed when the built-in comments list is rendered or removed. */
+export interface SuperDocCommentsListChangePayload {
+  /** Whether the built-in comments list is currently rendered. */
+  isRendered: boolean;
+}
+
+/** Document error passed to `Config.onContentError`. */
+export interface SuperDocContentErrorPayload {
+  /** Error reported while reading or updating the document. */
+  error: unknown;
+  /** Editor that reported the error. */
+  editor: Editor;
+  /** Document associated with the editor. */
+  documentId: string;
+  /** File or Blob associated with the document, when available. */
+  file: globalThis.File | globalThis.Blob | null | undefined;
+}
+
+/** Payload passed to `Config.onPaginationUpdate` after a layout pass. */
+export interface SuperDocPaginationUpdatePayload {
+  /** Current number of pages. */
+  totalPages: number;
+  /** SuperDoc instance whose layout changed. */
+  superdoc: SuperDoc;
+}
+
+/** Payload passed to the experimental `Config.onPageCountKnown` callback. */
+export interface SuperDocPageCountKnownPayload {
+  /** Current number of pages. */
+  pageCount: number;
+  /** Layout generation that reported the page count. */
+  generation: number;
+}
+
 /** Result counts from an Accept All or Reject All tracked-change decision. */
 export interface SuperDocTrackedChangesBulkDecisionPayload {
   /** Document that received the bulk decision. */
@@ -4366,12 +4418,7 @@ export interface Config {
    */
   onEditorDestroy?: () => void;
   /** Called when the editor cannot read or update document content. */
-  onContentError?: (params: {
-    error: unknown;
-    editor: Editor;
-    documentId: string;
-    file: globalThis.File | globalThis.Blob | null | undefined;
-  }) => void;
+  onContentError?: (params: SuperDocContentErrorPayload) => void;
   /** Callback when the SuperDoc is ready. Receives a wrapper carrying the live SuperDoc instance. */
   onReady?: (params: SuperDocReadyPayload) => void;
   /** Callback when comments are updated. */
@@ -4419,13 +4466,10 @@ export interface Config {
    * coverage.
    */
   onException?: (params: SuperDocExceptionPayload) => void;
-  /** Callback when the comments list is rendered. */
-  onCommentsListChange?: (params: { isRendered: boolean }) => void;
-  /**
-   * Callback when pagination layout updates (fires after each layout pass
-   * with the current page count).
-   */
-  onPaginationUpdate?: (params: { totalPages: number; superdoc: SuperDoc }) => void;
+  /** Called when the built-in comments list is rendered or removed. */
+  onCommentsListChange?: (params: SuperDocCommentsListChangePayload) => void;
+  /** Called after each pagination layout pass with the current page count. */
+  onPaginationUpdate?: (params: SuperDocPaginationUpdatePayload) => void;
   /**
    * Previous list-definition callback. SuperDoc 2 does not emit this callback.
    * @deprecated replaceWith=`onEditorUpdate` and `doc.lists.list` removeIn=v3.0
@@ -4643,32 +4687,23 @@ export interface Config {
    */
   measurementUnit?: SuperDocMeasurementUnit;
   /**
-   * Callback fired after the editor reports `fonts-resolved`. The payload
-   * contains `documentFonts` and `unsupportedFonts` arrays so hosts can fall
-   * back, warn, or block printing on unsupported faces.
-   *
-   * LEGACY/EARLY: this fires once before fonts load and is not substitution-aware
-   * (`unsupportedFonts` over-reports families that render via a bundled substitute).
-   * For the authoritative, load-settled picture use {@link onFontsChanged}.
+   * Previous first-report callback. In SuperDoc 2 it receives the same initial,
+   * load-aware report as `onFontsChanged`, but does not receive later updates.
    *
    * @deprecated replaceWith=`onFontsChanged` removeIn=v3.0
    */
   onFontsResolved?: (payload: FontsResolvedPayload) => void;
   /**
-   * Painter plan P7 §1 (@experimental): fires when the paginated page count
-   * changes, at layout-end — before resolve or paint, so page counters and
-   * minimaps can trust the number as soon as it is knowable. The payload's
-   * `generation` identifies the announcing layout pass (informational; the
-   * event is keyed on page-count changes, not generations). v2 vertical
-   * pagination only; semantic "web layout" surfaces never fire it.
+   * Experimental callback fired when paginated layout changes the page count.
+   * Runs before paint. `generation` identifies the layout pass. Does not fire
+   * in web layout.
    */
-  onPageCountKnown?: (payload: { pageCount: number; generation: number }) => void;
+  onPageCountKnown?: (payload: SuperDocPageCountKnownPayload) => void;
   /**
-   * Callback fired with the authoritative substitution + load-aware font report: once
-   * after the load-before-measure gate settles (`source: 'initial'`), again when a face
-   * arrives after a timed-out first paint (`'late-load'`). Each payload carries the full
-   * per-font `resolutions`, the genuinely `missingFonts`, and a `loadSummary`. Also
-   * available to pull on demand via `superdoc.fonts.getReport()`.
+   * Called after initial font resolution and whenever substitution or font
+   * availability changes. The payload includes the current report, missing
+   * fonts, load summary, and the reason for the update. Use
+   * `superdoc.fonts.onReport()` for the same subscription at runtime.
    */
   onFontsChanged?: (payload: FontsChangedPayload) => void;
 }

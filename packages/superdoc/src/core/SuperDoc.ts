@@ -290,15 +290,19 @@ import type {
   SearchMatch,
   SuperDocAwarenessUpdatePayload,
   SuperDocCommentsUpdatePayload,
+  SuperDocCommentsListChangePayload,
+  SuperDocDocumentModeChangePayload,
   SuperDocDocumentReplacedPayload,
   SuperDocEditorPayload,
   SuperDocExceptionPayload,
   SuperDocExceptionStorePayload,
   SuperDocFontsApi,
+  SuperDocFormattingMarksChangePayload,
   SuperDocLockedPayload,
   SuperDocMeasurementUnit,
   SuperDocMeasurementUnitChangePayload,
   SuperDocPageMarginsChangePayload,
+  SuperDocPaginationUpdatePayload,
   SuperDocReadyPayload,
   SuperDocState,
   SuperDocTrackedChangesBulkDecisionPayload,
@@ -581,21 +585,8 @@ function getActiveFontRuntime(editor: ActiveEditor | null | undefined): Normaliz
 interface SuperDocWhiteboardPayload {
   whiteboard: Whiteboard;
 }
-interface SuperDocFormattingMarksPayload {
-  showFormattingMarks: boolean;
-  superdoc: SuperDoc;
-}
-interface SuperDocDocumentModeChangePayload {
-  documentMode: DocumentMode;
-}
-interface SuperDocCommentsListChangePayload {
-  isRendered: boolean;
-}
-interface SuperDocPaginationPayload {
-  totalPages: number;
-  superdoc: SuperDoc;
-}
-interface SuperDocContentErrorPayload {
+/** Raw editor event enriched by `onContentError` before it reaches the Config callback. */
+interface EditorContentErrorPayload {
   error: unknown;
   editor: Editor;
 }
@@ -619,7 +610,7 @@ interface SuperDocEventMap {
   zoomChange: [SuperDocZoomPayload];
   'measurement-unit-change': [SuperDocMeasurementUnitChangePayload];
   'page-margins-change': [SuperDocPageMarginsChangePayload];
-  'formatting-marks-change': [SuperDocFormattingMarksPayload];
+  'formatting-marks-change': [SuperDocFormattingMarksChangePayload];
   'document-mode-change': [SuperDocDocumentModeChangePayload];
   /**
    * The active editor was assigned or cleared. Internal: the UI controller
@@ -645,10 +636,10 @@ interface SuperDocEventMap {
   'document-replaced': [SuperDocDocumentReplacedPayload];
   'editor-update': [EditorUpdateEvent];
   'tracked-changes:bulk-decision': [SuperDocTrackedChangesBulkDecisionPayload];
-  'content-error': [SuperDocContentErrorPayload];
+  'content-error': [EditorContentErrorPayload];
   'fonts-resolved': [FontsResolvedPayload];
   'fonts-changed': [FontsChangedPayload];
-  'pagination-update': [SuperDocPaginationPayload];
+  'pagination-update': [SuperDocPaginationUpdatePayload];
   'list-definitions-change': [ListDefinitionsPayload];
   'comments-update': [SuperDocCommentsUpdatePayload];
   'content-control:active-change': [ContentControlActiveChangePayload];
@@ -2570,7 +2561,7 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
   }
 
   /** Report an editor content error with its document ID and source file. */
-  onContentError({ error, editor }: { error: unknown; editor: Editor }) {
+  onContentError({ error, editor }: EditorContentErrorPayload) {
     const documentId = editor.options?.documentId;
     // Teardown or a foreign editor can make the expected store lookup miss.
     const doc = this.#requireSuperdocStore('onContentError').documents.find(
