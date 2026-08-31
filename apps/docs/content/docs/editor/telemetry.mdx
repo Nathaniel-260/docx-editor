@@ -6,7 +6,31 @@ description: Make the browser Editor telemetry behavior explicit.
 
 {/* Media decision: none. The configuration and verification target are clearer as code and prose. */}
 
-Telemetry is enabled by default. Configure it at Editor construction. The Editor's [license identity](/editor/license) is configured separately.
+Telemetry is enabled by default. The browser Editor sends one document-open event when each DOCX becomes ready. Configure it when you create the Editor. Set its [license identity](/editor/license) separately.
+
+Each request body uses this structure:
+
+```json
+{
+  "superdocVersion": "2.10.0",
+  "browserInfo": {
+    "userAgent": "Mozilla/5.0 ...",
+    "currentUrl": "https://app.example.com",
+    "hostname": "app.example.com",
+    "screenSize": { "width": 1440, "height": 900 }
+  },
+  "metadata": { "application": "contract-review" },
+  "events": [
+    {
+      "timestamp": "2026-08-29T12:00:00.000Z",
+      "documentId": "document-123",
+      "documentCreatedAt": "2026-08-01T09:30:00.000Z"
+    }
+  ]
+}
+```
+
+`superdocVersion`, `browserInfo`, and optional `metadata` are request-envelope fields. Each item in `events` contains only `timestamp`, `documentId`, and `documentCreatedAt`. `browserInfo.currentUrl` contains the page origin. The payload does not include the page path, query string, fragment, or document content.
 
 ## Choose telemetry behavior
 
@@ -20,7 +44,7 @@ const superdoc = new SuperDoc({
 });
 ```
 
-When telemetry is enabled, `endpoint` selects a custom destination and `metadata` attaches application-defined context:
+When telemetry is enabled, `endpoint` selects the destination and `metadata` adds application-defined context:
 
 ```ts
 const superdoc = new SuperDoc({
@@ -37,7 +61,7 @@ const superdoc = new SuperDoc({
 });
 ```
 
-Do not put document text, comments, names, email addresses, credentials, signed URLs, or other sensitive values in telemetry metadata. Allow the selected endpoint in `connect-src` and apply the same authentication, retention, and logging policy as any other production integration.
+The Editor serializes `metadata` into the request body. Do not include document text, comments, personal data, credentials, signed URLs, or other sensitive values. Allow the selected endpoint in `connect-src`. For a cross-origin endpoint, allow the Editor page's origin, the `POST` method, and the `Content-Type` and `X-License-Key` request headers in its CORS policy.
 
 <Callout variant='success' title='Verification target'>
   Inspect browser network requests in the deployed environment. Confirm that disabled telemetry sends no telemetry

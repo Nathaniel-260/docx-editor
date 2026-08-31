@@ -430,7 +430,7 @@
       "name": "licenseKey",
       "type": "string",
       "required": false,
-      "description": "License key for organization identification.",
+      "description": "Client-visible license identity sent with document-open telemetry.",
       "group": "other"
     },
     {
@@ -438,7 +438,7 @@
       "type": "{\n  enabled: boolean;\n  endpoint?: string;\n  metadata?: Record<string, unknown>;\n  licenseKey?: string;\n}",
       "typeName": "SuperDocTelemetryConfig",
       "required": false,
-      "description": "Telemetry configuration.",
+      "description": "Document-open telemetry settings. Enabled by default.",
       "group": "other"
     },
     {

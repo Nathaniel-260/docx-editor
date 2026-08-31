@@ -6,7 +6,7 @@ description: Set the browser Editor license identity.
 
 {/* Media decision: none. The runtime configuration is clearer as one small code example. */}
 
-Set the license key at Editor construction. The key identifies your organization to the browser Editor. It is client-visible configuration, not a secret or an authorization credential.
+Set the license key when you create the Editor. When telemetry is enabled, the browser Editor sends it with document-open events. It is client-visible configuration, not a secret or an authorization credential.
 
 ```ts
 const superdoc = new SuperDoc({
@@ -16,7 +16,7 @@ const superdoc = new SuperDoc({
 });
 ```
 
-Browser build variables are visible to the person running the application. Keep document access, collaboration credentials, and service authorization separate from the license identity.
+When telemetry is enabled and you omit the key, document-open events use the community and evaluation identity. Browser build variables remain visible to the person running the application. Keep document access, collaboration credentials, and service authorization separate from the license identity.
 
 This page covers Editor configuration. See [Licensing](/resources/license) for the open-source and commercial terms and the licensing contact.
 

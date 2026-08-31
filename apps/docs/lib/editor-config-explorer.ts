@@ -191,8 +191,8 @@ const summaries = {
   viewOptions: 'Set DOCX-compatible document view options.',
   contained: 'Keep the Editor inside a fixed-height scrolling container.',
   cspNonce: 'Apply a Content Security Policy nonce to SuperDoc runtime styles.',
-  licenseKey: 'Identify the licensed organization.',
-  telemetry: 'Enable or disable telemetry.',
+  licenseKey: 'Set the client-visible license identity sent with document-open telemetry.',
+  telemetry: 'Configure telemetry sent when a DOCX becomes ready.',
   proofing: 'Configure spelling and grammar checks.',
   fonts: 'Configure document fonts and font asset loading.',
   workerUrls: 'Load browser workers from same-origin URLs.',
@@ -331,6 +331,7 @@ const presentation = {
     guide: { label: 'License', href: '/editor/license' },
   },
   telemetry: {
+    type: '{\n  enabled: boolean;\n  endpoint?: string;\n  metadata?: Record<string, unknown>;\n}',
     default: '{ enabled: true }',
     example: { value: '{ enabled: false }', code: 'telemetry: { enabled: false }' },
     guide: { label: 'Telemetry', href: '/editor/telemetry' },

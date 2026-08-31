@@ -954,6 +954,18 @@ test('exports storage, version, and configuration guidance for the v2 Editor', a
   assert.match(license, /not a secret or an authorization credential/);
 });
 
+test('exports the telemetry privacy boundary', async () => {
+  const telemetry = await readFile(new URL('../out/md/editor/telemetry.md', import.meta.url), 'utf8');
+
+  assert.match(
+    telemetry,
+    /"superdocVersion"[\s\S]*"browserInfo"[\s\S]*"metadata"[\s\S]*"events": \[[\s\S]*"timestamp"[\s\S]*"documentId"[\s\S]*"documentCreatedAt"/u,
+  );
+  assert.match(telemetry, /does not include the page path, query string, fragment, or document content/u);
+  assert.match(telemetry, /allow the Editor page's origin/u);
+  assert.doesNotMatch(telemetry, /current URL/u);
+});
+
 test('exports every generated Document API reference route', async () => {
   const model = JSON.parse(
     await readFile(new URL('../generated/document-api-reference.json', import.meta.url), 'utf8'),

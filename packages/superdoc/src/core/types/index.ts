@@ -3303,9 +3303,16 @@ export interface ViewingOptions {
 }
 
 export interface SuperDocTelemetryConfig {
+  /** Whether to send a document-open event each time a DOCX becomes ready. */
   enabled: boolean;
+  /** Destination for document-open events. Defaults to SuperDoc's telemetry endpoint. */
   endpoint?: string;
+  /** Application-defined metadata serialized with each request. */
   metadata?: Record<string, unknown>;
+  /**
+   * Previous location for the license key.
+   * @deprecated replaceWith=`Config.licenseKey` removeIn=v3.0
+   */
   licenseKey?: string;
 }
 
@@ -4607,9 +4614,9 @@ export interface Config {
    * share a document must use the same nonce.
    */
   cspNonce?: string;
-  /** License key for organization identification. */
+  /** Client-visible license identity sent with document-open telemetry. */
   licenseKey?: string;
-  /** Telemetry configuration. */
+  /** Document-open telemetry settings. Enabled by default. */
   telemetry?: SuperDocTelemetryConfig;
   /** Proofing / spellcheck configuration. */
   proofing?: ProofingConfig;

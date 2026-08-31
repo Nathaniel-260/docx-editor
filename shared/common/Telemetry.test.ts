@@ -183,6 +183,36 @@ describe('Telemetry', () => {
   });
 
   describe('payload structure', () => {
+    it('does not include path, query, or fragment values from the page URL', async () => {
+      const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: {
+          location: {
+            href: 'https://app.example.com/reset/user@example.com?token=secret#oauth-code',
+            hostname: 'app.example.com',
+            origin: 'https://app.example.com',
+          },
+          navigator: { userAgent: 'test' },
+          screen: { width: 1280, height: 720 },
+        },
+      });
+
+      try {
+        const telemetry = new Telemetry(testConfig);
+        telemetry.trackDocumentOpen('doc-123');
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const callArgs = fetchSpy.mock.calls[0];
+        const payload: TelemetryPayload = JSON.parse(callArgs[1]?.body as string);
+        expect(payload.browserInfo.currentUrl).toBe('https://app.example.com');
+      } finally {
+        if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+        else delete (globalThis as { window?: unknown }).window;
+      }
+    });
+
     it('includes browser info at root level', async () => {
       const telemetry = new Telemetry(testConfig);
       telemetry.trackDocumentOpen('doc-123');

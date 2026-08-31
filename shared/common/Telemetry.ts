@@ -1,9 +1,6 @@
 /**
- * SuperDoc Telemetry - Document Open Tracking
- *
  * Tracks document opens for usage-based billing.
- * Sends immediately on each document open/import.
- * Fails silently - never breaks the app.
+ * Sends each event immediately. Delivery failures do not affect the Editor.
  */
 
 declare const __APP_VERSION__: string;
@@ -80,7 +77,7 @@ export class Telemetry {
 
     return {
       userAgent: window.navigator.userAgent,
-      currentUrl: window.location.href,
+      currentUrl: window.location.origin,
       hostname: window.location.hostname,
       screenSize: {
         width: window.screen.width,
@@ -90,9 +87,9 @@ export class Telemetry {
   }
 
   /**
-   * Track a document open event - sends immediately
-   * @param documentId - Unique document identifier (GUID or hash), or null if unavailable
-   * @param documentCreatedAt - Document creation timestamp (dcterms:created), or null if unavailable
+   * Sends a document-open event without waiting for delivery.
+   * @param documentId Document identifier, or `null` when unavailable.
+   * @param documentCreatedAt Value from `dcterms:created`, or `null` when unavailable.
    */
   trackDocumentOpen(documentId: string | null, documentCreatedAt: string | null = null): void {
     if (!this.enabled) return;
@@ -106,9 +103,6 @@ export class Telemetry {
     this.sendEvent(event);
   }
 
-  /**
-   * Send event via fetch (fire and forget)
-   */
   private async sendEvent(event: DocumentOpenEvent): Promise<void> {
     const payload: TelemetryPayload = {
       superdocVersion: this.superdocVersion,
@@ -128,7 +122,7 @@ export class Telemetry {
         credentials: 'omit',
       });
     } catch {
-      // Fail silently - telemetry should never break the app
+      // Telemetry delivery must not affect Editor behavior.
     }
   }
 }

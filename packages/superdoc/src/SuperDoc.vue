@@ -61,6 +61,7 @@ import { createV2SessionShortcutRoutes } from './core/editor-runtime/v2/v2-sessi
 import { markRuntimeRoot, unmarkRuntimeRoot } from './core/editor-runtime/root-marker.js';
 import { resolveV2Integration } from './core/v2-integration/v2-integration.js';
 import { resolveV2CollaborationTarget } from './core/collaboration/resolve-v2-collaboration-target.js';
+import { createDocumentOpenTelemetry } from './core/document-open-telemetry.js';
 import {
   translateUnzipDiagnostic,
   translateRenderReadinessDiagnostic,
@@ -198,6 +199,7 @@ const {
 } = commentsStore;
 const { proxy } = getCurrentInstance();
 commentsStore.proxy = proxy;
+const documentOpenTelemetry = createDocumentOpenTelemetry(proxy.$superdoc.config);
 
 // Resolve the single v2 integration object. superdoc@2 source-resolves the
 // private v2 browser shell locally; customers do not provide a runtime switch.
@@ -831,7 +833,9 @@ const onV2EditorReady = (payload) => {
     fonts,
     replaceFile,
     upgradeToCollaboration,
+    documentOpenToken,
   } = payload;
+  documentOpenTelemetry?.trackDocumentOpen(documentOpenToken ?? null, documentId ?? null);
   const saveV2Bytes = async (saveOptions = {}) => {
     if (!host || typeof host.save !== 'function') {
       throw new Error('v2-editor: save unavailable');
@@ -2287,15 +2291,6 @@ const editorOptions = (doc) => {
         isInternal: proxy.$superdoc.config.isInternal,
         ...payload,
       }),
-    licenseKey: proxy.$superdoc.config.licenseKey,
-    telemetry: proxy.$superdoc.config.telemetry?.enabled
-      ? {
-          enabled: true,
-          endpoint: proxy.$superdoc.config.telemetry?.endpoint,
-          metadata: proxy.$superdoc.config.telemetry?.metadata,
-          licenseKey: proxy.$superdoc.config.telemetry?.licenseKey,
-        }
-      : null,
   };
 
   return options;
