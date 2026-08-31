@@ -5236,7 +5236,13 @@ export { resolvePageNumberTokens, resolvePageNumberTokensCooperatively } from '.
 export type { NumberingContext, ResolvePageTokensResult, ResolvePageTokensOptions } from './resolvePageTokens.js';
 
 // Table utilities consumed by layout-bridge and cross-package sync tests
-export { getCellLines, getEmbeddedRowLines, resolveTableFrame, resolveRenderedTableWidth } from './layout-table.js';
+export {
+  getCellLines,
+  getEmbeddedRowLines,
+  resolveTableFrame,
+  resolveRenderedTableWidth,
+  generateFragmentMetadata,
+} from './layout-table.js';
 export { describeCellRenderBlocks, computeCellSliceContentHeight } from './table-cell-slice.js';
 export {
   readTableLayoutResumeCheckpoints,

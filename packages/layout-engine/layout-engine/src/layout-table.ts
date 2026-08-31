@@ -1311,7 +1311,7 @@ function findSplitPoint(
  * @param effectiveWidths - Optional rescaled column widths
  * @returns Table fragment metadata
  */
-function generateFragmentMetadata(
+export function generateFragmentMetadata(
   measure: TableMeasure,
   block: TableBlock,
   fromRow: number,

@@ -62,6 +62,7 @@ import {
   SEMANTIC_PAGE_HEIGHT_PX,
   SINGLE_COLUMN_DEFAULT,
   resolveTableFrame,
+  generateFragmentMetadata,
   readTableLayoutResumeCheckpoints,
   writeTableLayoutResume,
   writeTableLayoutResumeCheckpoints,
@@ -4315,6 +4316,9 @@ export async function incrementalLayout(
                     tableWidth,
                   );
 
+                  // AIDEV-NOTE: The footnote band places tables here instead of
+                  // layoutTableBlock. Attach the same fragment metadata that path
+                  // emits so DomPainter can stamp data-table-boundaries.
                   page.fragments.push({
                     kind: 'table',
                     blockId: range.blockId,
@@ -4326,6 +4330,7 @@ export async function incrementalLayout(
                     width: tableWidth,
                     height: Math.max(0, measure.totalHeight ?? 0),
                     columnWidths: fragmentColumnWidths,
+                    metadata: generateFragmentMetadata(measure, block, 0, block.rows.length, 0, fragmentColumnWidths),
                   });
                   cursorY += getRangeRenderHeight(range);
                   return;

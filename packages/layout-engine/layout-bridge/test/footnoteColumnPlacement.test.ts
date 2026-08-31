@@ -236,4 +236,79 @@ describe('Footnotes in columns', () => {
     // geometry group it under column 1, not the column-0 fallback.
     expect(listFragment && 'columnIndex' in listFragment ? listFragment.columnIndex : undefined).toBe(1);
   });
+
+  it('stamps columnBoundaries on a table laid out in the footnote band', async () => {
+    const body = makeParagraph('para-1', 'Cite note 1', 0);
+    const noteTable: TableBlock = {
+      kind: 'table',
+      id: 'footnote-1-0-table',
+      rows: [
+        {
+          id: 'fn-row-0',
+          cells: [
+            { id: 'fn-cell-0', blocks: [makeParagraph('fn-cell-0-p', 'A', 0)] },
+            { id: 'fn-cell-1', blocks: [makeParagraph('fn-cell-1-p', 'B', 0)] },
+          ],
+        },
+      ],
+    };
+    const cellMeasure = makeMeasure(12, 1);
+    const tableMeasure: TableMeasure = {
+      kind: 'table',
+      rows: [
+        {
+          cells: [
+            {
+              blocks: [cellMeasure],
+              paragraph: cellMeasure,
+              width: 80,
+              height: 16,
+              gridColumnStart: 0,
+              colSpan: 1,
+              rowSpan: 1,
+            },
+            {
+              blocks: [cellMeasure],
+              paragraph: cellMeasure,
+              width: 80,
+              height: 16,
+              gridColumnStart: 1,
+              colSpan: 1,
+              rowSpan: 1,
+            },
+          ],
+          height: 16,
+        },
+      ],
+      columnWidths: [80, 80],
+      totalWidth: 160,
+      totalHeight: 16,
+    };
+
+    const result = await incrementalLayout(
+      [],
+      null,
+      [body],
+      {
+        pageSize: { w: 600, h: 800 },
+        margins: { top: 60, right: 60, bottom: 60, left: 60 },
+        footnotes: {
+          refs: [{ id: '1', pos: 2 }],
+          blocksById: new Map([['1', [noteTable]]]),
+        },
+      },
+      async (block) => {
+        if (block.kind === 'table') return tableMeasure;
+        const textLength = block.kind === 'paragraph' ? (block.runs?.[0]?.text?.length ?? 1) : 1;
+        return makeMeasure(block.id.startsWith('footnote-') ? 10 : 18, textLength);
+      },
+    );
+
+    const fragment = result.layout.pages[0]?.fragments.find((entry) => entry.blockId === noteTable.id);
+    expect(fragment?.kind).toBe('table');
+    expect(fragment && 'metadata' in fragment ? fragment.metadata?.columnBoundaries : undefined).toEqual([
+      expect.objectContaining({ index: 0, width: 80 }),
+      expect.objectContaining({ index: 1, width: 80 }),
+    ]);
+  });
 });
