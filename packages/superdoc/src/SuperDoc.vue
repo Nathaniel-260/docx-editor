@@ -44,10 +44,17 @@ import { getV2TrackedChangeMutationImpact } from './helpers/v2-review-mutation-i
 import { resolveV2ReviewTargetCommentId } from './helpers/v2-review-target.js';
 import {
   createV2AuthorRequiredNotificationGate,
+  isV2AuthorRequiredRejection,
   V2_AUTHOR_REQUIRED_CODE,
   V2_AUTHOR_REQUIRED_MESSAGE,
 } from './helpers/v2-author-required-rejection.js';
 import { toV2BulkDecisionEvent } from './helpers/v2-bulk-decision-event.js';
+import {
+  createV2KeyboardEditRejectionException,
+  createV2KeyboardEditRejectionNotificationGate,
+  resolveV2MutationNoticeStatuses,
+  V2_EDIT_REJECTED_MESSAGE,
+} from './helpers/v2-keyboard-edit-rejection.js';
 import { DOCUMENT_EDITOR_SELECTION_SOURCE } from './helpers/selection-source.js';
 import { hasOutsideV2DomRangeSelection, shouldPreserveHostV2Selection } from './helpers/v2-selection-sync.js';
 import { useUiFontFamily } from './composables/useUiFontFamily.js';
@@ -640,6 +647,7 @@ const registerV2Runtime = ({ documentId, host, mount, facade }) => {
   proxy.$superdoc.registerEditorRuntime(adapter.runtime);
   v2Runtimes.set(documentId, { runtimeId, adapter });
   proxy.$superdoc.setActiveRuntime(runtimeId, 'v2-editor-ready');
+  syncV2EditRejectedActiveDocument();
   return true;
 };
 
@@ -699,12 +707,11 @@ const v2DiagnosticDedupe = createV2DiagnosticDedupe();
 // another inside a multi-document SuperDoc instance.
 const v2AuthorRequiredGate = createV2AuthorRequiredNotificationGate();
 const v2AuthorRequiredMessages = ref({});
-const v2AuthorRequiredStatus = computed(() => Object.values(v2AuthorRequiredMessages.value)[0] ?? null);
-const v2AuthorRequiredScope = (documentId) =>
+const v2MutationNoticeScope = (documentId) =>
   typeof documentId === 'string' && documentId.length > 0 ? `document:${documentId}` : 'document:default';
 
 const clearV2AuthorRequired = (documentId) => {
-  const scope = v2AuthorRequiredScope(documentId);
+  const scope = v2MutationNoticeScope(documentId);
   v2AuthorRequiredGate.clear(scope);
   if (!v2AuthorRequiredMessages.value[scope]) return;
   const next = { ...v2AuthorRequiredMessages.value };
@@ -713,7 +720,7 @@ const clearV2AuthorRequired = (documentId) => {
 };
 
 const maybeNotifyV2AuthorRequired = (documentId, event) => {
-  const scope = v2AuthorRequiredScope(documentId);
+  const scope = v2MutationNoticeScope(documentId);
   if (!v2AuthorRequiredGate.shouldNotify(scope, event)) return;
   v2AuthorRequiredMessages.value = {
     ...v2AuthorRequiredMessages.value,
@@ -728,6 +735,49 @@ const maybeNotifyV2AuthorRequired = (documentId, event) => {
     // code + reason string, never document text or an imported author).
     ...(event.failureSource === 'receipt' && event.failure ? { receipt: event.failure } : {}),
   });
+};
+
+const v2EditRejectedGate = createV2KeyboardEditRejectionNotificationGate();
+const v2EditRejectedMessages = ref({});
+const v2EditRejectedActiveDocumentId = ref(null);
+const v2MutationNoticeStatuses = computed(() =>
+  resolveV2MutationNoticeStatuses(
+    v2MutationNoticeScope(v2EditRejectedActiveDocumentId.value),
+    v2AuthorRequiredMessages.value,
+    v2EditRejectedMessages.value,
+  ),
+);
+const v2AuthorRequiredStatus = computed(() => v2MutationNoticeStatuses.value.authorRequired);
+const v2EditRejectedStatus = computed(() => v2MutationNoticeStatuses.value.editRejected);
+
+const syncV2EditRejectedActiveDocument = () => {
+  const activeEditor = proxy.$superdoc?.activeEditor;
+  if (activeEditor?.editorVersion !== 2) {
+    v2EditRejectedActiveDocumentId.value = null;
+    return;
+  }
+  const documentId = activeEditor.documentId ?? activeEditor.options?.documentId ?? null;
+  v2EditRejectedActiveDocumentId.value = typeof documentId === 'string' && documentId.length > 0 ? documentId : null;
+};
+
+const clearV2EditRejected = (documentId) => {
+  const scope = v2MutationNoticeScope(documentId);
+  v2EditRejectedGate.clear(scope);
+  if (!v2EditRejectedMessages.value[scope]) return;
+  const next = { ...v2EditRejectedMessages.value };
+  delete next[scope];
+  v2EditRejectedMessages.value = next;
+};
+
+const maybeNotifyV2EditRejected = (documentId, event) => {
+  const scope = v2MutationNoticeScope(documentId);
+  if (v2AuthorRequiredMessages.value[scope]) return;
+  if (!v2EditRejectedGate.shouldNotify(scope, event)) return;
+  v2EditRejectedMessages.value = {
+    ...v2EditRejectedMessages.value,
+    [scope]: V2_EDIT_REJECTED_MESSAGE,
+  };
+  proxy.$superdoc.emit('exception', createV2KeyboardEditRejectionException(documentId));
 };
 
 const getV2EditorFailure = (documentId) =>
@@ -752,6 +802,7 @@ const clearActiveV2EditorFacade = (documentId = null) => {
     if (activeEditor?.editorVersion === 2) {
       proxy.$superdoc.setActiveEditor(null);
     }
+    syncV2EditRejectedActiveDocument();
     return;
   }
 
@@ -773,6 +824,7 @@ const clearActiveV2EditorFacade = (documentId = null) => {
       proxy.$superdoc.setActiveEditor(null);
     }
   }
+  syncV2EditRejectedActiveDocument();
 };
 
 // Build the narrow public `activeEditor.extensions` facet from the v2 host's
@@ -811,6 +863,7 @@ const onV2EditorReady = (payload) => {
   // A successful open clears any prior terminal failure for this surface.
   clearV2EditorFailure(payload.documentId ?? null);
   clearV2AuthorRequired(payload.documentId ?? null);
+  clearV2EditRejected(payload.documentId ?? null);
   const {
     host,
     mount,
@@ -1252,6 +1305,7 @@ const onV2EditorReady = (payload) => {
   const runtimeRegistered = registerV2Runtime({ documentId, host, mount, facade });
   if (!runtimeRegistered) {
     proxy.$superdoc.setActiveEditor(facade);
+    syncV2EditRejectedActiveDocument();
   }
   proxy.$superdoc.broadcastEditorCreate(facade);
   installV2CommandShortcutBinding({ documentId, bindEditShortcuts });
@@ -1753,6 +1807,7 @@ const onV2RenderCleared = (payload) => {
   resetSelection();
   v2PageMetricsSnapshot.value = null;
   const clearedDocumentId = payload?.documentId == null ? null : String(payload.documentId);
+  clearV2EditRejected(clearedDocumentId);
   commentsStore.cancelImportedTrackedChangeBootstrap?.(clearedDocumentId ?? undefined);
   if (clearedDocumentId) v2MountStagesByDocumentId.delete(clearedDocumentId);
   if (
@@ -1816,16 +1871,21 @@ const onV2HostEvent = (document, event) => {
         trackedRowCount: commentsStore.getV2TrackedChangeRowCount?.(documentId) ?? null,
       });
     }
-    maybeNotifyV2AuthorRequired(documentId, event);
+    if (isV2AuthorRequiredRejection(event)) {
+      clearV2EditRejected(documentId);
+      maybeNotifyV2AuthorRequired(documentId, event);
+    } else {
+      maybeNotifyV2EditRejected(documentId, event);
+    }
     return;
   }
   if (event.type === 'mutation:committed') {
-    // A successful mutation clears any prior non-terminal author-required notice.
     clearV2AuthorRequired(documentId);
     const bulkDecisionEvent = toV2BulkDecisionEvent(documentId, event.trackedChangeBulkDecision);
     if (bulkDecisionEvent) {
       proxy.$superdoc.emit('tracked-changes:bulk-decision', bulkDecisionEvent);
     }
+    clearV2EditRejected(documentId);
     emitV2EditorUpdate();
   }
   if (event.type !== 'mutation:committed') return;
@@ -2120,6 +2180,7 @@ const onV2OpenDiagnostics = (doc, payload) => {
 // marked root is a no-op (the registry returns no owner).
 const activateRuntimeFromEvent = (event, reason) => {
   proxy.$superdoc?.activateRuntimeFromEventTarget?.(event.target, reason);
+  syncV2EditRejectedActiveDocument();
 };
 const handleRuntimeFocusIn = (event) => activateRuntimeFromEvent(event, 'focusin');
 const handleRuntimePointerDown = (event) => activateRuntimeFromEvent(event, 'pointerdown');
@@ -2804,6 +2865,7 @@ onMounted(() => {
   // document-mode change (viewing/editing/suggesting). See handler comment.
   proxy.$superdoc?.on?.('document-mode-change', handleV2DocumentModeChange);
   proxy.$superdoc?.on?.('active-editor-change', syncV2RulerActiveEditor);
+  proxy.$superdoc?.on?.('active-editor-change', syncV2EditRejectedActiveDocument);
 
   recalculateCompactCommentsMode();
   ensureCompactMeasurementObserver();
@@ -2979,6 +3041,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('selectionchange', handleDocumentSelectionChange);
   proxy.$superdoc?.off?.('document-mode-change', handleV2DocumentModeChange);
   proxy.$superdoc?.off?.('active-editor-change', syncV2RulerActiveEditor);
+  proxy.$superdoc?.off?.('active-editor-change', syncV2EditRejectedActiveDocument);
 });
 
 const selectionLayer = ref(null);
@@ -3535,6 +3598,11 @@ const whiteboardInteractive = computed(() => whiteboardEnabled.value);
       {{ v2AuthorRequiredStatus }}
     </p>
     <div class="superdoc__layers layers" ref="layers" role="group">
+      <div v-if="v2EditRejectedStatus" class="superdoc__mutation-status">
+        <p class="superdoc__edit-rejected-status" role="status" aria-live="polite" data-superdoc-v2-edit-rejected>
+          {{ v2EditRejectedStatus }}
+        </p>
+      </div>
       <!-- Floating tools menu (shows up when user has text selection)-->
       <!-- ui-phase3-002: v2 reuses the existing shell comment tool by
            synthesizing the same selection state the v1 path consumes. -->
@@ -3687,6 +3755,33 @@ const whiteboardInteractive = computed(() => whiteboardEnabled.value);
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+.superdoc__mutation-status {
+  position: sticky;
+  z-index: 10;
+  top: 12px;
+  height: 0;
+  pointer-events: none;
+}
+
+.superdoc__edit-rejected-status {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  max-width: min(480px, calc(100% - 32px));
+  margin: 0;
+  padding: 8px 12px;
+  transform: translateX(-50%);
+  border: 1px solid var(--sd-ui-border, #dadce0);
+  border-radius: 6px;
+  background: var(--sd-ui-surface-bg, #fff);
+  box-shadow: var(--sd-ui-surface-shadow, 0 2px 8px rgba(60, 64, 67, 0.2));
+  color: var(--sd-ui-text, #202124);
+  font-family: var(--sd-ui-font-family, Arial, sans-serif);
+  font-size: 13px;
+  line-height: 20px;
+  pointer-events: none;
 }
 
 .right-sidebar {
