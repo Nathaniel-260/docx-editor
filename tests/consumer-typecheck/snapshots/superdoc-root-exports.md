@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-28T20:23:20.683Z
+Generated: 2026-08-28T21:37:06.281Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 253 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 253 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 254 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 254 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **253** |
+| **union** |  | **254** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 243
+- typed but no runtime export (phantom risk): 244
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -110,6 +110,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `PasswordPromptHandle`
 - `PasswordPromptRenderContext`
 - `PasswordPromptResolution`
+- `PermissionResolver`
 - `PermissionResolverParams`
 - `ResolveRangeOutput`
 - `ResolvedFindReplaceTexts`
@@ -279,7 +280,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `BlocksListResult` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `BookmarkAddress` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `BookmarkInfo` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `BorrowedSuperDocUI` | ✓ | ✓ |   |   | 1 |   | 3 | 0 | 0 |
+| `BorrowedSuperDocUI` | ✓ | ✓ |   |   | 2 |   | 3 | 0 | 0 |
 | `BuiltInCommandId` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CanPerformPermissionParams` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CollaborationConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -290,7 +291,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `CommentsLayout` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsResponsiveConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsType` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Config` | ✓ | ✓ |   |   | 26 |   | 7 | 3 | 0 |
+| `Config` | ✓ | ✓ |   |   | 27 |   | 7 | 3 | 0 |
 | `ContentControlActiveChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContentControlClickPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContentControlRef` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -305,10 +306,10 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `ContextMenuSelectContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuSelectPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContextMenuSelectReadiness` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 300 | 55 | 0 |
-| `DiffApplyOperationReceipt` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `DiffApplyResult` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `DiffApplyReviewItem` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 301 | 55 | 0 |
+| `DiffApplyOperationReceipt` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `DiffApplyResult` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `DiffApplyReviewItem` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `DirectSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DocRange` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `Document` | ✓ | ✓ |   |   | 3 |   | 101 | 9 | 0 |
@@ -362,6 +363,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `PasswordPromptHandle` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `PasswordPromptRenderContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `PasswordPromptResolution` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `PermissionResolver` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `PermissionResolverParams` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ResolveRangeOutput` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ResolvedFindReplaceTexts` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -376,7 +378,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 1 | 0 | 0 |
 | `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 4 | 0 | 0 |
 | `StructuredDocumentSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 25 |   | 249 | 40 | 0 |
+| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 25 |   | 250 | 40 | 0 |
 | `SuperDocActiveEditorExtensions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsCommands` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsDiagnostics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -451,7 +453,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SuperDocSelectionTarget` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocState` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocStoryLocator` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `SuperDocTelemetryConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocTelemetryConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocTextAddress` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocTextTarget` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocUI` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |

@@ -62,13 +62,11 @@ const PERMISSION_MATRIX = Object.freeze({
 
 const pickResolver = (context = {}) => {
   if (typeof context.permissionResolver === 'function') return context.permissionResolver;
-  if (context.superdoc?.config?.modules?.comments?.permissionResolver) {
-    const resolver = context.superdoc.config.modules.comments.permissionResolver;
-    if (typeof resolver === 'function') return resolver;
-  }
   if (typeof context.superdoc?.config?.permissionResolver === 'function') {
     return context.superdoc.config.permissionResolver;
   }
+  const deprecatedResolver = context.superdoc?.config?.modules?.comments?.permissionResolver;
+  if (typeof deprecatedResolver === 'function') return deprecatedResolver;
   return null;
 };
 
@@ -78,23 +76,19 @@ const defaultDecisionFor = (permission, role, isInternal) => {
 };
 
 /**
- * Check if a role is allowed to perform a permission. The resolver
- * receives a `PermissionResolverParams`-shaped payload, so `context`
- * here is the un-merged set of fields the caller knows about. Use
- * lowercase `object` for the per-entity fields so SuperDoc class
- * instances and structural objects both satisfy the parameter (capital
- * `Object` excludes class instances under strict JSDoc inference).
+ * Resolve a client-side permission through the built-in matrix and optional
+ * resolver.
  *
  * @param {string} permission The permission to check
  * @param {string} role The role to check
  * @param {boolean} isInternal The internal/external flag
- * @param {object} [context] Optional context used by the permission resolver
+ * @param {object} [context] Context passed to the permission resolver
  * @param {object | null} [context.comment] The comment/tracked change being evaluated
- * @param {object | null} [context.superdoc] The superdoc instance
+ * @param {object | null} [context.superdoc] The SuperDoc instance
  * @param {object | null} [context.currentUser] The active user object performing the action
  * @param {Function} [context.permissionResolver] Explicit resolver override
  * @param {object | null} [context.trackedChange] Tracked change metadata (for tracked-change permissions)
- * @returns {boolean} True if the role is allowed to perform the permission
+ * @returns {boolean} Whether the permission is allowed
  */
 export const isAllowed = (permission, role, isInternal, context = {}) => {
   const defaultDecision = defaultDecisionFor(permission, role, isInternal);

@@ -136,6 +136,7 @@ import type {
   PasswordPromptHandle,
   PasswordPromptRenderContext,
   PasswordPromptResolution,
+  PermissionResolver,
   PermissionResolverParams,
   ResolvedFindReplaceTexts,
   ResolvedPasswordPromptTexts,
@@ -388,6 +389,7 @@ const _real_PasswordPromptContext: AssertNotAny<PasswordPromptContext> = true;
 const _real_PasswordPromptHandle: AssertNotAny<PasswordPromptHandle> = true;
 const _real_PasswordPromptRenderContext: AssertNotAny<PasswordPromptRenderContext> = true;
 const _real_PasswordPromptResolution: AssertNotAny<PasswordPromptResolution> = true;
+const _real_PermissionResolver: AssertNotAny<PermissionResolver> = true;
 const _real_PermissionResolverParams: AssertNotAny<PermissionResolverParams> = true;
 const _real_ResolvedFindReplaceTexts: AssertNotAny<ResolvedFindReplaceTexts> = true;
 const _real_ResolvedPasswordPromptTexts: AssertNotAny<ResolvedPasswordPromptTexts> = true;

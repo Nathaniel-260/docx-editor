@@ -166,7 +166,7 @@ const _policyLevel: Config = {
 const _policyResolver: Config = {
   selector: '#editor',
   // @ts-expect-error `permissionResolver` is collaboration wiring; it has no
-  // `ui` spelling and is read off `modules.comments` or top-level `Config`.
+  // `ui` spelling. Configure it on the top-level `Config` object.
   ui: { comments: { permissionResolver: () => true } },
 };
 
@@ -189,8 +189,6 @@ const _deprecatedPresentation: Config = {
 };
 
 // The legacy block still accepts its fields for v2 compatibility.
-// `permissionResolver` has no `interaction` spelling: `pickResolver` checks
-// `modules.comments.permissionResolver`, then the top-level `Config` field.
 const _legacyPolicy: Config = {
   selector: '#editor',
   modules: { comments: { readOnly: true, allowResolve: false, permissionResolver: () => true } },
@@ -202,8 +200,7 @@ const _interactionPolicy: Config = {
   interaction: { comments: { readOnly: true, allowResolve: false } },
 };
 
-// The other resolver spelling, which `pickResolver` falls back to when the
-// comments-scoped one is absent.
+// The canonical resolver spelling.
 const _topLevelResolver: Config = {
   selector: '#editor',
   permissionResolver: () => true,

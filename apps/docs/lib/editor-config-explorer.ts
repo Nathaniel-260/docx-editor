@@ -131,7 +131,7 @@ const summaries = {
   interaction: 'Set what people can do through Editor interactions.',
   surfaces: 'Configure dialogs and floating overlays.',
   modules: 'Configure document features that do not belong to the built-in interface.',
-  permissionResolver: 'Override permission checks for protected content.',
+  permissionResolver: 'Customize client-side permission decisions.',
   toolbar: 'Choose where the built-in toolbar renders.',
   toolbarGroups: 'Choose which toolbar groups appear.',
   toolbarIcons: 'Replace icons in the built-in toolbar.',

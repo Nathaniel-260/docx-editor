@@ -566,14 +566,14 @@ describe('permissions', () => {
     expect(Object.keys(PERMISSIONS)).toEqual(expect.arrayContaining(['RESOLVE_OWN', 'VERSION_HISTORY']));
   });
 
-  it('validates role access using isAllowed', () => {
+  it('applies the built-in role matrix without a resolver', () => {
     expect(isAllowed(PERMISSIONS.RESOLVE_OWN, 'editor', true)).toBe(true);
     expect(isAllowed(PERMISSIONS.RESOLVE_OWN, 'viewer', true)).toBe(false);
     expect(isAllowed(PERMISSIONS.REJECT_OWN, 'suggester', false)).toBe(true);
     expect(isAllowed(PERMISSIONS.REJECT_OTHER, 'suggester', false)).toBe(false);
   });
 
-  it('delegates permission decisions to a hook when provided', () => {
+  it('uses the deprecated comments resolver as a fallback', () => {
     const permissionResolver = vi.fn().mockImplementation(({ defaultDecision, comment, currentUser, superdoc }) => {
       expect(defaultDecision).toBe(true);
       expect(comment.commentId).toBe('comment-1');
@@ -611,7 +611,69 @@ describe('permissions', () => {
     );
   });
 
-  it('falls back to default decision when hook returns non-boolean', () => {
+  it('prefers the canonical resolver over the deprecated comments resolver', () => {
+    const permissionResolver = vi.fn(() => true);
+    const commentsPermissionResolver = vi.fn(() => false);
+    const superdoc = {
+      config: {
+        permissionResolver,
+        modules: {
+          comments: {
+            permissionResolver: commentsPermissionResolver,
+          },
+        },
+      },
+    };
+
+    const allowed = isAllowed(PERMISSIONS.RESOLVE_OWN, 'viewer', true, { superdoc });
+
+    expect(allowed).toBe(true);
+    expect(permissionResolver).toHaveBeenCalledOnce();
+    expect(commentsPermissionResolver).not.toHaveBeenCalled();
+  });
+
+  it('prefers the canonical resolver through canPerformPermission', () => {
+    const permissionResolver = vi.fn(() => true);
+    const commentsPermissionResolver = vi.fn(() => false);
+    const superdoc = {
+      config: {
+        role: 'viewer',
+        isInternal: true,
+        user: null,
+        permissionResolver,
+        modules: {
+          comments: {
+            permissionResolver: commentsPermissionResolver,
+          },
+        },
+      },
+    };
+
+    const allowed = SuperDoc.prototype.canPerformPermission.call(superdoc, {
+      permission: PERMISSIONS.RESOLVE_OWN,
+    });
+
+    expect(allowed).toBe(true);
+    expect(permissionResolver).toHaveBeenCalledOnce();
+    expect(commentsPermissionResolver).not.toHaveBeenCalled();
+  });
+
+  it('prefers a call-scoped resolver over configured resolvers', () => {
+    const callScopedResolver = vi.fn(() => true);
+    const permissionResolver = vi.fn(() => false);
+    const superdoc = { config: { permissionResolver } };
+
+    const allowed = isAllowed(PERMISSIONS.RESOLVE_OWN, 'viewer', true, {
+      superdoc,
+      permissionResolver: callScopedResolver,
+    });
+
+    expect(allowed).toBe(true);
+    expect(callScopedResolver).toHaveBeenCalledOnce();
+    expect(permissionResolver).not.toHaveBeenCalled();
+  });
+
+  it('uses the built-in decision when the resolver returns undefined', () => {
     const superdoc = {
       config: {
         user: { email: 'viewer@example.com' },

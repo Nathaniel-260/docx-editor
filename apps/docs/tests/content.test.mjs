@@ -1076,6 +1076,10 @@ test('the Editor configuration reference starts with concise essential fields', 
   const interactionType = editorConfigExplorer.fields.find((field) => field.name === 'interaction')?.type ?? '';
   assert.match(interactionType, /comments\?: \{ level\?: CommentInteractionLevel; \}/u);
   assert.doesNotMatch(interactionType, /CommentInteractionConfig|readOnly|allowResolve/u);
+  const permissionResolver = editorConfigExplorer.fields.find((field) => field.name === 'permissionResolver');
+  assert.equal(permissionResolver?.summary, 'Customize client-side permission decisions.');
+  assert.match(permissionResolver?.description ?? '', /^Customize client-side permission decisions\./u);
+  assert.doesNotMatch(permissionResolver?.description ?? '', /comment and tracked-change permission decisions/iu);
   const fieldNames = new Set(editorConfigExplorer.fields.map((field) => field.name));
   for (const legacyField of [
     'comments',

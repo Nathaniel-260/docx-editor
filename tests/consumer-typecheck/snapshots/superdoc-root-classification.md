@@ -1,22 +1,22 @@
 # SD-3212 A1 — root classification
 
 Generated: derived from superdoc-root-classification.json (aligned with current root export inventory)
-Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (253 names)
+Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (254 names)
 
 ## Summary
 
 | Bucket | Count |
 |---|---|
-| supported-root | 250 |
+| supported-root | 251 |
 | legacy-root | 3 |
 | move-to-subpath | 0 |
 | internal-candidate | 0 |
 | NEEDS-REVIEW | 0 |
-| **total** | **253** |
+| **total** | **254** |
 
-Confidence: high=205, medium=48, low=0, needs-review=0.
+Confidence: high=206, medium=48, low=0, needs-review=0.
 
-## supported-root (250)
+## supported-root (251)
 
 | Name | Confidence | Source | Rationale |
 |---|---|---|---|
@@ -107,7 +107,8 @@ Confidence: high=205, medium=48, low=0, needs-review=0.
 | `PasswordPromptHandle` | medium | password-prompt | PasswordPrompt surface API type. Public. |
 | `PasswordPromptRenderContext` | medium | password-prompt | PasswordPrompt surface API type. Public. |
 | `PasswordPromptResolution` | medium | password-prompt | PasswordPrompt surface API type. Public. |
-| `PermissionResolverParams` | high | config-supported | Payload passed to permission resolver callbacks registered via Config.permissionResolver or Modules.comments.permissionResolver; promoted from a non-exported helper to a named public type so resolver authors can import the contract. |
+| `PermissionResolver` | high | config-supported | Callback type used by Config.permissionResolver and the deprecated Modules.comments.permissionResolver field. |
+| `PermissionResolverParams` | high | config-supported | Payload passed to PermissionResolver callbacks. |
 | `ResolveRangeOutput` | high | doc-api | Document API ranges.resolve result type implemented by the v2 range resolver adapter; useful for consumers typing range handles, targets, and preview metadata from the root package. |
 | `ResolvedFindReplaceTexts` | medium | find-replace | FindReplace surface API type. Public. |
 | `ResolvedPasswordPromptTexts` | medium | password-prompt | PasswordPrompt surface API type. Public. |
@@ -387,6 +388,7 @@ Confidence: high=205, medium=48, low=0, needs-review=0.
 | `PasswordPromptHandle` | ✓ | ✓ |   |   |
 | `PasswordPromptRenderContext` | ✓ | ✓ |   |   |
 | `PasswordPromptResolution` | ✓ | ✓ |   |   |
+| `PermissionResolver` | ✓ | ✓ |   |   |
 | `PermissionResolverParams` | ✓ | ✓ |   |   |
 | `ResolveRangeOutput` | ✓ | ✓ |   |   |
 | `ResolvedFindReplaceTexts` | ✓ | ✓ |   |   |

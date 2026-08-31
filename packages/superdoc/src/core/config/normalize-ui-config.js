@@ -108,8 +108,8 @@ function resolveOptions(ui, key) {
  * reading the merged view, so they are dropped here and the consumer keeps
  * seeing the authoritative ones underneath.
  *
- * `permissionResolver` is collaboration wiring rather than presentation and is
- * read straight off `modules.comments`; it is excluded for the same reason.
+ * `permissionResolver` is resolved separately from the canonical top-level
+ * field and its deprecated `modules.comments` fallback.
  */
 const COMMENT_POLICY_FIELDS = Object.freeze(['level', 'readOnly', 'allowResolve', 'permissionResolver']);
 
