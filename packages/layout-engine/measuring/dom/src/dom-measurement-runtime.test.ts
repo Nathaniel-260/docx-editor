@@ -75,7 +75,7 @@ describe('surface-owned DOM measurement runtime', () => {
     expect(stats.residentEntries).toBeLessThan(20);
   });
 
-  it('yields inside a large paragraph without changing its exact measure', async () => {
+  it('keeps cooperative probes bounded across many short words without changing its exact measure', async () => {
     const block = legalParagraph();
     const baseline = await measureBlock(block, 420, fontContext('baseline'));
     const runtime = createDomMeasurementRuntime();
@@ -94,9 +94,33 @@ describe('surface-owned DOM measurement runtime', () => {
     const stats = pass.finish();
 
     expect(measured).toEqual(baseline);
+    expect(probes).toBe(47);
     expect(yields).toBeGreaterThan(0);
     expect(stats.requests).toBeGreaterThan(0);
     expect(stats.intrinsicMeasureCalls).toBeLessThanOrEqual(stats.misses);
+    runtime.dispose();
+  });
+
+  it('surfaces cancellation from a bounded checkpoint inside a large paragraph', async () => {
+    const runtime = createDomMeasurementRuntime();
+    let probes = 0;
+    let aborted = false;
+    const pass = runtime.beginPass(fontContext('runtime-cancellation'), {
+      throwIfAborted: () => {
+        if (aborted) throw new Error('measurement cancelled');
+      },
+      checkpointIfDue: () => {
+        probes += 1;
+        if (probes !== 3) return null;
+        return Promise.resolve().then(() => {
+          aborted = true;
+        });
+      },
+    });
+
+    await expect(pass.measureBlock(legalParagraph(), 420)).rejects.toThrow('measurement cancelled');
+    expect(probes).toBe(3);
+    pass.finish();
     runtime.dispose();
   });
 

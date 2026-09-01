@@ -304,6 +304,10 @@ function statsDelta(current: TextWidthCacheStats, baseline: TextWidthCacheStats)
 }
 
 const measurementCheckpointIfDue = surfaceMeasurementCheckpointIfDue;
+// Wrapped long words retain their per-code-point checks. Batching only the
+// word-boundary checks avoids repeated clock reads while ordinary prose remains
+// cancellable within 8 tokens.
+const WORD_BOUNDARIES_PER_MEASUREMENT_CHECKPOINT = 8;
 
 export function createDomMeasurementRuntime(options: DomMeasurementRuntimeOptions = {}): DomMeasurementRuntime {
   const state = createSurfaceMeasurementRuntimeState({
@@ -2812,6 +2816,7 @@ async function measureParagraphBlock(
   };
 
   let sequentialTabIndex = 0;
+  let wordBoundariesUntilCheckpoint = WORD_BOUNDARIES_PER_MEASUREMENT_CHECKPOINT;
   for (let runIndex = 0; runIndex < runsToProcess.length; runIndex++) {
     const runCheckpoint = measurementCheckpointIfDue(fontContext);
     if (runCheckpoint) await runCheckpoint;
@@ -3692,8 +3697,12 @@ async function measureParagraphBlock(
       };
 
       for (let wordIndex = 0; wordIndex < words.length; wordIndex++) {
-        const wordCheckpoint = measurementCheckpointIfDue(fontContext);
-        if (wordCheckpoint) await wordCheckpoint;
+        wordBoundariesUntilCheckpoint -= 1;
+        if (wordBoundariesUntilCheckpoint === 0) {
+          wordBoundariesUntilCheckpoint = WORD_BOUNDARIES_PER_MEASUREMENT_CHECKPOINT;
+          const wordCheckpoint = measurementCheckpointIfDue(fontContext);
+          if (wordCheckpoint) await wordCheckpoint;
+        }
         const word = words[wordIndex];
         /**
          * Handle empty strings from split(' ') representing space characters.
