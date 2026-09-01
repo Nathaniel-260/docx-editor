@@ -83,6 +83,34 @@ describe('DomPainter renderColumnSeparators', () => {
       expect(seps[0].style.height).toBe('864px');
     });
 
+    it('gates an RTL separator on the LEFT column, which is the later one there', () => {
+      // In an RTL section column 0 sits on the right, so "content past the separator" — the
+      // condition Word uses to decide whether to draw the line at all — is content to its LEFT.
+      // With the LTR test, a fragment that never left the FIRST column satisfies `x >= separatorX`
+      // and the painter draws a line Word does not draw.
+      const firstColumnOnly = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true, direction: 'rtl' },
+        fragments: [fragAt(432)],
+      });
+      paintOnce(buildLayout(firstColumnOnly), mount);
+      expect(querySeparators(mount)).toHaveLength(0);
+
+      mount.remove();
+      mount = document.createElement('div');
+      document.body.append(mount);
+
+      const bothColumns = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true, direction: 'rtl' },
+        fragments: [fragAt(432), fragAt(96)],
+      });
+      paintOnce(buildLayout(bothColumns), mount);
+
+      const seps = querySeparators(mount);
+      expect(seps).toHaveLength(1);
+      // Equal columns fill the content area, so the gutter — and the line in it — is where it was.
+      expect(seps[0].style.left).toBe('408px');
+    });
+
     it('draws count-1 separators for 3 equal columns', () => {
       const page = buildPage({
         columns: { count: 3, gap: 48, withSeparator: true },

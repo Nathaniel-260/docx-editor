@@ -347,6 +347,33 @@ describe('balanceSectionOnPage', () => {
     return { fragments, measureMap, blockSectionMap };
   }
 
+  it('keeps an RTL section right-to-left on the balanced page', () => {
+    // Balancing REBUILDS the geometry and then overwrites every fragment's x from it, so a dropped
+    // direction does not fail loudly: the last page of a two-column Hebrew section would simply be
+    // laid out left-to-right while every earlier page of the same section was right-to-left.
+    const top = 96;
+    const { fragments, measureMap, blockSectionMap } = buildSectionFixture(2, 6, 20, top);
+
+    const result = balanceSectionOnPage({
+      fragments,
+      sectionIndex: 2,
+      sectionColumns: { count: 2, gap: 48, width: 288, direction: 'rtl', contentWidth: 624 },
+      sectionHasExplicitColumnBreak: false,
+      blockSectionMap,
+      margins: { left: 96 },
+      topMargin: top,
+      columnWidth: 288,
+      availableHeight: 60,
+      measureMap,
+    });
+
+    expect(result).not.toBeNull();
+    // The FIRST three paragraphs land in the RIGHT column (x = left margin + 288 + 48), the last
+    // three in the left one — the mirror image of the LTR case above.
+    expect(fragments.slice(0, 3).map((f) => f.x)).toEqual([432, 432, 432]);
+    expect(fragments.slice(3).map((f) => f.x)).toEqual([96, 96, 96]);
+  });
+
   it('balances the target section and returns the tallest balanced column bottom', () => {
     // 6 equal paragraphs in a 2-col section → 3+3 balanced, tallest col ends at top + 3×20 = top + 60.
     const top = 96;

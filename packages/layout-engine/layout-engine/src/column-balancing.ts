@@ -7,6 +7,7 @@
  */
 
 import { getColumnGeometry, getColumnX, hasGenuinelyUnequalExplicitColumnWidths } from '@superdoc/contracts';
+import type { BaseDirection } from '@superdoc/contracts';
 
 // ============================================================================
 // Types and Interfaces
@@ -657,6 +658,16 @@ export interface SectionColumnLayout {
    */
   gaps?: number[];
   equalWidth?: boolean;
+  /**
+   * Section page direction (`w:sectPr/w:bidi`) and the content width it was normalized against.
+   *
+   * Declared here — and not left to the structural subset above — because balancing REBUILDS the
+   * geometry and then overwrites every fragment's `x` from it. A balanced page that dropped these
+   * would be laid out left-to-right while every earlier page of the same RTL section was laid out
+   * right-to-left, so the last page of a two-column Hebrew section would visibly flip.
+   */
+  direction?: BaseDirection;
+  contentWidth?: number;
 }
 
 export interface BalanceSectionOnPageArgs {
@@ -864,6 +875,8 @@ export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: nu
     width: columnWidth,
     ...(Array.isArray(sectionColumns.widths) ? { widths: sectionColumns.widths } : {}),
     ...(Array.isArray(sectionColumns.gaps) ? { gaps: sectionColumns.gaps } : {}),
+    ...(sectionColumns.direction !== undefined ? { direction: sectionColumns.direction } : {}),
+    ...(sectionColumns.contentWidth !== undefined ? { contentWidth: sectionColumns.contentWidth } : {}),
   });
   const columnX = (columnIndex: number): number => getColumnX(balancedGeometry, columnIndex, args.margins.left);
 

@@ -1793,8 +1793,15 @@ export class DomPainter {
       // separator on whether any fragment sits past it within the region.
       const fragmentsInRegion = page.items.filter((item) => item.y >= yStart - 0.5 && item.y < yEnd + 0.5);
 
+      // "Past the separator" means "in a later column", which is the LEFT side in an RTL section:
+      // there column 0 sits on the right, so an `f.x >= separatorX` test is satisfied by content
+      // that never left the FIRST column and the gate would draw a line Word does not draw.
+      const laterColumnsAreLeft = columns.direction === 'rtl';
+
       for (const separatorX of separatorPositions) {
-        const hasContentPastSeparator = fragmentsInRegion.some((f) => f.x >= separatorX);
+        const hasContentPastSeparator = fragmentsInRegion.some((f) =>
+          laterColumnsAreLeft ? f.x < separatorX : f.x >= separatorX,
+        );
         if (!hasContentPastSeparator) continue;
 
         const separatorEl = this.doc.createElement('div');
