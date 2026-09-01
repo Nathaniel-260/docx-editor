@@ -126,6 +126,86 @@ describe('DomPainter renderColumnSeparators', () => {
       expect(querySeparators(mount)).toHaveLength(0);
     });
 
+    it('draws the RTL separator for a wide right-aligned table whose x is OUTSIDE its column', () => {
+      // The real shape of over-wide content, not the idealised one. `resolveTableFrame` right-aligns
+      // a table inside its column, and `end` is the default justification for any bidiVisual table,
+      // so an RTL table wider than its column gets a NEGATIVE offset: it starts left of its own
+      // column and ends past the separator. Neither of its edges identifies the column it belongs
+      // to, and neither does its origin. `columnIndex` — which the engine records as it lays the
+      // fragment out — does.
+      const wideRtlTable: Fragment = { ...fragAt(-116), width: 500, columnIndex: 1 };
+      const page = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true, direction: 'rtl' },
+        fragments: [{ ...fragAt(432), columnIndex: 0 }, wideRtlTable],
+      });
+      paintOnce(buildLayout(page), mount);
+
+      const seps = querySeparators(mount);
+      expect(seps).toHaveLength(1);
+      expect(seps[0].style.left).toBe('408px');
+    });
+
+    it('still ignores an over-wide table that belongs to the FIRST column', () => {
+      // The other half of the contract: overflowing out of column 0 is not evidence that a later
+      // column holds anything, whichever direction the columns run and wherever the box lands.
+      const rtl = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true, direction: 'rtl' },
+        fragments: [{ ...fragAt(220), width: 500, columnIndex: 0 }],
+      });
+      paintOnce(buildLayout(rtl), mount);
+      expect(querySeparators(mount)).toHaveLength(0);
+
+      mount.remove();
+      mount = document.createElement('div');
+      document.body.append(mount);
+
+      const ltr = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true },
+        fragments: [{ ...fragAt(96), width: 500, columnIndex: 0 }],
+      });
+      paintOnce(buildLayout(ltr), mount);
+      expect(querySeparators(mount)).toHaveLength(0);
+    });
+
+    it('counts a fragment nudged out of its column by a negative indent', () => {
+      // A negative `w:ind` puts a paragraph's origin in the gutter, outside every column span. The
+      // engine still knows which column it belongs to, so the line must be drawn.
+      const outdented: Fragment = { ...fragAt(422), columnIndex: 1 };
+      const page = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true },
+        fragments: [{ ...fragAt(96), columnIndex: 0 }, outdented],
+      });
+      paintOnce(buildLayout(page), mount);
+
+      expect(querySeparators(mount)).toHaveLength(1);
+    });
+
+    it('attributes a fragment on a zero-gap column boundary to the LATER column', () => {
+      // With `w:space="0"` adjacent columns share an endpoint, and that endpoint is exactly where
+      // the later column's content starts. Column spans are half-open so the boundary belongs to
+      // the column that begins there, not the one that ends there.
+      const page = buildPage({
+        columns: { count: 2, gap: 0, withSeparator: true },
+        fragments: [fragAt(96), fragAt(408)],
+      });
+      paintOnce(buildLayout(page), mount);
+
+      expect(querySeparators(mount)).toHaveLength(1);
+    });
+
+    it('does not let a page-wide anchored graphic satisfy the LTR gate either', () => {
+      // The watermark guard is not an RTL special case: an item that belongs to no column is not
+      // evidence for any separator, whichever way the columns run.
+      const watermark: Fragment = { ...fragAt(0), width: 816 };
+      const page = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true },
+        fragments: [fragAt(96), watermark],
+      });
+      paintOnce(buildLayout(page), mount);
+
+      expect(querySeparators(mount)).toHaveLength(0);
+    });
+
     it('draws count-1 separators for 3 equal columns', () => {
       const page = buildPage({
         columns: { count: 3, gap: 48, withSeparator: true },

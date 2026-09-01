@@ -1,6 +1,7 @@
 import type {
   ChartDrawing,
   CellBorders,
+  ColumnGeometry,
   ColumnLayout,
   CustomGeometryData,
   DrawingBlock,
@@ -54,8 +55,8 @@ import {
   expandRunsForInlineNewlines,
   formatPageNumber,
   formatSectionPageNumberText,
+  findColumnContaining,
   getColumnGeometry,
-  getColumnSeparatorPositions as getColumnSeparatorPositionsFromGeometry,
   isPositionedParagraphFrame,
   normalizeColumnLayout,
   resolveColumnMode,
@@ -1782,34 +1783,54 @@ export class DomPainter {
       const regionHeight = yEnd - yStart;
       if (regionHeight <= 0) continue;
 
-      const separatorPositions = this.getColumnSeparatorPositions(columns, leftMargin, contentWidth);
-      if (separatorPositions.length === 0) continue;
+      const geometry = this.resolveSeparatorColumnGeometry(columns, contentWidth);
+      if (!geometry) continue;
 
       // Word only renders the column separator between columns that both have
       // content. For a 2-col page where col 1 is empty (e.g. the last page of
       // a multi-column section that fits in col 0, or a `nextPage` section
       // where Word fills col 0 first without balancing), Word draws no line
       // even when the section's `w:cols` declared `w:sep="1"`. Gate each
-      // separator on whether any fragment sits past it within the region.
+      // separator on whether any LATER column in fill order holds content.
       const fragmentsInRegion = page.items.filter((item) => item.y >= yStart - 0.5 && item.y < yEnd + 0.5);
 
-      // "Past the separator" means "in a later column", which is the LEFT side in an RTL section:
-      // there column 0 sits on the right, so an `f.x >= separatorX` test is satisfied by content
-      // that never left the FIRST column and the gate would draw a line Word does not draw.
+      // Ask which column OWNS each fragment rather than comparing an edge against the separator.
+      // An edge test has to pick which edge trails in the fill direction, and no choice is right:
+      // content wider than its column does not sit inside it. `resolveTableFrame` places a
+      // right-aligned or centred over-wide table at a NEGATIVE offset from its column — and `end`
+      // is the default justification for any bidiVisual table — so in an RTL section such a table
+      // starts left of its own column and ends past the separator, while never having left the
+      // later column at all.
       //
-      // Each branch tests the edge that TRAILS in its own fill direction: the left edge going
-      // right, the right edge going left. Testing `f.x` in both would leave the branches
-      // asymmetric for anything wider than a column. `page.items` also carries page-anchored
-      // graphics, and a full-width watermark sits at `x = 0` — never past the separator going
-      // right, always past a left-edge test going left — so a section whose text never left the
-      // first column would draw a separator on the strength of the watermark alone.
-      const laterColumnsAreLeft = columns.direction === 'rtl';
+      // `fragment.columnIndex` is the engine's own record of the owning column, written for
+      // paragraphs and tables alike as they are laid out, and documented as the field to trust
+      // "when overflow crosses margins". Geometry is only the fallback, for a fragment that
+      // carries no such record.
+      //
+      // Falling back to containment rather than to `getColumnAtX` is deliberate: containment can
+      // answer "no column", and that is what keeps page-anchored objects out of the gate.
+      // `page.items` carries them, and a full-width watermark belongs to no column — counting it
+      // would draw a separator on a page whose text never left the first column.
+      const lastColumnIndex = geometry.length - 1;
+      const occupiedColumns = new Set<number>();
+      for (const item of fragmentsInRegion) {
+        // `page.items` are paint items; the engine's record of the owning column lives on the
+        // source fragment they point back to.
+        const owned = (item as { fragment?: { columnIndex?: number } }).fragment?.columnIndex;
+        const columnIndex =
+          typeof owned === 'number' && Number.isFinite(owned)
+            ? Math.max(0, Math.min(lastColumnIndex, Math.floor(owned)))
+            : findColumnContaining(geometry, item.x, leftMargin);
+        if (columnIndex !== null) occupiedColumns.add(columnIndex);
+      }
 
-      for (const separatorX of separatorPositions) {
-        const hasContentPastSeparator = fragmentsInRegion.some((f) =>
-          laterColumnsAreLeft ? f.x + (f.width ?? 0) <= separatorX : f.x >= separatorX,
-        );
+      // Iterating the geometry (rather than a positions array) keeps each separator paired with the
+      // column it follows, which is what "a later column" is measured against.
+      for (const column of geometry) {
+        if (column.separatorX === undefined) continue;
+        const hasContentPastSeparator = [...occupiedColumns].some((index) => index > column.index);
         if (!hasContentPastSeparator) continue;
+        const separatorX = leftMargin + column.separatorX;
 
         const separatorEl = this.doc.createElement('div');
         separatorEl.dataset.superdocColumnSeparator = 'true';
@@ -1826,7 +1847,12 @@ export class DomPainter {
     }
   }
 
-  private getColumnSeparatorPositions(columns: ColumnLayout, leftMargin: number, contentWidth: number): number[] {
+  /**
+   * The resolved column geometry this region's separators are drawn from, or null when the region
+   * draws none. Returns the geometry rather than bare x positions because the gate needs to know
+   * WHICH column each separator follows, not only where it sits.
+   */
+  private resolveSeparatorColumnGeometry(columns: ColumnLayout, contentWidth: number): ColumnGeometry[] | null {
     // SD-2629: separator positions come from the one resolved column geometry (the same source as
     // fill count and column widths), not a re-derivation here. The caller has already gated on
     // withSeparator and count > 1.
@@ -1838,12 +1864,12 @@ export class DomPainter {
     // raw equalWidth:true config carrying stray widths still takes the equal-mode guard. Legacy guard.
     if (resolveColumnMode(columns) === 'equal') {
       const equalWidth = (contentWidth - columns.gap * (normalized.count - 1)) / normalized.count;
-      if (equalWidth <= 1) return [];
+      if (equalWidth <= 1) return null;
     }
     const geometry = getColumnGeometry(normalized);
-    if (geometry.length <= 1) return [];
-    if (geometry.some((column) => column.width <= 1)) return [];
-    return getColumnSeparatorPositionsFromGeometry(geometry, leftMargin);
+    if (geometry.length <= 1) return null;
+    if (geometry.some((column) => column.width <= 1)) return null;
+    return geometry;
   }
   private renderDecorationsForPage(pageEl: HTMLElement, page: ResolvedPage, pageIndex: number): void {
     if (this.isSemanticFlow) return;

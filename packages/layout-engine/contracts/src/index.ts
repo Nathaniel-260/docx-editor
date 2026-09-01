@@ -163,6 +163,7 @@ export {
   cloneColumnLayout,
   columnLayoutsEqual,
   columnRenderLayoutsEqual,
+  findColumnContaining,
   getColumnAtX,
   getColumnGapAfter,
   getColumnGeometry,

@@ -15,6 +15,7 @@ import {
   resolveColumnLayout,
   resolveColumnMode,
   widthsEqual,
+  findColumnContaining,
 } from './column-layout.js';
 
 describe('widthsEqual', () => {
@@ -593,5 +594,74 @@ describe('RTL section column order', () => {
     // Absent means ltr, so omitting it must not read as a change.
     expect(columnLayoutsEqual(twoEqual(), twoEqual('ltr'))).toBe(true);
     expect(columnRenderLayoutsEqual(twoEqual(), twoEqual('ltr'))).toBe(true);
+  });
+});
+
+describe('findColumnContaining', () => {
+  // 3 equal columns over 624px with a 24px gap: 192px columns at 0, 216, 432.
+  const ltr = getColumnGeometry(normalizeColumnLayout({ count: 3, gap: 24 }, 624));
+  const rtl = getColumnGeometry(normalizeColumnLayout({ count: 3, gap: 24, direction: 'rtl' }, 624));
+
+  it('resolves an x inside a column to that column, in both directions', () => {
+    expect(findColumnContaining(ltr, 10)).toBe(0);
+    expect(findColumnContaining(ltr, 300)).toBe(1);
+    expect(findColumnContaining(ltr, 500)).toBe(2);
+    // Mirrored: column 0 is the rightmost, so the same points answer in reverse.
+    expect(findColumnContaining(rtl, 10)).toBe(2);
+    expect(findColumnContaining(rtl, 300)).toBe(1);
+    expect(findColumnContaining(rtl, 500)).toBe(0);
+  });
+
+  it('answers null in a gutter instead of clamping to a neighbour', () => {
+    // The gap between column 0 and 1 runs 192..216 in LTR.
+    expect(findColumnContaining(ltr, 200)).toBeNull();
+    // getColumnAtX, which exists for hit testing, must still clamp there.
+    expect(getColumnAtX(ltr, 200)).toBe(0);
+  });
+
+  it('answers null outside the strip entirely, in both directions', () => {
+    expect(findColumnContaining(ltr, -50)).toBeNull();
+    expect(findColumnContaining(ltr, 700)).toBeNull();
+    expect(findColumnContaining(rtl, -50)).toBeNull();
+    expect(findColumnContaining(rtl, 700)).toBeNull();
+  });
+
+  it('identifies a fragment WIDER than its column by its origin', () => {
+    // An over-wide table is placed at its column's left edge and overflows rightward in BOTH
+    // directions. Its origin still names its column; its trailing edge does not, which is exactly
+    // why an edge comparison cannot answer this question.
+    const originOfLastColumn = rtl[2].x;
+    expect(findColumnContaining(rtl, originOfLastColumn)).toBe(2);
+    // The same fragment's right edge, 500px later, has left the column and reads as another one.
+    expect(findColumnContaining(rtl, originOfLastColumn + 500)).not.toBe(2);
+  });
+
+  it('gives a shared zero-gap boundary to the column that STARTS there', () => {
+    // `w:space="0"` makes adjacent columns share an endpoint, and that endpoint is exactly where
+    // the later column's content is placed. Inclusive spans would hand it to the column that ends
+    // there instead, and — because the scan runs in fill order — would do so in LTR but not in RTL,
+    // making the two directions disagree.
+    const zeroGap = getColumnGeometry(normalizeColumnLayout({ count: 2, gap: 0 }, 624));
+    expect(zeroGap.map((col) => col.x)).toEqual([0, 312]);
+    expect(findColumnContaining(zeroGap, 311.9)).toBe(0);
+    expect(findColumnContaining(zeroGap, 312)).toBe(1);
+
+    // The mirrored strip has to answer the same way about its own shared boundary.
+    const zeroGapRtl = getColumnGeometry(normalizeColumnLayout({ count: 2, gap: 0, direction: 'rtl' }, 624));
+    expect(zeroGapRtl.map((col) => col.x)).toEqual([312, 0]);
+    expect(findColumnContaining(zeroGapRtl, 312)).toBe(0);
+    expect(findColumnContaining(zeroGapRtl, 311.9)).toBe(1);
+  });
+
+  it('honors originX', () => {
+    expect(findColumnContaining(ltr, 106, 96)).toBe(0);
+    expect(findColumnContaining(ltr, 96 + 300, 96)).toBe(1);
+    expect(findColumnContaining(ltr, 0, 96)).toBeNull();
+  });
+
+  it('treats a single column as a column', () => {
+    const one = getColumnGeometry(normalizeColumnLayout({ count: 1, gap: 0 }, 624));
+    expect(findColumnContaining(one, 300)).toBe(0);
+    expect(findColumnContaining(one, 900)).toBeNull();
   });
 });

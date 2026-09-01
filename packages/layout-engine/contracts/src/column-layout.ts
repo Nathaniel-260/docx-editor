@@ -310,6 +310,36 @@ export function getColumnSeparatorPositions(geometry: ColumnGeometry[], originX 
 }
 
 /**
+ * Index of the column whose OWN span contains absolute `x`, or `null` when `x` lies in no column at
+ * all — a gutter, the page margins, or something that is not column flow in the first place.
+ *
+ * This is the strict counterpart to `getColumnAtX` below, and the two exist because paint-time and
+ * hit-testing want opposite answers. A click has to select something, so `getColumnAtX` clamps and
+ * hands a gap to its neighbouring column. Asking "is there content in a later column" must not
+ * clamp: `page.items` carries page-anchored objects, and a full-width watermark belongs to no
+ * column, so answering with one makes it evidence for chrome Word does not draw.
+ *
+ * Direction-agnostic by construction. It tests containment in each column's own span instead of
+ * comparing against a boundary, so it does not care whether `x` ascends or descends with the index,
+ * and — unlike an edge test — it is not fooled by a fragment WIDER than its column. An over-wide
+ * table is placed at its column's left edge and overflows rightward in both directions, so its
+ * origin still identifies its column while its trailing edge does not.
+ *
+ * Spans are half-open — `[x, x + width)` — so that adjacent columns authored with no gutter at all
+ * (`w:space="0"`) do not both claim the boundary they share. That boundary is exactly where the
+ * later column's own content is placed, and an inclusive upper bound would hand it to the earlier
+ * column instead. Columns are scanned in fill order and the first containing span wins, which
+ * after that only matters for an overfull explicit strip whose columns genuinely overlap.
+ */
+export function findColumnContaining(geometry: ColumnGeometry[], x: number, originX = 0): number | null {
+  const cx = x - originX;
+  for (const col of geometry) {
+    if (cx >= col.x && cx < col.x + col.width) return col.index;
+  }
+  return null;
+}
+
+/**
  * Index of the column containing absolute `x` (clicks in a gap map to the preceding column).
  *
  * The walk is direction-aware and cannot assume ascending `x`: in an RTL section column 0 sits on
