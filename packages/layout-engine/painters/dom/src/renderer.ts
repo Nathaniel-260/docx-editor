@@ -1796,11 +1796,18 @@ export class DomPainter {
       // "Past the separator" means "in a later column", which is the LEFT side in an RTL section:
       // there column 0 sits on the right, so an `f.x >= separatorX` test is satisfied by content
       // that never left the FIRST column and the gate would draw a line Word does not draw.
+      //
+      // Each branch tests the edge that TRAILS in its own fill direction: the left edge going
+      // right, the right edge going left. Testing `f.x` in both would leave the branches
+      // asymmetric for anything wider than a column. `page.items` also carries page-anchored
+      // graphics, and a full-width watermark sits at `x = 0` — never past the separator going
+      // right, always past a left-edge test going left — so a section whose text never left the
+      // first column would draw a separator on the strength of the watermark alone.
       const laterColumnsAreLeft = columns.direction === 'rtl';
 
       for (const separatorX of separatorPositions) {
         const hasContentPastSeparator = fragmentsInRegion.some((f) =>
-          laterColumnsAreLeft ? f.x < separatorX : f.x >= separatorX,
+          laterColumnsAreLeft ? f.x + (f.width ?? 0) <= separatorX : f.x >= separatorX,
         );
         if (!hasContentPastSeparator) continue;
 

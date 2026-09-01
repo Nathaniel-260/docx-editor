@@ -111,6 +111,21 @@ describe('DomPainter renderColumnSeparators', () => {
       expect(seps[0].style.left).toBe('408px');
     });
 
+    it('does not let a page-wide anchored graphic satisfy the RTL gate', () => {
+      // `page.items` carries anchored drawings as well as column content, and a page-relative
+      // watermark sits at x = 0 spanning the whole page. Testing its LEFT edge against the
+      // separator makes it 'past' the separator in RTL while the same item is never past it in
+      // LTR, so a section whose text never left the first column would draw a line Word does not.
+      const watermark: Fragment = { ...fragAt(0), width: 816 };
+      const page = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true, direction: 'rtl' },
+        fragments: [fragAt(432), watermark],
+      });
+      paintOnce(buildLayout(page), mount);
+
+      expect(querySeparators(mount)).toHaveLength(0);
+    });
+
     it('draws count-1 separators for 3 equal columns', () => {
       const page = buildPage({
         columns: { count: 3, gap: 48, withSeparator: true },
