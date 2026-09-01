@@ -177,6 +177,14 @@ export {
   widthsEqual,
 } from './column-layout.js';
 export type { ColumnGeometry, NormalizedColumnLayout } from './column-layout.js';
+export { resolveFootnoteSeparatorX } from './footnote-separator-placement.js';
+export type { FootnoteSeparatorPlacement } from './footnote-separator-placement.js';
+export {
+  FOOTNOTE_COLUMNS_MATCH_BODY,
+  mapBodyColumnToFootnoteColumn,
+  resolveFootnoteBandColumns,
+  resolveFootnoteColumnCount,
+} from './footnote-band-columns.js';
 export {
   authorFromTrackedChangeMeta,
   authorIdentityKey,
@@ -2035,6 +2043,14 @@ export type SectionBreakBlock = {
   columns?: ColumnLayout & {
     equalWidth?: boolean;
   };
+  /**
+   * `w15:footnoteColumns/@w:val` — how many columns the section's FOOTNOTE BAND uses, independent
+   * of the body's `w:cols`. `0` or absent means "match the body", which is Word's default; `1`
+   * under a multi-column body is the authored value that puts one note strip across the whole
+   * content area. Resolve it through `resolveFootnoteBandColumns` rather than reading it raw — the
+   * count is clamped to the body's, and only the band layout that helper returns is supported.
+   */
+  footnoteColumns?: number;
   /**
    * Vertical alignment of content within the section's pages.
    * - 'top': Content starts at top margin (default behavior)

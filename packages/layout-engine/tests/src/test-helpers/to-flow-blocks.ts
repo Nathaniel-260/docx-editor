@@ -201,6 +201,16 @@ const readSectPr = (sectPr: unknown): Partial<SectionBreakBlock> => {
       continue;
     }
 
+    // `w15:footnoteColumns` sits in the Word 2012 extension namespace and describes the FOOTNOTE
+    // band, not the body: `1` under a two-column body means one note strip across the whole content
+    // area. `0` is the schema's "match the body", which is also what an absent element means, so it
+    // is carried through as-is and resolved downstream rather than normalized away here.
+    if (name === 'w15:footnoteColumns') {
+      const count = Number(attrs['w:val']);
+      if (Number.isFinite(count) && count >= 0) out.footnoteColumns = Math.floor(count);
+      continue;
+    }
+
     if (name === 'w:bidi') {
       pageIsRtl = readOnOff(attrs);
       continue;

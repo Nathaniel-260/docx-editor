@@ -557,6 +557,12 @@ export type LayoutOptions = {
   margins?: Margins;
   documentBackground?: DocumentBackground;
   columns?: ColumnLayout;
+  /**
+   * `w15:footnoteColumns/@w:val` for the FIRST section, the companion to `columns` above. Later
+   * sections carry their own value on their `sectionBreak` block. `0` or absent means "match the
+   * body", which is Word's default.
+   */
+  footnoteColumns?: number;
   flowMode?: FlowMode;
   semantic?: {
     contentWidth?: number;
