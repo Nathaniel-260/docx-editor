@@ -91,6 +91,7 @@ const routes = [
   ['document-api/reference/content-controls/index.html', 'Content Controls operations'],
   ['document-api/reference/query/match/index.html', 'query.match'],
   ['resources/license/index.html', 'Licensing'],
+  ['resources/package-compatibility/index.html', 'Package compatibility'],
   ['resources/security/index.html', 'Trust &amp; Security'],
   ['resources/docx-engine-license/index.html', 'SuperDoc DOCX Engine Proprietary License'],
 ];
@@ -126,6 +127,10 @@ test('exports the condensed primary sections and keeps migration last', async ()
     new URL('../out/resources/how-superdoc-works/index.html', import.meta.url),
     'utf8',
   );
+  const resourcesCompatibility = await readFile(
+    new URL('../out/resources/package-compatibility/index.html', import.meta.url),
+    'utf8',
+  );
   const resourcesSecurity = await readFile(new URL('../out/resources/security/index.html', import.meta.url), 'utf8');
   const resourcesLicense = await readFile(new URL('../out/resources/license/index.html', import.meta.url), 'utf8');
   const expectedPrimaryLabels = [
@@ -155,7 +160,7 @@ test('exports the condensed primary sections and keeps migration last', async ()
   );
   assert.deepEqual(
     resourceLinks.slice(expectedPrimaryLabels.length).map(({ text }) => text),
-    ['How SuperDoc works', 'Security', 'License'],
+    ['How SuperDoc works', 'Package compatibility', 'Security', 'License'],
   );
 
   const sectionPages = [
@@ -163,6 +168,7 @@ test('exports the condensed primary sections and keeps migration last', async ()
     [migrationOverview, 'Migrate from v1'],
     [migrationRemovedApis, 'Migrate from v1'],
     [resourcesOverview, 'Resources'],
+    [resourcesCompatibility, 'Resources'],
     [resourcesSecurity, 'Resources'],
     [resourcesLicense, 'Resources'],
   ];

@@ -129,6 +129,16 @@ message, since the release version is derived from it:
 
 A local Git hook checks the message format before the commit lands.
 
+### Peer dependency changes
+
+Peer dependencies are a compatibility contract with applications that install a published SuperDoc package. Any authored change to that contract requires manual review. CI compares the effective packed ranges, including `catalog:` and `workspace:` resolutions, with the pull request base and leaves a review comment when they differ.
+
+Use a `feat:` title for a backward-compatible expansion such as widening a tested range, adding an optional peer, or making a required peer optional. Use a breaking `!` title for a change that removes accepted versions, adds a required peer, makes an optional peer required, or removes or replaces a peer contract. The protected check fails when the configured release planner would produce less than the required release impact; a breaking peer change cannot merge until the release path can produce the required major release.
+
+The existing exact `superdoc` dependency and peer in `@superdoc/react` are a release-managed exception: the version stamper moves both pins only as part of the coordinated React and SuperDoc release train after protected PR checks. Changing the pin form, optionality, or compatibility policy is still an authored contract change and follows the rules above.
+
+Read the [package compatibility policy](https://docs.superdoc.dev/resources/package-compatibility) before changing `peerDependencies`, `peerDependenciesMeta`, or a catalog entry used by a peer.
+
 Before you open the PR:
 
 - [ ] `pnpm test` passes
