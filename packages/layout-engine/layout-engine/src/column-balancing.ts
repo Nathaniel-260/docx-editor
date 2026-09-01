@@ -794,12 +794,18 @@ export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: nu
     precedingHeight: precedingHeightBeforeTable,
   });
 
-  // Order fragments in document order: by current column (x → left-to-right),
-  // then by y within each column. During unbalanced layout the paginator fills
-  // column 0 top-to-bottom, then column 1, etc. — so (x, y) preserves the
-  // original sequence.
+  // Order fragments in document order: by current column, then by y within each column. During
+  // unbalanced layout the paginator fills column 0 top-to-bottom, then column 1, etc. — so column
+  // order followed by y preserves the original sequence.
+  //
+  // Which way "column order" runs across the page is direction-relative. In an RTL section column 0
+  // is the RIGHT one, so document order DESCENDS in x; sorting ascending there would feed the
+  // balancer the trailing column first and silently scramble the balanced page's reading order,
+  // since the balanced x/y are then written back onto the fragments in this order.
+  const columnOrder =
+    sectionColumns.direction === 'rtl' ? (a: number, b: number) => b - a : (a: number, b: number) => a - b;
   const ordered = [...sectionFragments].sort((a, b) => {
-    if (a.x !== b.x) return a.x - b.x;
+    if (a.x !== b.x) return columnOrder(a.x, b.x);
     return a.y - b.y;
   });
 

@@ -153,14 +153,17 @@ function buildColumnGeometry(
     geometry.push(col);
     x += width + gapAfter;
   }
-  if (direction !== 'rtl' || geometry.length < 2) return geometry;
+  if (direction !== 'rtl') return geometry;
 
-  // RTL: the FIRST column belongs on the right (ECMA-376 §17.6.1). Mirror rather than reverse the
-  // array: `index` stays the FILL order, so every consumer that walks columns 0..n-1 keeps filling
-  // in document order and only the painted x changes. `x` stays the LEFT edge of the column, which
-  // is what the whole geometry API and its callers mean by `x`. `gapAfter` is likewise untouched —
-  // it is the gap after this column in fill order, and in RTL that gap lies to its left, exactly
-  // where the mirrored x places it.
+  // RTL: the FIRST column belongs on the right (ECMA-376 §17.6.1). A single column is mirrored too:
+  // it is a no-op when the column fills the content area, but an explicit column that underfills it
+  // still belongs against the RIGHT margin, by the same axis rule as a multi-column strip.
+  //
+  // Mirror rather than reverse the array: `index` stays the FILL order, so every consumer that
+  // walks columns 0..n-1 keeps filling in document order and only the painted x changes. `x` stays
+  // the LEFT edge of the column, which is what the whole geometry API and its callers mean by `x`.
+  // `gapAfter` is likewise untouched — it is the gap after this column in fill order, and in RTL
+  // that gap lies to its left, exactly where the mirrored x places it.
   //
   // The mirror axis is the CONTENT AREA, not the strip: explicit widths are not scaled to fill it
   // (see normalizeColumnLayout), so a strip that underfills must end up against the RIGHT margin
@@ -209,8 +212,17 @@ export function normalizeColumnLayout(
   }
 
   // Per-column gaps drive geometry in explicit mode (step 4); equal mode uses the uniform gap.
+  //
+  // Clamped to >= 0 like the scalar `gap` above. OOXML cannot express a negative gutter — `w:space`
+  // is ST_TwipsMeasure, unsigned — and letting one through breaks the invariant the geometry API
+  // relies on: that in an LTR layout `x` rises with the column index. Direction-aware consumers read
+  // that monotonicity to tell a mirrored strip from an upright one, so a negative gap wide enough to
+  // pull a column back behind its predecessor would make an LTR layout answer hit tests as if it
+  // were RTL.
   const gaps =
-    explicitWidths.length > 0 && Array.isArray(input?.gaps) ? input.gaps.slice(0, Math.max(0, count - 1)) : undefined;
+    explicitWidths.length > 0 && Array.isArray(input?.gaps)
+      ? input.gaps.slice(0, Math.max(0, count - 1)).map((value) => Math.max(0, value))
+      : undefined;
 
   const width = widths.reduce((max, value) => Math.max(max, value), 0);
 

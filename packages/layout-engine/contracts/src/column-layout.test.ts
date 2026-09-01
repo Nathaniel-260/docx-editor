@@ -437,9 +437,61 @@ describe('RTL section column order', () => {
     );
   });
 
-  it('does not mirror a single column', () => {
+  it('is a no-op for a single column that fills the content area', () => {
     const rtl = getColumnGeometry(normalizeColumnLayout({ count: 1, gap: 48, direction: 'rtl' }, 602));
     expect(rtl).toEqual([{ index: 0, x: 0, width: 602, gapAfter: 0 }]);
+  });
+
+  it('pins a single underfilling explicit column to the RIGHT margin', () => {
+    // One column has no order to flip, but it still has a side. `<w:cols w:num="1" w:equalWidth="0">`
+    // with an authored width narrower than the body leaves slack, and in an RTL section that slack
+    // belongs on the left — the same axis rule the multi-column strip follows.
+    const rtl = getColumnGeometry(
+      normalizeColumnLayout({ count: 1, gap: 0, equalWidth: false, widths: [200], direction: 'rtl' }, 602),
+    );
+    expect(rtl).toEqual([{ index: 0, x: 402, width: 200, gapAfter: 0 }]);
+
+    // LTR keeps the slack on the right, as before.
+    const ltr = getColumnGeometry(normalizeColumnLayout({ count: 1, gap: 0, equalWidth: false, widths: [200] }, 602));
+    expect(ltr).toEqual([{ index: 0, x: 0, width: 200, gapAfter: 0 }]);
+  });
+
+  it('mirrors three columns with per-column gaps onto the right physical gutters', () => {
+    const columns: ColumnLayout = {
+      count: 3,
+      gap: 0,
+      equalWidth: false,
+      widths: [100, 150, 200],
+      gaps: [20, 40],
+      withSeparator: true,
+      direction: 'rtl',
+    };
+    const rtl = getColumnGeometry(normalizeColumnLayout(columns, 602));
+
+    // Fill order still runs 0,1,2; the strip is laid out right to left from the right margin.
+    expect(rtl.map((col) => col.index)).toEqual([0, 1, 2]);
+    expect(rtl.map((col) => col.x)).toEqual([502, 332, 92]);
+    // Column 0's right edge is the right margin, and each separator is the midpoint of the gutter
+    // between the columns it actually separates.
+    expect(rtl[0].x + rtl[0].width).toBe(602);
+    expect(getColumnSeparatorPositions(rtl, 0)).toEqual([492, 312]);
+    // Hit testing descends with the index and every column claims its own span.
+    expect(getColumnAtX(rtl, 550)).toBe(0);
+    expect(getColumnAtX(rtl, 400)).toBe(1);
+    expect(getColumnAtX(rtl, 150)).toBe(2);
+  });
+
+  it('clamps a negative per-column gap so an LTR layout cannot read as mirrored', () => {
+    // OOXML cannot express a negative gutter (`w:space` is unsigned), but a host-built layout can.
+    // Left unclamped, `gaps: [-100]` pulls column 1 back behind column 0 and the direction-aware
+    // consumers — which infer the axis from x monotonicity — would answer hit tests as if the
+    // upright layout were mirrored.
+    const ltr = getColumnGeometry(
+      normalizeColumnLayout({ count: 2, gap: 0, equalWidth: false, widths: [50, 50], gaps: [-100] }, 602),
+    );
+    expect(ltr.map((col) => col.x)).toEqual([0, 50]);
+    expect(getColumnAtX(ltr, 20)).toBe(0);
+    expect(getColumnAtX(ltr, 80)).toBe(1);
   });
 
   it('pins an underfilling explicit strip to the RIGHT margin, not the left', () => {
