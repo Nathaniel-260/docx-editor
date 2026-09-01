@@ -206,6 +206,22 @@ describe('DomPainter renderColumnSeparators', () => {
       expect(querySeparators(mount)).toHaveLength(0);
     });
 
+    it('still draws the separator when the later column holds only an outdented paragraph', () => {
+      // The paginator records `columnIndex` for tables and footnote bodies but not for ordinary
+      // paragraphs, so a paragraph reaches the geometry fallback. A negative `w:ind` puts its
+      // origin in the gutter, outside its own column: attributing by containment of the origin
+      // would find no column and suppress a line Word draws.
+      // 2 equal columns of 288 in a 624 content area: column 1 starts at 96 + 288 + 48 = 432.
+      const outdented: Fragment = { ...fragAt(432 - 40), width: 288 };
+      const page = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true },
+        fragments: [fragAt(96), outdented],
+      });
+      paintOnce(buildLayout(page), mount);
+
+      expect(querySeparators(mount)).toHaveLength(1);
+    });
+
     it('draws count-1 separators for 3 equal columns', () => {
       const page = buildPage({
         columns: { count: 3, gap: 48, withSeparator: true },

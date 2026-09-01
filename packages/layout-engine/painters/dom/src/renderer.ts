@@ -1054,6 +1054,46 @@ function svgEffectColor(value: TextEffectColor): string | undefined {
  * - Incremental re-rendering when only specific blocks change
  * - Hyperlink rendering with security sanitization and accessibility
  */
+/**
+ * The column that owns a fragment spanning `[x, x + width)` in content-relative coordinates, or
+ * `null` when it belongs to no column.
+ *
+ * Attribution is by OVERLAP rather than by containment of the origin, because an origin can sit
+ * outside its own column in two ordinary cases: a paragraph with a negative `w:ind` hangs into the
+ * gutter, and `resolveTableFrame` places a right-aligned or centred over-wide table at a negative
+ * offset from its column. The paginator records `columnIndex` for tables and footnote bodies but
+ * NOT for ordinary paragraphs, so an outdented paragraph alone in a later column reaches this
+ * fallback — and answering `null` for it would suppress a separator Word draws.
+ *
+ * Anything at least as wide as the whole content area belongs to no column. That is what keeps
+ * page-anchored objects out of the gate: `page.items` carries them, and a full-width watermark
+ * overlaps every column without being content of any. The same rule catches an over-wide table that
+ * reaches here without a recorded column, and `null` is the safe answer there too — it can only
+ * ever suppress a separator, never invent one.
+ *
+ * Ties go to the earliest column in fill order, which arises only for an overfull explicit strip
+ * whose columns genuinely overlap.
+ */
+function columnOwningSpan(geometry: ColumnGeometry[], x: number, width: number): number | null {
+  if (geometry.length === 0) return null;
+
+  const span = Number.isFinite(width) && width > 0 ? width : 0;
+  const contentStart = Math.min(...geometry.map((col) => col.x));
+  const contentEnd = Math.max(...geometry.map((col) => col.x + col.width));
+  if (span >= contentEnd - contentStart) return null;
+
+  let best: number | null = null;
+  let bestOverlap = 0;
+  for (const col of geometry) {
+    const overlap = Math.min(x + span, col.x + col.width) - Math.max(x, col.x);
+    if (overlap > bestOverlap) {
+      bestOverlap = overlap;
+      best = col.index;
+    }
+  }
+  return best;
+}
+
 export class DomPainter {
   private readonly options: PainterOptions;
   private mount: HTMLElement | null = null;
@@ -1802,25 +1842,20 @@ export class DomPainter {
       // starts left of its own column and ends past the separator, while never having left the
       // later column at all.
       //
-      // `fragment.columnIndex` is the engine's own record of the owning column, written for
-      // paragraphs and tables alike as they are laid out, and documented as the field to trust
-      // "when overflow crosses margins". Geometry is only the fallback, for a fragment that
-      // carries no such record.
-      //
-      // Falling back to containment rather than to `getColumnAtX` is deliberate: containment can
-      // answer "no column", and that is what keeps page-anchored objects out of the gate.
-      // `page.items` carries them, and a full-width watermark belongs to no column — counting it
-      // would draw a separator on a page whose text never left the first column.
+      // `fragment.columnIndex` is the engine's own record of the owning column, and it is the
+      // first thing consulted. Today the paginator writes it for tables and footnote bodies but
+      // not for ordinary paragraphs, so the geometry fallback below carries most fragments and
+      // has to be right on its own.
       const lastColumnIndex = geometry.length - 1;
       const occupiedColumns = new Set<number>();
       for (const item of fragmentsInRegion) {
-        // `page.items` are paint items; the engine's record of the owning column lives on the
+        // `page.items` are paint items; the engine`s record of the owning column lives on the
         // source fragment they point back to.
         const owned = (item as { fragment?: { columnIndex?: number } }).fragment?.columnIndex;
         const columnIndex =
           typeof owned === 'number' && Number.isFinite(owned)
             ? Math.max(0, Math.min(lastColumnIndex, Math.floor(owned)))
-            : findColumnContaining(geometry, item.x, leftMargin);
+            : columnOwningSpan(geometry, item.x - leftMargin, item.width);
         if (columnIndex !== null) occupiedColumns.add(columnIndex);
       }
 
