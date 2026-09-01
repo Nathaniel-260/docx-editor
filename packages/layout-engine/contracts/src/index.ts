@@ -3587,9 +3587,13 @@ export type HeaderFooterLayout = {
 export type LayoutBlockResumeCheckpoint = {
   blockId: BlockId;
   pageIndex: number;
+  /** Page before keep/fit decisions; editing may pull a deferred paragraph back here. */
+  preflightPageIndex?: number;
   prefixFragmentCount: number;
   cursorY: number;
   maxCursorY: number;
+  /** Exact accepted body footprint for coupled paragraph/note pagination. */
+  committedBodyBottom?: number;
   columnIndex: number;
   trailingSpacing: number;
   lastParagraphStyleId?: string;
