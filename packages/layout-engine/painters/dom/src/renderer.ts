@@ -1107,12 +1107,7 @@ function svgEffectColor(value: TextEffectColor): string | undefined {
  */
 const COLUMN_EDGE_EPSILON = 0.01;
 
-function columnOwningSpan(
-  geometry: ColumnGeometry[],
-  x: number,
-  width: number,
-  contentWidth: number,
-): number | null {
+function columnOwningSpan(geometry: ColumnGeometry[], x: number, width: number, contentWidth: number): number | null {
   if (geometry.length === 0) return null;
 
   const span = Number.isFinite(width) && width > 0 ? width : 0;
