@@ -878,7 +878,7 @@ export function layoutParagraphBlock(ctx: ParagraphLayoutContext, anchors?: Para
           )
         : columnX(state);
 
-      const fragment = createAnchoredTableFragment(entry.block, entry.measure, anchorX, anchorY);
+      const fragment = createAnchoredTableFragment(entry.block, entry.measure, anchorX, anchorY, state.columnIndex);
       state.page.fragments.push(fragment);
       registeredAnchoredTablePlacements.set(entry.block.id, {
         page: state.page,

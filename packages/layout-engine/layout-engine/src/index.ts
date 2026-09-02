@@ -3920,7 +3920,9 @@ function* layoutDocumentSteps(
       const anchorX = tableBlock.anchor?.offsetH ?? columnX(state);
 
       floatManager.registerTable(tableBlock, tableMeasure, anchorY, state.columnIndex, state.page.number);
-      state.page.fragments.push(createAnchoredTableFragment(tableBlock, tableMeasure, anchorX, anchorY));
+      state.page.fragments.push(
+        createAnchoredTableFragment(tableBlock, tableMeasure, anchorX, anchorY, state.columnIndex),
+      );
     }
   }
 
