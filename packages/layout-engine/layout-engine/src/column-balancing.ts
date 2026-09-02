@@ -834,7 +834,11 @@ export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: nu
    * the same input, and it does differ between engines.
    */
   const ordinalOf = (fragment: BalancingFragment): number => {
-    // The engine's own record, where it kept one. Tables carry it; ordinary paragraphs do not.
+    // The engine's own record, where it kept one. Only a few fragment kinds do: tables
+    // (`layout-table.ts`, five sites), footnote bodies, and a paragraph ONLY when it is a collapsed
+    // split-line-break anchor carrier (`layout-paragraph.ts`, under `collapseSplitLineBreakCarrier`)
+    // — a narrow document shape, not the ordinary paragraph. The rules below therefore carry almost
+    // every fragment.
     const recorded = (fragment as { columnIndex?: number }).columnIndex;
     if (typeof recorded === 'number' && Number.isFinite(recorded)) return clampOrdinal(recorded);
 
