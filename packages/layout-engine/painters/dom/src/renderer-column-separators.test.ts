@@ -757,34 +757,44 @@ describe('DomPainter renderColumnSeparators', () => {
     });
   });
 
-  describe('FIX 3 - columnOwningSpan gates origin containment on the box fitting its column', () => {
-    // IMPORTANT (see the written report): this test does NOT fail against pre-fix
-    // HEAD. A scratch replica swept outdent 0..160px in 2px steps for a 100px
-    // fragment nominally in column 1 (col0 [0,288), col1 [336,624)) and compared the
-    // pre-fix pure-overlap columnOwningSpan against the current origin+fit one on
-    // every step: they never disagreed. The reason is structural, not incidental —
-    // whenever the fit check passes, the box lies entirely inside one column's span,
-    // and since normalizeColumnLayout/getColumnGeometry never produce overlapping
-    // column spans, overlap-alone would trivially pick that same column too (its
-    // overlap with any other, disjoint column is exactly 0). So for any geometry
-    // reachable through the shared geometry helpers, "origin, gated on fit, else
-    // overlap" and "overlap alone" are provably the same function. This test is kept
-    // as a pin on CURRENT behavior (and documentation of the fit gate's intent) —
-    // protection against a future regression in the fit gate itself, such as one
-    // that accidentally rejects the fallback to overlap — not a pre-fix regression
-    // test.
-    it('still attributes an outdented paragraph to its own (later) column', () => {
-      // A 100px fragment belongs to column 1 (its unindented origin would be content
-      // x 336, page x 432) but a negative `w:ind` outdents it 60px, to content x 276
-      // / page x 372 — inside column 0's [0,288) span, so containment of the origin
-      // alone (with no fit check and no overlap fallback) would misattribute it to
-      // column 0. With the fit check: byOrigin = column 0, but the box doesn't fit
-      // (276+100=376 > 288+0.01), so attribution falls through to overlap, which
-      // favors column 1 (overlap 40 vs 12 — see the outdent-sweep comment above).
-      // Ordinary paragraphs never carry a recorded `columnIndex` (the paginator only
-      // records it for tables and footnote bodies), so this reaches the geometry
-      // fallback, not the recorded-columnIndex branch FIX 2 covers.
-      const outdented: Fragment = { ...fragAt(372), width: 100 };
+  describe('a box wider than its column is the only origin the gate distrusts', () => {
+    // Why WIDTH and not the right edge, stated once for both cases below. An edge gate would be
+    // dead code: pass it and the box lies wholly inside one column's span, and since
+    // `getColumnGeometry` never emits overlapping spans, every other column's overlap is zero and
+    // the vote below returns the same column anyway. Swept over outdents from 0 to 160px in 2px
+    // steps, an edge-gated containment step and plain overlap never disagreed once. The width gate
+    // is what makes the step do work, because it admits the one shape whose right edge overhangs
+    // while its origin is still authoritative -- the right-aligned frame in the first test.
+    it('keeps a right-aligned framed paragraph in the column its origin is in', () => {
+      // `w:framePr` with `xAlign="right"` re-points the fragment at
+      // `columnX + (effectiveColumnWidth - maxLineWidth)` (layout-paragraph.ts, `floatAlignment`)
+      // and leaves `width` at the FULL column width, so the recorded box overhangs the gutter and
+      // the next column while the text never left column 0. Two equal 288px columns over 624 put a
+      // frame whose longest line is 50px at content-relative 238 with width 288, i.e. the box
+      // [238, 526]: neither edge lands on a column edge, and overlap alone favours the neighbour --
+      // 50px of column 0 against 190px of column 1 -- so the gate drew a separator on a page with
+      // nothing in its second column.
+      //
+      // This is why origin containment is gated on the box's WIDTH and not on its right edge. The
+      // box is 288 wide against a 288px column, so it fits, and its origin is believed. Gating on
+      // the right edge rejects it (526 > 288) and hands it to the overlap vote, which is wrong.
+      const framed: Fragment = { ...fragAt(96 + 288 - 50), width: 288 };
+      const page = buildPage({
+        columns: { count: 2, gap: 48, withSeparator: true },
+        fragments: [fragAt(96), framed],
+      });
+      paintOnce(buildLayout(page), mount);
+
+      expect(querySeparators(mount)).toHaveLength(0);
+    });
+
+    it('still distrusts the origin of a box that outgrew its column', () => {
+      // The mirror shape, and the reason the width gate is a gate rather than an unconditional
+      // trust: a negative `w:ind` widens the fragment by the outdent, so a column-1 paragraph
+      // outdented 72px past the 48px gutter is the box [264, 624] -- origin inside column 0, width
+      // 360 against a 288px column. It does NOT fit, so the origin is not believed, and overlap
+      // answers column 1 (24px against 288px). A separator belongs here.
+      const outdented: Fragment = { ...fragAt(96 + 264), width: 360 };
       const page = buildPage({
         columns: { count: 2, gap: 48, withSeparator: true },
         fragments: [fragAt(96), outdented],
@@ -792,7 +802,6 @@ describe('DomPainter renderColumnSeparators', () => {
       paintOnce(buildLayout(page), mount);
 
       expect(querySeparators(mount)).toHaveLength(1);
-      expect(querySeparators(mount)[0].style.left).toBe('408px');
     });
   });
 

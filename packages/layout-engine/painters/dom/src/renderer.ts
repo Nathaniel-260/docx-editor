@@ -1147,19 +1147,30 @@ function columnOwningSpan(geometry: ColumnGeometry[], x: number, width: number, 
     if (Math.abs(x + span - (col.x + col.width)) <= COLUMN_EDGE_EPSILON) return col.index;
   }
 
-  // Containment of the origin, but only while the box still FITS the column it starts in. The fit is
-  // what makes the origin evidence of ownership: an indent moves a fragment's origin without
-  // changing which column it flows in, and it still ends inside that column. Content that starts in
-  // one column and ends past it has a shifted origin instead — an over-wide table justified to `end`
-  // begins inside an EARLIER column, having never left its own — and there the origin names the
-  // wrong column. Dropping the fit test suppressed a rule Word draws: a paragraph outdented further
-  // than the gutter has its origin in the previous column, so its own column read as empty. Measured
-  // on equal 2-col geometry over 624px (col0 [0,288), col1 [336,624)): a 100px fragment in column 1
-  // outdented 72px sits at origin 264, inside column 0, while overlap correctly answers 1.
+  // Containment of the origin, gated on the box being no WIDER than the column it starts in — not on
+  // its right edge landing inside that column. The distinction is the whole content of this step.
+  //
+  // A box that fits its column was placed in that column wherever the origin ended up: ordinary
+  // content, a `w:ind` indent, and — the case that makes this step load-bearing — a paragraph
+  // carrying `attrs.floatAlignment` of `right` or `center`. `layout-paragraph.ts` re-points such a
+  // fragment at `columnX + (effectiveColumnWidth - maxLineWidth)` and never reduces
+  // `fragment.width`, so a 50px line in a 288px column is recorded as x = columnX + 238 with width
+  // still 288: origin inside its own column, right edge 238px past it. An edge gate rejects that,
+  // and the overlap vote below then sees 50px of column 0 against 190px of column 1 and moves it —
+  // so a page whose text never left column 0 drew a separator, with no anchored object involved at
+  // all. (Nothing in this repo's production code sets `floatAlignment`; it arrives from the
+  // adapter outside the layout engine, so the OOXML feature behind it is deliberately not named.)
+  //
+  // A box WIDER than its column may instead have been pulled LEFT out of it, and there the origin is
+  // no evidence: a negative `w:ind` widens the fragment by the outdent, so an outdent bigger than
+  // the gutter lands the origin in the PREVIOUS column while the content belongs to this one.
+  // Measured on equal 2-col geometry over 624px (col0 [0,288), col1 [336,624)): a column-1 paragraph
+  // outdented 72px is the box [264, 624], whose origin is in column 0 and whose overlap correctly
+  // answers 1. Width is what separates the two shapes; the right edge overhangs in both.
   const byOrigin = findColumnContaining(geometry, x);
   if (byOrigin !== null) {
     const originColumn = geometry.find((col) => col.index === byOrigin);
-    if (originColumn && x + span <= originColumn.x + originColumn.width + COLUMN_EDGE_EPSILON) return byOrigin;
+    if (originColumn && span <= originColumn.width + COLUMN_EDGE_EPSILON) return byOrigin;
   }
 
   let best: number | null = null;
