@@ -36,8 +36,46 @@ const ltrRun =
 const RTL = () => true;
 const LTR = () => false;
 
+/**
+ * A node long enough that reading it again per caret, or per keystroke, is
+ * unmissable, swept at few enough carets that reading it *once* is nearly free.
+ * Both mistakes these tests are for cost a pass per caret, so the two sides sit
+ * about fifty times apart at this shape.
+ *
+ * The tests that use it each start their text with a different character, on
+ * purpose: what one resolution works out is handed on to a text that extends it,
+ * so a shared prefix would let one test answer the next and leave it measuring
+ * nothing.
+ */
+const RUN = 200000;
+const SWEEP = 5000;
+
+/**
+ * Typing is measured on a shorter node with more keystrokes: the gap there is
+ * per keystroke whatever the node's length, since both sides of it are one pass
+ * over the node — a copy of what is already worked out, against working it all
+ * out again.
+ */
+const TYPED_RUN = 30000;
+const KEYSTROKES = 200;
+
+/**
+ * The three cost tests below opt out of the suite's `retry`. They measure work
+ * that is only done once: a retry runs the same text through a module that has
+ * already worked it out, so it passes however slow the first attempt was, and a
+ * retried cost test can never fail.
+ */
+const MEASURED_ONCE = { retry: 0 };
+
+/** Generous next to the ~20 ms these take, and far below the seconds they take when the walks are not kept. */
+const COST_BUDGET_MS = 1000;
+
 const HEBREW = 'שלום';
 const HEBREW_SPACE = `${HEBREW} `;
+
+/** The two edges of the character after HEBREW in a right-to-left run: its logical end is the left one. */
+const TAIL_RIGHT = 100 - CHAR_WIDTH * HEBREW.length;
+const TAIL_LEFT = TAIL_RIGHT - CHAR_WIDTH;
 
 /**
  * An RTL paragraph whose Hebrew word is followed by a space and then a
@@ -405,17 +443,81 @@ describe('resolveCollapsedCaretGeometry', () => {
     expect(resolveCollapsedCaretGeometry(offset, text, ltrRun(text.length), LTR)?.x).toBe(CHAR_WIDTH * (offset - 1));
   });
 
-  it('reads the text once however many carets are resolved in it', () => {
+  it('walks a neutral run once for all the carets resolved along it', MEASURED_ONCE, () => {
     // The rules need the nearest strong character on each side, which is linear
     // to walk to. Walking on every placement made an unbroken run of neutrals
-    // quadratic under key-repeat, so the pass is cached on the text instead.
-    const text = `${'%'.repeat(20000)} `;
+    // quadratic under key-repeat. Sweeping forwards is what asks each walk to
+    // stop at the answer the one before it left.
+    const text = `a${'%'.repeat(RUN)}`;
     const glyphs = rtlRun(text.length);
     const started = Date.now();
-    for (let caret = 0; caret < 2000; caret += 1) {
+    for (let caret = text.length - SWEEP; caret <= text.length; caret += 1) {
+      resolveCollapsedCaretGeometry(caret, text, glyphs, RTL);
+    }
+    expect(Date.now() - started).toBeLessThan(COST_BUDGET_MS);
+  });
+
+  it('writes what one walk found over the whole run it passed', MEASURED_ONCE, () => {
+    // Sweeping backwards instead: the first caret walks the run, and every
+    // caret behind it must be answered by what that walk wrote down rather than
+    // by a walk of its own. A separate text, since the sweep above would
+    // otherwise have answered this one.
+    const text = `b${'%'.repeat(RUN)}`;
+    const glyphs = rtlRun(text.length);
+    const started = Date.now();
+    for (let caret = 0; caret < SWEEP; caret += 1) {
       resolveCollapsedCaretGeometry(text.length - caret, text, glyphs, RTL);
     }
-    expect(Date.now() - started).toBeLessThan(2000);
+    expect(Date.now() - started).toBeLessThan(COST_BUDGET_MS);
+  });
+
+  it('does not read the whole node again on every keystroke', MEASURED_ONCE, () => {
+    // Typing replaces the text, so nothing kept on the whole text survives a
+    // keystroke, and reading the whole node on each one made a typing session
+    // quadratic in turn — twelve milliseconds a keystroke in a node this long.
+    // What a character has behind it cannot be changed by an edit after it, so
+    // an edit hands that on.
+    let text = `c${'%'.repeat(TYPED_RUN)}`;
+    const started = Date.now();
+    for (let keystroke = 0; keystroke < KEYSTROKES; keystroke += 1) {
+      text += '%';
+      resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL);
+    }
+    expect(Date.now() - started).toBeLessThan(COST_BUDGET_MS);
+  });
+
+  it('works out a character again when an edit replaced it', () => {
+    // What an edit changed is not among what it hands on. Resolving the Latin
+    // tail first is what puts its answer in reach of the Hebrew one: both texts
+    // share the four Hebrew letters, and only the fifth character differs.
+    const latin = `${HEBREW}b`;
+    const hebrew = `${HEBREW}\u05d0`;
+    expect(resolveCollapsedCaretGeometry(latin.length, latin, rtlRun(latin.length), RTL)?.x).toBe(TAIL_RIGHT);
+    expect(resolveCollapsedCaretGeometry(hebrew.length, hebrew, rtlRun(hebrew.length), RTL)?.x).toBe(TAIL_LEFT);
+  });
+
+  it('works out a character again when an edit completed its surrogate pair', () => {
+    // A lone high surrogate and the pair it becomes share their first unit, so
+    // comparing units alone would hand on an answer for a different character.
+    // The half is left-to-right by default; the whole is Phoenician alf.
+    const half = `${HEBREW}\ud802`;
+    const whole = `${HEBREW}\ud802\udd00`;
+    expect(resolveCollapsedCaretGeometry(half.length, half, rtlRun(half.length), RTL)?.x).toBe(TAIL_RIGHT);
+    expect(resolveCollapsedCaretGeometry(whole.length, whole, rtlRun(whole.length), RTL)?.x).toBe(TAIL_LEFT);
+  });
+
+  it('does not hand on what an edit moved', () => {
+    // N1 reads both sides of a neutral. What is behind a character survives an
+    // edit after it; what is ahead of it does not, and keeping that would answer
+    // the second of these with the first one's tail.
+    const gap = ' '.repeat(40);
+    const offset = 1 + gap.length / 2;
+    const rtlTail = `\u05d0${gap}\u05d1`;
+    const ltrTail = `\u05d0${gap}b`;
+    expect(resolveCollapsedCaretGeometry(offset, rtlTail, ltrRun(rtlTail.length), LTR)?.x).toBe(
+      CHAR_WIDTH * (offset - 1),
+    );
+    expect(resolveCollapsedCaretGeometry(offset, ltrTail, ltrRun(ltrTail.length), LTR)?.x).toBe(CHAR_WIDTH * offset);
   });
 
   it('carries the glyph vertical metrics onto the caret', () => {
