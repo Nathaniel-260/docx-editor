@@ -202,7 +202,7 @@ overrides:
   protobufjs@8: 8.6.4
   superdoc: workspace:*
   '@superdoc/react': workspace:*
-  '@superdoc/sdk': 2.8.0
+  '@superdoc/sdk': 2.9.0-next.1
   '@superdoc/common': workspace:*
   '@superdoc/contracts': workspace:*
   '@superdoc/dom-contract': workspace:*
@@ -363,8 +363,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/react
       '@superdoc/sdk':
-        specifier: 2.8.0
-        version: 2.8.0
+        specifier: 2.9.0-next.1
+        version: 2.9.0-next.1
       '@tailwindcss/postcss':
         specifier: ^4.3.3
         version: 4.3.3
@@ -3444,8 +3444,20 @@ packages:
     os: [darwin]
     hasBin: true
 
+  '@superdoc/sdk-darwin-arm64@2.9.0-next.1':
+    resolution: {integrity: sha512-GyMFDSsM1XIsRjcHbIJ1mjyhNARPDunsAUYFBFHqiViT4n/Ic70D6jJuMESsYC6NGvHYLcWAOUnNnCCYZJ0R7Q==}
+    cpu: [arm64]
+    os: [darwin]
+    hasBin: true
+
   '@superdoc/sdk-darwin-x64@2.8.0':
     resolution: {integrity: sha512-n5qLFW8RYvXgMZt6Yyv4Vbsz1BX3mAUdgGDAIjDDnNChdiHh5kkBzpxJ5ylb+jyJl+j2WEk1EeW2/Cujgx6Bjg==}
+    cpu: [x64]
+    os: [darwin]
+    hasBin: true
+
+  '@superdoc/sdk-darwin-x64@2.9.0-next.1':
+    resolution: {integrity: sha512-vXLsJbw+eF2nlBqQCCKEMQIOtzDVuWT/HxDWJozakalWvqkwFPglU8OdlcJJN4BPcEzG/vwUdqlCd/hq1JsohQ==}
     cpu: [x64]
     os: [darwin]
     hasBin: true
@@ -3456,8 +3468,20 @@ packages:
     os: [linux]
     hasBin: true
 
+  '@superdoc/sdk-linux-arm64@2.9.0-next.1':
+    resolution: {integrity: sha512-1ql3jJmJjY5QAFiwv2rllGFWYpjNMocsjUnxPgqStgPPJdVWi4KA5xUsMh9NxV7K9V8Kc9A+78rRXUZ6kUdYaw==}
+    cpu: [arm64]
+    os: [linux]
+    hasBin: true
+
   '@superdoc/sdk-linux-x64@2.8.0':
     resolution: {integrity: sha512-jzA6nQw6Jj5k+/s10uw0ylcnpcw+vIoZj9ArT4lvwItv3jxuATFD3fpNU4V3FyZ68F+Nqv1E+qWTqoRTL9fxkQ==}
+    cpu: [x64]
+    os: [linux]
+    hasBin: true
+
+  '@superdoc/sdk-linux-x64@2.9.0-next.1':
+    resolution: {integrity: sha512-K/R+/Dalg376HGPN8gvQCfEhLJXdUregeDFkc2YiU3GHaVfTpJnYa7n8FLvYZ42MzX822dc6BTVomwcMagExYw==}
     cpu: [x64]
     os: [linux]
     hasBin: true
@@ -3468,8 +3492,17 @@ packages:
     os: [win32]
     hasBin: true
 
+  '@superdoc/sdk-windows-x64@2.9.0-next.1':
+    resolution: {integrity: sha512-rJqfGyln+851OPN/9nvSvwSZg6uLUMyo9O3Iraob1HwUp3RpLIHF/2HWAMyWUITWOXOa+N/1DXUaWKHCjBTWrA==}
+    cpu: [x64]
+    os: [win32]
+    hasBin: true
+
   '@superdoc/sdk@2.8.0':
     resolution: {integrity: sha512-CvPlUTTPydJ9ACqqqWpw9vwy9wVhLTRPuy3ou6p4tOdY4/k1dg5Er0HFfu8DSe+1YC80tVXCrssnUnBMwitAkA==}
+
+  '@superdoc/sdk@2.9.0-next.1':
+    resolution: {integrity: sha512-sLHtKYpJd6eANpUR9st8EroZjteNXi0zYmIzBWZzbdmqpiM5yNRNovDrmCa73UuRyw3JS6pYp0cAMukkd4HbuQ==}
 
   '@sveltejs/acorn-typescript@1.0.12':
     resolution: {integrity: sha512-J1jNYG23QWd67UfrQSFHtjhV37r9mVi0gdc12A3MWPldOjRK35Xk+um+qACPVjgw3AleiqoyEAhok8Wm3q46NA==}
@@ -12010,16 +12043,31 @@ snapshots:
   '@superdoc/sdk-darwin-arm64@2.8.0':
     optional: true
 
+  '@superdoc/sdk-darwin-arm64@2.9.0-next.1':
+    optional: true
+
   '@superdoc/sdk-darwin-x64@2.8.0':
+    optional: true
+
+  '@superdoc/sdk-darwin-x64@2.9.0-next.1':
     optional: true
 
   '@superdoc/sdk-linux-arm64@2.8.0':
     optional: true
 
+  '@superdoc/sdk-linux-arm64@2.9.0-next.1':
+    optional: true
+
   '@superdoc/sdk-linux-x64@2.8.0':
     optional: true
 
+  '@superdoc/sdk-linux-x64@2.9.0-next.1':
+    optional: true
+
   '@superdoc/sdk-windows-x64@2.8.0':
+    optional: true
+
+  '@superdoc/sdk-windows-x64@2.9.0-next.1':
     optional: true
 
   '@superdoc/sdk@2.8.0':
@@ -12029,6 +12077,14 @@ snapshots:
       '@superdoc/sdk-linux-arm64': 2.8.0
       '@superdoc/sdk-linux-x64': 2.8.0
       '@superdoc/sdk-windows-x64': 2.8.0
+
+  '@superdoc/sdk@2.9.0-next.1':
+    optionalDependencies:
+      '@superdoc/sdk-darwin-arm64': 2.9.0-next.1
+      '@superdoc/sdk-darwin-x64': 2.9.0-next.1
+      '@superdoc/sdk-linux-arm64': 2.9.0-next.1
+      '@superdoc/sdk-linux-x64': 2.9.0-next.1
+      '@superdoc/sdk-windows-x64': 2.9.0-next.1
 
   '@sveltejs/acorn-typescript@1.0.12(acorn@8.16.0)':
     dependencies:
