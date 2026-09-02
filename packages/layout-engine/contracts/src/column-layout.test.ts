@@ -461,6 +461,30 @@ describe('columnRenderLayoutsEqual (SD-2629)', () => {
     expect(columnRenderLayoutsEqual({ count: 3, gap: 24 }, { count: 3, gap: 40 })).toBe(false);
   });
 
+  it('falls a hole in the gaps array back to the scalar, not to NaN', () => {
+    // `Math.max(0, undefined)` is NaN, and NaN is not nullish, so `buildColumnGeometry`'s
+    // `gaps?.[i] ?? gap` could not rescue it: the hole propagated into every later column's x.
+    // A hole is forbidden by `gaps?: number[]` and nothing in the repo builds a gaps array yet, so
+    // this is a guard for the day the importer starts projecting `w:space` per column.
+    const holed = normalizeColumnLayout(
+      { count: 3, gap: 40, widths: [200, 200, 200], equalWidth: false, gaps: [30, undefined] } as ColumnLayout,
+      720,
+    );
+    expect(holed.gaps).toEqual([30, 40]);
+    const geometry = getColumnGeometry(holed);
+    expect(geometry.map((col) => col.x)).toEqual([0, 230, 470]);
+    expect(geometry.every((col) => Number.isFinite(col.x))).toBe(true);
+
+    // Which also means the hole now renders identically to spelling the scalar out, so the render
+    // predicate must call the two equal rather than splitting a region over an unreachable value.
+    expect(
+      columnRenderLayoutsEqual(
+        { count: 3, gap: 40, widths: [200, 200, 200], equalWidth: false, gaps: [30, undefined] } as ColumnLayout,
+        { count: 3, gap: 40, widths: [200, 200, 200], equalWidth: false, gaps: [30, 40] },
+      ),
+    ).toBe(true);
+  });
+
   it('still splits explicit sub-pixel widths on the scalar gap alone', () => {
     // The one route by which the scalar reaches explicit WIDTHS rather than the gutters: normalize
     // floors a fabricated width at 1px, and collapses to a single full-width column once the usable

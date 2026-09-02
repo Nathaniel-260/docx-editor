@@ -219,9 +219,19 @@ export function normalizeColumnLayout(
   // that monotonicity to tell a mirrored strip from an upright one, so a negative gap wide enough to
   // pull a column back behind its predecessor would make an LTR layout answer hit tests as if it
   // were RTL.
+  // A HOLE in the array falls back to the scalar, exactly as `buildColumnGeometry`'s `gaps?.[i] ??
+  // gap` and `effectiveColumnGaps` already do for a SHORT one. `Math.max(0, undefined)` is NaN, and
+  // NaN is not nullish, so the geometry fallback below could not catch it: `{gap: 40, gaps: [30,
+  // undefined]}` normalized to `gaps: [30, NaN]` and painted `col2.x = NaN`, i.e. a column with no
+  // position at all. `gaps?: number[]` forbids a hole under TypeScript and nothing in this repo
+  // constructs a `gaps` array yet, so this is unreachable today — and it stops being unreachable the
+  // day the importer starts projecting `w:cols/w:col/@w:space` per column. A non-finite entry takes
+  // the same fallback, since the reason to distrust it is identical.
   const gaps =
     explicitWidths.length > 0 && Array.isArray(input?.gaps)
-      ? input.gaps.slice(0, Math.max(0, count - 1)).map((value) => Math.max(0, value))
+      ? input.gaps
+          .slice(0, Math.max(0, count - 1))
+          .map((value) => (Number.isFinite(value) ? Math.max(0, value) : Math.max(0, gap)))
       : undefined;
 
   const width = widths.reduce((max, value) => Math.max(max, value), 0);
@@ -461,7 +471,11 @@ export function columnRenderLayoutsEqual(a?: ColumnLayout, b?: ColumnLayout): bo
     // scalar still reaches explicit WIDTHS — normalize's sub-pixel `Math.max(1, …)` floor and its
     // epsilon collapse, both keyed on the sign of `contentWidth - gap * (count - 1)` — is handled by
     // the `hasSubPixelWidth` guard in the explicit branch above, not waved off here: a width of 1px
-    // or more makes both no-ops, which is exactly the threshold that guard tests.
+    // or more makes both no-ops, which is exactly the threshold that guard tests. That guard is
+    // COMPLETE rather than merely in scope — the epsilon collapse needs the MAXIMUM authored width
+    // at or under the epsilon, and both epsilons live in the tree are below 1px (1e-4 in
+    // `layout-engine/src/index.ts`, 1e-2 in `layout-bridge/src/incrementalLayout.ts`), so that route
+    // also implies a sub-pixel width. There is no path the guard misses.
     return false;
   }
   return true;
