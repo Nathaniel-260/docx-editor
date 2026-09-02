@@ -822,6 +822,10 @@ export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: nu
   });
   const originX = args.margins.left;
   const clampOrdinal = (value: number): number => Math.max(0, Math.min(columnCount - 1, Math.floor(value)));
+  // Sub-pixel tolerance for "this edge IS that column's edge". Column x values reach fragments
+  // through `getColumnX`, so unindented content matches exactly and the slack only absorbs float
+  // drift — it stays two orders of magnitude below the smallest indent a document can author.
+  const EDGE_EPSILON = 0.01;
 
   /**
    * Which column a fragment occupies, as a fill-order ordinal. ALWAYS a number: the result is a sort
@@ -834,27 +838,53 @@ export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: nu
     const recorded = (fragment as { columnIndex?: number }).columnIndex;
     if (typeof recorded === 'number' && Number.isFinite(recorded)) return clampOrdinal(recorded);
 
-    // The origin is the column's left edge for ordinary content, and it stays right for content
-    // that merely OVERFLOWS its column, which an overlap comparison gets wrong once the columns are
-    // unequal enough for the spill to cover more than the column it came from.
-    const byOrigin = findColumnContaining(preBalanceGeometry, fragment.x, originX);
-    if (byOrigin !== null) return byOrigin;
-
-    // Origin outside every column: a negative `w:ind` or a float offset hung it into the gutter. The
-    // box still lies mostly in the column that owns it.
     const span = Number.isFinite(fragment.width) && fragment.width > 0 ? fragment.width : 0;
     const left = fragment.x - originX;
+    const right = left + span;
+
+    // A box on a column's LEADING edge is that column's, fit or no fit. That covers ordinary
+    // content, and it covers content WIDER than its column, which overflows rightward from that
+    // same edge in either direction. It has to be asked before any overlap test, because an
+    // over-wide box can cover more of a wide neighbour than of the narrow column it came from.
+    for (const col of preBalanceGeometry) {
+      if (Math.abs(left - col.x) <= EDGE_EPSILON) return col.index;
+    }
+
+    // A box on a column's TRAILING edge is that column's too, and it is a different question, not a
+    // mirror of the one above. `resolveTableFrame` places an over-wide table that justifies to `end`
+    // at `col.x + (col.width - width)` — a NEGATIVE offset from its own column — and `end` is the
+    // default justification for any `w:bidiVisual` table. Such a table BEGINS inside an earlier
+    // column without ever having left its own, so its origin names the wrong column, and once it is
+    // wide enough its overlap outvotes its own column too. An anchored table reaches this at all
+    // because `createAnchoredTableFragment` records no `columnIndex` for the step above to read.
+    for (const col of preBalanceGeometry) {
+      if (Math.abs(right - (col.x + col.width)) <= EDGE_EPSILON) return col.index;
+    }
+
+    // Neither edge lands on a column edge, so an indent moved the origin. Containment is right while
+    // the box still FITS the column it starts in, which is what an indent leaves behind. Demanding
+    // the fit is what stops this from claiming a SHIFTED origin: a centred over-wide table also
+    // begins inside an earlier column, and there the origin is no evidence of ownership at all.
+    const byOrigin = findColumnContaining(preBalanceGeometry, fragment.x, originX);
+    if (byOrigin !== null) {
+      const originColumn = preBalanceGeometry.find((col) => col.index === byOrigin);
+      if (originColumn && right <= originColumn.x + originColumn.width + EDGE_EPSILON) return byOrigin;
+    }
+
+    // What is left is a box whose origin cannot be trusted: centred over-wide content, or an origin
+    // hung into a gutter by a negative `w:ind` or a float offset. It still lies mostly in the column
+    // that owns it. Ties go to the earliest column in fill order.
     let best: number | null = null;
     let bestOverlap = 0;
     for (const col of preBalanceGeometry) {
-      const overlap = Math.min(left + span, col.x + col.width) - Math.max(left, col.x);
+      const overlap = Math.min(right, col.x + col.width) - Math.max(left, col.x);
       if (overlap > bestOverlap) {
         bestOverlap = overlap;
         best = col.index;
       }
     }
-    // Touching no column at all (fully inside a gutter, or off the strip): fall back to the
-    // hit-testing walk, which clamps and therefore always names one.
+    // Touching no column at all (zero width, wholly inside a gutter, or off the strip): fall back to
+    // the hit-testing walk, which clamps and therefore always names one.
     return best ?? clampOrdinal(getColumnAtX(preBalanceGeometry, fragment.x, originX));
   };
 
@@ -966,6 +996,18 @@ export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: nu
     f.x = columnX(col);
     f.y = colCursors[col];
     f.width = columnWidth;
+    // Balancing MOVES fragments between columns, so a `columnIndex` the paginator wrote before the
+    // move now names the column the fragment left. Three consumers trust that record ahead of any
+    // geometry — `ordinalOf` above, the painter's separator gate, and `determineTableColumn` for hit
+    // testing — so a stale one is worse than none: an in-flow table balanced out of column 0 kept
+    // reporting column 0, which left its new column reading as empty and suppressed a rule Word
+    // draws. Rewrite it where the fragment had one; do not invent one where it did not, for the same
+    // reason the split branch below does not — an invented value is evidence the fragment never
+    // carried, and the gate would act on it.
+    const recordedColumn = (f as { columnIndex?: number }).columnIndex;
+    if (typeof recordedColumn === 'number' && Number.isFinite(recordedColumn)) {
+      (f as { columnIndex?: number }).columnIndex = col;
+    }
     // SD-3359: apply a line-boundary split chosen by the balancer. The first
     // half keeps the leading lines in this column; a cloned second half carries
     // the remaining lines to the top of the next column — the same
@@ -990,6 +1032,15 @@ export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: nu
         continuesFromPrev: true,
         continuesOnNext: originalContinuesOnNext,
       } as BalancingFragment;
+      // The half lands in the NEXT column, so a `columnIndex` carried over by the spread would still
+      // name the FIRST half's column — and column ordering trusts that record ahead of any geometry,
+      // so a later balancing pass would sort this half back into the column it left. Rewrite it
+      // where the source had one; do not invent one where it did not, because the separator gate
+      // reads the same field and an invented value is evidence it never had.
+      const carriedColumn = (f as { columnIndex?: number }).columnIndex;
+      if (typeof carriedColumn === 'number' && Number.isFinite(carriedColumn)) {
+        (secondHalf as { columnIndex?: number }).columnIndex = col + 1;
+      }
       // Remeasured fragments render their own `lines` wholesale (fromLine/toLine are
       // ignored by the resolve stage then), so the halves must each carry ONLY their
       // slice or both columns render the entire paragraph.

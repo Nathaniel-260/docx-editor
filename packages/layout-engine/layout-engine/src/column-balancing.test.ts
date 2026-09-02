@@ -329,6 +329,7 @@ describe('balanceSectionOnPage', () => {
     width: number;
     kind: string;
     columnIndex?: number;
+    height?: number;
   };
 
   /**
@@ -533,6 +534,231 @@ describe('balanceSectionOnPage', () => {
     // lower than every other fragment's x on the page.
     expect(readingOrder(fragments, LEFT)).toEqual([0, 1, 2, 3, 4, 5]);
     expect(new Set(fragments.map((f) => f.x)).size).toBe(2);
+  });
+
+  it('keeps document order for an over-wide anchored table that recorded no column', () => {
+    // The test above leans on the columnIndex the paginator recorded. An ANCHORED table has none:
+    // `createAnchoredTableFragment` never sets the field, so a floating over-wide table reaches the
+    // geometric fallback with nothing but its box. Answering from the box's ORIGIN gets it wrong,
+    // because resolveTableFrame's right-aligned placement puts that origin inside an EARLIER column
+    // — and `end` is the default justification for any w:bidiVisual table, so this is the common
+    // shape, not an exotic one. Its trailing edge is what still lands on its own column's edge.
+    const top = 96;
+    const LEFT = 96;
+    const RIGHT = 432;
+    const placements: TestFragment[] = [
+      { blockId: '', x: LEFT, y: top, width: 288, kind: 'para' },
+      { blockId: '', x: LEFT, y: top + 20, width: 288, kind: 'para' },
+      { blockId: '', x: LEFT, y: top + 40, width: 288, kind: 'para' },
+      // Identical to the recorded-column case (432 + (288 - 500) = 220) with the record removed.
+      { blockId: '', x: 220, y: top, width: 500, kind: 'table' },
+      { blockId: '', x: RIGHT, y: top + 20, width: 288, kind: 'para' },
+      { blockId: '', x: RIGHT, y: top + 40, width: 288, kind: 'para' },
+    ];
+    const fragments: TestFragment[] = [];
+    const measureMap = new Map<string, { kind: string; lines: Array<{ lineHeight: number }> }>();
+    const blockSectionMap = new Map<string, number>();
+    placements.forEach((placement, i) => {
+      const id = `s2-b${i}`;
+      fragments.push({ ...placement, blockId: id });
+      measureMap.set(id, createMeasure('paragraph', [20]));
+      blockSectionMap.set(id, 2);
+    });
+
+    const result = balanceSectionOnPage({
+      fragments,
+      sectionIndex: 2,
+      sectionColumns: { count: 2, gap: 48, width: 288, contentWidth: 624 },
+      sectionHasExplicitColumnBreak: false,
+      blockSectionMap,
+      margins: { left: 96 },
+      topMargin: top,
+      columnWidth: 288,
+      availableHeight: 60,
+      measureMap,
+    });
+
+    expect(result).not.toBeNull();
+    // Containment on the origin put it in column 0 and hoisted it above the two paragraphs that
+    // precede it there.
+    expect(readingOrder(fragments, LEFT)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(new Set(fragments.map((f) => f.x)).size).toBe(2);
+  });
+
+  it('updates a recorded column when balancing moves the fragment to another one', () => {
+    // The canonical last page of a balanced section: the paginator filled column 0 top to bottom and
+    // left column 1 empty, so everything it recorded a column for recorded column 0. Balancing then
+    // moves the tail into column 1 — and the record has to follow, because two consumers now treat
+    // it as authoritative. Ordering above prefers it over any geometry, and the DOM painter's
+    // separator gate reads it to decide which columns hold content, so a table left claiming column
+    // 0 while painted in column 1 can suppress a separator Word draws.
+    const top = 96;
+    const fragments: TestFragment[] = [];
+    const measureMap = new Map<string, { kind: string; lines: Array<{ lineHeight: number }> }>();
+    const blockSectionMap = new Map<string, number>();
+    for (let i = 0; i < 5; i += 1) {
+      const id = `p${i}`;
+      fragments.push({ blockId: id, x: 96, y: top + i * 20, width: 288, kind: 'para' });
+      measureMap.set(id, createMeasure('paragraph', [20]));
+      blockSectionMap.set(id, 0);
+    }
+    // layout-table.ts stamps columnIndex on a flow table; this one was laid out in column 0.
+    fragments.push({ blockId: 'tbl', x: 96, y: top + 100, width: 288, kind: 'table', height: 20, columnIndex: 0 });
+    measureMap.set('tbl', createMeasure('table', []));
+    blockSectionMap.set('tbl', 0);
+
+    const result = balanceSectionOnPage({
+      fragments,
+      sectionIndex: 0,
+      sectionColumns: { count: 2, gap: 48, width: 288, contentWidth: 624 },
+      sectionHasExplicitColumnBreak: false,
+      blockSectionMap,
+      margins: { left: 96 },
+      topMargin: top,
+      columnWidth: 288,
+      availableHeight: 60,
+      measureMap,
+    });
+
+    expect(result).not.toBeNull();
+    const table = fragments.find((f) => f.blockId === 'tbl')!;
+    expect(table.x).toBe(432);
+    expect(table.columnIndex).toBe(1);
+    // A paragraph the paginator recorded nothing for still records nothing: the presence of a value
+    // is the engine's own evidence of ownership, and the separator gate reads it as such.
+    expect(fragments.filter((f) => f.blockId !== 'tbl').every((f) => f.columnIndex === undefined)).toBe(true);
+  });
+
+  describe('resolving which column owns a fragment', () => {
+    // Every case here uses EQUAL columns, because `hasGenuinelyUnequalExplicitColumnWidths` makes
+    // balancing skip a genuinely unequal explicit section outright — an unequal-width fixture would
+    // return null and prove nothing.
+    //
+    // 200px columns over a 420px content area with a 20px gutter: column 0 spans 96..296 absolute,
+    // column 1 spans 316..516. Each case builds four 20px fragments, two per column, and replaces
+    // one of them with the fragment under test. Correct ordinals always read back as [0, 1, 2, 3];
+    // balancing splits the page 2/2, so a misresolved ordinal hoists the fragment past a sibling and
+    // shows up as a swap rather than merely an odd position.
+    const TOP = 96;
+    const LEFT = 96;
+    const COL1 = 316;
+
+    function orderWith(slot: number, special: TestFragment): number[] {
+      const base: TestFragment[] = [
+        { blockId: '', x: LEFT, y: TOP, width: 200, kind: 'para' },
+        { blockId: '', x: LEFT, y: TOP + 20, width: 200, kind: 'para' },
+        { blockId: '', x: COL1, y: TOP, width: 200, kind: 'para' },
+        { blockId: '', x: COL1, y: TOP + 20, width: 200, kind: 'para' },
+      ];
+      base[slot] = { ...special, y: base[slot].y };
+
+      const fragments: TestFragment[] = [];
+      const measureMap = new Map<string, { kind: string; lines: Array<{ lineHeight: number }> }>();
+      const blockSectionMap = new Map<string, number>();
+      base.forEach((fragment, i) => {
+        const id = `s2-b${i}`;
+        fragments.push({ ...fragment, blockId: id });
+        measureMap.set(id, createMeasure('paragraph', [20]));
+        blockSectionMap.set(id, 2);
+      });
+
+      const result = balanceSectionOnPage({
+        fragments,
+        sectionIndex: 2,
+        sectionColumns: { count: 2, gap: 20, width: 200, contentWidth: 420 },
+        sectionHasExplicitColumnBreak: false,
+        blockSectionMap,
+        margins: { left: LEFT },
+        topMargin: TOP,
+        columnWidth: 200,
+        availableHeight: 60,
+        measureMap,
+      });
+      expect(result).not.toBeNull();
+      return readingOrder(fragments, LEFT);
+    }
+
+    it('takes the column the engine recorded over anything the geometry says', () => {
+      // A footnote body is placed in its own note band, so its x can name one column while the flow
+      // column that owns it is another (contracts/index.ts calls the field "distinct from visual
+      // x"). Here the box sits exactly on column 0's leading edge — the strongest signal geometry
+      // has — while the record says column 1. The record has to win, or a note band's ordering comes
+      // from where it was drawn rather than what it belongs to.
+      expect(orderWith(2, { blockId: '', x: LEFT, y: 0, width: 200, kind: 'para', columnIndex: 1 })).toEqual([
+        0, 1, 2, 3,
+      ]);
+    });
+
+    it('reads a table as wide as the whole content area from its leading edge', () => {
+      // A table at column 0's left edge that spans the entire content area ENDS exactly on column
+      // 1's trailing edge. The trailing-edge rule below would therefore claim it for column 1, which
+      // is why the leading edge has to be asked first: content overflows rightward from its own
+      // column's start, so a leading-edge match settles ownership on its own.
+      expect(orderWith(1, { blockId: '', x: LEFT, y: 0, width: 420, kind: 'table', height: 20 })).toEqual([0, 1, 2, 3]);
+    });
+
+    it('reads a right-aligned over-wide table from its trailing edge', () => {
+      // resolveTableFrame places an over-wide table that justifies to `end` at
+      // `col.x + (col.width - width)`: 316 + (200 - 600) = -84, so it starts left of the page's
+      // content area entirely. Overlap cannot settle this one — the table covers 200px of column 0
+      // and 200px of column 1, an exact tie that resolves to the EARLIER column and pulls the table
+      // ahead of the paragraphs it follows. Its trailing edge still lands on column 1's, and `end`
+      // is the default justification for any w:bidiVisual table, so this is the common shape.
+      expect(orderWith(2, { blockId: '', x: -84, y: 0, width: 600, kind: 'table', height: 20 })).toEqual([0, 1, 2, 3]);
+    });
+
+    it('reads a centred over-wide table from the column it covers, not the one it starts in', () => {
+      // Centred, an over-wide table lands on NEITHER column edge: 316 + (200 - 400) / 2 = 216, ending
+      // at 616. Its origin sits inside column 0, so containment names column 0 — and that is why
+      // containment only counts when the box FITS the column it starts in. It does not here, so
+      // overlap decides, and the table covers 200px of column 1 against 80px of column 0.
+      expect(orderWith(2, { blockId: '', x: 216, y: 0, width: 400, kind: 'table', height: 20 })).toEqual([0, 1, 2, 3]);
+    });
+  });
+
+  it('still reads an indented fragment from the column its origin sits in', () => {
+    // The trailing-edge rule must not swallow the case it was added beside. A paragraph indented by
+    // a `w:ind` matches NEITHER column edge, and it is the origin that identifies it — so long as
+    // the box still fits the column it starts in, which is what an indent leaves behind.
+    const top = 96;
+    const LEFT = 96;
+    const RIGHT = 432;
+    const placements: TestFragment[] = [
+      { blockId: '', x: LEFT, y: top, width: 288, kind: 'para' },
+      // Indented 36px inside column 0 and 88px short of its trailing edge, so it lands on NEITHER
+      // column edge and the origin is all there is to go on. Its own column is still the only one
+      // it overlaps.
+      { blockId: '', x: LEFT + 36, y: top + 20, width: 200, kind: 'para' },
+      { blockId: '', x: LEFT, y: top + 40, width: 288, kind: 'para' },
+      // The same indent in column 1.
+      { blockId: '', x: RIGHT + 36, y: top, width: 200, kind: 'para' },
+      { blockId: '', x: RIGHT, y: top + 20, width: 288, kind: 'para' },
+    ];
+    const fragments: TestFragment[] = [];
+    const measureMap = new Map<string, { kind: string; lines: Array<{ lineHeight: number }> }>();
+    const blockSectionMap = new Map<string, number>();
+    placements.forEach((placement, i) => {
+      const id = `s2-b${i}`;
+      fragments.push({ ...placement, blockId: id });
+      measureMap.set(id, createMeasure('paragraph', [20]));
+      blockSectionMap.set(id, 2);
+    });
+
+    const result = balanceSectionOnPage({
+      fragments,
+      sectionIndex: 2,
+      sectionColumns: { count: 2, gap: 48, width: 288, contentWidth: 624 },
+      sectionHasExplicitColumnBreak: false,
+      blockSectionMap,
+      margins: { left: 96 },
+      topMargin: top,
+      columnWidth: 288,
+      availableHeight: 60,
+      measureMap,
+    });
+
+    expect(result).not.toBeNull();
+    expect(readingOrder(fragments, LEFT)).toEqual([0, 1, 2, 3, 4]);
   });
 
   it('recovers document order from a shuffled fragment array', () => {
@@ -900,6 +1126,43 @@ describe('balanceSectionOnPage', () => {
         measureMap,
         ...extra,
       });
+
+    it('moves the recorded column of a split half to the column it lands in', () => {
+      // Column ordering trusts a fragment's own `columnIndex` ahead of any geometry, so a record
+      // that contradicts the placement is worse than none. The spread that builds the second half
+      // copies the FIRST half's column, and the half is then placed one column further on — so a
+      // later balancing pass would read the stale record and sort the half back into the column it
+      // was moved out of, undoing the split it is the other half of.
+      const { fragments, measureMap, blockSectionMap } = straddleFixture();
+      // The paginator records the column for a footnote body and for tables, not for an ordinary
+      // paragraph; C carries one here to stand for the fragments that do.
+      const c = fragments.find((f) => f.blockId === 'C')!;
+      c.columnIndex = 0;
+
+      expect(balance(fragments, measureMap, blockSectionMap)).not.toBeNull();
+
+      const [c1, c2] = (fragments.filter((f) => f.blockId === 'C') as SplitFragment[]).sort(
+        (a, b) => (a.fromLine ?? 0) - (b.fromLine ?? 0),
+      );
+      expect(c1.x).toBe(96);
+      expect(c2.x).toBe(COL1_X);
+      // Each half's record now names the column it is actually in.
+      expect(c1.columnIndex).toBe(0);
+      expect(c2.columnIndex).toBe(1);
+    });
+
+    it('does not invent a recorded column for a half that never had one', () => {
+      // The separator gate reads the same field and treats a value as the engine's own evidence of
+      // ownership, so filling it in for a paragraph that carried nothing would be asserting more
+      // than the paginator ever knew.
+      const { fragments, measureMap, blockSectionMap } = straddleFixture();
+
+      expect(balance(fragments, measureMap, blockSectionMap)).not.toBeNull();
+
+      const halves = fragments.filter((f) => f.blockId === 'C') as SplitFragment[];
+      expect(halves.length).toBe(2);
+      expect(halves.every((half) => half.columnIndex === undefined)).toBe(true);
+    });
 
     it('splits a straddling paragraph at a line boundary so columns balance', () => {
       const { fragments, measureMap, blockSectionMap } = straddleFixture();
