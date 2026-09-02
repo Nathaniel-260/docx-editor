@@ -457,11 +457,11 @@ export function columnRenderLayoutsEqual(a?: ColumnLayout, b?: ColumnLayout): bo
     // fallback for a gutter `gaps` does not supply, and `effectiveColumnGaps` above already folds it
     // in at exactly that position — so a layout whose `gaps` spell out every gutter renders
     // identically no matter what the scalar says, and comparing it separately split a region and
-    // invalidated the normalized-columns cache over a value nothing read. (The scalar can still
-    // reach explicit widths through the sub-pixel `Math.max(1, …)` floor, which turns on the sign of
-    // `contentWidth - gap * (count - 1)`; that is content-width-dependent, and this predicate is
-    // documented as content-width-INDEPENDENT — the widths comparison does not model the floor
-    // either.)
+    // invalidated the normalized-columns cache over a value nothing read. The one route by which the
+    // scalar still reaches explicit WIDTHS — normalize's sub-pixel `Math.max(1, …)` floor and its
+    // epsilon collapse, both keyed on the sign of `contentWidth - gap * (count - 1)` — is handled by
+    // the `hasSubPixelWidth` guard in the explicit branch above, not waved off here: a width of 1px
+    // or more makes both no-ops, which is exactly the threshold that guard tests.
     return false;
   }
   return true;
