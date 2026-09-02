@@ -219,20 +219,6 @@ const MARK_EXCEPTION_CHAR = /[\u0CBF\u0CC6\u{11A07}\u{11A08}\u{11C3F}]/u;
 const NEUTRAL_CHAR =
   /[\u0000-\u0040\u005B-\u0060\u007B-\u00A9\u00AB-\u00B4\u00B6-\u00B8\u00BB-\u00BF\u00D7\u00F7\u02B9-\u02BA\u02C2-\u02CF\u02D2-\u02DF\u02E5-\u02ED\u02EF-\u02FF\u0374-\u0375\u037E\u0384-\u0385\u0387\u03F6\u058A\u058D-\u07F9\u0BF3-\u0BFA\u0C78-\u0C7E\u0F3A-\u0F3D\u1390-\u1399\u1400\u1680\u169B-\u169C\u17F0-\u17F9\u1800-\u180E\u1940\u1944-\u1945\u19DE-\u19FF\u1FBD\u1FBF-\u1FC1\u1FCD-\u1FCF\u1FDD-\u1FDF\u1FED-\u1FEF\u1FFD-\u1FFE\u2000-\u200D\u2010-\u206F\u207A-\u207E\u208A-\u208E\u2100-\u2101\u2103-\u2106\u2108-\u2109\u2114\u2116-\u2118\u211E-\u2123\u2125\u2127\u2129\u213A-\u213B\u2140-\u2144\u214A-\u214D\u2150-\u215F\u2189-\u218B\u2190-\u2335\u237B-\u2394\u2396-\u2429\u2440-\u244A\u2460-\u2487\u24EA-\u26AB\u26AD-\u27FF\u2900-\u2B73\u2B76-\u2BFF\u2CE5-\u2CEA\u2CF9-\u2CFF\u2E00-\u2E5D\u2E80-\u2E99\u2E9B-\u2EF3\u2F00-\u2FD5\u2FF0-\u3004\u3008-\u3020\u3030\u3036-\u3037\u303D-\u303F\u309B-\u309C\u30A0\u30FB\u31C0-\u31E5\u31EF\u321D-\u321E\u3250-\u325F\u327C-\u327E\u32B1-\u32BF\u32CC-\u32CF\u3377-\u337A\u33DE-\u33DF\u33FF\u4DC0-\u4DFF\uA490-\uA4C6\uA60D-\uA60F\uA673-\uA67F\uA700-\uA721\uA788\uA828-\uA82B\uA874-\uA877\uAB6A-\uAB6B\uFB29-\uFE19\uFE30-\uFE52\uFE54-\uFE66\uFE68-\uFE6B\uFEFF\uFF01-\uFF20\uFF3B-\uFF40\uFF5B-\uFF65\uFFE2-\uFFE4\uFFE8-\uFFEE\uFFF0-\uFFFF\u{10101}\u{10140}-\u{1018C}\u{10190}-\u{1019C}\u{101A0}\u{1091F}-\u{10ED8}\u{11052}-\u{11065}\u{11660}-\u{1166C}\u{11FD5}-\u{11FF1}\u{16FE2}\u{1BCA0}-\u{1BCA3}\u{1CC00}-\u{1CCD5}\u{1CCFA}-\u{1CCFC}\u{1CD00}-\u{1CEB3}\u{1CEBA}-\u{1CED0}\u{1CEE0}-\u{1CEF0}\u{1D173}-\u{1D17A}\u{1D1E9}-\u{1D1EA}\u{1D200}-\u{1D245}\u{1D300}-\u{1D356}\u{1D6C1}\u{1D6DB}\u{1D6FB}\u{1D715}\u{1D735}\u{1D74F}\u{1D76F}\u{1D789}\u{1D7A9}\u{1D7C3}\u{1EEF0}-\u{1F02B}\u{1F030}-\u{1F093}\u{1F0A0}-\u{1F0AE}\u{1F0B1}-\u{1F0BF}\u{1F0C1}-\u{1F0CF}\u{1F0D1}-\u{1F0F5}\u{1F10B}-\u{1F10F}\u{1F12F}\u{1F16A}-\u{1F16F}\u{1F1AD}\u{1F260}-\u{1F265}\u{1F300}-\u{1F6D8}\u{1F6DC}-\u{1F6EC}\u{1F6F0}-\u{1F6FC}\u{1F700}-\u{1F7D9}\u{1F7E0}-\u{1F7EB}\u{1F7F0}\u{1F800}-\u{1F80B}\u{1F810}-\u{1F847}\u{1F850}-\u{1F859}\u{1F860}-\u{1F887}\u{1F890}-\u{1F8AD}\u{1F8B0}-\u{1F8BB}\u{1F8C0}-\u{1F8C1}\u{1F8D0}-\u{1F8D8}\u{1F900}-\u{1FA57}\u{1FA60}-\u{1FA6D}\u{1FA70}-\u{1FA7C}\u{1FA80}-\u{1FA8A}\u{1FA8E}-\u{1FAC6}\u{1FAC8}\u{1FACD}-\u{1FADC}\u{1FADF}-\u{1FAEA}\u{1FAEF}-\u{1FAF8}\u{1FB00}-\u{1FB92}\u{1FB94}-\u{1FBFA}\u{1FFFE}-\u{1FFFF}\u{2FFFE}-\u{2FFFF}\u{3FFFE}-\u{3FFFF}\u{4FFFE}-\u{4FFFF}\u{5FFFE}-\u{5FFFF}\u{6FFFE}-\u{6FFFF}\u{7FFFE}-\u{7FFFF}\u{8FFFE}-\u{8FFFF}\u{9FFFE}-\u{9FFFF}\u{AFFFE}-\u{AFFFF}\u{BFFFE}-\u{BFFFF}\u{CFFFE}-\u{CFFFF}\u{DFFFE}-\u{E0FFF}\u{EFFFE}-\u{EFFFF}\u{FFFFE}-\u{FFFFF}\u{10FFFE}-\u{10FFFF}]/u;
 
-/**
- * How far the neutral, terminator and bracket searches look before giving up and
- * taking the paragraph's direction.
- *
- * Each search is linear in the text it walks, and the caret is resolved once per
- * placement, so an unbroken run of neutrals — pasted financial data, a wall of
- * combining marks — turns key-repeat or drag-select into quadratic work on the
- * main thread. Measured at roughly 1.5µs per character walked, this bound keeps
- * a single resolution under about a millisecond. A run longer than this has no
- * strong character near enough to matter, and the paragraph's direction is what
- * N2 and L1 would give anyway.
- */
-const MAX_SCAN_CHARACTERS = 512;
-
 const HIGH_SURROGATE_START = 0xd800;
 const HIGH_SURROGATE_END = 0xdbff;
 const LOW_SURROGATE_START = 0xdc00;
@@ -303,87 +289,6 @@ function classOf(char) {
 }
 
 /**
- * Rule W2: a European number is re-read as an Arabic number when the nearest
- * strong character before it is an Arabic letter. Only European numbers absorb
- * a terminator, so this is what makes "%" part of the number in Hebrew
- * ("שלום 50%") but not in Arabic ("مرحبا 50%"), which both engines confirm.
- *
- * @param {string} text
- * @param {number} index Index of the European number.
- * @returns {boolean}
- */
-function europeanNumberKeepsEuropeanRun(text, index) {
-  for (let at = index; at > 0;) {
-    at = codePointStart(text, at - 1);
-    const char = characterAt(text, at);
-    const charClass = classOf(char);
-    if (charClass === CLASS_RTL) return !ARABIC_LETTER_CHAR.test(char);
-    if (charClass === CLASS_LTR) return true;
-  }
-  return true;
-}
-
-/**
- * Rule W5: a run of terminators touching a European number joins that number,
- * on either side, so both "$50" and "50%" stay one left-to-right run.
- *
- * @param {string} text
- * @param {number} index Index of the terminator.
- * @returns {boolean}
- */
-function terminatorTouchesEuropeanNumber(text, index) {
-  for (const step of [-1, 1]) {
-    let budget = MAX_SCAN_CHARACTERS;
-    for (let at = index; budget > 0; budget -= 1) {
-      if (step < 0) {
-        if (at === 0) break;
-        at = codePointStart(text, at - 1);
-      } else {
-        at = codePointEnd(text, at);
-        if (at >= text.length) break;
-      }
-      const char = characterAt(text, at);
-      const charClass = classOf(char);
-      if (charClass === CLASS_TERMINATOR || charClass === CLASS_MARK) continue;
-      if (charClass !== CLASS_NUMBER || !EUROPEAN_NUMBER_CHAR.test(char)) break;
-      if (europeanNumberKeepsEuropeanRun(text, at)) return true;
-      break;
-    }
-  }
-  return false;
-}
-
-/**
- * Direction of the nearest strong character on one side of a neutral, with the
- * paragraph direction standing in past either end of the text (sor / eor).
- * Rule N1 has numbers influence a neighbouring neutral as though they were
- * right-to-left, which is why CLASS_NUMBER answers `true` here even though a
- * number is itself ordered left-to-right.
- *
- * @param {string} text
- * @param {number} index
- * @param {number} step -1 to look back, 1 to look forward.
- * @param {boolean} paragraphIsRtl
- * @returns {boolean}
- */
-function strongSideIsRtl(text, index, step, paragraphIsRtl) {
-  let budget = MAX_SCAN_CHARACTERS;
-  for (let at = index; budget > 0; budget -= 1) {
-    if (step < 0) {
-      if (at <= 0) return paragraphIsRtl;
-      at = codePointStart(text, at - 1);
-    } else {
-      at = codePointEnd(text, at);
-      if (at >= text.length) return paragraphIsRtl;
-    }
-    const charClass = classOf(characterAt(text, at));
-    if (charClass === CLASS_RTL || charClass === CLASS_NUMBER) return true;
-    if (charClass === CLASS_LTR) return false;
-  }
-  return paragraphIsRtl;
-}
-
-/**
  * The 64 bracket pairs of `BidiBrackets.txt` (Unicode 17.0.0), index-aligned:
  * the closing bracket for `BRACKET_OPENINGS[i]` is `BRACKET_CLOSINGS[i]`.
  */
@@ -409,81 +314,192 @@ function canonicalBracket(char) {
 }
 
 /**
- * BD16: the bracket pair that `index` belongs to, or null when it is in none.
+ * Everything about one text node's characters that does not depend on the
+ * paragraph's direction, computed in a single pass over the text.
  *
- * @param {string} text
- * @param {number} index
- * @returns {{ open: number, close: number } | null}
+ * The rules below need, for a given character, the nearest strong character on
+ * each side, the character a mark sits on, and whether a terminator touches a
+ * European number. Walking for those on every caret placement is linear each
+ * time, which makes an unbroken run of neutrals quadratic under key-repeat — a
+ * run of 20,000 measured at twelve minutes of main-thread work. Cutting the
+ * walks off at a fixed distance would fix that and change the answer: a neutral
+ * run longer than the cutoff would stop seeing the strong characters that
+ * surround it, and a wide bracket pair would stop being a pair. So the work is
+ * bounded by doing it once instead, and the result stays exactly what the
+ * algorithm says at any length.
+ *
+ * Only the paragraph-independent half is precomputed, so a character that
+ * carries its own direction still resolves without reading the paragraph's,
+ * which forces a style recalc.
+ *
+ * @typedef {object} TextAnalysis
+ * @property {Int8Array} classes Coarse Bidi_Class per UTF-16 unit.
+ * @property {Int32Array} baseBefore Nearest index at or before each one whose class is not a mark, or -1 (rule W1).
+ * @property {Int8Array} strongBefore Direction of the nearest strong character before each index: 1, 0, or -1 for none.
+ * @property {Int8Array} strongAfter The same, after each index.
+ * @property {Uint8Array} terminatorJoinsNumber Whether the terminator at each index touches a European run (rules W2 and W5).
+ * @property {Map<number, BracketPair>} bracketPairs Keyed by the index of each bracket of the pair.
  */
-function bracketPairAt(text, index) {
+
+/**
+ * @typedef {object} BracketPair
+ * @property {number} open
+ * @property {number} close
+ * @property {{ rtl: boolean, ltr: boolean } | null} enclosed Filled in on first use.
+ */
+
+/** Numbers influence a neighbouring neutral as though they were right-to-left (rule N1). */
+const STRONG_NONE = -1;
+const STRONG_LTR = 0;
+const STRONG_RTL = 1;
+
+/** What the nearest strong character before a number is, for rule W2. */
+const LETTER_NONE = -1;
+const LETTER_LTR = 0;
+const LETTER_RTL = 1;
+const LETTER_ARABIC = 2;
+
+/**
+ * @param {string} text
+ * @returns {TextAnalysis}
+ */
+function analyseText(text) {
+  const length = text.length;
+  const classes = new Int8Array(length);
+  const baseBefore = new Int32Array(length).fill(-1);
+  const strongBefore = new Int8Array(length).fill(STRONG_NONE);
+  const strongAfter = new Int8Array(length).fill(STRONG_NONE);
+  const terminatorJoinsNumber = new Uint8Array(length);
+  /** @type {Map<number, BracketPair>} */
+  const bracketPairs = new Map();
+
+  /** @type {number[]} */
+  const starts = [];
+  for (let at = 0; at < length;) {
+    const end = codePointEnd(text, at);
+    const charClass = classOf(characterAt(text, at));
+    for (let unit = at; unit < end; unit += 1) classes[unit] = charClass;
+    starts.push(at);
+    at = end;
+  }
+
+  // Forward: what each character has behind it.
+  const letterBefore = new Int8Array(length).fill(LETTER_NONE);
+  const runBefore = new Int32Array(length).fill(-1);
+  let lastBase = -1;
+  let lastStrong = STRONG_NONE;
+  let lastLetter = LETTER_NONE;
+  let lastRun = -1;
+  for (const start of starts) {
+    const charClass = classes[start];
+    baseBefore[start] = charClass === CLASS_MARK ? lastBase : start;
+    strongBefore[start] = lastStrong;
+    letterBefore[start] = lastLetter;
+    runBefore[start] = lastRun;
+    if (charClass !== CLASS_MARK) lastBase = start;
+    if (charClass === CLASS_RTL || charClass === CLASS_NUMBER) lastStrong = STRONG_RTL;
+    else if (charClass === CLASS_LTR) lastStrong = STRONG_LTR;
+    if (charClass === CLASS_RTL) {
+      lastLetter = ARABIC_LETTER_CHAR.test(characterAt(text, start)) ? LETTER_ARABIC : LETTER_RTL;
+    } else if (charClass === CLASS_LTR) {
+      lastLetter = LETTER_LTR;
+    }
+    if (charClass !== CLASS_TERMINATOR && charClass !== CLASS_MARK) lastRun = start;
+  }
+
+  // Backward: what each character has ahead of it.
+  const runAfter = new Int32Array(length).fill(-1);
+  let nextStrong = STRONG_NONE;
+  let nextRun = -1;
+  for (let index = starts.length - 1; index >= 0; index -= 1) {
+    const start = starts[index];
+    const charClass = classes[start];
+    strongAfter[start] = nextStrong;
+    runAfter[start] = nextRun;
+    if (charClass === CLASS_RTL || charClass === CLASS_NUMBER) nextStrong = STRONG_RTL;
+    else if (charClass === CLASS_LTR) nextStrong = STRONG_LTR;
+    if (charClass !== CLASS_TERMINATOR && charClass !== CLASS_MARK) nextRun = start;
+  }
+
+  // Rule W5, with rule W2 folded in: a run of terminators joins an adjacent
+  // European number, unless an Arabic letter before that number made it Arabic.
+  const touchesEuropean = (start) =>
+    start >= 0 &&
+    classes[start] === CLASS_NUMBER &&
+    EUROPEAN_NUMBER_CHAR.test(characterAt(text, start)) &&
+    letterBefore[start] !== LETTER_ARABIC;
+  for (const start of starts) {
+    if (classes[start] !== CLASS_TERMINATOR) continue;
+    terminatorJoinsNumber[start] = touchesEuropean(runBefore[start]) || touchesEuropean(runAfter[start]) ? 1 : 0;
+  }
+
+  // BD16: bracket pairs, from one pass with a stack.
   /** @type {{ closing: string, at: number }[]} */
   const stack = [];
-  // Bounded like the other searches; a bracket whose partner is further away
-  // than this simply has no pair, which leaves it neutral.
-  const from = Math.max(0, index - MAX_SCAN_CHARACTERS);
-  const to = Math.min(text.length, index + MAX_SCAN_CHARACTERS);
-  for (let at = from; at < to; at = codePointEnd(text, at)) {
-    const char = characterAt(text, at);
-    // Only a bracket that is still neutral takes part; one that a preceding rule
-    // already resolved is not a bracket for N0's purposes.
-    if (classOf(char) !== CLASS_NEUTRAL) continue;
-    const canonical = canonicalBracket(char);
+  for (const start of starts) {
+    if (classes[start] !== CLASS_NEUTRAL) continue;
+    const canonical = canonicalBracket(characterAt(text, start));
     const opening = BRACKET_OPENINGS.indexOf(canonical);
     if (opening >= 0) {
-      if (stack.length >= MAX_BRACKET_PAIRS) return null;
-      stack.push({ closing: BRACKET_CLOSINGS[opening], at });
+      if (stack.length >= MAX_BRACKET_PAIRS) break;
+      stack.push({ closing: BRACKET_CLOSINGS[opening], at: start });
       continue;
     }
     if (BRACKET_CLOSINGS.indexOf(canonical) < 0) continue;
     for (let depth = stack.length - 1; depth >= 0; depth -= 1) {
       if (stack[depth].closing !== canonical) continue;
-      const pair = { open: stack[depth].at, close: at };
-      if (pair.open === index || pair.close === index) return pair;
+      const pair = { open: stack[depth].at, close: start, enclosed: null };
+      bracketPairs.set(pair.open, pair);
+      bracketPairs.set(pair.close, pair);
       stack.length = depth;
       break;
     }
   }
-  return null;
+
+  return { classes, baseBefore, strongBefore, strongAfter, terminatorJoinsNumber, bracketPairs };
 }
 
 /**
- * N0: a bracket pair takes the direction of the strong text it encloses.
+ * The last analysed text, kept so that repeated caret placements in one text
+ * node pay for the pass once. One entry is enough: the caret is resolved in the
+ * node it is in, and moving to another node is not the case that repeats.
  *
- * "שלום abc(def)" is the case that matters — a Latin parenthetical inside Hebrew,
- * which Hebrew technical and legal writing is full of. The brackets enclose
- * left-to-right text and follow left-to-right text, so they join it; without this
- * they would be neutrals taking the paragraph's direction, and the caret after
- * the closing bracket would sit on its other edge.
- *
- * Returns null when the rule does not apply — an unpaired bracket, or a pair
- * enclosing nothing strong — leaving the character neutral for N1/N2.
- *
- * @param {string} text
- * @param {number} index
- * @param {boolean} paragraphIsRtl
- * @returns {boolean | null}
+ * @type {{ text: string, analysis: TextAnalysis } | null}
  */
-function bracketPairIsRtl(text, index, paragraphIsRtl) {
-  const pair = bracketPairAt(text, index);
-  if (!pair) return null;
+let lastAnalysis = null;
 
-  let enclosesParagraphDirection = false;
-  let enclosesOppositeDirection = false;
-  for (let at = codePointEnd(text, pair.open); at < pair.close; at = codePointEnd(text, at)) {
-    const charClass = classOf(characterAt(text, at));
+/**
+ * @param {string} text
+ * @returns {TextAnalysis}
+ */
+function analysisFor(text) {
+  if (lastAnalysis?.text === text) return lastAnalysis.analysis;
+  const analysis = analyseText(text);
+  lastAnalysis = { text, analysis };
+  return analysis;
+}
+
+/**
+ * What a bracket pair encloses, by strong direction. Computed on first use
+ * because most brackets are never asked about, and kept on the pair so a nested
+ * pair is not rescanned.
+ *
+ * @param {TextAnalysis} analysis
+ * @param {BracketPair} pair
+ * @returns {{ rtl: boolean, ltr: boolean }}
+ */
+function enclosedDirections(analysis, pair) {
+  if (pair.enclosed) return pair.enclosed;
+  let rtl = false;
+  let ltr = false;
+  for (let at = pair.open + 1; at < pair.close; at += 1) {
+    const charClass = analysis.classes[at];
     // N0 counts numbers as right-to-left, exactly as N1 does.
-    const isRtl = charClass === CLASS_RTL || charClass === CLASS_NUMBER;
-    if (!isRtl && charClass !== CLASS_LTR) continue;
-    if (isRtl === paragraphIsRtl) enclosesParagraphDirection = true;
-    else enclosesOppositeDirection = true;
+    if (charClass === CLASS_RTL || charClass === CLASS_NUMBER) rtl = true;
+    else if (charClass === CLASS_LTR) ltr = true;
   }
-
-  if (enclosesParagraphDirection) return paragraphIsRtl;
-  if (!enclosesOppositeDirection) return null;
-  // The pair runs against the paragraph, so the text before it decides whether
-  // the brackets join that run or fall back to the paragraph.
-  const opposite = !paragraphIsRtl;
-  return strongSideIsRtl(text, pair.open, -1, paragraphIsRtl) === opposite ? opposite : paragraphIsRtl;
+  pair.enclosed = { rtl, ltr };
+  return pair.enclosed;
 }
 
 /**
@@ -504,41 +520,53 @@ function bracketPairIsRtl(text, index, paragraphIsRtl) {
  * number), N0 for a paired bracket, then N1/N2 and L1 for anything neutral,
  * which at the end of the text is always the paragraph's own direction.
  *
+ * Everything the rules need from the rest of the text comes from a single pass
+ * over it, cached, so this is a handful of array reads however long the text is.
+ *
  * @param {string} text
  * @param {number} index
  * @param {() => boolean} resolveParagraphIsRtl Paragraph direction, read only when needed since it forces a style recalc.
  * @returns {boolean}
  */
 function characterIsRtl(text, index, resolveParagraphIsRtl) {
-  let at = codePointStart(text, index);
-  let char = characterAt(text, at);
+  const analysis = analysisFor(text);
 
   // W1: a non-spacing mark takes the class of the character before it, and the
   // paragraph direction when there is none.
-  for (let budget = MAX_SCAN_CHARACTERS; classOf(char) === CLASS_MARK; budget -= 1) {
-    if (at <= 0 || budget <= 0) return resolveParagraphIsRtl();
-    at = codePointStart(text, at - 1);
-    char = characterAt(text, at);
-  }
+  const at = analysis.baseBefore[codePointStart(text, index)];
+  if (at < 0) return resolveParagraphIsRtl();
 
-  const charClass = classOf(char);
+  const charClass = analysis.classes[at];
   if (charClass === CLASS_RTL) return true;
   if (charClass === CLASS_LTR) return false;
   if (charClass === CLASS_NUMBER) return false;
-  if (charClass === CLASS_TERMINATOR && terminatorTouchesEuropeanNumber(text, at)) return false;
+  if (charClass === CLASS_TERMINATOR && analysis.terminatorJoinsNumber[at]) return false;
 
   const paragraphIsRtl = resolveParagraphIsRtl();
+  const sideIsRtl = (side) => (side === STRONG_NONE ? paragraphIsRtl : side === STRONG_RTL);
 
   // N0: a paired bracket resolves from what its pair encloses, before the
-  // general neutral rules see it.
-  const canonical = canonicalBracket(char);
-  if (BRACKET_OPENINGS.indexOf(canonical) >= 0 || BRACKET_CLOSINGS.indexOf(canonical) >= 0) {
-    const paired = bracketPairIsRtl(text, at, paragraphIsRtl);
-    if (paired !== null) return paired;
+  // general neutral rules see it. A pair enclosing nothing strong, and a bracket
+  // with no pair, fall through to those rules.
+  const pair = analysis.bracketPairs.get(at);
+  if (pair) {
+    const enclosed = enclosedDirections(analysis, pair);
+    const enclosesParagraphDirection = paragraphIsRtl ? enclosed.rtl : enclosed.ltr;
+    const enclosesOppositeDirection = paragraphIsRtl ? enclosed.ltr : enclosed.rtl;
+    if (enclosesParagraphDirection) return paragraphIsRtl;
+    if (enclosesOppositeDirection) {
+      // The pair runs against the paragraph, so the text before it decides
+      // whether the brackets join that run or fall back to the paragraph.
+      const opposite = !paragraphIsRtl;
+      return sideIsRtl(analysis.strongBefore[pair.open]) === opposite ? opposite : paragraphIsRtl;
+    }
   }
 
-  const before = strongSideIsRtl(text, at, -1, paragraphIsRtl);
-  const after = strongSideIsRtl(text, at, 1, paragraphIsRtl);
+  // N1 and N2: a neutral takes the direction its two sides share, and the
+  // paragraph's otherwise. At either end of the text the paragraph stands in,
+  // which is also what L1 gives for a trailing neutral.
+  const before = sideIsRtl(analysis.strongBefore[at]);
+  const after = sideIsRtl(analysis.strongAfter[at]);
   return before === after ? before : paragraphIsRtl;
 }
 

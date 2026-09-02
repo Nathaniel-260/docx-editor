@@ -394,18 +394,28 @@ describe('resolveCollapsedCaretGeometry', () => {
     }
   });
 
-  it('stops searching for a strong character rather than walking the whole node', () => {
-    // Every step of the search classifies a character, and the caret is resolved
-    // on each placement, so an unbroken run of neutrals would otherwise make
-    // key-repeat quadratic. Here a left-to-right paragraph holds two Hebrew
-    // letters more than the bound apart, with the caret in the neutral run
-    // between them: within the bound they would pull the caret right-to-left,
-    // past it the paragraph decides, which is what the neutral rules give for a
-    // run this long anyway.
+  it('joins a neutral to the strong characters around it however far away they are', () => {
+    // A left-to-right paragraph holding two Hebrew letters 1200 characters apart,
+    // with the caret in the neutral run between them: N1 gives the run their
+    // direction, and distance does not enter into it. Cutting the search off at
+    // a fixed length would answer with the paragraph instead.
     const gap = ' '.repeat(1200);
     const text = `א${gap}ב`;
     const offset = 1 + gap.length / 2;
-    expect(resolveCollapsedCaretGeometry(offset, text, ltrRun(text.length), LTR)?.x).toBe(CHAR_WIDTH * offset);
+    expect(resolveCollapsedCaretGeometry(offset, text, ltrRun(text.length), LTR)?.x).toBe(CHAR_WIDTH * (offset - 1));
+  });
+
+  it('reads the text once however many carets are resolved in it', () => {
+    // The rules need the nearest strong character on each side, which is linear
+    // to walk to. Walking on every placement made an unbroken run of neutrals
+    // quadratic under key-repeat, so the pass is cached on the text instead.
+    const text = `${'%'.repeat(20000)} `;
+    const glyphs = rtlRun(text.length);
+    const started = Date.now();
+    for (let caret = 0; caret < 2000; caret += 1) {
+      resolveCollapsedCaretGeometry(text.length - caret, text, glyphs, RTL);
+    }
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 
   it('carries the glyph vertical metrics onto the caret', () => {
