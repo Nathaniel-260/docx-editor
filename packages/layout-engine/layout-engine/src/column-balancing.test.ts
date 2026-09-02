@@ -322,7 +322,27 @@ function createMeasure(kind: string, lineHeights: number[]): { kind: string; lin
 }
 
 describe('balanceSectionOnPage', () => {
-  type TestFragment = { blockId: string; x: number; y: number; width: number; kind: string };
+  type TestFragment = {
+    blockId: string;
+    x: number;
+    y: number;
+    width: number;
+    kind: string;
+    columnIndex?: number;
+  };
+
+  /**
+   * Read the balanced page back the way a person does — each column top to bottom, columns in fill
+   * order — and return the document indices in that sequence. Asserting on this rather than on exact
+   * y values keeps the test about ORDER, so it does not break when the balancer legitimately picks a
+   * different split point.
+   */
+  function readingOrder(fragments: TestFragment[], firstColumnX: number): number[] {
+    return fragments
+      .map((fragment, index) => ({ index, column: fragment.x === firstColumnX ? 0 : 1, y: fragment.y }))
+      .sort((a, b) => a.column - b.column || a.y - b.y)
+      .map((entry) => entry.index);
+  }
 
   /** Build a fragment + section mapping for section-scoped tests. */
   function buildSectionFixture(
@@ -418,6 +438,195 @@ describe('balanceSectionOnPage', () => {
     // 3+3 balance, still in document order: 0-2 in the right column, 3-5 in the left one.
     expect(fragments.map((f) => f.x)).toEqual([RIGHT, RIGHT, RIGHT, LEFT, LEFT, LEFT]);
     expect(fragments.map((f) => f.y)).toEqual([top, top + 20, top + 40, top, top + 20, top + 40]);
+  });
+
+  it('keeps document order when fragments in one column do not share an x', () => {
+    // Document order was reconstructed by sorting on raw x, on the premise that every fragment in a
+    // column starts at the same place. A negative w:ind, a float offset, or a right-aligned wide
+    // table all break that premise, and the balanced x/y are written back in whatever order the sort
+    // produced — so the page is REORDERED, not merely laid out oddly.
+    const top = 96;
+    const LEFT = 96;
+    const RIGHT = 432; // margin 96 + column 288 + gap 48
+    // Paragraphs 0-3 fill the left column; #1 is indented 20px and #2 by a hair. 4-5 spilled right.
+    const placements = [
+      { x: LEFT, y: top },
+      { x: LEFT + 20, y: top + 20 },
+      { x: LEFT + 1e-7, y: top + 40 },
+      { x: LEFT, y: top + 60 },
+      { x: RIGHT, y: top },
+      { x: RIGHT, y: top + 20 },
+    ];
+    const fragments: TestFragment[] = [];
+    const measureMap = new Map<string, { kind: string; lines: Array<{ lineHeight: number }> }>();
+    const blockSectionMap = new Map<string, number>();
+    placements.forEach((placement, i) => {
+      const id = `s2-b${i}`;
+      fragments.push({ blockId: id, x: placement.x, y: placement.y, width: 288, kind: 'para' });
+      measureMap.set(id, createMeasure('paragraph', [20]));
+      blockSectionMap.set(id, 2);
+    });
+
+    const result = balanceSectionOnPage({
+      fragments,
+      sectionIndex: 2,
+      sectionColumns: { count: 2, gap: 48, width: 288, contentWidth: 624 },
+      sectionHasExplicitColumnBreak: false,
+      blockSectionMap,
+      margins: { left: 96 },
+      topMargin: top,
+      columnWidth: 288,
+      availableHeight: 60,
+      measureMap,
+    });
+
+    expect(result).not.toBeNull();
+    // Reading the page back gives document order. Sorting on x would have put #1 (x = 116) after
+    // #0, #2 and #3, so paragraph 1 would surface in the wrong place entirely.
+    expect(readingOrder(fragments, LEFT)).toEqual([0, 1, 2, 3, 4, 5]);
+    // Both columns are actually used, or the assertion above proves nothing.
+    expect(new Set(fragments.map((f) => f.x)).size).toBe(2);
+  });
+
+  it('keeps document order for an over-wide table whose x sits outside its column', () => {
+    // resolveTableFrame right-aligns an over-wide table inside its column, which puts its origin at
+    // a NEGATIVE offset — outside the column, and left of every fragment in the column before it.
+    const top = 96;
+    const LEFT = 96;
+    const RIGHT = 432;
+    const placements: TestFragment[] = [
+      { blockId: '', x: LEFT, y: top, width: 288, kind: 'para' },
+      { blockId: '', x: LEFT, y: top + 20, width: 288, kind: 'para' },
+      { blockId: '', x: LEFT, y: top + 40, width: 288, kind: 'para' },
+      // In the SECOND column, but right-aligned and 500 wide, so resolveTableFrame gives it
+      // 432 + (288 - 500) = 220 — an origin that lands INSIDE the first column's span. Nothing about
+      // its box says which column owns it; only the columnIndex the engine recorded does.
+      { blockId: '', x: 220, y: top, width: 500, kind: 'table', columnIndex: 1 },
+      { blockId: '', x: RIGHT, y: top + 20, width: 288, kind: 'para' },
+      { blockId: '', x: RIGHT, y: top + 40, width: 288, kind: 'para' },
+    ];
+    const fragments: TestFragment[] = [];
+    const measureMap = new Map<string, { kind: string; lines: Array<{ lineHeight: number }> }>();
+    const blockSectionMap = new Map<string, number>();
+    placements.forEach((placement, i) => {
+      const id = `s2-b${i}`;
+      fragments.push({ ...placement, blockId: id });
+      measureMap.set(id, createMeasure('paragraph', [20]));
+      blockSectionMap.set(id, 2);
+    });
+
+    const result = balanceSectionOnPage({
+      fragments,
+      sectionIndex: 2,
+      sectionColumns: { count: 2, gap: 48, width: 288, contentWidth: 624 },
+      sectionHasExplicitColumnBreak: false,
+      blockSectionMap,
+      margins: { left: 96 },
+      topMargin: top,
+      columnWidth: 288,
+      availableHeight: 60,
+      measureMap,
+    });
+
+    expect(result).not.toBeNull();
+    // It keeps its place in reading order. Sorting on x would have pulled it forward, because 220 is
+    // lower than every other fragment's x on the page.
+    expect(readingOrder(fragments, LEFT)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(new Set(fragments.map((f) => f.x)).size).toBe(2);
+  });
+
+  it('recovers document order from a shuffled fragment array', () => {
+    // The paginator's array order is not a contract, so the ordinal/y ordering has to stand on its
+    // own rather than leaning on the stability of an already-sorted input.
+    const top = 96;
+    const LEFT = 96;
+    const RIGHT = 432;
+    const byIndex = [
+      { x: LEFT, y: top },
+      { x: LEFT, y: top + 20 },
+      { x: LEFT, y: top + 40 },
+      { x: RIGHT, y: top },
+      { x: RIGHT, y: top + 20 },
+      { x: RIGHT, y: top + 40 },
+    ];
+    const shuffled = [3, 0, 5, 2, 4, 1];
+    const fragments: TestFragment[] = [];
+    const measureMap = new Map<string, { kind: string; lines: Array<{ lineHeight: number }> }>();
+    const blockSectionMap = new Map<string, number>();
+    shuffled.forEach((documentIndex) => {
+      const id = `s2-b${documentIndex}`;
+      fragments.push({ blockId: id, ...byIndex[documentIndex], width: 288, kind: 'para' });
+      measureMap.set(id, createMeasure('paragraph', [20]));
+      blockSectionMap.set(id, 2);
+    });
+
+    const result = balanceSectionOnPage({
+      fragments,
+      sectionIndex: 2,
+      sectionColumns: { count: 2, gap: 48, width: 288, contentWidth: 624 },
+      sectionHasExplicitColumnBreak: false,
+      blockSectionMap,
+      margins: { left: 96 },
+      topMargin: top,
+      columnWidth: 288,
+      availableHeight: 60,
+      measureMap,
+    });
+
+    expect(result).not.toBeNull();
+    // Read the page back and recover the document indices, which the blockIds carry.
+    const recovered = fragments
+      .map((fragment) => ({
+        n: Number(fragment.blockId.slice('s2-b'.length)),
+        column: fragment.x === LEFT ? 0 : 1,
+        y: fragment.y,
+      }))
+      .sort((a, b) => a.column - b.column || a.y - b.y)
+      .map((entry) => entry.n);
+    expect(recovered).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('resolves columns against the page margin, not the page origin', () => {
+    // Fragment x is absolute; column geometry is content-relative. A left margin wide enough to be
+    // mistaken for a column offset catches the conversion being dropped.
+    const top = 96;
+    const MARGIN = 300;
+    const LEFT = MARGIN; // column 0
+    const RIGHT = MARGIN + 288 + 48; // column 1
+    const placements = [
+      { x: LEFT, y: top },
+      { x: LEFT, y: top + 20 },
+      { x: LEFT, y: top + 40 },
+      { x: RIGHT, y: top },
+      { x: RIGHT, y: top + 20 },
+      { x: RIGHT, y: top + 40 },
+    ];
+    const fragments: TestFragment[] = [];
+    const measureMap = new Map<string, { kind: string; lines: Array<{ lineHeight: number }> }>();
+    const blockSectionMap = new Map<string, number>();
+    placements.forEach((placement, i) => {
+      const id = `s2-b${i}`;
+      fragments.push({ blockId: id, x: placement.x, y: placement.y, width: 288, kind: 'para' });
+      measureMap.set(id, createMeasure('paragraph', [20]));
+      blockSectionMap.set(id, 2);
+    });
+
+    const result = balanceSectionOnPage({
+      fragments,
+      sectionIndex: 2,
+      sectionColumns: { count: 2, gap: 48, width: 288, contentWidth: 624 },
+      sectionHasExplicitColumnBreak: false,
+      blockSectionMap,
+      margins: { left: MARGIN },
+      topMargin: top,
+      columnWidth: 288,
+      availableHeight: 60,
+      measureMap,
+    });
+
+    expect(result).not.toBeNull();
+    expect(readingOrder(fragments, LEFT)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(new Set(fragments.map((f) => f.x)).size).toBe(2);
   });
 
   it('balances the target section and returns the tallest balanced column bottom', () => {

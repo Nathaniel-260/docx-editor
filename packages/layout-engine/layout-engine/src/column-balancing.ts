@@ -6,7 +6,13 @@
  * matching Microsoft Word's behavior.
  */
 
-import { getColumnGeometry, getColumnX, hasGenuinelyUnequalExplicitColumnWidths } from '@superdoc/contracts';
+import {
+  findColumnContaining,
+  getColumnAtX,
+  getColumnGeometry,
+  getColumnX,
+  hasGenuinelyUnequalExplicitColumnWidths,
+} from '@superdoc/contracts';
 import type { BaseDirection } from '@superdoc/contracts';
 
 // ============================================================================
@@ -794,19 +800,84 @@ export function balanceSectionOnPage(args: BalanceSectionOnPageArgs): { maxY: nu
     precedingHeight: precedingHeightBeforeTable,
   });
 
-  // Order fragments in document order: by current column, then by y within each column. During
-  // unbalanced layout the paginator fills column 0 top-to-bottom, then column 1, etc. — so column
-  // order followed by y preserves the original sequence.
+  // Order fragments in document order: by the column each one occupies, then by y within it. During
+  // unbalanced layout the paginator fills column 0 top-to-bottom, then column 1, etc., so column
+  // ordinal followed by y reproduces the original sequence — and the balanced x/y are written back
+  // onto the fragments in exactly this order, so getting it wrong reorders the page rather than
+  // just laying it out oddly.
   //
-  // Which way "column order" runs across the page is direction-relative. In an RTL section column 0
-  // is the RIGHT one, so document order DESCENDS in x; sorting ascending there would feed the
-  // balancer the trailing column first and silently scramble the balanced page's reading order,
-  // since the balanced x/y are then written back onto the fragments in this order.
-  const columnOrder =
-    sectionColumns.direction === 'rtl' ? (a: number, b: number) => b - a : (a: number, b: number) => a - b;
+  // Resolve the ordinal from the fragment rather than sorting on raw `x`. Sorting on x assumes every
+  // fragment in a column shares one origin, which is false for a negative `w:ind`, a float offset,
+  // or a right-aligned over-wide table — and a difference of 1e-7 is enough to swap two paragraphs.
+  // The ordinal is also direction-free: it is the fill order, so it needs no RTL special case, where
+  // an x comparison needs one because column 0 sits on the right and document order descends in x.
+  const preBalanceGeometry = getColumnGeometry({
+    count: columnCount,
+    gap: columnGap,
+    width: columnWidth,
+    ...(Array.isArray(sectionColumns.widths) ? { widths: sectionColumns.widths } : {}),
+    ...(Array.isArray(sectionColumns.gaps) ? { gaps: sectionColumns.gaps } : {}),
+    ...(sectionColumns.direction !== undefined ? { direction: sectionColumns.direction } : {}),
+    ...(sectionColumns.contentWidth !== undefined ? { contentWidth: sectionColumns.contentWidth } : {}),
+  });
+  const originX = args.margins.left;
+  const clampOrdinal = (value: number): number => Math.max(0, Math.min(columnCount - 1, Math.floor(value)));
+
+  /**
+   * Which column a fragment occupies, as a fill-order ordinal. ALWAYS a number: the result is a sort
+   * key, and a key that is sometimes absent would leave the comparator mixing two different metrics,
+   * which is not a total order — `Array.prototype.sort` is then free to return different orders for
+   * the same input, and it does differ between engines.
+   */
+  const ordinalOf = (fragment: BalancingFragment): number => {
+    // The engine's own record, where it kept one. Tables carry it; ordinary paragraphs do not.
+    const recorded = (fragment as { columnIndex?: number }).columnIndex;
+    if (typeof recorded === 'number' && Number.isFinite(recorded)) return clampOrdinal(recorded);
+
+    // The origin is the column's left edge for ordinary content, and it stays right for content
+    // that merely OVERFLOWS its column, which an overlap comparison gets wrong once the columns are
+    // unequal enough for the spill to cover more than the column it came from.
+    const byOrigin = findColumnContaining(preBalanceGeometry, fragment.x, originX);
+    if (byOrigin !== null) return byOrigin;
+
+    // Origin outside every column: a negative `w:ind` or a float offset hung it into the gutter. The
+    // box still lies mostly in the column that owns it.
+    const span = Number.isFinite(fragment.width) && fragment.width > 0 ? fragment.width : 0;
+    const left = fragment.x - originX;
+    let best: number | null = null;
+    let bestOverlap = 0;
+    for (const col of preBalanceGeometry) {
+      const overlap = Math.min(left + span, col.x + col.width) - Math.max(left, col.x);
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        best = col.index;
+      }
+    }
+    // Touching no column at all (fully inside a gutter, or off the strip): fall back to the
+    // hit-testing walk, which clamps and therefore always names one.
+    return best ?? clampOrdinal(getColumnAtX(preBalanceGeometry, fragment.x, originX));
+  };
+
+  // Order fragments in document order: by the column each one occupies, then by y within it. During
+  // unbalanced layout the paginator fills column 0 top-to-bottom, then column 1, etc., so column
+  // ordinal followed by y reproduces the original sequence — and the balanced x/y are written back
+  // onto the fragments in exactly this order, so getting it wrong REORDERS the page rather than
+  // merely laying it out oddly.
+  //
+  // Sorting on raw x, as this did, assumes every fragment in a column shares one origin. A negative
+  // `w:ind`, a float offset, or a right-aligned over-wide table each break that, and a difference of
+  // 1e-7 was enough to swap two paragraphs. The ordinal is also direction-free — it IS the fill
+  // order — where an x comparison needed an RTL special case because column 0 sits on the right.
+  const ordinals = new Map<BalancingFragment, number>();
+  sectionFragments.forEach((fragment) => ordinals.set(fragment, ordinalOf(fragment)));
+  const inputOrder = new Map<BalancingFragment, number>();
+  sectionFragments.forEach((fragment, index) => inputOrder.set(fragment, index));
   const ordered = [...sectionFragments].sort((a, b) => {
-    if (a.x !== b.x) return columnOrder(a.x, b.x);
-    return a.y - b.y;
+    const byColumn = (ordinals.get(a) ?? 0) - (ordinals.get(b) ?? 0);
+    if (byColumn !== 0) return byColumn;
+    if (a.y !== b.y) return a.y - b.y;
+    // Same column, same y: keep the order they arrived in, so the sort is total and stable.
+    return (inputOrder.get(a) ?? 0) - (inputOrder.get(b) ?? 0);
   });
 
   // Treat each fragment as its own block for binary-search balancing. Grouping
