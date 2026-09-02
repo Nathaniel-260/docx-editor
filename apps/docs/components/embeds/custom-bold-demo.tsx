@@ -2,6 +2,7 @@
 
 import { Bold, Expand, Shrink } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { UIConfig } from 'superdoc';
 import type { BorrowedSuperDocUI, CommandState } from 'superdoc/ui';
 import { CollapsibleEditorPreview } from './collapsible-editor-preview';
 import { createRuntimeEditor, loadRuntime, type SuperDocInstance } from './superdoc-runtime';
@@ -18,6 +19,7 @@ import { createRuntimeEditor, loadRuntime, type SuperDocInstance } from './super
 // comments. The shared NDA fixtures are full contracts, so the sentence the
 // page asks the reader to select would be several screens down.
 const DEMO_DOCUMENT = '/fixtures/formatting-sample.docx';
+const HANDOFF_DOCUMENT = '/fixtures/getting-started.docx';
 const DISABLED_BEFORE_SELECTION = 'Select text in the document to enable Bold.';
 
 type DemoState = 'idle' | 'loading' | 'ready' | 'error';
@@ -25,8 +27,14 @@ type DemoState = 'idle' | 'loading' | 'ready' | 'error';
 const INITIAL_BOLD: CommandState = { active: false, enabled: false, supported: false };
 const ZOOM = { max: 200, min: 10 } as const;
 
-export function CustomBoldDemo() {
+type CustomBoldDemoProps = {
+  variant?: 'standalone' | 'handoff';
+};
+
+export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) {
+  const handoff = variant === 'handoff';
   const rootRef = useRef<HTMLElement>(null);
+  const builtInToolbarRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<SuperDocInstance | null>(null);
   const uiRef = useRef<BorrowedSuperDocUI | null>(null);
@@ -128,21 +136,29 @@ export function CustomBoldDemo() {
         setError(cause instanceof Error ? cause.message : 'The sample document could not be loaded.');
       };
 
+      let editorUi: UIConfig = { comments: false, loading: false };
+      if (handoff) {
+        const toolbar = builtInToolbarRef.current;
+        if (!toolbar) throw new Error('The built-in toolbar could not be mounted.');
+        editorUi = {
+          ...editorUi,
+          toolbar: {
+            container: toolbar,
+            excludeItems: ['bold'],
+            responsiveTo: 'container',
+          },
+        };
+      }
+
       const instance = createRuntimeEditor(SuperDocCtor, {
         selector: mountRef.current,
-        document: DEMO_DOCUMENT,
+        document: handoff ? HANDOFF_DOCUMENT : DEMO_DOCUMENT,
         documentMode: 'editing',
-        // This page replaces exactly one surface — the toolbar above — so the
-        // built-in comments sidebar is switched off. It also reserves container
-        // width, which `fit-width` counts as available and then shrinks the
-        // page to a fraction of the frame to compensate.
-        ui: { comments: false, loading: false },
+        ui: editorUi,
         // Manual, measured against the mount rather than the runtime's own
         // fit policy, for the same reason: the measurement has to be of the
         // space the document actually gets.
         zoom: { mode: 'manual', fitWidth: { min: ZOOM.min, max: ZOOM.max } },
-        // This embed owns one button. Every other surface stays built in,
-        // which is the hybrid arrangement the page is describing.
         onReady: () => {
           if (!isCurrent()) return;
           setState('ready');
@@ -162,11 +178,6 @@ export function CustomBoldDemo() {
       ui.commands.get('bold').observe((next) => {
         if (isCurrent()) setBold(next);
       });
-      ui.selection.observe(() => {
-        // A new selection makes the previous outcome stale, so the line falls
-        // back to the hint rather than reporting an edit that already happened.
-        if (isCurrent()) setResult(null);
-      });
 
       // The component can unmount while the constructor is still wiring up.
       // Tear down here rather than leaking the instance the cleanup missed.
@@ -177,7 +188,7 @@ export function CustomBoldDemo() {
       setState('error');
       setError(cause instanceof Error ? cause.message : 'The demo could not start.');
     }
-  }, [teardown]);
+  }, [connectFitToWidth, handoff, teardown]);
 
   // Load when the demo scrolls into view rather than asking the reader to press
   // a button first. The runtime is a CDN fetch, so deferring it until the embed
@@ -292,8 +303,87 @@ export function CustomBoldDemo() {
       : (result ??
         (!bold.enabled ? 'Select text in the document to enable Bold.' : 'Press Bold to format the selection.'));
 
+  const applicationControls =
+    state !== 'idle' && state !== 'error' ? (
+      <div
+        className='sd-custom-bold-demo-toolbar'
+        role='toolbar'
+        aria-label={handoff ? 'Application controls' : 'Custom controls'}
+      >
+        {handoff ? (
+          <span aria-hidden='true' className='sd-custom-bold-demo-owner'>
+            Your application
+          </span>
+        ) : null}
+        <button
+          aria-pressed={bold.active}
+          data-testid='custom-bold'
+          // `pending` as well as `enabled`: Bold is a toggle whose direction is
+          // read before executing, so a second click landing mid-flight would
+          // compute its direction from state the first has not finished
+          // changing, and the earlier completion would publish a result for
+          // the later one.
+          disabled={!bold.enabled || pending}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => void runBold()}
+          title={bold.enabled ? 'Bold' : (bold.reason ?? DISABLED_BEFORE_SELECTION)}
+          type='button'
+        >
+          <Bold aria-hidden='true' size={16} />
+          Bold
+        </button>
+
+        {/* One quiet line. The raw controller values belong in the prose and
+          the simulated model below, not competing with the document. */}
+        <output className='sd-custom-bold-demo-state' data-testid='custom-bold-state'>
+          {plainState}
+        </output>
+
+        <button
+          className='sd-custom-bold-demo-reset'
+          data-testid='custom-bold-reset'
+          onClick={() => void start()}
+          type='button'
+        >
+          Reset
+        </button>
+
+        <button
+          aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          className='sd-custom-bold-demo-expand'
+          data-testid='custom-bold-expand'
+          onClick={() => void toggleFullscreen()}
+          type='button'
+        >
+          {isFullscreen ? <Shrink aria-hidden='true' size={15} /> : <Expand aria-hidden='true' size={15} />}
+        </button>
+      </div>
+    ) : null;
+
+  const builtInControls = handoff ? (
+    <div className='sd-custom-bold-demo-built-in'>
+      <span aria-hidden='true' className='sd-custom-bold-demo-owner'>
+        SuperDoc UI
+      </span>
+      <div className='sd-custom-bold-demo-built-in-toolbar' ref={builtInToolbarRef} />
+    </div>
+  ) : null;
+
   return (
-    <figure className='sd-custom-bold-demo' ref={rootRef} data-custom-bold-demo data-state={state}>
+    <figure
+      className='sd-custom-bold-demo'
+      ref={rootRef}
+      data-custom-bold-demo
+      data-state={state}
+      data-variant={variant}
+    >
+      {handoff ? (
+        <>
+          {applicationControls}
+          {builtInControls}
+        </>
+      ) : null}
+
       <CollapsibleEditorPreview className='sd-custom-bold-demo-preview'>
         {state === 'error' ? (
           <div className='sd-custom-bold-demo-error' role='alert'>
@@ -304,73 +394,31 @@ export function CustomBoldDemo() {
           </div>
         ) : null}
 
-        {state !== 'idle' && state !== 'error' ? (
-          <div className='sd-custom-bold-demo-toolbar' role='toolbar' aria-label='Custom controls'>
-            <button
-              aria-pressed={bold.active}
-              data-testid='custom-bold'
-              // `pending` as well as `enabled`: Bold is a toggle whose direction is
-              // read before executing, so a second click landing mid-flight would
-              // compute its direction from state the first has not finished
-              // changing, and the earlier completion would publish a result for
-              // the later one.
-              disabled={!bold.enabled || pending}
-              onClick={() => void runBold()}
-              title={bold.enabled ? 'Bold' : (bold.reason ?? DISABLED_BEFORE_SELECTION)}
-              type='button'
-            >
-              <Bold aria-hidden='true' size={16} />
-              Bold
-            </button>
-
-            {/* One quiet line. The raw controller values belong in the prose and
-              the simulated model below, not competing with the document. */}
-            <output className='sd-custom-bold-demo-state' data-testid='custom-bold-state'>
-              {plainState}
-            </output>
-
-            <button
-              className='sd-custom-bold-demo-reset'
-              data-testid='custom-bold-reset'
-              onClick={() => void start()}
-              type='button'
-            >
-              Reset
-            </button>
-
-            <button
-              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-              className='sd-custom-bold-demo-expand'
-              data-testid='custom-bold-expand'
-              onClick={() => void toggleFullscreen()}
-              type='button'
-            >
-              {isFullscreen ? <Shrink aria-hidden='true' size={15} /> : <Expand aria-hidden='true' size={15} />}
-            </button>
-          </div>
-        ) : null}
+        {!handoff ? applicationControls : null}
 
         <div className='sd-custom-bold-demo-canvas' ref={mountRef} />
       </CollapsibleEditorPreview>
 
-      <ol aria-label='Anatomy of a command control' className='sd-anatomy'>
-        <li className='sd-anatomy-step' data-active={step === 1}>
-          <b>1 Observe</b>
-          <code>enabled · active</code>
-        </li>
-        <li className='sd-anatomy-step' data-active={step === 2}>
-          <b>2 Render</b>
-          <code>disabled · aria-pressed</code>
-        </li>
-        <li className='sd-anatomy-step' data-active={step === 3}>
-          <b>3 Execute</b>
-          <code>executeAsync()</code>
-        </li>
-        <li className='sd-anatomy-step' data-active={step === 4}>
-          <b>4 Read outcome</b>
-          <code>boolean or receipt</code>
-        </li>
-      </ol>
+      {!handoff ? (
+        <ol aria-label='Anatomy of a command control' className='sd-anatomy'>
+          <li className='sd-anatomy-step' data-active={step === 1}>
+            <b>1 Observe</b>
+            <code>enabled · active</code>
+          </li>
+          <li className='sd-anatomy-step' data-active={step === 2}>
+            <b>2 Render</b>
+            <code>disabled · aria-pressed</code>
+          </li>
+          <li className='sd-anatomy-step' data-active={step === 3}>
+            <b>3 Execute</b>
+            <code>executeAsync()</code>
+          </li>
+          <li className='sd-anatomy-step' data-active={step === 4}>
+            <b>4 Read outcome</b>
+            <code>boolean or receipt</code>
+          </li>
+        </ol>
+      ) : null}
     </figure>
   );
 }

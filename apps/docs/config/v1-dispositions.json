@@ -2741,7 +2741,7 @@
     {
       "source": "/editor/custom-ui/react-setup",
       "kind": "v2",
-      "destination": "/editor/custom-ui/react-setup/"
+      "destination": "/editor/custom-ui/controller-setup/"
     },
     {
       "source": "/editor/custom-ui/selection-and-viewport",

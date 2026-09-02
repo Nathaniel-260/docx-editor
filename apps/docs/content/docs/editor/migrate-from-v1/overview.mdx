@@ -110,7 +110,8 @@ A v1 custom toolbar is not restored by changing only its import. Bind the applic
 
 Do not create a controller for every render, tab, or document. One `SuperDoc` instance owns one stable controller. Replacing its document resets document-scoped state while existing command hooks stay subscribed. Replacing the entire instance is different: the provider must receive the new ready instance.
 
-Follow the complete [React custom UI setup](/editor/custom-ui/react-setup) for a toolbar that reports command outcomes and stays live after document replacement. Use [Commands and state](/editor/custom-ui/commands-and-state) for the framework-neutral contract.
+Follow [Build your first custom control](/editor/custom-ui/controller-setup) for a React toolbar that reports command
+outcomes. Use [Commands and state](/editor/custom-ui/commands-and-state) for the shared controller contract.
 
 ## 4. Replace direct editor internals
 

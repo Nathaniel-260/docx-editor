@@ -42,8 +42,7 @@ const routes = [
   ['editor/content-controls/replace-clauses-from-your-application/index.html', 'Replace clauses from your application'],
   ['editor/content-controls/lock-template-fields/index.html', 'Lock template fields'],
   ['editor/custom-ui/overview/index.html', 'Build a custom UI'],
-  ['editor/custom-ui/controller-setup/index.html', 'Custom UI controller setup'],
-  ['editor/custom-ui/react-setup/index.html', 'React custom UI setup'],
+  ['editor/custom-ui/controller-setup/index.html', 'Build your first custom control'],
   ['editor/custom-ui/commands-and-state/index.html', 'Commands and state'],
   ['editor/custom-ui/custom-commands/index.html', 'Register custom commands'],
   ['editor/custom-ui/formatting-controls/index.html', 'Build formatting controls'],
@@ -604,15 +603,21 @@ test('exports the focused built-in toolbar example as clean Markdown', async () 
   );
 });
 
-test('exports the React custom UI example as clean Markdown', async () => {
-  const article = await readFile(new URL('../out/editor/custom-ui/react-setup/index.html', import.meta.url), 'utf8');
-  const markdown = await readFile(new URL('../out/md/editor/custom-ui/react-setup.md', import.meta.url), 'utf8');
+test('exports the custom UI setup examples as clean Markdown', async () => {
+  const article = await readFile(new URL('../out/editor/custom-ui/controller-setup/index.html', import.meta.url), 'utf8');
+  const markdown = await readFile(new URL('../out/md/editor/custom-ui/controller-setup.md', import.meta.url), 'utf8');
 
   assert.match(article, /SuperDocUIProvider/);
   assert.match(article, /useSuperDocCommand/);
-  assert.match(markdown, /document: '\/contract\.docx'/);
+  assert.match(article, /data-variant="handoff"/);
+  assert.match(markdown, /document: '\/sample\.docx'/);
+  assert.match(markdown, /pnpm add superdoc/);
   assert.match(markdown, /useSetSuperDoc/);
-  assert.match(markdown, /The React component still owns the Editor instance/);
+  assert.match(markdown, /excludeItems: \['bold'\]/);
+  assert.match(markdown, /Live example: move one control into your application/);
+  assert.match(markdown, /Bold applied\./);
+  assert.doesNotMatch(markdown, /toolbar: false/);
+  assert.doesNotMatch(markdown, /<CustomBoldDemo\b/);
   assert.doesNotMatch(markdown, /<include>/);
 });
 
@@ -1158,8 +1163,8 @@ test('exports the machine-readable documentation files', async () => {
   assert.match(interfaceMarkdown, /your application renders comments through `superdoc\.ui\.comments`/);
   assert.match(interfaceMarkdown, /A partial `ui` object changes only the surfaces it names/);
   assert.doesNotMatch(interfaceMarkdown, /<Callout\b/);
-  assert.match(customUISetupMarkdown, /^# Custom UI controller setup/m);
-  assert.match(customUISetupMarkdown, /createSuperDocUI/);
+  assert.match(customUISetupMarkdown, /^# Build your first custom control/m);
+  assert.match(customUISetupMarkdown, /SuperDocUIProvider/);
   assert.match(customUISetupMarkdown, /await bold\.executeAsync\(\)/);
   assert.doesNotMatch(customUISetupMarkdown, /<include>/);
   assert.match(migrationMarkdown, /^# Migrate from v1/m);

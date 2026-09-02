@@ -6,7 +6,8 @@ description: Keep custom controls synchronized with the Editor and handle comman
 
 A custom control has two responsibilities: render the current command state and route an action back through the same command handle. SuperDoc owns the state because availability can change with the selection, document mode, history, and document content.
 
-Start with the [framework-neutral controller example](/editor/custom-ui/controller-setup) or [React setup](/editor/custom-ui/react-setup). Both use the contract described here.
+Start with [Build your first custom control](/editor/custom-ui/controller-setup). Its Vanilla and React examples both use
+the contract described here.
 
 ## Read the state you need
 
@@ -73,4 +74,5 @@ Do not render every recognized command automatically. Choose the controls the pr
 
 The exhaustive command reference remains generated-source work. Until it is integrated into this site, use the focused examples in this section instead of copying the old command matrix.
 
-Continue with [React custom UI setup](/editor/custom-ui/react-setup), or compare custom controls with the [configured built-in toolbar](/editor/built-in-ui/configure-the-toolbar).
+Continue with [Formatting controls](/editor/custom-ui/formatting-controls), or compare custom controls with the
+[configured built-in toolbar](/editor/built-in-ui/configure-the-toolbar).

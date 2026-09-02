@@ -19,6 +19,7 @@ const builtInUiMetaUrl = new URL('../content/docs/editor/built-in-ui/meta.json',
 const builtInUiMapUrl = new URL('../components/embeds/built-in-ui-map.tsx', import.meta.url);
 const editorDemoUrl = new URL('../components/embeds/editor-demo.tsx', import.meta.url);
 const customBoldDemoUrl = new URL('../components/embeds/custom-bold-demo.tsx', import.meta.url);
+const customUiSetupPageUrl = new URL('../content/docs/editor/custom-ui/controller-setup.mdx', import.meta.url);
 const templatePopulationDemoUrl = new URL(
   '../components/embeds/template-population-demo.tsx',
   import.meta.url,
@@ -51,6 +52,7 @@ const builtInToolbarPageUrl = new URL(
 );
 const redirectsConfigUrl = new URL('../config/redirects.json', import.meta.url);
 const builtInEditorDemoDataUrl = new URL('../lib/built-in-editor-demos.ts', import.meta.url);
+const customUiControllerExampleUrl = new URL('../snippets/editor/custom-ui-controller.ts', import.meta.url);
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
 const builtInContentControlsPageUrl = new URL(
@@ -330,6 +332,24 @@ test('the custom UI overview demo uses the Editor-owned controller', async () =>
   assert.doesNotMatch(demo, /\b(?:createSuperDocUI|loadUIModule)\b/u);
 });
 
+test('the custom UI setup demo shows one control changing ownership', async () => {
+  const [page, demo] = await Promise.all(
+    [customUiSetupPageUrl, customBoldDemoUrl].map((url) => readFile(url, 'utf8')),
+  );
+
+  assert.match(page, /<CustomBoldDemo variant='handoff' \/>/u);
+  assert.match(page, /Only the visible Bold control changed owner/u);
+  assert.match(demo, /excludeItems: \['bold'\]/u);
+  assert.match(demo, /const toolbar = builtInToolbarRef\.current/u);
+  assert.match(demo, /container: toolbar/u);
+  assert.match(demo, /data-variant=\{variant\}/u);
+  assert.match(
+    demo,
+    /\{handoff \? \([\s\S]*\{applicationControls\}[\s\S]*\{builtInControls\}[\s\S]*\) : null\}\s*<CollapsibleEditorPreview/u,
+  );
+  assert.match(demo, /<CollapsibleEditorPreview[\s\S]*\{!handoff \? applicationControls : null\}/u);
+});
+
 test('the built-in toolbar examples use canonical public item ids', async () => {
   const examples = await Promise.all(
     [focusedToolbarExampleUrl, focusedReactToolbarExampleUrl].map((url) => readFile(url, 'utf8')),
@@ -460,6 +480,33 @@ test('the React toolbar example uses command ids from the public v2 command cata
   const unknownIds = [...configuredIds].filter((id) => !catalogIds.has(id));
 
   assert.deepEqual(unknownIds, []);
+});
+
+test('the custom UI setup preserves selection and shares the Editor-owned controller', async () => {
+  const markupUrl = new URL('../snippets/editor/custom-ui-controller.html', import.meta.url);
+  const [markup, vanilla, react] = await Promise.all(
+    [markupUrl, customUiControllerExampleUrl, reactToolbarExampleUrl].map((url) => readFile(url, 'utf8')),
+  );
+
+  for (const example of [vanilla, react]) {
+    assert.match(example, /excludeItems: \['bold'\]/u);
+    assert.match(example, /preventDefault\(\)/u);
+    assert.doesNotMatch(example, /toolbar: false/u);
+  }
+
+  assert.match(markup, /id="toolbar"/u);
+  assert.match(vanilla, /container: '#toolbar'/u);
+  assert.match(vanilla, /ui: editorUi/u);
+  assert.match(vanilla, /readySuperDoc\.ui\.commands\.get\('bold'\)/u);
+  assert.match(vanilla, /bold\.executeAsync\(\)/u);
+  assert.doesNotMatch(react, /container: '#toolbar'/u);
+  assert.match(react, /useSuperDocCommand\('bold'\)/u);
+  assert.match(react, /ui\.commands\.executeAsync\('bold'\)/u);
+  assert.match(react, /disabled=\{!bold\.enabled \|\| pending\}/u);
+  assert.match(react, /setStatus\(\(current\) => \(\{ id: current\.id \+ 1,/u);
+  assert.match(react, /<span key=\{status\.id\}>\{status\.message\}<\/span>/u);
+  assert.match(react, /onReady=\{\(\{ superdoc \}\) => setSuperDoc\(superdoc\)\}/u);
+  assert.doesNotMatch(react, /\bui=\{\{/u);
 });
 
 test('the React comments example keeps restart-sensitive config identities stable', async () => {

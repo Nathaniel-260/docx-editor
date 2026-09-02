@@ -155,7 +155,16 @@ export function renderLLMMarkdown(markdown: string) {
     LoadingConfigReference() {
       return renderConfigReferenceMarkdown(loadingConfigExplorer);
     },
-    CustomBoldDemo() {
+    CustomBoldDemo({ attributes }) {
+      if (textAttribute(attributes, 'variant') === 'handoff') {
+        return [
+          '> **Live example: move one control into your application**',
+          '>',
+          "> Select text in the real DOCX. The application-owned Bold button and SuperDoc's remaining toolbar act on the same Editor selection. Bold is excluded from the built-in toolbar, but its command remains available through `superdoc.ui`.",
+          '',
+        ].join('\n');
+      }
+
       return [
         '> **Live example: one custom control on a real document**',
         '>',

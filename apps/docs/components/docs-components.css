@@ -1251,7 +1251,8 @@
 
 .sd-editor-demo[data-preset='hyperlinks'],
 .sd-editor-demo[data-preset='search'],
-.sd-editor-demo[data-preset='toolbar'] {
+.sd-editor-demo[data-preset='toolbar'],
+.sd-custom-bold-demo-built-in-toolbar {
   --sd-ui-text: #202124;
   --sd-ui-text-muted: #5f6368;
   --sd-ui-text-disabled: #9aa0a6;
@@ -1817,6 +1818,33 @@
   align-items: center;
   padding: 0.75rem 1.125rem;
   border-bottom: 1px solid var(--sd-border-soft);
+}
+
+.sd-custom-bold-demo-owner {
+  flex: none;
+  color: var(--sd-blue-600);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.dark .sd-custom-bold-demo-owner {
+  color: var(--color-fd-accent-foreground);
+}
+
+.sd-custom-bold-demo-built-in {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.75rem 1.125rem;
+  border-bottom: 1px solid var(--sd-border-soft);
+  background: var(--sd-surface-muted);
+}
+
+.sd-custom-bold-demo-built-in-toolbar {
+  min-width: 0;
 }
 
 .sd-custom-bold-demo-toolbar button {
@@ -2876,7 +2904,7 @@
    and one quiet status line. Everything else moved into the page prose so the
    document itself is what the reader looks at. */
 .sd-custom-bold-demo-state {
-  flex: 1;
+  flex: 1 1 10rem;
   min-width: 0;
   color: var(--sd-text-secondary);
   font-size: 0.8125rem;

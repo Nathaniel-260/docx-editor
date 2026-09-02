@@ -61,6 +61,11 @@
       "reason": "Failure handling was merged into the command state contract."
     },
     {
+      "source": "/editor/custom-ui/react-setup/",
+      "destination": "/editor/custom-ui/controller-setup/",
+      "reason": "Vanilla and React now share one custom UI setup guide."
+    },
+    {
       "source": "/start/choose-your-path/",
       "destination": "/",
       "reason": "The documentation home now owns the choice between Editor and automation workflows."
