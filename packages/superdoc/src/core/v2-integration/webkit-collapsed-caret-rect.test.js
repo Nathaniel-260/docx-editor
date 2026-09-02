@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vite-plus/test';
 import {
   detectCollapsedCaretRectQuirk,
   installWebKitCollapsedCaretRectFix,
+  positionsWalkedSoFar,
   resolveCollapsedCaretGeometry,
 } from './webkit-collapsed-caret-rect.js';
 
@@ -37,38 +38,59 @@ const RTL = () => true;
 const LTR = () => false;
 
 /**
- * A node long enough that reading it again per caret, or per keystroke, is
- * unmissable, swept at few enough carets that reading it *once* is nearly free.
- * Both mistakes these tests are for cost a pass per caret, so the two sides sit
- * about fifty times apart at this shape.
+ * The cost tests below count the positions the module's walks visit, read from
+ * `positionsWalkedSoFar()`, rather than timing anything. The count is the same
+ * on a loaded CI runner as on a quiet desktop, and the two shapes the tests tell
+ * apart — a pass over the text, against a pass per caret — sit thousands of
+ * times apart in it, where a budget in milliseconds can only hold them a few
+ * multiples apart and then only on an idle machine.
  *
- * The tests that use it each start their text with a different character, on
- * purpose: what one resolution works out is handed on to a text that extends it,
- * so a shared prefix would let one test answer the next and leave it measuring
- * nothing.
+ * A node long enough that a pass per caret is unmistakable in the count, swept
+ * at enough carets to make it so. The tests that use it each start their text
+ * with a different character, on purpose: what one resolution works out is
+ * handed on to a text that extends it, so a shared prefix would let one test
+ * answer the next and leave it counting nothing.
  */
-const RUN = 200000;
-const SWEEP = 5000;
+const RUN = 20000;
+const SWEEP = 2000;
 
 /**
- * Typing is measured on a shorter node with more keystrokes: the gap there is
- * per keystroke whatever the node's length, since both sides of it are one pass
- * over the node — a copy of what is already worked out, against working it all
- * out again.
+ * Passes over the text a sweep may cost in total, however many carets it
+ * resolves. Two rules walk these texts — to the left end of the terminator run
+ * and to the nearest strong character before the caret — and each may walk the
+ * text once; the rest is a position or two per caret. A walk per caret would
+ * come to SWEEP passes.
  */
-const TYPED_RUN = 30000;
+const PASSES_ALLOWED = 4;
+
+/**
+ * Typing is measured on the same length of node, a keystroke at a time. A
+ * keystroke may cost a few positions — the character it added and the one
+ * before it — and never a pass: a pass per keystroke is what the carry across
+ * an edit exists to prevent, and is what a node this long cost before it.
+ */
 const KEYSTROKES = 200;
+const POSITIONS_PER_KEYSTROKE_ALLOWED = 8;
 
 /**
- * The three cost tests below opt out of the suite's `retry`. They measure work
- * that is only done once: a retry runs the same text through a module that has
- * already worked it out, so it passes however slow the first attempt was, and a
- * retried cost test can never fail.
+ * The three cost tests below opt out of the suite's `retry`. Their assertion is
+ * deterministic, so a failure is a regression and never noise; and a retry would
+ * run the same text through a module that has already worked it out, count
+ * nothing, and pass — hiding exactly what the test is for.
  */
 const MEASURED_ONCE = { retry: 0 };
 
-/** Generous next to the ~20 ms these take, and far below the seconds they take when the walks are not kept. */
-const COST_BUDGET_MS = 1000;
+/**
+ * Positions the module walked while `work` ran.
+ *
+ * @param {() => void} work
+ * @returns {number}
+ */
+const positionsWalkedBy = (work) => {
+  const before = positionsWalkedSoFar();
+  work();
+  return positionsWalkedSoFar() - before;
+};
 
 const HEBREW = 'שלום';
 const HEBREW_SPACE = `${HEBREW} `;
@@ -450,11 +472,14 @@ describe('resolveCollapsedCaretGeometry', () => {
     // stop at the answer the one before it left.
     const text = `a${'%'.repeat(RUN)}`;
     const glyphs = rtlRun(text.length);
-    const started = Date.now();
-    for (let caret = text.length - SWEEP; caret <= text.length; caret += 1) {
-      resolveCollapsedCaretGeometry(caret, text, glyphs, RTL);
-    }
-    expect(Date.now() - started).toBeLessThan(COST_BUDGET_MS);
+    const walked = positionsWalkedBy(() => {
+      for (let caret = text.length - SWEEP; caret <= text.length; caret += 1) {
+        resolveCollapsedCaretGeometry(caret, text, glyphs, RTL);
+      }
+    });
+    // Something was counted, so this text was not answered by an earlier one's.
+    expect(walked).toBeGreaterThan(0);
+    expect(walked).toBeLessThanOrEqual(PASSES_ALLOWED * text.length);
   });
 
   it('writes what one walk found over the whole run it passed', MEASURED_ONCE, () => {
@@ -464,11 +489,13 @@ describe('resolveCollapsedCaretGeometry', () => {
     // otherwise have answered this one.
     const text = `b${'%'.repeat(RUN)}`;
     const glyphs = rtlRun(text.length);
-    const started = Date.now();
-    for (let caret = 0; caret < SWEEP; caret += 1) {
-      resolveCollapsedCaretGeometry(text.length - caret, text, glyphs, RTL);
-    }
-    expect(Date.now() - started).toBeLessThan(COST_BUDGET_MS);
+    const walked = positionsWalkedBy(() => {
+      for (let caret = 0; caret < SWEEP; caret += 1) {
+        resolveCollapsedCaretGeometry(text.length - caret, text, glyphs, RTL);
+      }
+    });
+    expect(walked).toBeGreaterThan(0);
+    expect(walked).toBeLessThanOrEqual(PASSES_ALLOWED * text.length);
   });
 
   it('does not read the whole node again on every keystroke', MEASURED_ONCE, () => {
@@ -476,14 +503,18 @@ describe('resolveCollapsedCaretGeometry', () => {
     // keystroke, and reading the whole node on each one made a typing session
     // quadratic in turn — twelve milliseconds a keystroke in a node this long.
     // What a character has behind it cannot be changed by an edit after it, so
-    // an edit hands that on.
-    let text = `c${'%'.repeat(TYPED_RUN)}`;
-    const started = Date.now();
-    for (let keystroke = 0; keystroke < KEYSTROKES; keystroke += 1) {
-      text += '%';
-      resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL);
-    }
-    expect(Date.now() - started).toBeLessThan(COST_BUDGET_MS);
+    // an edit hands that on. The first resolution pays for the node once and is
+    // left out of the count; the keystrokes are what is measured.
+    let text = `c${'%'.repeat(RUN)}`;
+    resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL);
+    const walked = positionsWalkedBy(() => {
+      for (let keystroke = 0; keystroke < KEYSTROKES; keystroke += 1) {
+        text += '%';
+        resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL);
+      }
+    });
+    expect(walked).toBeGreaterThan(0);
+    expect(walked).toBeLessThanOrEqual(POSITIONS_PER_KEYSTROKE_ALLOWED * KEYSTROKES);
   });
 
   it('works out a character again when an edit replaced it', () => {
@@ -504,6 +535,19 @@ describe('resolveCollapsedCaretGeometry', () => {
     const whole = `${HEBREW}\ud802\udd00`;
     expect(resolveCollapsedCaretGeometry(half.length, half, rtlRun(half.length), RTL)?.x).toBe(TAIL_RIGHT);
     expect(resolveCollapsedCaretGeometry(whole.length, whole, rtlRun(whole.length), RTL)?.x).toBe(TAIL_LEFT);
+  });
+
+  it('works out a character again when an edit split its surrogate pair', () => {
+    // The mirror image: the pair is worked out whole, then the edit takes its
+    // low surrogate away, or puts something else in its place. The units before
+    // the edit are the same in both texts, so a comparison of units alone would
+    // hand the whole character's class on to the half — and Phoenician alf is
+    // right-to-left where a lone surrogate is not.
+    const whole = `${HEBREW}\ud802\udd00`;
+    for (const split of [`${HEBREW}\ud802`, `${HEBREW}\ud802b`]) {
+      expect(resolveCollapsedCaretGeometry(whole.length, whole, rtlRun(whole.length), RTL)?.x).toBe(TAIL_LEFT);
+      expect(resolveCollapsedCaretGeometry(HEBREW.length + 1, split, rtlRun(split.length), RTL)?.x).toBe(TAIL_RIGHT);
+    }
   });
 
   it('does not hand on what an edit moved', () => {

@@ -402,6 +402,29 @@ function createAnalysis(text) {
 }
 
 /**
+ * Positions the walks below have visited, in total, since the module loaded.
+ *
+ * This is the module's cost: a resolution costs exactly the positions its walks
+ * cross, and every guarantee above about that cost — one pass per text however
+ * many carets, a handful of positions per keystroke — is a statement about this
+ * number. The tests that pin those guarantees read it instead of a clock, so
+ * they fail the same way on a loaded CI runner as on a quiet desktop, and a
+ * regression to a walk per caret is a count a thousand times over, not a
+ * budget missed by a few milliseconds. One increment per position walked, on a
+ * path that is already reading a typed array; nothing in production reads it.
+ */
+let positionsWalked = 0;
+
+/**
+ * @internal For the cost tests only. Everything else about this module shows in
+ * its answers; how much of the text it read to give them does not.
+ * @returns {number}
+ */
+export function positionsWalkedSoFar() {
+  return positionsWalked;
+}
+
+/**
  * The analysis of the text the caret is in, kept so that resolutions in one text
  * share their walks. One entry is enough: the caret is resolved in the node it
  * is in, and moving to another node is not the case that repeats.
@@ -452,9 +475,13 @@ function carryUnchangedPrefix(previous, analysis) {
     shared = 0;
     while (shared < limit && previousText.charCodeAt(shared) === text.charCodeAt(shared)) shared += 1;
   }
-  // A code point the edit split is worked out again: the units before it are the
-  // same, but the character they encode need not be.
-  const kept = codePointStart(text, shared);
+  // A code point the edit split is worked out again, whichever text it is whole
+  // in: the units before it are the same in both, but the character they encode
+  // need not be. An edit that completes a pair leaves the whole in the new text;
+  // one that takes its low surrogate away, or puts something else there, leaves
+  // the whole in the old text and a half in the new, and the half must not
+  // inherit the whole's class.
+  const kept = Math.min(codePointStart(text, shared), codePointStart(previousText, shared));
   if (kept <= 0) return;
 
   const carry = (table, Table) => {
@@ -507,6 +534,7 @@ function baseBefore(analysis, at) {
   for (;;) {
     base = base > 0 ? codePointStart(text, base - 1) : -1;
     if (base < 0) break;
+    positionsWalked += 1;
     // A mark whose own base is known is in this same run, so its base is this
     // one's too, and the rest of the run does not have to be walked again.
     const answered = table[base];
@@ -552,6 +580,7 @@ function strongBefore(analysis, at) {
   let stop = -1;
   for (let index = at; index > 0;) {
     index = codePointStart(text, index - 1);
+    positionsWalked += 1;
     const charClass = classAt(analysis, index);
     if (charClass === CLASS_RTL || charClass === CLASS_NUMBER) side = STRONG_RTL;
     else if (charClass === CLASS_LTR) side = STRONG_LTR;
@@ -587,6 +616,7 @@ function strongAfter(analysis, at) {
   let side = STRONG_NONE;
   let stop = length;
   for (let index = codePointEnd(text, at); index < length; index = codePointEnd(text, index)) {
+    positionsWalked += 1;
     const charClass = classAt(analysis, index);
     if (charClass === CLASS_RTL || charClass === CLASS_NUMBER) side = STRONG_RTL;
     else if (charClass === CLASS_LTR) side = STRONG_LTR;
@@ -619,6 +649,7 @@ function letterBefore(analysis, at) {
   let stop = -1;
   for (let index = at; index > 0;) {
     index = codePointStart(text, index - 1);
+    positionsWalked += 1;
     const charClass = classAt(analysis, index);
     if (charClass === CLASS_RTL) {
       letter = ARABIC_LETTER_CHAR.test(characterAt(text, index)) ? LETTER_ARABIC : LETTER_RTL;
@@ -660,6 +691,7 @@ function terminatorRunFirst(analysis, at) {
   let walked = at;
   while (first > 0) {
     const before = codePointStart(text, first - 1);
+    positionsWalked += 1;
     const answered = table[before];
     if (answered !== NOT_WORKED_OUT) {
       first = answered - 1;
@@ -705,6 +737,7 @@ function terminatorRunPast(analysis, at) {
       past = length;
       break;
     }
+    positionsWalked += 1;
     const answered = table[past];
     if (answered !== NOT_WORKED_OUT) {
       past = answered - 1;
@@ -773,6 +806,7 @@ function bracketPairAt(analysis, at) {
   /** @type {{ closing: string, at: number }[]} */
   const stack = [];
   for (let index = 0; index < text.length; index = codePointEnd(text, index)) {
+    positionsWalked += 1;
     const char = characterAt(text, index);
     if (!isBracket(char) || classAt(analysis, index) !== CLASS_NEUTRAL) continue;
     const canonical = canonicalBracket(char);
@@ -811,6 +845,7 @@ function enclosedDirections(analysis, pair) {
   let rtl = false;
   let ltr = false;
   for (let at = codePointEnd(text, pair.open); at < pair.close; at = codePointEnd(text, at)) {
+    positionsWalked += 1;
     const charClass = classAt(analysis, at);
     // N0 counts numbers as right-to-left, exactly as N1 does.
     if (charClass === CLASS_RTL || charClass === CLASS_NUMBER) rtl = true;
