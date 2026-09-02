@@ -348,6 +348,16 @@ export function findColumnContaining(geometry: ColumnGeometry[], x: number, orig
  * makes a drag that crosses the gutter keep extending from the column it is leaving instead of
  * jumping. Direction is read off the geometry rather than taken as an argument, so every existing
  * caller keeps working unchanged.
+ *
+ * Both branches test a HALF-OPEN span, so this agrees with `findColumnContaining` on every boundary
+ * the two can both answer. The LTR branch gets that from `cx >= col.x`: a point on a shared edge is
+ * the later column's, because that is where the later column's content begins. The mirrored branch
+ * has to say the same thing from the other side — the shared edge is the EARLIER fill column's left
+ * edge there — which is `cx < col.x + col.width`, exclusive. An inclusive bound handed that point to
+ * the later column, contradicting the half-open span the geometry places content in, and it also
+ * pulled in the point one pixel-width past a column's trailing edge, which is gutter and belongs to
+ * the preceding column. With `w:space="0"` the two coincide and every column boundary in an RTL
+ * section resolved one column too far.
  */
 export function getColumnAtX(geometry: ColumnGeometry[], x: number, originX = 0): number {
   if (geometry.length === 0) return 0;
@@ -355,7 +365,7 @@ export function getColumnAtX(geometry: ColumnGeometry[], x: number, originX = 0)
   const mirrored = geometry.length > 1 && geometry[1].x < geometry[0].x;
   let result = 0;
   for (const col of geometry) {
-    if (mirrored ? cx <= col.x + col.width : cx >= col.x) result = col.index;
+    if (mirrored ? cx < col.x + col.width : cx >= col.x) result = col.index;
     else break;
   }
   return result;

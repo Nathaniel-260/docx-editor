@@ -123,8 +123,9 @@ describe('determineColumn (SD-2629: resolved per-column boundaries)', () => {
     } as unknown as Page;
     const layout = { pageSize: { w: 816, h: 1056 }, columns, pages: [page] } as unknown as Layout;
 
-    // Content width 624 -> 192px columns. Mirrored, column 0 spans 528..720, column 1 336..528,
-    // column 2 96..288 (absolute).
+    // Content width 624 -> 192px columns with a 24px gutter between them. Mirrored, column 0 spans
+    // 528..720, column 1 312..504, column 2 96..288 (absolute) -- each start is the previous
+    // column's start less width+gap, so the gutters are 504..528 and 288..312.
     expect(determineColumn(layout, 700, page)).toBe(0);
     expect(determineColumn(layout, 400, page)).toBe(1);
     expect(determineColumn(layout, 150, page)).toBe(2);

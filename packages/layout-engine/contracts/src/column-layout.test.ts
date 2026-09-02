@@ -564,6 +564,33 @@ describe('RTL section column order', () => {
     expect(getColumnAtX(rtl, 300)).toBe(0);
   });
 
+  it('resolves an RTL column boundary the same way containment does', () => {
+    // `w:space="0"` (ECMA-376 §17.6.3) makes adjacent columns share an edge, which is the one point
+    // hit testing and containment can be made to disagree about. Two columns over 602px mirror to
+    // column 0 at [301,602) and column 1 at [0,301), so 301 is column 0's leading edge and column
+    // 1's trailing one at the same time.
+    const flush = getColumnGeometry(normalizeColumnLayout({ count: 2, gap: 0, direction: 'rtl' }, 602));
+    expect(flush.map((col) => col.x)).toEqual([301, 0]);
+
+    // Half-open spans put a shared edge in the column that STARTS there, which in RTL is the earlier
+    // column in fill order. An inclusive mirrored bound handed it to column 1 instead, so every
+    // column boundary in a zero-gutter RTL section resolved one column too far — and disagreed with
+    // the containment the geometry places content by.
+    expect(findColumnContaining(flush, 301)).toBe(0);
+    expect(getColumnAtX(flush, 301)).toBe(0);
+    // A hair to the left is genuinely column 1's, in both resolvers.
+    expect(findColumnContaining(flush, 300.99)).toBe(1);
+    expect(getColumnAtX(flush, 300.99)).toBe(1);
+
+    // With a gutter the same bound over-claimed the point on a column's TRAILING edge, which is
+    // gutter and belongs to the column preceding it in fill order.
+    const gutter = getColumnGeometry(normalizeColumnLayout(twoEqual('rtl'), 602));
+    expect(gutter[1]).toEqual({ index: 1, x: 0, width: 277, gapAfter: 0 });
+    expect(findColumnContaining(gutter, 277)).toBeNull();
+    expect(getColumnAtX(gutter, 277)).toBe(0);
+    expect(getColumnAtX(gutter, 276.99)).toBe(1);
+  });
+
   it('keeps LTR hit testing byte-identical', () => {
     const ltr = getColumnGeometry(normalizeColumnLayout(twoEqual(), 602));
     expect(getColumnAtX(ltr, 100)).toBe(0);
