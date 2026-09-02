@@ -789,15 +789,24 @@ describe('DomPainter renderColumnSeparators', () => {
     });
 
     it('still distrusts the origin of a box that outgrew its column', () => {
-      // The mirror shape, and the reason the width gate is a gate rather than an unconditional
-      // trust: a negative `w:ind` widens the fragment by the outdent, so a column-1 paragraph
-      // outdented 72px past the 48px gutter is the box [264, 624] -- origin inside column 0, width
-      // 360 against a 288px column. It does NOT fit, so the origin is not believed, and overlap
-      // answers column 1 (24px against 288px). A separator belongs here.
-      const outdented: Fragment = { ...fragAt(96 + 264), width: 360 };
+      // The shape that actually reaches the gate's rejection path. `resolveTableFrame` centres an
+      // over-wide table inside its column, at `col.x + (col.width - width) / 2` -- a NEGATIVE offset
+      // once the table is wider than the column -- so it begins inside an earlier column without
+      // ever having left its own. A 400px box centred in column 1 of two equal 288px columns over
+      // 624 is [280, 680]: neither edge lands on a column edge (680 misses column 1's 624 by 56),
+      // the origin 280 falls inside column 0, and 400 does not fit a 288px column. So the origin is
+      // rejected and the overlap vote answers column 1, 288px against 8px.
+      //
+      // An outdented paragraph does NOT reach here, though this test used one until cubic pointed
+      // out that it could not. A negative `w:ind` widens the fragment by exactly the outdent it
+      // shifts by, so `x + width` lands on its own column's trailing edge for every outdent and the
+      // trailing-edge rule answers first. Worth recording rather than quietly swapping the fixture:
+      // that outdent was the only guard on this gate, and replacing the width comparison with
+      // unconditional origin trust left all 39 tests in this file passing.
+      const centredOverWide: Fragment = { ...fragAt(96 + 280), width: 400 };
       const page = buildPage({
         columns: { count: 2, gap: 48, withSeparator: true },
-        fragments: [fragAt(96), outdented],
+        fragments: [fragAt(96), centredOverWide],
       });
       paintOnce(buildLayout(page), mount);
 

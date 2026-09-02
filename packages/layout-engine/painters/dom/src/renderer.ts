@@ -1161,12 +1161,21 @@ function columnOwningSpan(geometry: ColumnGeometry[], x: number, width: number, 
   // all. (Nothing in this repo's production code sets `floatAlignment`; it arrives from the
   // adapter outside the layout engine, so the OOXML feature behind it is deliberately not named.)
   //
-  // A box WIDER than its column may instead have been pulled LEFT out of it, and there the origin is
-  // no evidence: a negative `w:ind` widens the fragment by the outdent, so an outdent bigger than
-  // the gutter lands the origin in the PREVIOUS column while the content belongs to this one.
-  // Measured on equal 2-col geometry over 624px (col0 [0,288), col1 [336,624)): a column-1 paragraph
-  // outdented 72px is the box [264, 624], whose origin is in column 0 and whose overlap correctly
-  // answers 1. Width is what separates the two shapes; the right edge overhangs in both.
+  // A box WIDER than its column may instead have been pulled OUT of it, and there the origin is no
+  // evidence at all. `resolveTableFrame` centres an over-wide table inside its column, placing it at
+  // `col.x + (col.width - width) / 2` — a NEGATIVE offset once the table is wider than the column —
+  // so it begins inside an EARLIER column without ever having left its own. Measured on equal 2-col
+  // geometry over 624px (col0 [0,288), col1 [336,624)): a 400px box centred in column 1 is
+  // [280, 680], whose origin is in column 0 and whose overlap correctly answers 1, 288px against
+  // 8px. Width is what separates the two shapes; the right edge overhangs in both.
+  //
+  // An outdented paragraph is NOT this case, though it looks like it and was written here as the
+  // justification once. A negative `w:ind` widens the fragment by exactly the outdent it shifts by,
+  // so `x + width` lands on its own column's trailing edge for EVERY outdent — the rule above has
+  // already answered and this step never sees it. That mistake is worth recording rather than just
+  // deleting: it was also the fixture guarding this gate, so the gate had no test at all. Replacing
+  // the width comparison with unconditional origin trust left all 39 tests in
+  // `renderer-column-separators.test.ts` passing.
   const byOrigin = findColumnContaining(geometry, x);
   if (byOrigin !== null) {
     const originColumn = geometry.find((col) => col.index === byOrigin);
