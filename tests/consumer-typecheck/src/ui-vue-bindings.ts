@@ -13,7 +13,7 @@ import {
   useSuperDocUI,
 } from 'superdoc/ui/vue';
 import type { SuperDocHost, SuperDocUIBinding, UseSuperDocCommandResult } from 'superdoc/ui/vue';
-import type { CommandState, SuperDocUIState } from 'superdoc/ui';
+import type { CommandId, CommandState, SuperDocUIState } from 'superdoc/ui';
 import type { ComputedRef, MaybeRefOrGetter, ShallowRef } from 'vue';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -35,9 +35,9 @@ type PublishedUi = NonNullable<ReturnType<typeof useSuperDocUI>['value']>;
 const _noDestroy: AssertEqual<'destroy' extends keyof PublishedUi ? true : false, false> = true;
 
 // Command state is exposed as Vue refs beside execution methods, and the id
-// parameter accepts a plain string, a ref, or a getter.
+// parameter accepts a plain or reactive command id.
 const _commandReturns: AssertEqual<ReturnType<typeof useSuperDocCommand>, UseSuperDocCommandResult> = true;
-const _commandParams: AssertEqual<Parameters<typeof useSuperDocCommand>, [id: MaybeRefOrGetter<string>]> = true;
+const _commandParams: AssertEqual<Parameters<typeof useSuperDocCommand>, [id: MaybeRefOrGetter<CommandId>]> = true;
 const _commandState: AssertEqual<UseSuperDocCommandResult['state'], Readonly<ShallowRef<CommandState>>> = true;
 const _commandEnabled: AssertEqual<UseSuperDocCommandResult['enabled'], Readonly<ComputedRef<boolean>>> = true;
 

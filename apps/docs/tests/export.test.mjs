@@ -43,7 +43,7 @@ const routes = [
   ['editor/content-controls/lock-template-fields/index.html', 'Lock template fields'],
   ['editor/custom-ui/overview/index.html', 'Build a custom UI'],
   ['editor/custom-ui/controller-setup/index.html', 'Build your first custom control'],
-  ['editor/custom-ui/commands-and-state/index.html', 'Commands and state'],
+  ['editor/custom-ui/commands-and-state/index.html', 'Keep custom controls in sync'],
   ['editor/custom-ui/custom-commands/index.html', 'Register custom commands'],
   ['editor/custom-ui/formatting-controls/index.html', 'Build formatting controls'],
   ['editor/custom-ui/comments/index.html', 'Build a custom comments UI'],
@@ -536,10 +536,13 @@ test('exports the custom UI command-state model with a Markdown fallback', async
   const markdown = await readFile(new URL('../out/md/editor/custom-ui/commands-and-state.md', import.meta.url), 'utf8');
 
   assert.match(article, /data-command-state-demo="true"/);
-  assert.match(article, /Selection drives command state/);
+  assert.match(article, /Watch one control follow the selection/);
   assert.match(article, /Toggle bold for the simulated selection/);
-  assert.match(markdown, /> \*\*Interactive model: selection drives command state\*\*/);
+  assert.match(article, /Run Bold to see the command result/);
+  assert.match(markdown, /> \*\*Interactive model: watch one control follow the selection\*\*/);
+  assert.match(markdown, /Pressing Bold changes `active` to `true` and reports `\{ success: true \}`/);
   assert.match(markdown, /A locked heading reports `enabled: false`, `active: false`, and a disabled reason/);
+  assert.match(markdown, /State describes what the control should render/);
   assert.doesNotMatch(markdown, /<CommandStateDemo\b/);
 });
 
@@ -629,9 +632,9 @@ test('exports the custom UI command-state contract without a copied command matr
   assert.match(markdown, /`value`/);
   assert.match(markdown, /`reason`/);
   assert.match(markdown, /`supported`/);
-  assert.match(markdown, /BUILT_IN_COMMAND_IDS/);
-  assert.match(markdown, /Do not render every recognized command automatically/);
-  assert.match(markdown, /For a receipt, inspect `success` before continuing/);
+  assert.match(markdown, /`CommandId`/);
+  assert.match(markdown, /Choose the actions your workflow needs instead of generating a toolbar/);
+  assert.match(markdown, /check the result even when `enabled` was `true`/);
 });
 
 test('exports the Editor tracked-change review workflow with the existing review demo', async () => {
@@ -711,16 +714,6 @@ test('exports custom command registration as clean Markdown', async () => {
   assert.match(markdown, /shortcut.*application still owns the keyboard listener/s);
   assert.match(markdown, /registration\.unregister/);
   assert.match(markdown, /Custom commands do not create an authorization boundary/);
-  assert.doesNotMatch(markdown, /<include>/);
-});
-
-test('exports command failure guidance from the command-state owner page', async () => {
-  const markdown = await readFile(new URL('../out/md/editor/custom-ui/commands-and-state.md', import.meta.url), 'utf8');
-
-  assert.match(markdown, /Partial<Record<SuperDocUIReason, string>>/);
-  assert.match(markdown, /State is a snapshot rather than a guarantee/);
-  assert.match(markdown, /Do not render every recognized command automatically/);
-  assert.match(markdown, /Do not treat a resolved promise or the absence of an exception as proof/);
   assert.doesNotMatch(markdown, /<include>/);
 });
 

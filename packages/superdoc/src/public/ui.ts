@@ -50,6 +50,7 @@ export type {
   WorkflowScrollResult,
   SelectionRestoreResult,
   SuperDocUIReason,
+  CommandId,
   CommandsHandle,
   ContextMenuItem,
   ContextMenuHandle,

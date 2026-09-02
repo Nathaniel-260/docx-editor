@@ -20,6 +20,7 @@ import type { SliceSource } from './slice-source.js';
 
 import type {
   BorrowedSuperDocUI,
+  CommandId,
   CommandState,
   CommentsSlice,
   ContentControlsSlice,
@@ -228,7 +229,7 @@ export function useSuperDocToolbar(): ToolbarSnapshotSlice {
 }
 
 /** Subscribe to a single command's enable/active state. */
-export function useSuperDocCommand(id: string): CommandState {
+export function useSuperDocCommand(id: CommandId): CommandState {
   return useSuperDocSlice(
     (ui) => ({
       getSnapshot: () => ui.commands.get(id).getState(),

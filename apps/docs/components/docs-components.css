@@ -1651,6 +1651,15 @@
   color: var(--sd-text-primary);
 }
 
+.sd-command-state-demo-readout > div[data-result] {
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+}
+
+.sd-command-state-demo-readout > div[data-result='success'] dd {
+  color: var(--sd-success);
+}
+
 @media (max-width: 42rem) {
   .sd-receipt-bar {
     grid-template-columns: 1fr 1fr;

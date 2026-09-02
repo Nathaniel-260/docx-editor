@@ -34,6 +34,7 @@ import type { SliceSource } from './slice-source.js';
 import type {
   BorrowedSuperDocUI,
   CommandExecutionResult,
+  CommandId,
   CommandState,
   CommentsSlice,
   ContentControlsSlice,
@@ -372,7 +373,7 @@ export interface UseSuperDocCommandResult {
  * Subscribe to and execute a single command. Accepts a plain id, a ref, or a
  * getter; a reactive id re-subscribes and routes execution to the new command.
  */
-export function useSuperDocCommand(id: MaybeRefOrGetter<string>): UseSuperDocCommandResult {
+export function useSuperDocCommand(id: MaybeRefOrGetter<CommandId>): UseSuperDocCommandResult {
   const ui = useSuperDocUI();
   const state = shallowRef<CommandState>(EMPTY_COMMAND);
 

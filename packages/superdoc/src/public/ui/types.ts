@@ -286,6 +286,12 @@ export interface CommandState {
   reason?: SuperDocUIReason;
 }
 
+/** A built-in command id, or an application id registered through `ui.commands.register()`. */
+export type CommandId = BuiltInCommandId | (string & {});
+
+/** Command id accepted by toolbar APIs. Equivalent to {@link CommandId}. */
+export type ToolbarCommandId = CommandId;
+
 /**
  * Failure code carried by a receipt that the UI controller mints itself
  * (rather than relaying from the Document API). Extends the Document API's
@@ -427,7 +433,7 @@ export type SelectionRestoreResult = { success: boolean } & WorkflowActionResult
  * Document API / SuperDoc instance; `getState` reflects the live enable/active
  * snapshot; `observe` notifies on state change.
  */
-export interface CommandHandle<Id extends string = string> {
+export interface CommandHandle<Id extends CommandId = CommandId> {
   /** The command id this handle wraps. */
   readonly id: Id;
   /** Current enable/active state. */
@@ -547,9 +553,9 @@ export interface CustomCommandContext<TPayload = unknown> {
    */
   ui: BorrowedSuperDocUI;
   /** Run a catalog command id through the shared controller. */
-  execute(id: string, payload?: unknown): CommandExecutionResult;
+  execute(id: CommandId, payload?: unknown): CommandExecutionResult;
   /** Run a catalog command id and await its settled result. */
-  executeAsync(id: string, payload?: unknown): Promise<CommandExecutionResult>;
+  executeAsync(id: CommandId, payload?: unknown): Promise<CommandExecutionResult>;
   /**
    * The host's browser Document API facade (read-only-guarded, async-capable),
    * or `null` when unavailable.
@@ -580,7 +586,7 @@ export interface CustomCommandContext<TPayload = unknown> {
 
 export interface CustomCommandRegistration<TPayload = unknown, TValue = unknown> {
   /** Unique command id. */
-  id: string;
+  id: CommandId;
   /** Implementation invoked when the command runs. */
   execute(context: CustomCommandContext<TPayload>): unknown;
   /** Optional live-state provider. */
@@ -597,7 +603,7 @@ export interface CustomCommandRegistration<TPayload = unknown, TValue = unknown>
 }
 
 export interface CustomCommandHandle<TPayload = unknown, TValue = unknown> extends Omit<
-  CommandHandle<string>,
+  CommandHandle<CommandId>,
   'execute' | 'executeAsync' | 'getState' | 'observe'
 > {
   /** Current custom-command state. */
@@ -618,15 +624,15 @@ export type CustomCommandRegistrationResult<TPayload = unknown, TValue = unknown
 /** Aggregate command surface. */
 export interface CommandsHandle {
   /** All known command ids (built-in plus registered). */
-  readonly ids: readonly string[];
+  readonly ids: readonly CommandId[];
   /** Whether a command id is known to the controller. */
-  has(id: string): boolean;
+  has(id: CommandId): boolean;
   /** Resolve a handle for a command id. */
-  get<Id extends string = string>(id: Id): CommandHandle<Id>;
+  get<Id extends CommandId = CommandId>(id: Id): CommandHandle<Id>;
   /** Execute a command by id. */
-  execute(id: string, payload?: unknown): CommandExecutionResult;
+  execute(id: CommandId, payload?: unknown): CommandExecutionResult;
   /** Execute a command by id and resolve once the routed work has settled. */
-  executeAsync(id: string, payload?: unknown): Promise<CommandExecutionResult>;
+  executeAsync(id: CommandId, payload?: unknown): Promise<CommandExecutionResult>;
   /** Register a consumer-defined command; returns an unregister function. */
   register<TPayload = unknown, TValue = unknown>(
     registration: CustomCommandRegistration<TPayload, TValue>,
@@ -1206,9 +1212,6 @@ export interface FontsHandle extends SnapshotSubscribable<FontsSlice> {
   /** Available font size options. */
   getSizeOptions(): readonly FontSizeOption[];
 }
-
-/** A built-in command id, or an id registered through `ui.commands.register()`. */
-export type ToolbarCommandId = BuiltInCommandId | (string & {});
 
 /** Toolbar handle. */
 export interface ToolbarHandle extends SnapshotSubscribable<ToolbarSnapshotSlice> {

@@ -125,9 +125,9 @@ export function renderLLMMarkdown(markdown: string) {
     },
     CommandStateDemo() {
       return [
-        '> **Interactive model: selection drives command state**',
+        '> **Interactive model: watch one control follow the selection**',
         '>',
-        '> The sample selection is simulated. Normal text reports `enabled: true` and `active: false`. Bold text reports `enabled: true` and `active: true`. A locked heading reports `enabled: false`, `active: false`, and a disabled reason. In an application, the real `superdoc/ui` controller derives these values from the active Editor selection.',
+        '> The sample selection is simulated. Normal text reports `enabled: true` and `active: false`. Pressing Bold changes `active` to `true` and reports `{ success: true }`. Bold text starts with `active: true`. A locked heading reports `enabled: false`, `active: false`, and a disabled reason. State describes what the control should render; the execution result confirms what the command did.',
         '',
       ].join('\n');
     },
