@@ -376,6 +376,38 @@ describe('resolveCollapsedCaretGeometry', () => {
     }
   });
 
+  it('keeps the caret after a native-script digit, which is plain left-to-right', () => {
+    // Only ASCII, Persian, fullwidth, Arabic-Indic, NKo and Adlam digits have a
+    // bidi class of their own. Devanagari, Thai, Bengali and forty more scripts
+    // write ordinary left-to-right digits, and reading them as neutral put the
+    // caret on the paragraph's edge instead of theirs.
+    for (const digit of ['२', '๑', '১', '၁']) {
+      const { text, charRect, tailStart } = rtlThenLtrTail(digit);
+      expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH);
+    }
+  });
+
+  it('returns nothing for text that is not a string', () => {
+    for (const notText of [null, undefined, 42, {}]) {
+      expect(resolveCollapsedCaretGeometry(0, notText, () => null, RTL)).toBeNull();
+      expect(resolveCollapsedCaretGeometry(1, notText, rtlRun(1), RTL)).toBeNull();
+    }
+  });
+
+  it('stops searching for a strong character rather than walking the whole node', () => {
+    // Every step of the search classifies a character, and the caret is resolved
+    // on each placement, so an unbroken run of neutrals would otherwise make
+    // key-repeat quadratic. Here a left-to-right paragraph holds two Hebrew
+    // letters more than the bound apart, with the caret in the neutral run
+    // between them: within the bound they would pull the caret right-to-left,
+    // past it the paragraph decides, which is what the neutral rules give for a
+    // run this long anyway.
+    const gap = ' '.repeat(1200);
+    const text = `א${gap}ב`;
+    const offset = 1 + gap.length / 2;
+    expect(resolveCollapsedCaretGeometry(offset, text, ltrRun(text.length), LTR)?.x).toBe(CHAR_WIDTH * offset);
+  });
+
   it('carries the glyph vertical metrics onto the caret', () => {
     expect(resolveCollapsedCaretGeometry(5, HEBREW_SPACE, rtlRun(5), RTL)).toMatchObject({
       top: 0,

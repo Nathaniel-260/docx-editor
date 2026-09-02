@@ -155,13 +155,14 @@ const firstGlyphRect = (rects) => {
 const RTL_SCRIPT_BLOCK = /[\u0590-\u08FF\u200F\uFB1D-\uFDFF\uFE70-\uFEFF\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]/u;
 
 /**
- * The 46 assigned code points inside those blocks that are NOT Bidi_Class R or
- * AL: the Arabic comma, the ornate parentheses, the Arabic ligature symbols,
- * the NKo punctuation, and a handful of others. They are neutral, so they take
- * the paragraph's direction like any other neutral.
+ * The 112 code points inside those blocks that are NOT Bidi_Class R or AL: the
+ * Arabic comma, the ornate parentheses, the Arabic ligature and honorific
+ * symbols, the NKo punctuation, the Arabic Extended-C signs, and the
+ * noncharacters. They are neutral, so they take the paragraph's direction like
+ * any other neutral.
  */
 const RTL_BLOCK_NEUTRAL =
-  /[\u0606-\u0607\u060C\u060E-\u060F\u06DE\u06E9\u07F6-\u07F9\uFB29\uFD3E-\uFD4F\uFDCF\uFDFD-\uFDFF\uFEFF\u{1091F}\u{10B39}-\u{10B3F}\u{10D6E}\u{1EEF0}-\u{1EEF1}]/u;
+  /[\u0606-\u0607\u060C\u060E-\u060F\u06DE\u06E9\u07F6-\u07F9\uFB29\uFBC3-\uFBD2\uFD3E-\uFD4F\uFD90-\uFD91\uFDC8-\uFDEF\uFDFD-\uFDFF\uFEFF\u{1091F}\u{10B39}-\u{10B3F}\u{10D6E}\u{10ED0}-\u{10ED8}\u{1EEF0}-\u{1EEF1}]/u;
 
 /** Bidi_Class EN — European numbers, ordered left-to-right at any embedding level. */
 const EUROPEAN_NUMBER_CHAR =
@@ -173,22 +174,41 @@ const ARABIC_NUMBER_CHAR =
 
 /** Bidi_Class ET — terminators that a neighbouring European number absorbs (rule W5). */
 const NUMBER_TERMINATOR_CHAR =
-  /[\u0023-\u0025\u00A2-\u00A5\u00B0-\u00B1\u058F\u0609-\u060A\u066A\u09F2-\u09F3\u09FB\u0AF1\u0BF9\u0E3F\u17DB\u2030-\u2034\u20A0-\u20C1\u212E\u2213\uA838-\uA839\uFE5F\uFE69-\uFE6A\uFF03-\uFF05\uFFE0-\uFFE1\uFFE5-\uFFE6\u{11FDD}-\u{11FE0}\u{1E2FF}]/u;
+  /[\u0023-\u0025\u00A2-\u00A5\u00B0-\u00B1\u058F\u0609-\u060A\u066A\u09F2-\u09F3\u09FB\u0AF1\u0BF9\u0E3F\u17DB\u2030-\u2034\u20A0-\u20CF\u212E\u2213\uA838-\uA839\uFE5F\uFE69-\uFE6A\uFF03-\uFF05\uFFE0-\uFFE1\uFFE5-\uFFE6\u{11FDD}-\u{11FE0}\u{1E2FF}]/u;
 
 /** Bidi_Class AL — Arabic letters, which turn a following European number Arabic (rule W2). */
 const ARABIC_LETTER_CHAR =
-  /[\u0608-\u060B\u060D\u061B-\u06D5\u06E5-\u06E6\u06EE-\u07B1\u0860-\u08C9\uFB50-\uFD3D\uFD50-\uFDC7\uFDF0-\uFDFC\uFE70-\uFEFC\u{10D00}-\u{10D23}\u{10EC2}-\u{10EC7}\u{10F30}-\u{10F59}\u{1EC71}-\u{1EEBB}]/u;
+  /[\u0608\u060B\u060D\u061B-\u064A\u066D-\u066F\u0671-\u06D5\u06E5-\u06E6\u06EE-\u06EF\u06FA-\u0710\u0712-\u072F\u074B-\u07A5\u07B1-\u07BF\u0860-\u088F\u0892-\u0896\u08A0-\u08C9\uFB50-\uFBC2\uFBD3-\uFD3D\uFD50-\uFD8F\uFD92-\uFDC7\uFDF0-\uFDFC\uFE70-\uFEFE\u{10D00}-\u{10D23}\u{10D28}-\u{10D2F}\u{10D3A}-\u{10D3F}\u{10EC0}-\u{10ECF}\u{10ED9}-\u{10EF9}\u{10F30}-\u{10F45}\u{10F51}-\u{10F6F}\u{1EC70}-\u{1ECBF}\u{1ED00}-\u{1ED4F}\u{1EE00}-\u{1EEEF}\u{1EEF2}-\u{1EEFF}]/u;
 
 /**
  * Bidi_Class NSM — non-spacing marks, which take the class of the character
- * before them (rule W1). The Unicode Character Database defines NSM as exactly
- * the characters of general category Mn or Me, so this needs no table.
+ * before them (rule W1). Every NSM character is general category Mn or Me, and
+ * all but five characters of those categories are NSM, so this needs only the
+ * category test and the short exception list below.
  */
 const MARK_CHAR = /[\p{Mn}\p{Me}]/u;
 
 /**
- * Bidi_Class L, for what is left once the classes above are resolved: letters,
- * letter numbers, spacing marks, and private use.
+ * The five characters that are general category Mn without being
+ * Bidi_Class NSM — U+0CBF and U+0CC6 (Kannada), U+11A07 and U+11A08
+ * (Zanabazar Square) and U+11C3F (Bhaiksuki). They are Bidi_Class L, so they
+ * carry their own direction rather than inheriting the previous character's.
+ */
+const MARK_EXCEPTION_CHAR = /[\u0CBF\u0CC6\u{11A07}\u{11A08}\u{11C3F}]/u;
+
+/**
+ * The neutral classes — ON, WS, BN, B, S, CS, ES and the explicit formatting
+ * codes — for what is left once the classes above are resolved.
+ *
+ * This is the last test, so everything it does not match is Bidi_Class L. That
+ * is the right default: Unicode gives L to every code point it does not say
+ * otherwise about, unassigned ones included, and the two blocks where the
+ * default is something else — the right-to-left scripts and the currency
+ * symbols — are both resolved above. Listing the neutrals rather than guessing
+ * at the left-to-right ones is what makes the classification exact: general
+ * categories cut across Bidi_Class badly here, since `½` and `①` are numbers
+ * that are neutral, 620 decimal digits are plain left-to-right, and private use
+ * and Indic spacing marks are left-to-right without being letters.
  *
  * Private use earns its place: a .docx symbol run (Wingdings, Symbol) maps to
  * U+F0xx, the Unicode default for private use is left-to-right, and Chromium
@@ -196,7 +216,22 @@ const MARK_CHAR = /[\p{Mn}\p{Me}]/u;
  * symbols belonging to left-to-right scripts — 1.3% of assigned code points,
  * and visible only inside a right-to-left paragraph.
  */
-const STRONG_LTR_CHAR = /[\p{L}\p{Nl}\p{Mc}\p{Co}]/u;
+const NEUTRAL_CHAR =
+  /[\u0000-\u0040\u005B-\u0060\u007B-\u00A9\u00AB-\u00B4\u00B6-\u00B8\u00BB-\u00BF\u00D7\u00F7\u02B9-\u02BA\u02C2-\u02CF\u02D2-\u02DF\u02E5-\u02ED\u02EF-\u02FF\u0374-\u0375\u037E\u0384-\u0385\u0387\u03F6\u058A\u058D-\u07F9\u0BF3-\u0BFA\u0C78-\u0C7E\u0F3A-\u0F3D\u1390-\u1399\u1400\u1680\u169B-\u169C\u17F0-\u17F9\u1800-\u180E\u1940\u1944-\u1945\u19DE-\u19FF\u1FBD\u1FBF-\u1FC1\u1FCD-\u1FCF\u1FDD-\u1FDF\u1FED-\u1FEF\u1FFD-\u1FFE\u2000-\u200D\u2010-\u206F\u207A-\u207E\u208A-\u208E\u2100-\u2101\u2103-\u2106\u2108-\u2109\u2114\u2116-\u2118\u211E-\u2123\u2125\u2127\u2129\u213A-\u213B\u2140-\u2144\u214A-\u214D\u2150-\u215F\u2189-\u218B\u2190-\u2335\u237B-\u2394\u2396-\u2429\u2440-\u244A\u2460-\u2487\u24EA-\u26AB\u26AD-\u27FF\u2900-\u2B73\u2B76-\u2BFF\u2CE5-\u2CEA\u2CF9-\u2CFF\u2E00-\u2E5D\u2E80-\u2E99\u2E9B-\u2EF3\u2F00-\u2FD5\u2FF0-\u3004\u3008-\u3020\u3030\u3036-\u3037\u303D-\u303F\u309B-\u309C\u30A0\u30FB\u31C0-\u31E5\u31EF\u321D-\u321E\u3250-\u325F\u327C-\u327E\u32B1-\u32BF\u32CC-\u32CF\u3377-\u337A\u33DE-\u33DF\u33FF\u4DC0-\u4DFF\uA490-\uA4C6\uA60D-\uA60F\uA673-\uA67F\uA700-\uA721\uA788\uA828-\uA82B\uA874-\uA877\uAB6A-\uAB6B\uFB29-\uFE19\uFE30-\uFE52\uFE54-\uFE66\uFE68-\uFE6B\uFEFF\uFF01-\uFF20\uFF3B-\uFF40\uFF5B-\uFF65\uFFE2-\uFFE4\uFFE8-\uFFEE\uFFF0-\uFFFF\u{10101}\u{10140}-\u{1018C}\u{10190}-\u{1019C}\u{101A0}\u{1091F}-\u{10ED8}\u{11052}-\u{11065}\u{11660}-\u{1166C}\u{11FD5}-\u{11FF1}\u{16FE2}\u{1BCA0}-\u{1BCA3}\u{1CC00}-\u{1CCD5}\u{1CCFA}-\u{1CCFC}\u{1CD00}-\u{1CEB3}\u{1CEBA}-\u{1CED0}\u{1CEE0}-\u{1CEF0}\u{1D173}-\u{1D17A}\u{1D1E9}-\u{1D1EA}\u{1D200}-\u{1D245}\u{1D300}-\u{1D356}\u{1D6C1}\u{1D6DB}\u{1D6FB}\u{1D715}\u{1D735}\u{1D74F}\u{1D76F}\u{1D789}\u{1D7A9}\u{1D7C3}\u{1EEF0}-\u{1F02B}\u{1F030}-\u{1F093}\u{1F0A0}-\u{1F0AE}\u{1F0B1}-\u{1F0BF}\u{1F0C1}-\u{1F0CF}\u{1F0D1}-\u{1F0F5}\u{1F10B}-\u{1F10F}\u{1F12F}\u{1F16A}-\u{1F16F}\u{1F1AD}\u{1F260}-\u{1F265}\u{1F300}-\u{1F6D8}\u{1F6DC}-\u{1F6EC}\u{1F6F0}-\u{1F6FC}\u{1F700}-\u{1F7D9}\u{1F7E0}-\u{1F7EB}\u{1F7F0}\u{1F800}-\u{1F80B}\u{1F810}-\u{1F847}\u{1F850}-\u{1F859}\u{1F860}-\u{1F887}\u{1F890}-\u{1F8AD}\u{1F8B0}-\u{1F8BB}\u{1F8C0}-\u{1F8C1}\u{1F8D0}-\u{1F8D8}\u{1F900}-\u{1FA57}\u{1FA60}-\u{1FA6D}\u{1FA70}-\u{1FA7C}\u{1FA80}-\u{1FA8A}\u{1FA8E}-\u{1FAC6}\u{1FAC8}\u{1FACD}-\u{1FADC}\u{1FADF}-\u{1FAEA}\u{1FAEF}-\u{1FAF8}\u{1FB00}-\u{1FB92}\u{1FB94}-\u{1FBFA}\u{1FFFE}-\u{1FFFF}\u{2FFFE}-\u{2FFFF}\u{3FFFE}-\u{3FFFF}\u{4FFFE}-\u{4FFFF}\u{5FFFE}-\u{5FFFF}\u{6FFFE}-\u{6FFFF}\u{7FFFE}-\u{7FFFF}\u{8FFFE}-\u{8FFFF}\u{9FFFE}-\u{9FFFF}\u{AFFFE}-\u{AFFFF}\u{BFFFE}-\u{BFFFF}\u{CFFFE}-\u{CFFFF}\u{DFFFE}-\u{E0FFF}\u{EFFFE}-\u{EFFFF}\u{FFFFE}-\u{FFFFF}\u{10FFFE}-\u{10FFFF}]/u;
+
+/**
+ * How far the neutral, terminator and bracket searches look before giving up and
+ * taking the paragraph's direction.
+ *
+ * Each search is linear in the text it walks, and the caret is resolved once per
+ * placement, so an unbroken run of neutrals — pasted financial data, a wall of
+ * combining marks — turns key-repeat or drag-select into quadratic work on the
+ * main thread. Measured at roughly 1.5µs per character walked, this bound keeps
+ * a single resolution under about a millisecond. A run longer than this has no
+ * strong character near enough to matter, and the paragraph's direction is what
+ * N2 and L1 would give anyway.
+ */
+const MAX_SCAN_CHARACTERS = 512;
 
 const HIGH_SURROGATE_START = 0xd800;
 const HIGH_SURROGATE_END = 0xdbff;
@@ -259,12 +294,12 @@ const CLASS_MARK = 6;
  * @returns {number}
  */
 function classOf(char) {
-  if (MARK_CHAR.test(char)) return CLASS_MARK;
+  if (MARK_CHAR.test(char) && !MARK_EXCEPTION_CHAR.test(char)) return CLASS_MARK;
   if (EUROPEAN_NUMBER_CHAR.test(char) || ARABIC_NUMBER_CHAR.test(char)) return CLASS_NUMBER;
   if (NUMBER_TERMINATOR_CHAR.test(char)) return CLASS_TERMINATOR;
   if (RTL_SCRIPT_BLOCK.test(char)) return RTL_BLOCK_NEUTRAL.test(char) ? CLASS_NEUTRAL : CLASS_RTL;
-  if (STRONG_LTR_CHAR.test(char)) return CLASS_LTR;
-  return CLASS_NEUTRAL;
+  if (NEUTRAL_CHAR.test(char)) return CLASS_NEUTRAL;
+  return CLASS_LTR;
 }
 
 /**
@@ -298,7 +333,8 @@ function europeanNumberKeepsEuropeanRun(text, index) {
  */
 function terminatorTouchesEuropeanNumber(text, index) {
   for (const step of [-1, 1]) {
-    for (let at = index; ;) {
+    let budget = MAX_SCAN_CHARACTERS;
+    for (let at = index; budget > 0; budget -= 1) {
       if (step < 0) {
         if (at === 0) break;
         at = codePointStart(text, at - 1);
@@ -331,9 +367,10 @@ function terminatorTouchesEuropeanNumber(text, index) {
  * @returns {boolean}
  */
 function strongSideIsRtl(text, index, step, paragraphIsRtl) {
-  for (let at = index; ;) {
+  let budget = MAX_SCAN_CHARACTERS;
+  for (let at = index; budget > 0; budget -= 1) {
     if (step < 0) {
-      if (at === 0) return paragraphIsRtl;
+      if (at <= 0) return paragraphIsRtl;
       at = codePointStart(text, at - 1);
     } else {
       at = codePointEnd(text, at);
@@ -343,6 +380,7 @@ function strongSideIsRtl(text, index, step, paragraphIsRtl) {
     if (charClass === CLASS_RTL || charClass === CLASS_NUMBER) return true;
     if (charClass === CLASS_LTR) return false;
   }
+  return paragraphIsRtl;
 }
 
 /**
@@ -380,7 +418,11 @@ function canonicalBracket(char) {
 function bracketPairAt(text, index) {
   /** @type {{ closing: string, at: number }[]} */
   const stack = [];
-  for (let at = 0; at < text.length; at = codePointEnd(text, at)) {
+  // Bounded like the other searches; a bracket whose partner is further away
+  // than this simply has no pair, which leaves it neutral.
+  const from = Math.max(0, index - MAX_SCAN_CHARACTERS);
+  const to = Math.min(text.length, index + MAX_SCAN_CHARACTERS);
+  for (let at = from; at < to; at = codePointEnd(text, at)) {
     const char = characterAt(text, at);
     // Only a bracket that is still neutral takes part; one that a preceding rule
     // already resolved is not a bracket for N0's purposes.
@@ -473,8 +515,8 @@ function characterIsRtl(text, index, resolveParagraphIsRtl) {
 
   // W1: a non-spacing mark takes the class of the character before it, and the
   // paragraph direction when there is none.
-  while (classOf(char) === CLASS_MARK) {
-    if (at === 0) return resolveParagraphIsRtl();
+  for (let budget = MAX_SCAN_CHARACTERS; classOf(char) === CLASS_MARK; budget -= 1) {
+    if (at <= 0 || budget <= 0) return resolveParagraphIsRtl();
     at = codePointStart(text, at - 1);
     char = characterAt(text, at);
   }
@@ -565,8 +607,8 @@ function nearestMeasuredCharacter(offset, text, measureCharRect, step) {
  * @returns {{ x: number, top: number, height: number } | null}
  */
 export function resolveCollapsedCaretGeometry(offset, text, measureCharRect, resolveParagraphIsRtl) {
-  const textLength = text?.length ?? 0;
-  if (!Number.isInteger(offset) || offset < 0 || offset > textLength) return null;
+  if (typeof text !== 'string') return null;
+  if (!Number.isInteger(offset) || offset < 0 || offset > text.length) return null;
 
   const previous = nearestMeasuredCharacter(offset, text, measureCharRect, -1);
   if (previous) {
