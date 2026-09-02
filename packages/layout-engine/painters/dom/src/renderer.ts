@@ -1058,29 +1058,114 @@ function svgEffectColor(value: TextEffectColor): string | undefined {
  * The column that owns a fragment spanning `[x, x + width)` in content-relative coordinates, or
  * `null` when it belongs to no column.
  *
- * Attribution is by OVERLAP rather than by containment of the origin, because an origin can sit
- * outside its own column in two ordinary cases: a paragraph with a negative `w:ind` hangs into the
- * gutter, and `resolveTableFrame` places a right-aligned or centred over-wide table at a negative
- * offset from its column. The paginator records `columnIndex` for tables and footnote bodies but
- * NOT for ordinary paragraphs, so an outdented paragraph alone in a later column reaches this
- * fallback — and answering `null` for it would suppress a separator Word draws.
+ * Four rules after the width bound, in this order, because each is wrong for the case the next one
+ * answers. `balanceSectionOnPage`'s `ordinalOf` asks the same four for the same reasons; the two
+ * differ only at the end, where a sort key must name a column and this may answer `null`.
  *
- * Anything at least as wide as the whole content area belongs to no column. That is what keeps
- * page-anchored objects out of the gate: `page.items` carries them, and a full-width watermark
- * overlaps every column without being content of any. The same rule catches an over-wide table that
- * reaches here without a recorded column, and `null` is the safe answer there too — it can only
- * ever suppress a separator, never invent one.
+ * 0. WIDTH BOUND. Anything at least as wide as the area it would have to be content OF belongs to no
+ *    column. That is what keeps page-anchored objects out of the gate: `page.items` carries them,
+ *    and a full-width watermark overlaps every column without being content of any. It comes first,
+ *    before every rule below: in a mirrored RTL strip the LAST column reaches furthest left, so a
+ *    watermark at x = 0 sits on that column's leading edge and would be read as content of it.
  *
- * Ties go to the earliest column in fill order, which arises only for an overfull explicit strip
- * whose columns genuinely overlap.
+ *    The area has two bounds and the threshold is the smaller, because either alone leaks. The
+ *    strip's own span, since explicit widths are not scaled to fill the page (see
+ *    `normalizeColumnLayout`) and an underfilling strip is narrower than the content area. And the
+ *    page content area, since those widths are not CAPPED either — nothing clamps their sum — so an
+ *    authored `w:num="2"` with two over-wide `w:col/@w` produces a strip WIDER than the page, and
+ *    against the strip bound alone a page-wide graphic measures as merely partial.
+ *
+ * 1. LEADING EDGE. A box that starts on a column's own edge is that column's, fit or no fit. That is
+ *    ordinary content, and it is also content WIDER than its column, which overflows from that same
+ *    edge. Asked before any overlap test, because an over-wide box can cover more of a wide
+ *    neighbour than of the narrow column it came from: `widths: [100, 400]` puts a 500px box that
+ *    starts at column 0's edge 100px into column 0 and 352px into column 1.
+ *
+ * 2. TRAILING EDGE — a different question, not a mirror of the first. An indent moves only the
+ *    leading edge, so a paragraph outdented FURTHER than the gutter has its origin inside the
+ *    PREVIOUS column while still ending exactly at its own column's trailing edge. And
+ *    `resolveTableFrame` places an over-wide table justified to `end` at a negative offset from its
+ *    own column, which likewise begins in an earlier column without ever having left its own.
+ *
+ * 3. THE ORIGIN, while the box still FITS the column it starts in. The fit is what makes the origin
+ *    evidence: a smaller indent leaves the origin inside its own column and the box inside it too. A
+ *    centred over-wide table also begins inside an earlier column, and there the origin is no
+ *    evidence at all — which is what the fit test rejects.
+ *
+ * 4. OVERLAP, for a box whose origin sits in no column: hung into a gutter by a negative `w:ind` or
+ *    a float offset. Ties go to the earliest column in fill order, which arises only for an overfull
+ *    strip whose columns genuinely overlap.
+ *
+ * `null` at the end is the safe answer here, unlike in `ordinalOf`, which must clamp because a sort
+ * key that is sometimes absent is not a total order. The question here is "does a LATER column hold
+ * content", so `null` can only ever suppress a separator, never invent one.
  */
-function columnOwningSpan(geometry: ColumnGeometry[], x: number, width: number): number | null {
+/**
+ * Sub-pixel slack for "this edge IS that column's edge". Column x values reach fragments through
+ * `getColumnX`, so unindented content matches exactly and this only absorbs float drift — it stays
+ * two orders of magnitude below the smallest indent a document can author (1 twip = 1/1440in).
+ */
+const COLUMN_EDGE_EPSILON = 0.01;
+
+function columnOwningSpan(
+  geometry: ColumnGeometry[],
+  x: number,
+  width: number,
+  contentWidth: number,
+): number | null {
   if (geometry.length === 0) return null;
 
   const span = Number.isFinite(width) && width > 0 ? width : 0;
-  const contentStart = Math.min(...geometry.map((col) => col.x));
-  const contentEnd = Math.max(...geometry.map((col) => col.x + col.width));
-  if (span >= contentEnd - contentStart) return null;
+  // Folded rather than spread into `Math.min`/`Math.max`: `w:num` is bounded at 45 by the schema but
+  // nothing in the pipeline enforces it, and a host-built layout with a six-figure count overflows
+  // the argument stack — a paint-time crash, from a function whose whole job is to answer
+  // conservatively.
+  let stripStart = Infinity;
+  let stripEnd = -Infinity;
+  for (const col of geometry) {
+    if (col.x < stripStart) stripStart = col.x;
+    if (col.x + col.width > stripEnd) stripEnd = col.x + col.width;
+  }
+  // The page bound applies only when the page reports a usable content width. A malformed page can
+  // report zero or a negative one, and letting that become the threshold would reject every fragment
+  // and blank out separators that belong on the page.
+  const pageSpan = Number.isFinite(contentWidth) && contentWidth > 0 ? contentWidth : Infinity;
+  if (span >= Math.min(stripEnd - stripStart, pageSpan)) return null;
+
+  // A box on a column's LEADING edge is that column's, fit or no fit. That covers ordinary content,
+  // and it covers content WIDER than its column, which overflows rightward from that same edge in
+  // either direction. Asked before any overlap test, because an over-wide box can cover more of a
+  // wide neighbour than of the narrow column it came from: `widths: [100, 400]` puts a 500px box
+  // that starts at column 0's edge 100px into column 0 and 352px into column 1.
+  for (const col of geometry) {
+    if (Math.abs(x - col.x) <= COLUMN_EDGE_EPSILON) return col.index;
+  }
+
+  // A box on a column's TRAILING edge is that column's too, and it is a different question rather
+  // than a mirror of the one above. An indent moves only the leading edge, so a paragraph outdented
+  // FURTHER than the gutter has its origin inside the previous column while still ending exactly at
+  // its own column's trailing edge — measured on equal 2-col geometry over 624px (col0 [0,288),
+  // col1 [336,624)): a column-1 paragraph outdented 72px is the box [264, 624]. And
+  // `resolveTableFrame` places an over-wide table justified to `end` at a NEGATIVE offset from its
+  // own column, which likewise begins inside an earlier column without ever having left its own.
+  for (const col of geometry) {
+    if (Math.abs(x + span - (col.x + col.width)) <= COLUMN_EDGE_EPSILON) return col.index;
+  }
+
+  // Containment of the origin, but only while the box still FITS the column it starts in. The fit is
+  // what makes the origin evidence of ownership: an indent moves a fragment's origin without
+  // changing which column it flows in, and it still ends inside that column. Content that starts in
+  // one column and ends past it has a shifted origin instead — an over-wide table justified to `end`
+  // begins inside an EARLIER column, having never left its own — and there the origin names the
+  // wrong column. Dropping the fit test suppressed a rule Word draws: a paragraph outdented further
+  // than the gutter has its origin in the previous column, so its own column read as empty. Measured
+  // on equal 2-col geometry over 624px (col0 [0,288), col1 [336,624)): a 100px fragment in column 1
+  // outdented 72px sits at origin 264, inside column 0, while overlap correctly answers 1.
+  const byOrigin = findColumnContaining(geometry, x);
+  if (byOrigin !== null) {
+    const originColumn = geometry.find((col) => col.index === byOrigin);
+    if (originColumn && x + span <= originColumn.x + originColumn.width + COLUMN_EDGE_EPSILON) return byOrigin;
+  }
 
   let best: number | null = null;
   let bestOverlap = 0;
@@ -1851,11 +1936,38 @@ export class DomPainter {
       for (const item of fragmentsInRegion) {
         // `page.items` are paint items; the engine`s record of the owning column lives on the
         // source fragment they point back to.
-        const owned = (item as { fragment?: { columnIndex?: number } }).fragment?.columnIndex;
+        const source = (item as { fragment?: { columnIndex?: number; isAnchored?: boolean } }).fragment;
+
+        // A FLOAT is not column content, and the width threshold below cannot recognise one. That
+        // threshold catches a full-width watermark, which is the case it was written for, but
+        // `page.items` is `page.fragments.map(...)` with no anchor filtering, and an anchored object
+        // carries its own `measure.width` — so a narrow one is the ordinary case, not the exception.
+        // A 200px logo placed at page x 500 on a 2-column page whose text never leaves column 0 has
+        // its origin inside column 1 and lit this gate, drawing a rule Word does not draw. The same
+        // logo 84px further left lands in the gutter and wins column 1 on overlap instead.
+        //
+        // Every float is excluded, not only the page-relative ones. `hRelativeFrom` is consumed at
+        // layout time and never reaches the fragment, so telling a page-anchored float from a
+        // column-anchored one here means reaching back through `item.block`, and I have no evidence
+        // about the case that would distinguish them: whether Word draws a rule beside a column
+        // holding a floating object and no text. Word's rule tracks text, and the gate is
+        // deliberately asymmetric — excluding an item can only ever suppress a rule, never invent
+        // one — so the conservative reading is also the simpler one. If a document turns up where
+        // Word draws that rule, the fix is to admit column-anchored floats specifically.
+        if (source?.isAnchored === true) continue;
+
+        // An out-of-range record is REJECTED, not clamped. Clamping turned any stale or corrupt value
+        // into a real column index — `columnIndex: 5` on a two-column page became 1 — which is
+        // exactly the "a later column holds content" this gate asks about, invented out of a number
+        // that describes no column on this page. Falling through to geometry answers from the
+        // fragment's actual position instead. Flooring first, so ordinary float drift on a valid
+        // index still resolves rather than being thrown away as out of range.
+        const owned = source?.columnIndex;
+        const recorded = typeof owned === 'number' && Number.isFinite(owned) ? Math.floor(owned) : null;
         const columnIndex =
-          typeof owned === 'number' && Number.isFinite(owned)
-            ? Math.max(0, Math.min(lastColumnIndex, Math.floor(owned)))
-            : columnOwningSpan(geometry, item.x - leftMargin, item.width);
+          recorded !== null && recorded >= 0 && recorded <= lastColumnIndex
+            ? recorded
+            : columnOwningSpan(geometry, item.x - leftMargin, item.width, contentWidth);
         if (columnIndex !== null) occupiedColumns.add(columnIndex);
       }
 
