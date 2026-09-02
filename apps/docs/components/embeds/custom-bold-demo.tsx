@@ -2,18 +2,16 @@
 
 import { Bold, Expand, Shrink } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CommandState, SuperDocUI } from 'superdoc/ui';
+import type { BorrowedSuperDocUI, CommandState } from 'superdoc/ui';
 import { CollapsibleEditorPreview } from './collapsible-editor-preview';
-import { createRuntimeEditor, loadRuntime, loadUIModule, type SuperDocInstance } from './superdoc-runtime';
+import { createRuntimeEditor, loadRuntime, type SuperDocInstance } from './superdoc-runtime';
 
 /**
  * The smallest complete custom control, running against a real Editor.
  *
- * The overview also carries a simulated state model, which is better at showing
- * the enabled/active/disabled combinations on demand. What it cannot do is prove
- * the integration: that a control reading `ui.commands` is wired to the same
- * document the reader is editing. This embed exists for that, and stays
- * deliberately small — one command, one receipt, no panels or lifecycle.
+ * The Commands and state page carries a simulated model for comparing command
+ * states. This embed proves the integration against a real document and stays
+ * deliberately small: one command, one result, no panels.
  */
 
 // Purpose-built for this page: three short paragraphs, no tracked changes or
@@ -31,7 +29,7 @@ export function CustomBoldDemo() {
   const rootRef = useRef<HTMLElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<SuperDocInstance | null>(null);
-  const uiRef = useRef<SuperDocUI | null>(null);
+  const uiRef = useRef<BorrowedSuperDocUI | null>(null);
   // Every startup is stamped with an id, and the component tracks whether it is
   // still mounted. Both guards exist because the async work below outlives the
   // attempt that began it: a retry, or an unmount, must not have its state
@@ -90,7 +88,6 @@ export function CustomBoldDemo() {
   const teardown = useCallback(() => {
     fitCleanupRef.current?.();
     fitCleanupRef.current = null;
-    uiRef.current?.destroy();
     uiRef.current = null;
     instanceRef.current?.destroy();
     instanceRef.current = null;
@@ -111,7 +108,7 @@ export function CustomBoldDemo() {
     setPending(false);
 
     try {
-      const [SuperDocCtor, { createSuperDocUI }] = await Promise.all([loadRuntime(), loadUIModule()]);
+      const SuperDocCtor = await loadRuntime();
       // Re-check after the await. Without this, a component unmounted during
       // the load would construct an instance nothing ever destroys — the
       // effect cleanup already ran, against still-null refs.
@@ -156,9 +153,8 @@ export function CustomBoldDemo() {
       });
       instanceRef.current = instance;
 
-      // The factory rather than `instance.ui`, because this component owns the
-      // controller's lifetime and tears it down with the embed.
-      const ui = createSuperDocUI({ superdoc: instance as never });
+      // The Editor owns this controller and tears it down with the instance.
+      const ui = instance.ui;
       uiRef.current = ui;
 
       // `commands.get(id)` returns a handle that observes just this command,

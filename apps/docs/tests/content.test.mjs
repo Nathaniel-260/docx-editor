@@ -18,6 +18,7 @@ const docsHomeUrl = new URL('../components/docs-home.tsx', import.meta.url);
 const builtInUiMetaUrl = new URL('../content/docs/editor/built-in-ui/meta.json', import.meta.url);
 const builtInUiMapUrl = new URL('../components/embeds/built-in-ui-map.tsx', import.meta.url);
 const editorDemoUrl = new URL('../components/embeds/editor-demo.tsx', import.meta.url);
+const customBoldDemoUrl = new URL('../components/embeds/custom-bold-demo.tsx', import.meta.url);
 const templatePopulationDemoUrl = new URL(
   '../components/embeds/template-population-demo.tsx',
   import.meta.url,
@@ -320,6 +321,13 @@ test('the editor demo runtime uses exact stable packages', async () => {
   assert.match(runtimeConfig.engineVersion, /^\d+\.\d+\.\d+$/u);
   assert.ok(engineSpecifier, `${runtimeConfig.enginePackage} must remain a SuperDoc dependency`);
   assert.equal(runtimeConfig.uiModulePath, superdocPackage.exports?.['./ui']?.import?.slice(1));
+});
+
+test('the custom UI overview demo uses the Editor-owned controller', async () => {
+  const demo = await readFile(customBoldDemoUrl, 'utf8');
+
+  assert.match(demo, /const ui = instance\.ui/u);
+  assert.doesNotMatch(demo, /\b(?:createSuperDocUI|loadUIModule)\b/u);
 });
 
 test('the built-in toolbar examples use canonical public item ids', async () => {

@@ -24,6 +24,11 @@ Use `getState()` for the initial framework-neutral value and `observe()` for upd
 
 Do not infer these fields from the document DOM. The canvas is the rendered document, not the public command-state boundary.
 
+Choose a sample selection below to see the state a custom Bold control receives. This model is simulated so you can
+compare enabled, active, and disabled states without finding each one in a DOCX.
+
+<CommandStateDemo />
+
 ## Keep unavailable controls understandable
 
 Disable a control when `enabled` is false. Use `reason` in a tooltip or nearby explanation when the cause is useful to the person editing.

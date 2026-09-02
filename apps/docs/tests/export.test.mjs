@@ -41,7 +41,7 @@ const routes = [
   ['editor/content-controls/fill-a-docx-template/index.html', 'Fill a DOCX template'],
   ['editor/content-controls/replace-clauses-from-your-application/index.html', 'Replace clauses from your application'],
   ['editor/content-controls/lock-template-fields/index.html', 'Lock template fields'],
-  ['editor/custom-ui/overview/index.html', 'Custom UI overview'],
+  ['editor/custom-ui/overview/index.html', 'Build a custom UI'],
   ['editor/custom-ui/controller-setup/index.html', 'Custom UI controller setup'],
   ['editor/custom-ui/react-setup/index.html', 'React custom UI setup'],
   ['editor/custom-ui/commands-and-state/index.html', 'Commands and state'],
@@ -520,9 +520,21 @@ test('exports the proofing guide with an interactive editor', async () => {
   assert.doesNotMatch(markdown, /<EditorDemo\b/);
 });
 
-test('exports the custom UI command-state model with a Markdown fallback', async () => {
+test('exports the custom UI overview with ownership and live-control fallbacks', async () => {
   const article = await readFile(new URL('../out/editor/custom-ui/overview/index.html', import.meta.url), 'utf8');
   const markdown = await readFile(new URL('../out/md/editor/custom-ui/overview.md', import.meta.url), 'utf8');
+
+  assert.match(article, /sd-cui-arch/);
+  assert.match(article, /data-custom-bold-demo="true"/);
+  assert.match(markdown, /> \*\*Diagram: the custom UI ownership boundary\*\*/);
+  assert.match(markdown, /> \*\*Live example: one custom control on a real document\*\*/);
+  assert.doesNotMatch(markdown, /<CustomUiArchitecture\b/);
+  assert.doesNotMatch(markdown, /<CustomBoldDemo\b/);
+});
+
+test('exports the custom UI command-state model with a Markdown fallback', async () => {
+  const article = await readFile(new URL('../out/editor/custom-ui/commands-and-state/index.html', import.meta.url), 'utf8');
+  const markdown = await readFile(new URL('../out/md/editor/custom-ui/commands-and-state.md', import.meta.url), 'utf8');
 
   assert.match(article, /data-command-state-demo="true"/);
   assert.match(article, /Selection drives command state/);
