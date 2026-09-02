@@ -1928,9 +1928,12 @@ export class DomPainter {
       // later column at all.
       //
       // `fragment.columnIndex` is the engine's own record of the owning column, and it is the
-      // first thing consulted. Today the paginator writes it for tables and footnote bodies but
-      // not for ordinary paragraphs, so the geometry fallback below carries most fragments and
-      // has to be right on its own.
+      // first thing consulted. It reaches only a few fragment kinds: tables (`layout-table.ts`,
+      // five sites), the three footnote body kinds in `incrementalLayout.ts`, and a paragraph ONLY
+      // when it is a collapsed split-line-break anchor carrier (`layout-paragraph.ts`, under
+      // `collapseSplitLineBreakCarrier`) — a narrow document shape, not the ordinary paragraph. So
+      // the geometry fallback below carries almost every fragment on the page and has to be right
+      // on its own; the record is a shortcut for the cases that keep one, not the main path.
       const lastColumnIndex = geometry.length - 1;
       const occupiedColumns = new Set<number>();
       for (const item of fragmentsInRegion) {
