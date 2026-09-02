@@ -1,0 +1,513 @@
+import { afterEach, describe, expect, it } from 'vite-plus/test';
+
+import {
+  detectCollapsedCaretRectQuirk,
+  installWebKitCollapsedCaretRectFix,
+  resolveCollapsedCaretGeometry,
+} from './webkit-collapsed-caret-rect.js';
+
+const CHAR_WIDTH = 10;
+const LINE_HEIGHT = 16;
+
+/** @returns {DOMRect} */
+const rect = (left, right, top = 0) => ({
+  left,
+  right,
+  top,
+  bottom: top + LINE_HEIGHT,
+  width: right - left,
+  height: LINE_HEIGHT,
+  x: left,
+  y: top,
+});
+
+/** Characters painted right-to-left from x=100: logical char 0 is the rightmost. */
+const rtlRun =
+  (length, rightEdge = 100) =>
+  (index) =>
+    index >= 0 && index < length ? rect(rightEdge - CHAR_WIDTH * (index + 1), rightEdge - CHAR_WIDTH * index) : null;
+
+/** Characters painted left-to-right from x=0: logical char 0 is the leftmost. */
+const ltrRun =
+  (length, leftEdge = 0) =>
+  (index) =>
+    index >= 0 && index < length ? rect(leftEdge + CHAR_WIDTH * index, leftEdge + CHAR_WIDTH * (index + 1)) : null;
+
+const RTL = () => true;
+const LTR = () => false;
+
+const HEBREW = 'שלום';
+const HEBREW_SPACE = `${HEBREW} `;
+
+/**
+ * An RTL paragraph whose Hebrew word is followed by a space and then a
+ * left-to-right tail. The tail is painted to the LEFT of the space, so its rects
+ * sit exactly where a continuing right-to-left run's rects would sit.
+ */
+const rtlThenLtrTail = (tail, head = HEBREW_SPACE) => {
+  const rtlHead = rtlRun(head.length);
+  const tailStart = 100 - CHAR_WIDTH * (head.length + tail.length);
+  const ltrTail = ltrRun(tail.length, tailStart);
+  return {
+    text: head + tail,
+    charRect: (index) => (index < head.length ? rtlHead(index) : ltrTail(index - head.length)),
+    tailStart,
+  };
+};
+
+describe('resolveCollapsedCaretGeometry', () => {
+  it('places the end-of-text caret at the logical end of an RTL run (issue #3943)', () => {
+    // "שלום " — the boundary WebKit refuses to measure. The caret belongs at the
+    // LEFT edge of the trailing space; taking its right edge (the LTR answer)
+    // paints the caret one character behind, which is the reported bug.
+    const geometry = resolveCollapsedCaretGeometry(5, HEBREW_SPACE, rtlRun(5), RTL);
+    expect(geometry?.x).toBe(100 - CHAR_WIDTH * 5);
+  });
+
+  it('places the end-of-text caret at the logical end of an LTR run', () => {
+    expect(resolveCollapsedCaretGeometry(6, 'hello ', ltrRun(6), LTR)?.x).toBe(CHAR_WIDTH * 6);
+  });
+
+  it('keeps the caret after a lone digit ending an RTL paragraph', () => {
+    // "שלום 1" — "עמוד 5" in the wild. The digit is a one-character
+    // left-to-right run, so the caret belongs at its RIGHT edge. Its rects are
+    // indistinguishable from a continuing RTL run, so only the character itself
+    // carries the answer.
+    const { text, charRect, tailStart } = rtlThenLtrTail('1');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH);
+  });
+
+  it('keeps the caret after a lone Latin letter ending an RTL paragraph', () => {
+    const { text, charRect, tailStart } = rtlThenLtrTail('A');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH);
+  });
+
+  it('keeps the caret after an Arabic-Indic digit, which is a number and orders LTR', () => {
+    // "صفحة ٥" — a page number in an Arabic document. The digit lives inside the
+    // Arabic block but is laid out left-to-right like any other number, so a
+    // plain block test would put the caret before it.
+    const { text, charRect, tailStart } = rtlThenLtrTail('٥', 'مرحبا ');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH);
+  });
+
+  it('keeps the caret after an extended Arabic-Indic digit', () => {
+    const { text, charRect, tailStart } = rtlThenLtrTail('۵', 'صفحه ');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH);
+  });
+
+  it('places the caret at the logical end of a trailing Arabic letter', () => {
+    const text = 'مرحبا';
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('treats a terminator glued to a number as part of that number (UBA W5)', () => {
+    // "50%" is one left-to-right run, so the caret belongs after the sign.
+    const { text, charRect, tailStart } = rtlThenLtrTail('50%');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH * 3);
+  });
+
+  it('does not join a terminator to an Arabic-Indic number, which UBA W5 excludes', () => {
+    // "نسبة ٥٠٪" — the percent sign follows Arabic-Indic digits, so it stays
+    // neutral and takes the paragraph's direction rather than the number's run.
+    const text = 'نسبة ٥٠٪';
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('gives a separator after a number the paragraph direction, not the number run', () => {
+    // A trailing comma is not part of the number, so it stays neutral.
+    const text = `${HEBREW_SPACE}1,`;
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('follows the character, not the paragraph, when an RTL paragraph ends in an LTR word', () => {
+    const { text, charRect, tailStart } = rtlThenLtrTail('Word');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH * 4);
+  });
+
+  it('places the caret at the logical end of a trailing Hebrew letter', () => {
+    const text = `${HEBREW} עולם`;
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('puts an interior caret at the logical end of the character before it', () => {
+    expect(resolveCollapsedCaretGeometry(2, HEBREW_SPACE, rtlRun(5), RTL)?.x).toBe(100 - CHAR_WIDTH * 2);
+    expect(resolveCollapsedCaretGeometry(2, 'hello ', ltrRun(6), LTR)?.x).toBe(CHAR_WIDTH * 2);
+  });
+
+  it('places the start-of-text caret at the logical start of the first character', () => {
+    expect(resolveCollapsedCaretGeometry(0, HEBREW_SPACE, rtlRun(5), RTL)?.x).toBe(100);
+    expect(resolveCollapsedCaretGeometry(0, 'hello ', ltrRun(6), LTR)?.x).toBe(0);
+  });
+
+  it('takes the paragraph direction for a neutral character, which carries none of its own', () => {
+    expect(resolveCollapsedCaretGeometry(1, ' ', rtlRun(1), RTL)?.x).toBe(100 - CHAR_WIDTH);
+    expect(resolveCollapsedCaretGeometry(1, ' ', ltrRun(1), LTR)?.x).toBe(CHAR_WIDTH);
+  });
+
+  it('does not read the paragraph direction for a character that carries its own', () => {
+    // Reading it forces a style recalc, and this runs per synthesized caret.
+    let reads = 0;
+    const countingDirection = () => {
+      reads += 1;
+      return true;
+    };
+    resolveCollapsedCaretGeometry(4, HEBREW_SPACE, rtlRun(5), countingDirection);
+    expect(reads).toBe(0);
+  });
+
+  it('classifies a surrogate pair as one character rather than as half of one', () => {
+    // An astral RTL letter (Phoenician alf) closing an LTR paragraph. Reading
+    // only the low surrogate would see no letter at all, fall through to the
+    // paragraph, and put the caret on the wrong edge.
+    const text = 'abc𐤀';
+    expect(resolveCollapsedCaretGeometry(text.length, text, ltrRun(text.length), LTR)?.x).toBe(
+      CHAR_WIDTH * (text.length - 1),
+    );
+  });
+
+  it('carries the glyph vertical metrics onto the caret', () => {
+    expect(resolveCollapsedCaretGeometry(5, HEBREW_SPACE, rtlRun(5), RTL)).toMatchObject({
+      top: 0,
+      height: LINE_HEIGHT,
+    });
+  });
+
+  it('returns nothing when no glyph can be measured or the offset is out of range', () => {
+    expect(resolveCollapsedCaretGeometry(0, '', () => null, RTL)).toBeNull();
+    expect(resolveCollapsedCaretGeometry(2, 'ab', () => null, RTL)).toBeNull();
+    expect(resolveCollapsedCaretGeometry(3, 'ab', rtlRun(2), RTL)).toBeNull();
+    expect(resolveCollapsedCaretGeometry(-1, 'ab', rtlRun(2), RTL)).toBeNull();
+  });
+});
+
+/**
+ * A window whose ranges reproduce the WebKit defect: RTL text laid out
+ * right-to-left, with no client rects for a collapsed range at the end of a text
+ * node the browser refuses to measure.
+ *
+ * @param {{ isBrokenBoundary?: (text: string) => boolean, phantomGlyphRects?: boolean }} [options]
+ */
+function createFakeWindow({ isBrokenBoundary = (text) => /[ \t]$/.test(text), phantomGlyphRects = false } = {}) {
+  const bodyChildren = [];
+
+  class FakeDOMRect {
+    constructor(x, y, width, height) {
+      this.x = x;
+      this.y = y;
+      this.width = width;
+      this.height = height;
+      this.left = x;
+      this.right = x + width;
+      this.top = y;
+      this.bottom = y + height;
+    }
+  }
+
+  class FakeRange {
+    setStart(node, offset) {
+      this.startContainer = node;
+      this.startOffset = offset;
+      this.endContainer = node;
+      this.endOffset = offset;
+      this.collapsed = true;
+    }
+    setEnd(node, offset) {
+      this.endContainer = node;
+      this.endOffset = offset;
+      this.collapsed = this.startOffset === offset;
+    }
+    collapse() {
+      this.endOffset = this.startOffset;
+      this.collapsed = true;
+    }
+    // The browser's own measurement. Both public methods read it directly, so
+    // neither can be satisfied by the other one's patch.
+    measure() {
+      const text = this.startContainer?.data ?? '';
+      if (!this.collapsed) {
+        const glyph = rtlRun(text.length)(this.startOffset);
+        if (!glyph) return [];
+        // WebKit prefixes a zero-width sentinel parked on the previous line when
+        // a glyph opens a new line or a new bidi run.
+        return phantomGlyphRects ? [rect(999, 999, 100), glyph] : [glyph];
+      }
+      if (this.startOffset === text.length && isBrokenBoundary(text)) return [];
+      return [rect(100 - CHAR_WIDTH * this.startOffset, 100 - CHAR_WIDTH * this.startOffset)];
+    }
+    getClientRects() {
+      return this.measure();
+    }
+    getBoundingClientRect() {
+      return this.measure()[0] ?? new FakeDOMRect(0, 0, 0, 0);
+    }
+  }
+
+  const createTextNode = (data, parentElement) => ({ nodeType: 3, data, parentElement, ownerDocument: null });
+
+  const createElement = () => {
+    const element = {
+      style: { cssText: '' },
+      firstChild: null,
+      setAttribute: () => {},
+      appendChild: (child) => child,
+      remove: () => {},
+      set textContent(value) {
+        this.firstChild = createTextNode(value, this);
+        this.firstChild.ownerDocument = document;
+      },
+    };
+    return element;
+  };
+
+  const document = {
+    createRange: () => new FakeRange(),
+    createElement,
+    body: {
+      appendChild: (element) => {
+        bodyChildren.push(element);
+      },
+    },
+  };
+
+  const window = {
+    Range: FakeRange,
+    DOMRect: FakeDOMRect,
+    document,
+    getComputedStyle: (element) => ({
+      display: element?.display ?? 'block',
+      direction: element?.direction ?? 'rtl',
+    }),
+  };
+  document.defaultView = window;
+
+  /**
+   * A text node painted inside (or outside) a mounted SuperDoc runtime.
+   *
+   * `runDirection` wraps it in an inline run span carrying its own `dir`, which
+   * is what the painter emits around a numeric or Latin run.
+   */
+  const textNode = (data, { owned = true, runDirection = null, paragraphDirection = 'rtl' } = {}) => {
+    const runtimeRoot = { tagName: 'DIV' };
+    const closest = (selector) => (owned && selector === '[data-superdoc-runtime-id]' ? runtimeRoot : null);
+    const paragraph = { tagName: 'DIV', display: 'block', direction: paragraphDirection, closest };
+    const parentElement = runDirection
+      ? { tagName: 'SPAN', display: 'inline', direction: runDirection, parentElement: paragraph, closest }
+      : paragraph;
+    const node = createTextNode(data, parentElement);
+    node.ownerDocument = document;
+    return node;
+  };
+
+  const caretAt = (node, offset) => {
+    const range = new FakeRange();
+    range.setStart(node, offset);
+    range.collapse();
+    return range;
+  };
+
+  return { window, document, FakeRange, textNode, caretAt, bodyChildren };
+}
+
+describe('detectCollapsedCaretRectQuirk', () => {
+  it('reports the quirk when the control boundary measures but the target one does not', () => {
+    expect(detectCollapsedCaretRectQuirk(createFakeWindow().document)).toBe('quirk');
+  });
+
+  it('reports the quirk from any probed boundary, not only the trailing-space one', () => {
+    // A WebKit that fixed only RTL trailing whitespace still misplaces the caret
+    // after a trailing digit, so detection must not hinge on a single case.
+    const partiallyFixed = createFakeWindow({ isBrokenBoundary: (text) => /\d$/.test(text) });
+    expect(detectCollapsedCaretRectQuirk(partiallyFixed.document)).toBe('quirk');
+  });
+
+  it('reports a correct engine as clean', () => {
+    expect(detectCollapsedCaretRectQuirk(createFakeWindow({ isBrokenBoundary: () => false }).document)).toBe('clean');
+  });
+
+  it('reports an environment without layout as unknown, not as a quirk', () => {
+    // happy-dom returns no client rects at all, exactly like jsdom and SSR. An
+    // engine cannot be called quirky for measuring nothing anywhere.
+    expect(detectCollapsedCaretRectQuirk(document)).toBe('unknown');
+    expect(detectCollapsedCaretRectQuirk(null)).toBe('unknown');
+    expect(detectCollapsedCaretRectQuirk(undefined)).toBe('unknown');
+  });
+
+  it('reports unknown instead of throwing when the host has broken the DOM it needs', () => {
+    const { document: doc } = createFakeWindow();
+    doc.createElement = () => {
+      throw new Error('host instrumentation');
+    };
+    expect(detectCollapsedCaretRectQuirk(doc)).toBe('unknown');
+  });
+});
+
+describe('installWebKitCollapsedCaretRectFix', () => {
+  // The suite asserts against the real test-env window; make sure a runner that
+  // ever reports layout cannot leave this realm patched for other suites.
+  const nativeGetClientRects = Range.prototype.getClientRects;
+  const nativeGetBoundingClientRect = Range.prototype.getBoundingClientRect;
+  afterEach(() => {
+    Range.prototype.getClientRects = nativeGetClientRects;
+    Range.prototype.getBoundingClientRect = nativeGetBoundingClientRect;
+  });
+
+  it('does not patch a browser that measures the boundary correctly', () => {
+    expect(installWebKitCollapsedCaretRectFix(window)).toBeNull();
+    expect(installWebKitCollapsedCaretRectFix(createFakeWindow({ isBrokenBoundary: () => false }).window)).toBeNull();
+    expect(installWebKitCollapsedCaretRectFix(null)).toBeNull();
+    expect(installWebKitCollapsedCaretRectFix({})).toBeNull();
+  });
+
+  it('answers the unmeasurable caret with the logical end of the trailing space', () => {
+    const { window: quirky, textNode, caretAt } = createFakeWindow();
+    const uninstall = installWebKitCollapsedCaretRectFix(quirky);
+    expect(uninstall).toBeTypeOf('function');
+
+    const range = caretAt(textNode(HEBREW_SPACE), 5);
+    const rects = Array.from(range.getClientRects());
+    expect(rects).toHaveLength(1);
+    // Logical end of the RTL run: the LEFT edge of the trailing space.
+    expect(rects[0].left).toBe(100 - CHAR_WIDTH * 5);
+    expect(rects[0].width).toBe(0);
+    expect(rects[0].height).toBe(LINE_HEIGHT);
+    expect(range.getBoundingClientRect().left).toBe(100 - CHAR_WIDTH * 5);
+
+    uninstall();
+  });
+
+  it('reads the paragraph direction, not the direction of the inline run span', () => {
+    // The painter puts `dir` on individual run spans, but a neutral at the end
+    // of a line takes the direction of the block that contains it.
+    const { window: quirky, textNode, caretAt } = createFakeWindow();
+    const uninstall = installWebKitCollapsedCaretRectFix(quirky);
+
+    const inLtrRunSpan = caretAt(textNode(HEBREW_SPACE, { runDirection: 'ltr' }), 5);
+    expect(Array.from(inLtrRunSpan.getClientRects())[0].left).toBe(100 - CHAR_WIDTH * 5);
+
+    uninstall();
+  });
+
+  it('leaves text outside a mounted SuperDoc runtime to the browser', () => {
+    // The patch is global, so the host page's own ranges must keep the browser's
+    // answer byte for byte — including "no rects", which hosts read as
+    // "not rendered".
+    const { window: quirky, textNode, caretAt } = createFakeWindow();
+    const uninstall = installWebKitCollapsedCaretRectFix(quirky);
+
+    const outside = caretAt(textNode(HEBREW_SPACE, { owned: false }), 5);
+    expect(Array.from(outside.getClientRects())).toHaveLength(0);
+    expect(outside.getBoundingClientRect().height).toBe(0);
+
+    uninstall();
+  });
+
+  it('ignores the zero-width sentinel WebKit puts in front of a glyph', () => {
+    const { window: quirky, textNode, caretAt } = createFakeWindow({ phantomGlyphRects: true });
+    const uninstall = installWebKitCollapsedCaretRectFix(quirky);
+
+    const caret = Array.from(caretAt(textNode(HEBREW_SPACE), 5).getClientRects())[0];
+    // Taking the sentinel would put the caret at x=999 on the previous line.
+    expect(caret.left).toBe(100 - CHAR_WIDTH * 5);
+    expect(caret.top).toBe(0);
+
+    uninstall();
+  });
+
+  it('passes a boundary the browser does measure straight through', () => {
+    const { window: quirky, textNode, caretAt } = createFakeWindow();
+    const uninstall = installWebKitCollapsedCaretRectFix(quirky);
+
+    expect(Array.from(caretAt(textNode(HEBREW_SPACE), 3).getClientRects())[0].left).toBe(100 - CHAR_WIDTH * 3);
+    uninstall();
+  });
+
+  it('leaves a non-collapsed range and a non-text range alone', () => {
+    const { window: quirky, document: doc, FakeRange, textNode } = createFakeWindow();
+    const uninstall = installWebKitCollapsedCaretRectFix(quirky);
+
+    const spanning = new FakeRange();
+    spanning.setStart(textNode(HEBREW_SPACE), 0);
+    spanning.setEnd(spanning.startContainer, 5);
+    expect(Array.from(spanning.getClientRects())).toHaveLength(1);
+
+    const element = new FakeRange();
+    element.setStart({ nodeType: 1, ownerDocument: doc }, 0);
+    element.collapse();
+    expect(Array.from(element.getClientRects())).toHaveLength(1);
+
+    uninstall();
+  });
+
+  it('returns a DOMRectList-like result rather than an Array', () => {
+    const { window: quirky, textNode, caretAt } = createFakeWindow();
+    const uninstall = installWebKitCollapsedCaretRectFix(quirky);
+
+    const rects = caretAt(textNode(HEBREW_SPACE), 5).getClientRects();
+    expect(Array.isArray(rects)).toBe(false);
+    expect(rects.length).toBe(1);
+    expect(rects[0]).toBeDefined();
+    expect(rects.item(0)).toBe(rects[0]);
+    expect(rects.item(1)).toBeNull();
+    expect([...rects]).toHaveLength(1);
+    expect(Array.from(rects)).toHaveLength(1);
+
+    uninstall();
+  });
+
+  it('installs once and restores the native methods on uninstall', () => {
+    const { window: quirky, FakeRange } = createFakeWindow();
+    const native = FakeRange.prototype.getClientRects;
+
+    const uninstall = installWebKitCollapsedCaretRectFix(quirky);
+    expect(FakeRange.prototype.getClientRects).not.toBe(native);
+
+    const patched = FakeRange.prototype.getClientRects;
+    const second = installWebKitCollapsedCaretRectFix(quirky);
+    expect(FakeRange.prototype.getClientRects).toBe(patched);
+    second?.();
+
+    uninstall?.();
+    expect(FakeRange.prototype.getClientRects).toBe(native);
+  });
+
+  it('probes a correct engine only once, however many editors are constructed', () => {
+    // The probe forces a layout and delivers mutation records to any host
+    // observing document.body, so it must not repeat per editor.
+    const { window: clean, bodyChildren } = createFakeWindow({ isBrokenBoundary: () => false });
+    installWebKitCollapsedCaretRectFix(clean);
+    installWebKitCollapsedCaretRectFix(clean);
+    installWebKitCollapsedCaretRectFix(clean);
+    expect(bodyChildren).toHaveLength(1);
+  });
+
+  it('declines instead of throwing when the realm refuses the patch', () => {
+    // SES/Lockdown and similar hardened embeds freeze built-in prototypes. A
+    // caret workaround must never reject the engine-load promise, which would
+    // drop the editor to its fail-closed stub.
+    const { window: quirky, FakeRange } = createFakeWindow();
+    const native = FakeRange.prototype.getClientRects;
+    Object.freeze(FakeRange.prototype);
+
+    expect(installWebKitCollapsedCaretRectFix(quirky)).toBeNull();
+    expect(FakeRange.prototype.getClientRects).toBe(native);
+  });
+
+  it('declines instead of throwing when the host has instrumented the DOM', () => {
+    const { window: quirky, document: doc, FakeRange } = createFakeWindow();
+    const native = FakeRange.prototype.getClientRects;
+    doc.body.appendChild = () => {
+      throw new Error('host instrumentation');
+    };
+
+    expect(installWebKitCollapsedCaretRectFix(quirky)).toBeNull();
+    expect(FakeRange.prototype.getClientRects).toBe(native);
+  });
+});
