@@ -436,6 +436,65 @@ describe('columnRenderLayoutsEqual (SD-2629)', () => {
     expect(columnRenderLayoutsEqual(explicit([48, 48, 999]), explicit([48, 48]))).toBe(true);
   });
 
+  it('ignores a scalar gap that explicit per-column gaps have made unreachable', () => {
+    const explicit = (gap: number, gaps?: number[]): ColumnLayout => ({
+      count: 3,
+      gap,
+      widths: [100, 100, 300],
+      equalWidth: false,
+      ...(gaps ? { gaps } : {}),
+    });
+
+    // `gaps` supplies BOTH gutters, so geometry never reaches the scalar fallback and these two draw
+    // the same three columns in the same places. The scalar comparison used to run ahead of the mode
+    // branch and split anyway — a mid-page region break plus a cache flush over a value nothing
+    // read, which restarts the following content in column 0.
+    expect(columnRenderLayoutsEqual(explicit(24, [30, 40]), explicit(900, [30, 40]))).toBe(true);
+
+    // The moment the array stops supplying a gutter, the scalar IS that gutter and has to
+    // discriminate again.
+    expect(columnRenderLayoutsEqual(explicit(24, [30]), explicit(900, [30]))).toBe(false);
+    expect(columnRenderLayoutsEqual(explicit(24), explicit(900))).toBe(false);
+
+    // Equal mode reads the scalar twice over — as every gutter, and as what normalization subtracts
+    // before dividing the content area — so it still splits there.
+    expect(columnRenderLayoutsEqual({ count: 3, gap: 24 }, { count: 3, gap: 40 })).toBe(false);
+  });
+
+  it('still splits explicit sub-pixel widths on the scalar gap alone', () => {
+    // The one route by which the scalar reaches explicit WIDTHS rather than the gutters: normalize
+    // floors a fabricated width at 1px, and collapses to a single full-width column once the usable
+    // width falls to epsilon — both keyed on the sign of `contentWidth - gap * (count - 1)`, which
+    // the scalar moves. It can only bite when an authored width is ITSELF sub-pixel, because at 1px
+    // or more the floor and the collapse are no-ops, which is why the two tests above are unaffected.
+    //
+    // Measured at contentWidth 720: `[0.5, 0.5, 0.5]` renders as three 1px columns under gap 24 and
+    // as three 0.5px ones under gap 999, and at 1e-5 the second collapses to one 720px column. So
+    // these pairs must NOT compare equal, even though `gaps` supplies every gutter.
+    const subPixel = (gap: number): ColumnLayout => ({
+      count: 3,
+      gap,
+      widths: [0.5, 0.5, 0.5],
+      equalWidth: false,
+      gaps: [1, 1],
+    });
+    expect(columnRenderLayoutsEqual(subPixel(24), subPixel(999))).toBe(false);
+    // Same scalar on both sides is still equal — the guard keys on the gap differing, not on the
+    // widths being small.
+    expect(columnRenderLayoutsEqual(subPixel(24), subPixel(24))).toBe(true);
+
+    // A whole-pixel width is immune, which is the property that keeps this off every real document:
+    // no `w:col/@w` a document can author lands under 1px except at absurd twip values.
+    const wholePixel = (gap: number): ColumnLayout => ({
+      count: 3,
+      gap,
+      widths: [1, 1, 1],
+      equalWidth: false,
+      gaps: [1, 1],
+    });
+    expect(columnRenderLayoutsEqual(wholePixel(24), wholePixel(999))).toBe(true);
+  });
+
   it('distinguishes explicit vs equal mode and different resolved widths', () => {
     expect(
       columnRenderLayoutsEqual({ count: 2, gap: 24, widths: [192, 384], equalWidth: false }, { count: 2, gap: 24 }),

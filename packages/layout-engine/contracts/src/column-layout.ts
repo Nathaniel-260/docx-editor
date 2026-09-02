@@ -412,7 +412,6 @@ export function columnRenderLayoutsEqual(a?: ColumnLayout, b?: ColumnLayout): bo
   const mode = resolveColumnMode(a);
   if (mode !== resolveColumnMode(b)) return false;
   if (resolveColumnCount(a) !== resolveColumnCount(b)) return false;
-  if ((a.gap ?? 0) !== (b.gap ?? 0)) return false;
   if (Boolean(a.withSeparator) !== Boolean(b.withSeparator)) return false;
   // Direction IS paint-significant: it decides which side column 0 lands on, so two layouts that
   // differ only here must split regions and invalidate the normalized-columns cache.
@@ -438,6 +437,32 @@ export function columnRenderLayoutsEqual(a?: ColumnLayout, b?: ColumnLayout): bo
       return false;
     }
     if (!widthsEqual(ra.widths, rb.widths)) return false;
+    // The one way the scalar still reaches explicit WIDTHS: `normalizeColumnLayout` floors a
+    // fabricated width at 1px, and collapses to a single column when the usable width falls to
+    // epsilon — both gated on the sign of `contentWidth - gap * (count - 1)`, which the scalar moves.
+    // It only bites when an authored width is itself sub-pixel (under ~15 twips), because at 1px or
+    // more the floor and the collapse are both no-ops. Rather than model a content-width-dependent
+    // branch in a predicate documented as content-width-INDEPENDENT, refuse to call such a pair equal
+    // at all: `{widths: [0.5, 0.5, 0.5], gaps: [1, 1]}` renders as three 1px columns under one scalar
+    // gap and three 0.5px columns under another, and at 1e-5 the second collapses to one full-width
+    // column. Costs nothing on any real document.
+    const hasSubPixelWidth = (resolved: ColumnLayout): boolean => (resolved.widths ?? []).some((w) => w < 1);
+    if ((hasSubPixelWidth(ra) || hasSubPixelWidth(rb)) && (a.gap ?? 0) !== (b.gap ?? 0)) return false;
+  } else if ((a.gap ?? 0) !== (b.gap ?? 0)) {
+    // Equal mode reads the scalar gap twice over — it IS every gutter, and `normalizeColumnLayout`
+    // subtracts the total from the content area before dividing it, so it sets the column width as
+    // well. Nothing else can stand in for it here.
+    //
+    // Explicit mode deliberately does NOT compare it on its own. There the scalar is only the
+    // fallback for a gutter `gaps` does not supply, and `effectiveColumnGaps` above already folds it
+    // in at exactly that position — so a layout whose `gaps` spell out every gutter renders
+    // identically no matter what the scalar says, and comparing it separately split a region and
+    // invalidated the normalized-columns cache over a value nothing read. (The scalar can still
+    // reach explicit widths through the sub-pixel `Math.max(1, …)` floor, which turns on the sign of
+    // `contentWidth - gap * (count - 1)`; that is content-width-dependent, and this predicate is
+    // documented as content-width-INDEPENDENT — the widths comparison does not model the floor
+    // either.)
+    return false;
   }
   return true;
 }
