@@ -536,13 +536,13 @@ describe('balanceSectionOnPage', () => {
     expect(new Set(fragments.map((f) => f.x)).size).toBe(2);
   });
 
-  it('keeps document order for an over-wide anchored table that recorded no column', () => {
-    // The test above leans on the columnIndex the paginator recorded. An ANCHORED table has none:
-    // `createAnchoredTableFragment` never sets the field, so a floating over-wide table reaches the
-    // geometric fallback with nothing but its box. Answering from the box's ORIGIN gets it wrong,
-    // because resolveTableFrame's right-aligned placement puts that origin inside an EARLIER column
-    // — and `end` is the default justification for any w:bidiVisual table, so this is the common
-    // shape, not an exotic one. Its trailing edge is what still lands on its own column's edge.
+  it('keeps document order for an over-wide anchored table by the column it recorded', () => {
+    // Same shape as the test above, reached the other way: an ANCHORED table.
+    // `createAnchoredTableFragment` used to record no column at all, which left a floating over-wide
+    // table to be placed from its box alone — and its box cannot say which column owns it, because
+    // resolveTableFrame's `end` placement (the default for any w:bidiVisual table) puts its origin
+    // inside an EARLIER column while its trailing edge sits on its own. The factory now writes
+    // `state.columnIndex`, so the record answers it.
     const top = 96;
     const LEFT = 96;
     const RIGHT = 432;
@@ -550,8 +550,8 @@ describe('balanceSectionOnPage', () => {
       { blockId: '', x: LEFT, y: top, width: 288, kind: 'para' },
       { blockId: '', x: LEFT, y: top + 20, width: 288, kind: 'para' },
       { blockId: '', x: LEFT, y: top + 40, width: 288, kind: 'para' },
-      // Identical to the recorded-column case (432 + (288 - 500) = 220) with the record removed.
-      { blockId: '', x: 220, y: top, width: 500, kind: 'table' },
+      // 432 + (288 - 500) = 220, an origin that lands inside the FIRST column's span.
+      { blockId: '', x: 220, y: top, width: 500, kind: 'table', columnIndex: 1 },
       { blockId: '', x: RIGHT, y: top + 20, width: 288, kind: 'para' },
       { blockId: '', x: RIGHT, y: top + 40, width: 288, kind: 'para' },
     ];
@@ -579,8 +579,8 @@ describe('balanceSectionOnPage', () => {
     });
 
     expect(result).not.toBeNull();
-    // Containment on the origin put it in column 0 and hoisted it above the two paragraphs that
-    // precede it there.
+    // Without the record, containment on the origin puts it in column 0 and hoists it above the two
+    // paragraphs that precede it there.
     expect(readingOrder(fragments, LEFT)).toEqual([0, 1, 2, 3, 4, 5]);
     expect(new Set(fragments.map((f) => f.x)).size).toBe(2);
   });
@@ -689,30 +689,49 @@ describe('balanceSectionOnPage', () => {
       ]);
     });
 
-    it('reads a table as wide as the whole content area from its leading edge', () => {
-      // A table at column 0's left edge that spans the entire content area ENDS exactly on column
-      // 1's trailing edge. The trailing-edge rule below would therefore claim it for column 1, which
-      // is why the leading edge has to be asked first: content overflows rightward from its own
-      // column's start, so a leading-edge match settles ownership on its own.
+    it('reads a table as wide as the whole content area from its own column', () => {
+      // A table at column 0's left edge spanning the entire content area. Its origin IS column 0's
+      // origin, so containment answers it without needing to reason about the overhang at all.
       expect(orderWith(1, { blockId: '', x: LEFT, y: 0, width: 420, kind: 'table', height: 20 })).toEqual([0, 1, 2, 3]);
     });
 
-    it('reads a right-aligned over-wide table from its trailing edge', () => {
-      // resolveTableFrame places an over-wide table that justifies to `end` at
-      // `col.x + (col.width - width)`: 316 + (200 - 600) = -84, so it starts left of the page's
-      // content area entirely. Overlap cannot settle this one — the table covers 200px of column 0
-      // and 200px of column 1, an exact tie that resolves to the EARLIER column and pulls the table
-      // ahead of the paragraphs it follows. Its trailing edge still lands on column 1's, and `end`
-      // is the default justification for any w:bidiVisual table, so this is the common shape.
-      expect(orderWith(2, { blockId: '', x: -84, y: 0, width: 600, kind: 'table', height: 20 })).toEqual([0, 1, 2, 3]);
+    it('resolves an over-wide table from its record, because its box cannot', () => {
+      // These two boxes are THE SAME box. resolveTableFrame places a 600px `end`-justified table in
+      // column 1 at 316 + (200 - 600) = -84, spanning content-relative -180..420. A 400px table
+      // centred in column 1 sits at 216, spanning 120..420. Both end on column 1's trailing edge;
+      // both begin inside column 0; and for the pair below they even overlap the two columns
+      // identically. Nothing about either box distinguishes it from a box of the same shape whose
+      // owner is column 0 — see the content-area-wide case further down, which really does belong to
+      // column 0 while ending on a later column's trailing edge. Only the record settles it.
+      expect(
+        orderWith(2, { blockId: '', x: -84, y: 0, width: 600, kind: 'table', height: 20, columnIndex: 1 }),
+      ).toEqual([0, 1, 2, 3]);
+      expect(
+        orderWith(2, { blockId: '', x: 216, y: 0, width: 400, kind: 'table', height: 20, columnIndex: 1 }),
+      ).toEqual([0, 1, 2, 3]);
     });
 
-    it('reads a centred over-wide table from the column it covers, not the one it starts in', () => {
-      // Centred, an over-wide table lands on NEITHER column edge: 316 + (200 - 400) / 2 = 216, ending
-      // at 616. Its origin sits inside column 0, so containment names column 0 — and that is why
-      // containment only counts when the box FITS the column it starts in. It does not here, so
-      // overlap decides, and the table covers 200px of column 1 against 80px of column 0.
-      expect(orderWith(2, { blockId: '', x: 216, y: 0, width: 400, kind: 'table', height: 20 })).toEqual([0, 1, 2, 3]);
+    it('reads an outdented paragraph from the column it covers, not the one its origin fell into', () => {
+      // A negative `w:ind w:left` moves the origin OUT of its column and widens the fragment by the
+      // same amount. An outdent larger than the gutter therefore lands the origin inside the
+      // PREVIOUS column: a 50px outdent in column 1 gives x 266 (316 - 50) with width 250
+      // (200 + 50), and 266 is inside column 0's span of 96..296. Containment alone names column 0
+      // and pulls the paragraph ahead of column 0's own content.
+      //
+      // This is what the width gate is for. 250 does not fit column 0's 200, so the origin is not
+      // evidence of ownership, and the overlap vote decides: 30px of column 0 against the whole
+      // 200px of column 1.
+      expect(orderWith(2, { blockId: '', x: 266, y: 0, width: 250, kind: 'para' })).toEqual([0, 1, 2, 3]);
+    });
+
+    it('keeps a right-aligned float paragraph in the column its origin sits in', () => {
+      // `layout-paragraph.ts` re-points a `floatAlignment: 'right'` fragment at
+      // `columnX + (columnWidth - maxLineWidth)` and does NOT reduce its width, so a 50px line in a
+      // 200px column yields x 246 with width still 200 — an origin inside its own column and a right
+      // edge 150px past it. This is why the origin must NOT be gated on the box fitting its column:
+      // gating it sent this to an overlap vote, which sees 50px in column 0 against 130px in column
+      // 1 and moves the paragraph to the end of the page.
+      expect(orderWith(1, { blockId: '', x: LEFT + 150, y: 0, width: 200, kind: 'para' })).toEqual([0, 1, 2, 3]);
     });
   });
 
@@ -725,13 +744,12 @@ describe('balanceSectionOnPage', () => {
     const RIGHT = 432;
     const placements: TestFragment[] = [
       { blockId: '', x: LEFT, y: top, width: 288, kind: 'para' },
-      // Indented 36px inside column 0 and 88px short of its trailing edge, so it lands on NEITHER
-      // column edge and the origin is all there is to go on. Its own column is still the only one
-      // it overlaps.
-      { blockId: '', x: LEFT + 36, y: top + 20, width: 200, kind: 'para' },
+      // A real `w:ind w:left` of 36px: the origin moves in by 36 and the width comes DOWN by 36, so
+      // the fragment lands on neither column edge and the origin is all there is to go on.
+      { blockId: '', x: LEFT + 36, y: top + 20, width: 252, kind: 'para' },
       { blockId: '', x: LEFT, y: top + 40, width: 288, kind: 'para' },
       // The same indent in column 1.
-      { blockId: '', x: RIGHT + 36, y: top, width: 200, kind: 'para' },
+      { blockId: '', x: RIGHT + 36, y: top, width: 252, kind: 'para' },
       { blockId: '', x: RIGHT, y: top + 20, width: 288, kind: 'para' },
     ];
     const fragments: TestFragment[] = [];
@@ -759,6 +777,60 @@ describe('balanceSectionOnPage', () => {
 
     expect(result).not.toBeNull();
     expect(readingOrder(fragments, LEFT)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('keeps a content-area-wide centred box in the column it was centred in', () => {
+    // The counter-example that makes a trailing-edge rule unusable. Three 192px columns over a 624px
+    // content area with 24px gutters sit at 0 / 216 / 432. A box the full width of the content area,
+    // centred in column 0, is placed at 0 + (192 - 624) / 2 = -216 and so spans -216..408 — and 408
+    // is EXACTLY column 1's trailing edge (216 + 192). Reading the trailing edge therefore hands a
+    // column-0 box to column 1. It is not a coincidence of these numbers: for a content-area-wide box
+    // centred in column 0 the right edge is (columnWidth + contentWidth) / 2, which lands on the
+    // middle column's trailing edge for every odd column count.
+    //
+    // The origin is outside every column here, so the overlap vote decides, and the box covers
+    // column 0 and column 1 equally — 192px each — which the vote breaks toward the earlier column.
+    const top = 96;
+    const COLS = [96, 312, 528];
+    const placements: TestFragment[] = [
+      { blockId: '', x: COLS[0], y: top, width: 192, kind: 'para' },
+      { blockId: '', x: -120, y: top + 20, width: 624, kind: 'table', height: 20 },
+      { blockId: '', x: COLS[1], y: top, width: 192, kind: 'para' },
+      { blockId: '', x: COLS[1], y: top + 20, width: 192, kind: 'para' },
+      { blockId: '', x: COLS[2], y: top, width: 192, kind: 'para' },
+      { blockId: '', x: COLS[2], y: top + 20, width: 192, kind: 'para' },
+    ];
+    const fragments: TestFragment[] = [];
+    const measureMap = new Map<string, { kind: string; lines: Array<{ lineHeight: number }> }>();
+    const blockSectionMap = new Map<string, number>();
+    placements.forEach((placement, i) => {
+      const id = `s2-b${i}`;
+      fragments.push({ ...placement, blockId: id });
+      measureMap.set(id, createMeasure('paragraph', [20]));
+      blockSectionMap.set(id, 2);
+    });
+
+    const result = balanceSectionOnPage({
+      fragments,
+      sectionIndex: 2,
+      sectionColumns: { count: 3, gap: 24, width: 192, contentWidth: 624 },
+      sectionHasExplicitColumnBreak: false,
+      blockSectionMap,
+      margins: { left: 96 },
+      topMargin: top,
+      columnWidth: 192,
+      availableHeight: 40,
+      measureMap,
+    });
+
+    expect(result).not.toBeNull();
+    // Three columns, so read the page by ascending x then y rather than through the two-column
+    // helper above.
+    const reading = fragments
+      .map((fragment, index) => ({ index, x: fragment.x, y: fragment.y }))
+      .sort((a, b) => a.x - b.x || a.y - b.y)
+      .map((entry) => entry.index);
+    expect(reading).toEqual([0, 1, 2, 3, 4, 5]);
   });
 
   it('recovers document order from a shuffled fragment array', () => {
