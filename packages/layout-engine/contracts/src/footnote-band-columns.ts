@@ -46,9 +46,12 @@ export function resolveFootnoteColumnCount(
  *   Explicit body widths are dropped on purpose: they describe a different number of columns and
  *   cannot be reused, and Word divides a narrower band evenly.
  *
- * `withSeparator` is never carried over. `w:cols/@w:sep` draws the VERTICAL rules between body
- * columns, which the page painter derives from `page.columns`; the band draws its own horizontal
- * `w:separator` and no vertical rules of its own.
+ * `w:cols/@w:sep` is dropped by the merge branch and deliberately KEPT by the matching one, whose
+ * contract is "the body layout, verbatim" -- that is what makes a document without
+ * `w15:footnoteColumns` render byte-identically to before. Keeping it is inert either way: `@w:sep`
+ * draws the VERTICAL rules between body columns, which the painter derives from `page.columns` and
+ * not from this layout, and no footnote consumer reads the band geometry's `separatorX`. The band
+ * draws its own horizontal `w:separator` and no vertical rules of its own.
  */
 export function resolveFootnoteBandColumns(
   bodyColumns: ColumnLayout | undefined,

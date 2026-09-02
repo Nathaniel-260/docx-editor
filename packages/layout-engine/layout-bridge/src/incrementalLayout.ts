@@ -1350,8 +1350,13 @@ type FootnotesLayoutInput = {
    * when it declares nothing of its own, which is the usual case). Omitted means "no evidence": the
    * mark keeps the LTR start edge.
    *
-   * Paint-only. It never enters the note plan, which is why it is absent from the plan-input
-   * comparisons that gate band reuse (`separatorSpacingBefore` and friends, which do change heights).
+   * Paint-only: it never enters the note plan, which is why it is absent from the plan-input
+   * comparisons that gate band reuse (`separatorSpacingBefore` and friends, which do change
+   * heights). Reuse safety rests instead on the host's `renderInputsUnchanged` proof, which
+   * `retainedFootnotePlaneBaseAdoptable` requires before it adopts a previous page's band
+   * fragments -- an adopted band keeps the rule's old x. A host that starts populating this field
+   * MUST therefore include it in that proof, or a change to the separator paragraph alone will
+   * paint stale.
    */
   separatorParagraph?: ParagraphAttrs;
   /** The same, for the `<w:continuationSeparator/>` paragraph (`w:type="continuationSeparator"`, id 0). */
