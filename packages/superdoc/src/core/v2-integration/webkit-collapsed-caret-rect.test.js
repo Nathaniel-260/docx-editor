@@ -168,9 +168,212 @@ describe('resolveCollapsedCaretGeometry', () => {
     // only the low surrogate would see no letter at all, fall through to the
     // paragraph, and put the caret on the wrong edge.
     const text = 'abc𐤀';
-    expect(resolveCollapsedCaretGeometry(text.length, text, ltrRun(text.length), LTR)?.x).toBe(
-      CHAR_WIDTH * (text.length - 1),
+    expect(resolveCollapsedCaretGeometry(text.length, text, ltrRun(text.length), LTR)?.x).toBe(CHAR_WIDTH * 3);
+  });
+
+  it('asks for the whole code point, never for one half of a surrogate pair', () => {
+    // Range offsets are UTF-16 units, so a caller handed the low surrogate could
+    // measure half a pair. Both offsets inside the pair resolve to its start.
+    const text = 'abc𐤀';
+    const asked = [];
+    const record = (index) => {
+      asked.push(index);
+      return ltrRun(text.length)(index);
+    };
+    resolveCollapsedCaretGeometry(text.length, text, record, LTR);
+    resolveCollapsedCaretGeometry(text.length - 1, text, record, LTR);
+    expect(asked).toEqual([3, 3]);
+  });
+
+  it('keeps the caret after an NKo digit, which is a digit written right-to-left', () => {
+    // Not every digit orders left-to-right: NKo and Adlam write theirs
+    // right-to-left, so a general-category test for "number" picks the wrong
+    // edge. Chromium lays this one out right-to-left.
+    const text = `${HEBREW_SPACE}߅`;
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
     );
+  });
+
+  it('keeps the caret after an Adlam digit, which is astral and right-to-left', () => {
+    const text = `${HEBREW_SPACE}𞥕`;
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length - 1), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * (text.length - 1),
+    );
+  });
+
+  it('keeps the caret after an Imperial Aramaic number, which is right-to-left', () => {
+    const text = `${HEBREW_SPACE}𐡘`;
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length - 1), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * (text.length - 1),
+    );
+  });
+
+  it('gives a number symbol that is not ordered as a number the paragraph direction', () => {
+    // "½" and "①" are numbers by general category but neutral to the bidi
+    // algorithm, so they take the paragraph's direction rather than a run of
+    // their own.
+    for (const tail of ['½', '①']) {
+      const text = `${HEBREW_SPACE}${tail}`;
+      expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+        100 - CHAR_WIDTH * text.length,
+      );
+    }
+  });
+
+  it('keeps the caret after a Roman numeral, which is a left-to-right letter number', () => {
+    const { text, charRect, tailStart } = rtlThenLtrTail('Ⅷ');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH);
+  });
+
+  it('keeps the caret after a private-use character, as a .docx symbol run paints', () => {
+    // A Wingdings or Symbol run maps to U+F0xx. Unicode defaults private use to
+    // left-to-right and Chromium lays it out that way.
+    const { text, charRect, tailStart } = rtlThenLtrTail('');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH);
+  });
+
+  it('gives a combining mark the direction of the character it sits on (UBA W1)', () => {
+    // The acute belongs to the Latin "e", which is left-to-right even though the
+    // mark's own block is not. Its code-point block says nothing about it.
+    const { text, charRect, tailStart } = rtlThenLtrTail('é');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH * 2);
+  });
+
+  it('gives a combining mark on a Hebrew letter the right-to-left direction', () => {
+    const text = `${HEBREW_SPACE}אֱ`;
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('gives a variation selector the direction of the emoji it follows', () => {
+    // "☺️" ends a Hebrew line. The selector is a mark, the emoji is neutral,
+    // so the pair takes the paragraph's direction.
+    const text = `${HEBREW_SPACE}☺️`;
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('gives a mark with nothing before it the paragraph direction (UBA W1 at sor)', () => {
+    expect(resolveCollapsedCaretGeometry(1, '́', rtlRun(1), RTL)?.x).toBe(100 - CHAR_WIDTH);
+    expect(resolveCollapsedCaretGeometry(1, '́', ltrRun(1), LTR)?.x).toBe(CHAR_WIDTH);
+  });
+
+  it('does not join a terminator to a number that Arabic letters made Arabic (UBA W2)', () => {
+    // "مرحبا 50%": the digits follow an Arabic letter, so they order as an
+    // Arabic number, and W5 no longer attaches the sign to them. Hebrew before
+    // the same digits leaves them European and the sign does attach, which is
+    // the case above. Both engines agree.
+    const text = 'مرحبا 50%';
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('joins a terminator that comes before its number (UBA W5 reads both sides)', () => {
+    const { text, charRect, tailStart } = rtlThenLtrTail('$50');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH * 3);
+  });
+
+  it('gives a neutral between two right-to-left runs their direction (UBA N1)', () => {
+    // A Hebrew phrase inside an English paragraph: the full stop sits between two
+    // Hebrew words, so it joins them rather than taking the paragraph.
+    const text = 'abc שלום. עולם';
+    const dot = text.indexOf('.');
+    expect(resolveCollapsedCaretGeometry(dot + 1, text, rtlRun(text.length), LTR)?.x).toBe(
+      100 - CHAR_WIDTH * (dot + 1),
+    );
+  });
+
+  it('keeps the caret after Hebrew punctuation inside a left-to-right paragraph', () => {
+    // Gershayim is right-to-left without being a letter, so a letters-only test
+    // would hand it to the paragraph.
+    const text = 'abc ״';
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), LTR)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('gives the Arabic comma the paragraph direction, since it is neutral', () => {
+    // One of the 46 code points that sit inside a right-to-left block without
+    // being right-to-left themselves.
+    const text = 'abc ،';
+    expect(resolveCollapsedCaretGeometry(text.length, text, ltrRun(text.length), LTR)?.x).toBe(
+      CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('looks past a zero-width character to the neighbour that has a glyph box', () => {
+    // WebKit refuses the caret after "שלום " + ZWSP, and the zero-width space it
+    // would have measured has no box. Chromium puts the caret at the logical end
+    // of the space, which is the first neighbour that does have one.
+    const text = `${HEBREW_SPACE}\u200b`;
+    const glyphs = rtlRun(HEBREW_SPACE.length);
+    expect(resolveCollapsedCaretGeometry(text.length, text, glyphs, RTL)?.x).toBe(
+      100 - CHAR_WIDTH * HEBREW_SPACE.length,
+    );
+  });
+
+  it('looks past a run of bidi marks, which also have no glyph box', () => {
+    const text = `${HEBREW_SPACE}\u200f\u200e\u200f`;
+    const glyphs = rtlRun(HEBREW_SPACE.length);
+    expect(resolveCollapsedCaretGeometry(text.length, text, glyphs, RTL)?.x).toBe(
+      100 - CHAR_WIDTH * HEBREW_SPACE.length,
+    );
+  });
+
+  it('declines rather than scanning an unbounded run of invisible characters', () => {
+    // Every step is a forced layout, so the search is bounded and gives up
+    // instead, which leaves the caret exactly where the unpatched browser puts it.
+    let measurements = 0;
+    const text = `${HEBREW_SPACE}${'\u200b'.repeat(64)}`;
+    const glyphs = (index) => {
+      measurements += 1;
+      return rtlRun(HEBREW_SPACE.length)(index);
+    };
+    expect(resolveCollapsedCaretGeometry(text.length, text, glyphs, RTL)).toBeNull();
+    expect(measurements).toBeLessThanOrEqual(32);
+  });
+
+  it('joins a bracket pair to the left-to-right text it encloses (UBA N0)', () => {
+    // "שלום abc(def)" — a Latin parenthetical inside Hebrew, which Hebrew
+    // technical and legal writing is full of. The pair encloses left-to-right
+    // text and follows left-to-right text, so the brackets join that run rather
+    // than taking the paragraph's direction.
+    for (const [open, close] of [
+      ['(', ')'],
+      ['[', ']'],
+      ['{', '}'],
+      ['\uff08', '\uff09'],
+      ['\u3008', '\u3009'],
+    ]) {
+      const { text, charRect, tailStart } = rtlThenLtrTail(`abc${open}def${close}`);
+      expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH * 8);
+    }
+  });
+
+  it('matches a bracket across canonical equivalence, as BD16 requires', () => {
+    // U+2329 is canonically equivalent to U+3008, so it pairs with U+3009.
+    const { text, charRect, tailStart } = rtlThenLtrTail('abc\u2329def\u3009');
+    expect(resolveCollapsedCaretGeometry(text.length, text, charRect, RTL)?.x).toBe(tailStart + CHAR_WIDTH * 8);
+  });
+
+  it('gives a bracket pair the paragraph direction when it encloses that direction', () => {
+    const text = `${HEBREW_SPACE}(עולם)`;
+    expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+      100 - CHAR_WIDTH * text.length,
+    );
+  });
+
+  it('leaves an unpaired bracket, and one enclosing nothing strong, to the neutral rules', () => {
+    for (const tail of ['abc)', '()']) {
+      const text = `${HEBREW_SPACE}${tail}`;
+      expect(resolveCollapsedCaretGeometry(text.length, text, rtlRun(text.length), RTL)?.x).toBe(
+        100 - CHAR_WIDTH * text.length,
+      );
+    }
   });
 
   it('carries the glyph vertical metrics onto the caret', () => {
@@ -486,6 +689,100 @@ describe('installWebKitCollapsedCaretRectFix', () => {
     installWebKitCollapsedCaretRectFix(clean);
     installWebKitCollapsedCaretRectFix(clean);
     expect(bodyChildren).toHaveLength(1);
+  });
+
+  it('answers the browser rather than throwing when the host has broken the DOM it reads', () => {
+    // `getClientRects` is specified never to throw for a valid range. A host that
+    // has instrumented `closest` or `getComputedStyle` — an extension, a hardened
+    // realm, a test stub — must not be able to turn every Range on the page into
+    // a throwing API through this patch.
+    for (const breakage of ['closest', 'getComputedStyle']) {
+      const { window, textNode, caretAt } = createFakeWindow();
+      installWebKitCollapsedCaretRectFix(window);
+      const node = textNode(HEBREW_SPACE);
+      if (breakage === 'closest') {
+        node.parentElement.closest = () => {
+          throw new Error('host instrumentation');
+        };
+      } else {
+        window.getComputedStyle = () => {
+          throw new Error('host instrumentation');
+        };
+      }
+      const caret = caretAt(node, HEBREW_SPACE.length);
+      expect(() => caret.getClientRects()).not.toThrow();
+      expect(() => caret.getBoundingClientRect()).not.toThrow();
+      expect(Array.from(caret.getClientRects())).toHaveLength(0);
+    }
+  });
+
+  it('recognises text inside a shadow root under the runtime, which closest() cannot reach', () => {
+    // SuperDoc mounts painter content inside a shadow root in at least one
+    // supported embedding, which is why the shell reads pointer targets through
+    // composedPath(). `closest()` stops at that boundary.
+    const { window, textNode, caretAt } = createFakeWindow();
+    installWebKitCollapsedCaretRectFix(window);
+    const node = textNode(HEBREW_SPACE, { owned: false });
+    const runtimeRoot = { tagName: 'DIV' };
+    const host = {
+      nodeType: 1,
+      tagName: 'DIV',
+      closest: (selector) => (selector === '[data-superdoc-runtime-id]' ? runtimeRoot : null),
+    };
+    node.parentElement.getRootNode = () => ({ host });
+    expect(Array.from(caretAt(node, HEBREW_SPACE.length).getClientRects())).toHaveLength(1);
+  });
+
+  it('leaves a text node with no parent element to the browser', () => {
+    const { window, textNode, caretAt } = createFakeWindow();
+    installWebKitCollapsedCaretRectFix(window);
+    const node = textNode(HEBREW_SPACE);
+    node.parentElement = null;
+    expect(Array.from(caretAt(node, HEBREW_SPACE.length).getClientRects())).toHaveLength(0);
+  });
+
+  it('hides length and item from enumeration, as a real DOMRectList does', () => {
+    // A real DOMRectList exposes `length` as a non-enumerable accessor and `item`
+    // on its prototype, so neither appears in Object.keys or JSON.stringify. Host
+    // logging and deep-equality assertions compare against that shape.
+    const { window, textNode, caretAt } = createFakeWindow();
+    installWebKitCollapsedCaretRectFix(window);
+    const rects = caretAt(textNode(HEBREW_SPACE), HEBREW_SPACE.length).getClientRects();
+    expect(Object.keys(rects)).toEqual(['0']);
+    expect(JSON.parse(JSON.stringify(rects))).not.toHaveProperty('length');
+    expect(rects.length).toBe(1);
+    expect(typeof rects.item).toBe('function');
+  });
+
+  it('reinstates itself when a host replaces the patched method outright', () => {
+    // Wrapping composes; replacing does not, and the workaround would otherwise
+    // be gone for the rest of the page's life with no way to notice.
+    const { window, FakeRange, textNode, caretAt } = createFakeWindow();
+    installWebKitCollapsedCaretRectFix(window);
+    const native = FakeRange.prototype.measure;
+    FakeRange.prototype.getClientRects = function replaced() {
+      return native.call(this);
+    };
+    expect(Array.from(caretAt(textNode(HEBREW_SPACE), HEBREW_SPACE.length).getClientRects())).toHaveLength(0);
+
+    installWebKitCollapsedCaretRectFix(window);
+    expect(Array.from(caretAt(textNode(HEBREW_SPACE), HEBREW_SPACE.length).getClientRects())).toHaveLength(1);
+  });
+
+  it('stops re-probing a window that can never be measured', () => {
+    // Each probe forces a layout and delivers two childList records to any host
+    // observing document.body, so a page building many editors without layout
+    // must not pay it for every one of them.
+    const { window, bodyChildren } = createFakeWindow();
+    window.document.createRange = () => ({
+      setStart: () => {},
+      setEnd: () => {},
+      collapse: () => {},
+      getClientRects: () => [],
+      getBoundingClientRect: () => null,
+    });
+    for (let attempt = 0; attempt < 20; attempt += 1) installWebKitCollapsedCaretRectFix(window);
+    expect(bodyChildren.length).toBeLessThanOrEqual(8);
   });
 
   it('declines instead of throwing when the realm refuses the patch', () => {
