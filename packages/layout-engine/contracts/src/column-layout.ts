@@ -387,13 +387,22 @@ export function columnLayoutsEqual(a?: ColumnLayout, b?: ColumnLayout): boolean 
 }
 
 /**
+ * The gutters a layout will actually be drawn with: `gaps[i]` positionally when present, the scalar
+ * gap otherwise, each floored at 0. Mirrors `normalizeColumnLayout` so render equality stays exactly
+ * as discriminating as the geometry it stands in for.
+ */
+function effectiveColumnGaps(columns: ColumnLayout, count: number): number[] {
+  const gap = Math.max(0, columns.gap ?? 0);
+  const authored = Array.isArray(columns.gaps) ? columns.gaps : [];
+  return Array.from({ length: Math.max(0, count - 1) }, (_, i) => Math.max(0, authored[i] ?? gap));
+}
+
+/**
  * Render equality: true when two column configs produce the SAME rendered layout even if their raw
  * fields differ. Compares the canonical render form for today's renderer (resolved mode + count,
- * scalar gap, withSeparator, and in explicit mode the sliced widths) and deliberately ignores raw
- * `equalWidth` and the surplus count/widths that resolution discards. Per-column `gaps` are
- * intentionally ignored until geometry/separators consume them (step 4), so a gaps-only authored
- * delta does not split regions or invalidate the normalized-columns cache before it becomes
- * paint-significant. Use for region/cache change detection so e.g. `{num:4, widths:[a,b]}` vs
+ * scalar gap, withSeparator, and in explicit mode the sliced widths and per-column `gaps`) and
+ * deliberately ignores raw `equalWidth` and the surplus count/widths that resolution discards.
+ * Use for region/cache change detection so e.g. `{num:4, widths:[a,b]}` vs
  * `{num:2, widths:[a,b]}`, or `equalWidth:true` vs an omitted equalWidth, do not split into
  * separate regions. (SD-2629)
  */
@@ -411,6 +420,23 @@ export function columnRenderLayoutsEqual(a?: ColumnLayout, b?: ColumnLayout): bo
   if (mode === 'explicit') {
     const ra = resolveColumnLayout(a);
     const rb = resolveColumnLayout(b);
+    // Per-column gaps ARE paint-significant. `buildColumnGeometry` reads `gaps[i] ?? gap` for both
+    // the column x and the separator x, so a gaps-only delta moves every column after the first.
+    // This comparison used to skip them, on the note that nothing consumed them yet; SD-2629 step 4
+    // made that false, and while it was skipped two sections differing only in their per-column gaps
+    // compared equal — no region split, no cache invalidation, and the later section laid out with
+    // the earlier one's gutters.
+    //
+    // Compare the gutters that will actually be DRAWN, not the authored arrays. `resolveColumnLayout`
+    // emits `gaps` only when the author supplied them and pads a short array with 0, while geometry
+    // falls back to the scalar gap and floors at 0 — so the authored arrays are equal in cases that
+    // render differently (a short `[20]` vs `[20, 0]`) and differ in cases that render identically
+    // (an omitted array vs one spelling out the scalar gap, or a negative gap vs 0). Deriving the
+    // effective gutters the way `normalizeColumnLayout` does keeps this predicate exactly as
+    // discriminating as the geometry it is standing in for.
+    if (!widthsEqual(effectiveColumnGaps(a, resolveColumnCount(a)), effectiveColumnGaps(b, resolveColumnCount(b)))) {
+      return false;
+    }
     if (!widthsEqual(ra.widths, rb.widths)) return false;
   }
   return true;

@@ -382,13 +382,58 @@ describe('columnRenderLayoutsEqual (SD-2629)', () => {
     expect(columnRenderLayoutsEqual({ count: 2, gap: 24 }, { count: 2, gap: 48 })).toBe(false);
   });
 
-  it('treats explicit layouts differing only by per-column gaps as render-equal until geometry flips', () => {
+  it('splits explicit layouts that differ only by per-column gaps', () => {
+    // Geometry has flipped: `buildColumnGeometry` reads `gaps[i] ?? gap` for both the column x and
+    // the separator x, so this delta moves column 2 by 72px. While it compared equal, two sections
+    // differing only here shared a region and the later one was laid out with the earlier's gutters.
     expect(
       columnRenderLayoutsEqual(
         { count: 3, gap: 24, widths: [100, 100, 300], gaps: [24, 24], equalWidth: false },
         { count: 3, gap: 24, widths: [100, 100, 300], gaps: [24, 96], equalWidth: false },
       ),
+    ).toBe(false);
+
+    // Identical per-column gaps still compare equal, and so does an absent-vs-absent pair.
+    expect(
+      columnRenderLayoutsEqual(
+        { count: 3, gap: 24, widths: [100, 100, 300], gaps: [24, 96], equalWidth: false },
+        { count: 3, gap: 24, widths: [100, 100, 300], gaps: [24, 96], equalWidth: false },
+      ),
     ).toBe(true);
+    expect(
+      columnRenderLayoutsEqual(
+        { count: 3, gap: 24, widths: [100, 100, 300], equalWidth: false },
+        { count: 3, gap: 24, widths: [100, 100, 300], equalWidth: false },
+      ),
+    ).toBe(true);
+
+    // Equal mode has no per-column gaps to compare, so stray ones must not split a region.
+    expect(columnRenderLayoutsEqual({ count: 2, gap: 24, gaps: [24] }, { count: 2, gap: 24, gaps: [96] })).toBe(true);
+  });
+
+  it('compares the gutters that are drawn, not the authored arrays', () => {
+    const explicit = (gaps?: number[]): ColumnLayout => ({
+      count: 3,
+      gap: 48,
+      widths: [100, 100, 300],
+      equalWidth: false,
+      ...(gaps ? { gaps } : {}),
+    });
+
+    // Spelling the scalar gap out per column renders identically, so it must NOT split a region.
+    // Comparing the authored arrays instead would see `undefined` vs `[48, 48]` and split, resetting
+    // the later section to column 0 mid-page.
+    expect(columnRenderLayoutsEqual(explicit(), explicit([48, 48]))).toBe(true);
+    // Same for a negative gutter, which geometry floors at 0 exactly as 0 does.
+    expect(columnRenderLayoutsEqual(explicit([48, 0]), explicit([48, -10]))).toBe(true);
+
+    // A SHORT array falls back to the scalar gap for the gutter it omits — it does not mean 0. These
+    // two render differently and must split; padding the authored array with 0 would call them equal.
+    expect(columnRenderLayoutsEqual(explicit([20]), explicit([20, 0]))).toBe(false);
+    expect(columnRenderLayoutsEqual(explicit([20]), explicit([20, 48]))).toBe(true);
+
+    // Surplus gaps beyond count-1 are discarded by resolution, so they must not split either.
+    expect(columnRenderLayoutsEqual(explicit([48, 48, 999]), explicit([48, 48]))).toBe(true);
   });
 
   it('distinguishes explicit vs equal mode and different resolved widths', () => {
