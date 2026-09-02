@@ -1757,15 +1757,20 @@
   }
 }
 
-/* Live Bold control on the custom UI overview. Shares the visual language of
-   the simulated state model directly above it, so the two read as one lesson. */
+/* Live application-owned formatting controls. The overview, ownership handoff,
+   and toolbar pages share one Editor frame so the journey feels continuous. */
 .sd-custom-bold-demo {
+  --sd-custom-ui-text-secondary: #5a5a61;
   margin-block: 1.5rem;
   overflow: hidden;
   border: 1px solid var(--sd-border);
   border-radius: var(--sd-radius-lg);
   background: var(--sd-surface);
   box-shadow: var(--sd-shadow-sm);
+}
+
+.dark .sd-custom-bold-demo {
+  --sd-custom-ui-text-secondary: #aeb4c0;
 }
 
 .sd-custom-bold-demo-heading {
@@ -1797,7 +1802,7 @@
 .sd-custom-bold-demo-heading p {
   max-width: 42rem;
   margin: 0;
-  color: var(--sd-text-secondary);
+  color: var(--sd-custom-ui-text-secondary);
   font-size: 0.8125rem;
   line-height: 1.55;
 }
@@ -1816,7 +1821,7 @@
 
 .sd-custom-bold-demo-error {
   padding-inline: 1.125rem;
-  color: var(--sd-text-secondary);
+  color: var(--sd-custom-ui-text-secondary);
   font-size: 0.8125rem;
 }
 
@@ -1879,10 +1884,49 @@
   cursor: not-allowed;
 }
 
+.sd-custom-bold-demo-field {
+  display: inline-flex;
+  gap: 0.375rem;
+  align-items: center;
+  color: var(--sd-custom-ui-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.sd-custom-bold-demo-field select {
+  height: 2rem;
+  min-width: 6rem;
+  max-width: 10rem;
+  padding-inline: 0.5rem 1.75rem;
+  border: 1px solid var(--sd-border);
+  border-radius: var(--sd-radius-md);
+  background: var(--sd-surface);
+  color: var(--sd-text-primary);
+  font: 500 0.8125rem/1 var(--font-sans);
+}
+
+.sd-custom-bold-demo-toolbar button:focus-visible,
+.sd-custom-bold-demo-field select:focus-visible {
+  outline: 3px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.sd-custom-bold-demo-field select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .sd-custom-bold-demo-state {
-  color: var(--sd-text-secondary);
+  color: var(--sd-custom-ui-text-secondary);
   font-family: var(--font-mono);
   font-size: 0.75rem;
+}
+
+.sd-custom-bold-demo[data-variant='toolbar'] .sd-custom-bold-demo-state {
+  order: 2;
+  flex-basis: 100%;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--sd-border-soft);
 }
 
 /* Bounded so a multi-page fixture cannot push the rest of the page away. */
@@ -1937,7 +1981,7 @@
   margin: 0;
   padding: 0.625rem 1.125rem;
   border-top: 1px solid var(--sd-border-soft);
-  color: var(--sd-text-secondary);
+  color: var(--sd-custom-ui-text-secondary);
   font-size: 0.8125rem;
 }
 
@@ -2915,7 +2959,7 @@
 .sd-custom-bold-demo-state {
   flex: 1 1 10rem;
   min-width: 0;
-  color: var(--sd-text-secondary);
+  color: var(--sd-custom-ui-text-secondary);
   font-size: 0.8125rem;
 }
 

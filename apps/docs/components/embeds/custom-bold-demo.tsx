@@ -3,16 +3,22 @@
 import { Bold, Expand, Shrink } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { UIConfig } from 'superdoc';
-import type { BorrowedSuperDocUI, CommandState } from 'superdoc/ui';
+import type {
+  BorrowedSuperDocUI,
+  CommandExecutionResult,
+  CommandState,
+  FontFamilyOption,
+  FontSizeOption,
+} from 'superdoc/ui';
 import { CollapsibleEditorPreview } from './collapsible-editor-preview';
 import { createRuntimeEditor, loadRuntime, type SuperDocInstance } from './superdoc-runtime';
 
 /**
- * The smallest complete custom control, running against a real Editor.
+ * Application-owned formatting controls running against a real Editor.
  *
  * The Commands and state page carries a simulated model for comparing command
  * states. This embed proves the integration against a real document and stays
- * deliberately small: one command, one result, no panels.
+ * deliberately small: formatting commands, one result, no panels.
  */
 
 // Purpose-built for this page: three short paragraphs, no tracked changes or
@@ -23,16 +29,28 @@ const HANDOFF_DOCUMENT = '/fixtures/getting-started.docx';
 const DISABLED_BEFORE_SELECTION = 'Select text in the document to enable Bold.';
 
 type DemoState = 'idle' | 'loading' | 'ready' | 'error';
+type PickerCommandId = 'font-family' | 'font-size';
+type PendingCommand = 'bold' | PickerCommandId | null;
+type PickerOption = { value: string };
 
-const INITIAL_BOLD: CommandState = { active: false, enabled: false, supported: false };
+const INITIAL_COMMAND_STATE: CommandState = { active: false, enabled: false, supported: false };
 const ZOOM = { max: 200, min: 10 } as const;
 
+function getPickerValue(commandValue: unknown): string {
+  return typeof commandValue === 'string' || typeof commandValue === 'number' ? String(commandValue) : '';
+}
+
+function hasPickerOption(options: readonly PickerOption[], value: string): boolean {
+  return options.some((option) => option.value === value);
+}
+
 type CustomBoldDemoProps = {
-  variant?: 'standalone' | 'handoff';
+  variant?: 'standalone' | 'handoff' | 'toolbar';
 };
 
 export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) {
-  const handoff = variant === 'handoff';
+  const isHandoffVariant = variant === 'handoff';
+  const isToolbarVariant = variant === 'toolbar';
   const rootRef = useRef<HTMLElement>(null);
   const builtInToolbarRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
@@ -47,13 +65,18 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
   const mountedRef = useRef(true);
 
   const [state, setState] = useState<DemoState>('idle');
-  const [bold, setBold] = useState<CommandState>(INITIAL_BOLD);
+  const [bold, setBold] = useState<CommandState>(INITIAL_COMMAND_STATE);
+  const [fontFamily, setFontFamily] = useState<CommandState>(INITIAL_COMMAND_STATE);
+  const [fontSize, setFontSize] = useState<CommandState>(INITIAL_COMMAND_STATE);
+  const [fontOptions, setFontOptions] = useState<readonly FontFamilyOption[]>([]);
+  const [fontSizeOptions, setFontSizeOptions] = useState<readonly FontSizeOption[]>([]);
   const [result, setResult] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<PendingCommand>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [error, setError] = useState('');
 
   const fitCleanupRef = useRef<(() => void) | null>(null);
+  const observerCleanupRef = useRef<(() => void) | null>(null);
 
   /**
    * Fit the page to the mount's own width.
@@ -96,6 +119,8 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
   const teardown = useCallback(() => {
     fitCleanupRef.current?.();
     fitCleanupRef.current = null;
+    observerCleanupRef.current?.();
+    observerCleanupRef.current = null;
     uiRef.current = null;
     instanceRef.current?.destroy();
     instanceRef.current = null;
@@ -113,7 +138,12 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
     // A command superseded by this reset will not clear its own pending flag,
     // because its load id no longer matches. Clearing here is what keeps the
     // fresh document from starting out with the old one's button disabled.
-    setPending(false);
+    setPending(null);
+    setBold(INITIAL_COMMAND_STATE);
+    setFontFamily(INITIAL_COMMAND_STATE);
+    setFontSize(INITIAL_COMMAND_STATE);
+    setFontOptions([]);
+    setFontSizeOptions([]);
 
     try {
       const SuperDocCtor = await loadRuntime();
@@ -137,13 +167,15 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
       };
 
       let editorUi: UIConfig = { comments: false, loading: false };
-      if (handoff) {
-        const toolbar = builtInToolbarRef.current;
-        if (!toolbar) throw new Error('The built-in toolbar could not be mounted.');
+      if (isToolbarVariant) {
+        editorUi = { ...editorUi, toolbar: false };
+      } else if (isHandoffVariant) {
+        const toolbarContainer = builtInToolbarRef.current;
+        if (!toolbarContainer) throw new Error('The built-in toolbar could not be mounted.');
         editorUi = {
           ...editorUi,
           toolbar: {
-            container: toolbar,
+            container: toolbarContainer,
             excludeItems: ['bold'],
             responsiveTo: 'container',
           },
@@ -152,7 +184,7 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
 
       const instance = createRuntimeEditor(SuperDocCtor, {
         selector: mountRef.current,
-        document: handoff ? HANDOFF_DOCUMENT : DEMO_DOCUMENT,
+        document: isHandoffVariant ? HANDOFF_DOCUMENT : DEMO_DOCUMENT,
         documentMode: 'editing',
         ui: editorUi,
         // Manual, measured against the mount rather than the runtime's own
@@ -172,12 +204,45 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
       // The Editor owns this controller and tears it down with the instance.
       const ui = instance.ui;
       uiRef.current = ui;
+      const stopObservers: Array<() => void> = [];
+      observerCleanupRef.current = () => {
+        for (const stop of stopObservers) stop();
+      };
 
       // `commands.get(id)` returns a handle that observes just this command,
       // which is all a single control needs.
-      ui.commands.get('bold').observe((next) => {
-        if (isCurrent()) setBold(next);
-      });
+      const boldCommand = ui.commands.get('bold');
+      setBold(boldCommand.getState());
+      stopObservers.push(
+        boldCommand.observe((next) => {
+          if (isCurrent()) setBold(next);
+        }),
+      );
+
+      if (isToolbarVariant) {
+        const fontFamilyCommand = ui.commands.get('font-family');
+        const fontSizeCommand = ui.commands.get('font-size');
+        const syncFonts = () => {
+          const fonts = ui.fonts.getSnapshot();
+          setFontOptions(fonts.options);
+          setFontSizeOptions(fonts.sizeOptions);
+        };
+
+        setFontFamily(fontFamilyCommand.getState());
+        setFontSize(fontSizeCommand.getState());
+        syncFonts();
+        stopObservers.push(
+          fontFamilyCommand.observe((next) => {
+            if (isCurrent()) setFontFamily(next);
+          }),
+          fontSizeCommand.observe((next) => {
+            if (isCurrent()) setFontSize(next);
+          }),
+          ui.fonts.observe(() => {
+            if (isCurrent()) syncFonts();
+          }),
+        );
+      }
 
       // The component can unmount while the constructor is still wiring up.
       // Tear down here rather than leaking the instance the cleanup missed.
@@ -188,7 +253,7 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
       setState('error');
       setError(cause instanceof Error ? cause.message : 'The demo could not start.');
     }
-  }, [connectFitToWidth, handoff, teardown]);
+  }, [connectFitToWidth, isHandoffVariant, isToolbarVariant, teardown]);
 
   // Load when the demo scrolls into view rather than asking the reader to press
   // a button first. The runtime is a CDN fetch, so deferring it until the embed
@@ -264,7 +329,7 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
     const wasActive = handle.getState().active;
     const applied = wasActive ? 'Removed bold.' : 'Applied bold.';
 
-    setPending(true);
+    setPending('bold');
     try {
       // Await the result rather than assuming the absence of a throw means the
       // document changed. This is the habit the page is teaching.
@@ -286,31 +351,62 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
     } finally {
       // Unconditionally, or a rejection strands the button in its pending state
       // and the anatomy strip on step 3 until the page is reloaded.
-      if (isCurrent()) setPending(false);
+      if (isCurrent()) setPending(null);
+    }
+  }, []);
+
+  const runPickerCommand = useCallback(async (id: PickerCommandId, value: string, successMessage: string) => {
+    const ui = uiRef.current;
+    if (!ui || !value) return;
+
+    const loadId = loadIdRef.current;
+    const isCurrent = () => mountedRef.current && loadId === loadIdRef.current;
+    setPending(id);
+
+    try {
+      const outcome: CommandExecutionResult = await ui.commands.get(id).executeAsync(value);
+      if (!isCurrent()) return;
+      if (typeof outcome === 'boolean') {
+        setResult(outcome ? successMessage : 'The command was refused.');
+        return;
+      }
+      setResult(outcome.success ? successMessage : outcome.failure.message);
+    } catch (cause) {
+      if (isCurrent()) setResult(cause instanceof Error ? cause.message : 'The command could not run.');
+    } finally {
+      if (isCurrent()) setPending(null);
     }
   }, []);
 
   // Which habit the reader is currently exercising, so the anatomy strip below
   // can highlight it. Derived from the same state the button reads rather than
   // tracked separately, so it cannot disagree with what the control is doing.
-  const step: 1 | 2 | 3 | 4 = result !== null ? 4 : pending ? 3 : bold.enabled ? 2 : 1;
+  const step: 1 | 2 | 3 | 4 = result !== null ? 4 : pending !== null ? 3 : bold.enabled ? 2 : 1;
+
+  const fontFamilyValue = getPickerValue(fontFamily.value);
+  const fontSizeValue = getPickerValue(fontSize.value);
 
   // One status line for the whole embed: the last command outcome when there is
   // one, otherwise a hint derived from the same command state the button reads.
+  const readyHint = isToolbarVariant
+    ? 'The toolbar follows the current selection.'
+    : 'Press Bold to format the selection.';
+  const disabledHint = isToolbarVariant
+    ? 'Select text to enable the toolbar.'
+    : 'Select text in the document to enable Bold.';
   const plainState =
-    state === 'loading'
-      ? 'Loading the document…'
-      : (result ??
-        (!bold.enabled ? 'Select text in the document to enable Bold.' : 'Press Bold to format the selection.'));
+    state === 'loading' ? 'Loading the document…' : (result ?? (!bold.enabled ? disabledHint : readyHint));
 
   const applicationControls =
     state !== 'idle' && state !== 'error' ? (
       <div
         className='sd-custom-bold-demo-toolbar'
         role='toolbar'
-        aria-label={handoff ? 'Application controls' : 'Custom controls'}
+        aria-label={
+          isToolbarVariant ? 'Custom formatting toolbar' : isHandoffVariant ? 'Application controls' : 'Custom controls'
+        }
       >
-        {handoff ? (
+        {isHandoffVariant ? (
           <span aria-hidden='true' className='sd-custom-bold-demo-owner'>
             Your application
           </span>
@@ -323,7 +419,7 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
           // compute its direction from state the first has not finished
           // changing, and the earlier completion would publish a result for
           // the later one.
-          disabled={!bold.enabled || pending}
+          disabled={!bold.enabled || pending !== null}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => void runBold()}
           title={bold.enabled ? 'Bold' : (bold.reason ?? DISABLED_BEFORE_SELECTION)}
@@ -332,6 +428,60 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
           <Bold aria-hidden='true' size={16} />
           Bold
         </button>
+
+        {isToolbarVariant ? (
+          <>
+            <label className='sd-custom-bold-demo-field'>
+              <span>Font</span>
+              <select
+                data-testid='custom-font-family'
+                disabled={!fontFamily.enabled || pending !== null}
+                onChange={(event) =>
+                  void runPickerCommand('font-family', event.target.value, `Font changed to ${event.target.value}.`)
+                }
+                value={fontFamilyValue}
+              >
+                <option disabled value=''>
+                  Mixed
+                </option>
+                {fontFamilyValue && !hasPickerOption(fontOptions, fontFamilyValue) ? (
+                  <option style={{ fontFamily: fontFamilyValue }} value={fontFamilyValue}>
+                    {fontFamilyValue}
+                  </option>
+                ) : null}
+                {fontOptions.map((option) => (
+                  <option key={option.value} style={{ fontFamily: option.previewFamily }} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className='sd-custom-bold-demo-field'>
+              <span>Size</span>
+              <select
+                data-testid='custom-font-size'
+                disabled={!fontSize.enabled || pending !== null}
+                onChange={(event) =>
+                  void runPickerCommand('font-size', event.target.value, `Font size changed to ${event.target.value}.`)
+                }
+                value={fontSizeValue}
+              >
+                <option disabled value=''>
+                  Mixed
+                </option>
+                {fontSizeValue && !hasPickerOption(fontSizeOptions, fontSizeValue) ? (
+                  <option value={fontSizeValue}>{fontSizeValue}</option>
+                ) : null}
+                {fontSizeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : null}
 
         {/* One quiet line. The raw controller values belong in the prose and
           the simulated model below, not competing with the document. */}
@@ -360,7 +510,7 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
       </div>
     ) : null;
 
-  const builtInControls = handoff ? (
+  const builtInControls = isHandoffVariant ? (
     <div className='sd-custom-bold-demo-built-in'>
       <span aria-hidden='true' className='sd-custom-bold-demo-owner'>
         SuperDoc UI
@@ -374,17 +524,18 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
       className='sd-custom-bold-demo'
       ref={rootRef}
       data-custom-bold-demo
+      data-custom-toolbar-demo={isToolbarVariant || undefined}
       data-state={state}
       data-variant={variant}
     >
-      {handoff ? (
+      {isHandoffVariant ? (
         <>
           {applicationControls}
           {builtInControls}
         </>
       ) : null}
 
-      <CollapsibleEditorPreview className='sd-custom-bold-demo-preview'>
+      <CollapsibleEditorPreview className='sd-custom-bold-demo-preview' defaultExpanded={isToolbarVariant}>
         {state === 'error' ? (
           <div className='sd-custom-bold-demo-error' role='alert'>
             <p>{error}</p>
@@ -394,12 +545,12 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
           </div>
         ) : null}
 
-        {!handoff ? applicationControls : null}
+        {!isHandoffVariant ? applicationControls : null}
 
         <div className='sd-custom-bold-demo-canvas' ref={mountRef} />
       </CollapsibleEditorPreview>
 
-      {!handoff ? (
+      {variant === 'standalone' ? (
         <ol aria-label='Anatomy of a command control' className='sd-anatomy'>
           <li className='sd-anatomy-step' data-active={step === 1}>
             <b>1 Observe</b>
@@ -421,4 +572,8 @@ export function CustomBoldDemo({ variant = 'standalone' }: CustomBoldDemoProps) 
       ) : null}
     </figure>
   );
+}
+
+export function CustomToolbarDemo() {
+  return <CustomBoldDemo variant='toolbar' />;
 }

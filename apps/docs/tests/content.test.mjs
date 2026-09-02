@@ -19,7 +19,9 @@ const builtInUiMetaUrl = new URL('../content/docs/editor/built-in-ui/meta.json',
 const builtInUiMapUrl = new URL('../components/embeds/built-in-ui-map.tsx', import.meta.url);
 const editorDemoUrl = new URL('../components/embeds/editor-demo.tsx', import.meta.url);
 const customBoldDemoUrl = new URL('../components/embeds/custom-bold-demo.tsx', import.meta.url);
+const customUiMetaUrl = new URL('../content/docs/editor/custom-ui/meta.json', import.meta.url);
 const customUiSetupPageUrl = new URL('../content/docs/editor/custom-ui/controller-setup.mdx', import.meta.url);
+const customToolbarPageUrl = new URL('../content/docs/editor/custom-ui/formatting-controls.mdx', import.meta.url);
 const templatePopulationDemoUrl = new URL(
   '../components/embeds/template-population-demo.tsx',
   import.meta.url,
@@ -54,6 +56,11 @@ const redirectsConfigUrl = new URL('../config/redirects.json', import.meta.url);
 const builtInEditorDemoDataUrl = new URL('../lib/built-in-editor-demos.ts', import.meta.url);
 const customUiControllerExampleUrl = new URL('../snippets/editor/custom-ui-controller.ts', import.meta.url);
 const reactToolbarExampleUrl = new URL('../snippets/editor/react-custom-toolbar.tsx', import.meta.url);
+const customToolbarExampleUrl = new URL('../snippets/editor/custom-toolbar.ts', import.meta.url);
+const reactCustomToolbarExampleUrl = new URL(
+  '../snippets/editor/react-custom-formatting-toolbar.tsx',
+  import.meta.url,
+);
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
 const builtInContentControlsPageUrl = new URL(
   '../content/docs/editor/built-in-ui/content-controls.mdx',
@@ -137,6 +144,7 @@ const registeredComponents = new Set([
   'ConfigReference',
   'ContextMenuConfigReference',
   'CustomBoldDemo',
+  'CustomToolbarDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
   'DocumentApiNamespace',
@@ -340,14 +348,14 @@ test('the custom UI setup demo shows one control changing ownership', async () =
   assert.match(page, /<CustomBoldDemo variant='handoff' \/>/u);
   assert.match(page, /Only the visible Bold control changed owner/u);
   assert.match(demo, /excludeItems: \['bold'\]/u);
-  assert.match(demo, /const toolbar = builtInToolbarRef\.current/u);
-  assert.match(demo, /container: toolbar/u);
+  assert.match(demo, /const toolbarContainer = builtInToolbarRef\.current/u);
+  assert.match(demo, /container: toolbarContainer/u);
   assert.match(demo, /data-variant=\{variant\}/u);
   assert.match(
     demo,
-    /\{handoff \? \([\s\S]*\{applicationControls\}[\s\S]*\{builtInControls\}[\s\S]*\) : null\}\s*<CollapsibleEditorPreview/u,
+    /\{isHandoffVariant \? \([\s\S]*\{applicationControls\}[\s\S]*\{builtInControls\}[\s\S]*\) : null\}\s*<CollapsibleEditorPreview/u,
   );
-  assert.match(demo, /<CollapsibleEditorPreview[\s\S]*\{!handoff \? applicationControls : null\}/u);
+  assert.match(demo, /<CollapsibleEditorPreview[\s\S]*\{!isHandoffVariant \? applicationControls : null\}/u);
 });
 
 test('the built-in toolbar examples use canonical public item ids', async () => {
@@ -501,12 +509,77 @@ test('the custom UI setup preserves selection and shares the Editor-owned contro
   assert.match(vanilla, /bold\.executeAsync\(\)/u);
   assert.doesNotMatch(react, /container: '#toolbar'/u);
   assert.match(react, /useSuperDocCommand\('bold'\)/u);
-  assert.match(react, /ui\.commands\.executeAsync\('bold'\)/u);
+  assert.match(react, /bold\.executeAsync\(\)/u);
   assert.match(react, /disabled=\{!bold\.enabled \|\| pending\}/u);
   assert.match(react, /setStatus\(\(current\) => \(\{ id: current\.id \+ 1,/u);
   assert.match(react, /<span key=\{status\.id\}>\{status\.message\}<\/span>/u);
   assert.match(react, /onReady=\{\(\{ superdoc \}\) => setSuperDoc\(superdoc\)\}/u);
   assert.doesNotMatch(react, /\bui=\{\{/u);
+});
+
+test('the custom toolbar continues the setup project with selection-aware controls', async () => {
+  const [vanilla, react] = await Promise.all(
+    [customToolbarExampleUrl, reactCustomToolbarExampleUrl].map((url) => readFile(url, 'utf8')),
+  );
+
+  for (const example of [vanilla, react]) {
+    assert.match(example, /document(?:=|:)\s*['"]\/sample\.docx['"]/u);
+    assert.match(example, /toolbar: false/u);
+    assert.match(example, /useSuperDocCommand|get\('bold'\)/u);
+    assert.match(example, /font-family/u);
+    assert.match(example, /font-size/u);
+    assert.doesNotMatch(example, /contract\.docx|document-mode|paragraph-style/u);
+  }
+
+  assert.match(vanilla, /ui\.fonts\.observe\(render\)/u);
+  assert.match(react, /fontFamily\.executeAsync\(event\.target\.value\)/u);
+  assert.match(react, /fontSize\.executeAsync\(event\.target\.value\)/u);
+
+  // `Mixed` reports an indeterminate selection; choosing it would dispatch an
+  // empty payload, so both examples keep it visible but not selectable.
+  assert.match(vanilla, /mixed\.disabled = true/u);
+  assert.equal(react.match(/<option disabled value=''>/gu)?.length, 2);
+
+  // A uniform value outside the preset list is one value, not a mixed one.
+  assert.match(vanilla, /\[\{ value: selected, label: selected \}, \.\.\.options\]/u);
+  assert.match(react, /getPickerChoices\(fontOptions, fontFamily\.value\)/u);
+  assert.match(react, /getPickerChoices\(sizeOptions, fontSize\.value\)/u);
+
+  // Commands run one at a time, as the setup guide's control does.
+  assert.match(vanilla, /boldButton\.disabled = pending \|\| !boldState\.enabled/u);
+  assert.match(vanilla, /if \(pending\) return;/u);
+  // The select is rebuilt when a command starts, so the chosen value is read first.
+  assert.match(vanilla, /const value = fontFamilySelect\.value;\s+return run\(\(\) => fontFamily\.executeAsync\(value\)/u);
+  assert.match(vanilla, /const value = fontSizeSelect\.value;\s+return run\(\(\) => fontSize\.executeAsync\(value\)/u);
+  assert.match(react, /disabled=\{pending \|\| !bold\.enabled\}/u);
+  assert.match(react, /if \(pending\) return;/u);
+});
+
+test('the custom UI navigation has no internal section separators', async () => {
+  const { pages } = JSON.parse(await readFile(customUiMetaUrl, 'utf8'));
+
+  assert.deepEqual(
+    pages.filter((page) => typeof page === 'string' && page.startsWith('---')),
+    [],
+  );
+});
+
+test('the custom toolbar demo proves toggle, picker, and mixed selection state', async () => {
+  const [page, demo] = await Promise.all(
+    [customToolbarPageUrl, customBoldDemoUrl].map((url) => readFile(url, 'utf8')),
+  );
+
+  assert.match(page, /<CustomToolbarDemo \/>/u);
+  assert.match(page, /Extend that formatted selection into the next plain sentence and the pickers show/u);
+  assert.match(demo, /variant\?: 'standalone' \| 'handoff' \| 'toolbar'/u);
+  assert.match(demo, /editorUi = \{ \.\.\.editorUi, toolbar: false \}/u);
+  assert.match(demo, /ui\.fonts\.observe/u);
+  assert.match(demo, /observerCleanupRef\.current/u);
+  assert.match(demo, /ui\.commands\.get\(id\)\.executeAsync\(value\)/u);
+  assert.match(demo, /runPickerCommand\('font-family'/u);
+  assert.match(demo, /runPickerCommand\('font-size'/u);
+  assert.match(demo, /fontSizeValue && !hasPickerOption\(fontSizeOptions, fontSizeValue\)/u);
+  assert.equal(demo.match(/<option disabled value=''>/gu)?.length, 2);
 });
 
 test('the React comments example keeps restart-sensitive config identities stable', async () => {

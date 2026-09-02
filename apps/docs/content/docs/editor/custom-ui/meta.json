@@ -6,15 +6,15 @@
     "controller-setup",
     "commands-and-state",
     "formatting-controls",
-    "custom-commands",
     "comments",
     "tracked-changes",
-    "tables",
     "content-controls",
-    "context-menus",
     "search",
+    "context-menus",
+    "tables",
     "zoom-and-document-state",
     "selection-and-viewport",
-    "review-highlights"
+    "review-highlights",
+    "custom-commands"
   ]
 }

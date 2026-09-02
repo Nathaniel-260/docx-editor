@@ -37,6 +37,7 @@ export const llmPlaceholderComponents = [
   'ConfigReference',
   'ContextMenuConfigReference',
   'CustomBoldDemo',
+  'CustomToolbarDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
   'DocumentApiNamespace',
@@ -169,6 +170,14 @@ export function renderLLMMarkdown(markdown: string) {
         '> **Live example: one custom control on a real document**',
         '>',
         '> A Bold button rendered by the application, running against a real Editor. It reads `enabled` and `active` from the `bold` command handle, sets `disabled` and `aria-pressed` from those values rather than inspecting the selection, and reports the outcome from what `executeAsync()` resolves with. `CommandExecutionResult` is `boolean | receipt`, so both shapes are handled.',
+        '',
+      ].join('\n');
+    },
+    CustomToolbarDemo() {
+      return [
+        '> **Live example: scale one control into a custom toolbar**',
+        '>',
+        '> Select text in the real DOCX, then use the application-owned Bold, font-family, and font-size controls. The toolbar reads `active`, `value`, and `enabled` from the corresponding command handles. Formatting one sentence and extending the selection into plain text makes the font and size pickers show `Mixed`. Each action reports the result from `executeAsync()`.',
         '',
       ].join('\n');
     },

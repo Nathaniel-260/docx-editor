@@ -45,7 +45,7 @@ const routes = [
   ['editor/custom-ui/controller-setup/index.html', 'Build your first custom control'],
   ['editor/custom-ui/commands-and-state/index.html', 'Keep custom controls in sync'],
   ['editor/custom-ui/custom-commands/index.html', 'Register custom commands'],
-  ['editor/custom-ui/formatting-controls/index.html', 'Build formatting controls'],
+  ['editor/custom-ui/formatting-controls/index.html', 'Build a custom toolbar'],
   ['editor/custom-ui/comments/index.html', 'Build a custom comments UI'],
   ['editor/custom-ui/tracked-changes/index.html', 'Build tracked-change review controls'],
   ['editor/custom-ui/tables/index.html', 'Build contextual table controls'],
@@ -681,16 +681,26 @@ test('exports the custom table-controls workflow as clean Markdown', async () =>
   assert.doesNotMatch(markdown, /<include>/);
 });
 
-test('exports the custom formatting-controls workflow as clean Markdown', async () => {
+test('exports the custom toolbar workflow as clean Markdown', async () => {
+  const article = await readFile(
+    new URL('../out/editor/custom-ui/formatting-controls/index.html', import.meta.url),
+    'utf8',
+  );
   const markdown = await readFile(
     new URL('../out/md/editor/custom-ui/formatting-controls.md', import.meta.url),
     'utf8',
   );
 
+  assert.match(article, /data-custom-toolbar-demo="true"/);
+  assert.match(markdown, /> \*\*Live example: scale one control into a custom toolbar\*\*/);
+  assert.match(markdown, /Formatting one sentence and extending the selection into plain text makes the font and size pickers show `Mixed`/);
   assert.match(markdown, /ui\.fonts\.getSnapshot\(\)/);
-  assert.match(markdown, /ui\.styles\.getSnapshot\(\)/);
-  assert.match(markdown, /await paragraphStyle\.executeAsync/);
-  assert.match(markdown, /Applying the style ID preserves the document's style relationship/);
+  assert.match(markdown, /report\(await action\(\), message\)/);
+  assert.match(markdown, /if \(pending\) return/);
+  assert.match(markdown, /fontFamily\.executeAsync\(event\.target\.value\)/);
+  assert.match(markdown, /fontSize\.executeAsync\(event\.target\.value\)/);
+  assert.match(markdown, /ui: editorUi/);
+  assert.doesNotMatch(markdown, /<CustomToolbarDemo\b/);
   assert.doesNotMatch(markdown, /<include>/);
 });
 

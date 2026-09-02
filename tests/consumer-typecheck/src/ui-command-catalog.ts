@@ -15,6 +15,7 @@ import type {
   SuperDocUIReason,
 } from 'superdoc/ui';
 import { useSuperDocCommand, useSuperDocToolbar } from 'superdoc/ui/react';
+import type { UseSuperDocCommandResult } from 'superdoc/ui/react';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type AssertEqual<A, B> = Equal<A, B> extends true ? true : never;
@@ -80,10 +81,14 @@ void toolbar.executeAsync('zoom-fit-width');
 // React bindings resolve the same command/toolbar state types.
 function _reactProbe(): void {
   const _commandParams: AssertEqual<Parameters<typeof useSuperDocCommand>, [id: CommandId]> = true;
-  const cmdState: CommandState = useSuperDocCommand('bold');
+  const cmdState: UseSuperDocCommandResult = useSuperDocCommand('bold');
   void useSuperDocCommand(applicationCommandId);
   void _commandParams;
   void cmdState.reason;
+  const immediate: CommandExecutionResult = cmdState.execute();
+  const settled: Promise<CommandExecutionResult> = cmdState.executeAsync();
+  void immediate;
+  void settled;
   void useSuperDocToolbar().commands;
 }
 void _reactProbe;

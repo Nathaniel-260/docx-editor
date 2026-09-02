@@ -6,12 +6,18 @@ import { type ReactNode, useId, useState } from 'react';
 type CollapsibleEditorPreviewProps = {
   children: ReactNode;
   className?: string;
+  defaultExpanded?: boolean;
   onCollapse?: () => void;
 };
 
-export function CollapsibleEditorPreview({ children, className = '', onCollapse }: CollapsibleEditorPreviewProps) {
+export function CollapsibleEditorPreview({
+  children,
+  className = '',
+  defaultExpanded = false,
+  onCollapse,
+}: CollapsibleEditorPreviewProps) {
   const contentId = useId();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
 
   function toggle() {
     if (expanded) onCollapse?.();

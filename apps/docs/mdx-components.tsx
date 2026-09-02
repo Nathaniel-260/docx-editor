@@ -9,7 +9,7 @@ import { ClauseLibraryDemo } from '@/components/embeds/clause-library-demo';
 import { ContentControlAuthoringDemo } from '@/components/embeds/content-control-authoring-demo';
 import { ContentControlLocksDemo } from '@/components/embeds/content-control-locks-demo';
 import { ContentControlPatterns } from '@/components/embeds/content-control-patterns';
-import { CustomBoldDemo } from '@/components/embeds/custom-bold-demo';
+import { CustomBoldDemo, CustomToolbarDemo } from '@/components/embeds/custom-bold-demo';
 import { CustomUiArchitecture } from '@/components/embeds/custom-ui-architecture';
 import { DocumentPreview } from '@/components/embeds/document-preview';
 import { EditorDemo } from '@/components/embeds/editor-demo';
@@ -69,6 +69,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     CommandStateDemo,
     ContentControlPatterns,
     CustomBoldDemo,
+    CustomToolbarDemo,
     CustomUiArchitecture,
     DocumentPreview,
     DocumentApiNamespace,

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { SuperDocEditor } from '@superdoc/react';
 import type { UIConfig } from 'superdoc';
-import { SuperDocUIProvider, useSetSuperDoc, useSuperDocCommand, useSuperDocUI } from 'superdoc/ui/react';
+import { SuperDocUIProvider, useSetSuperDoc, useSuperDocCommand } from 'superdoc/ui/react';
 import '@superdoc/react/style.css';
 
 const editorUi = {
@@ -18,17 +18,16 @@ export default function App() {
 }
 
 function BoldControl() {
-  const ui = useSuperDocUI();
   const bold = useSuperDocCommand('bold');
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState({ id: 0, message: 'Select text to format it.' });
 
   async function toggleBold() {
-    if (!ui || pending) return;
+    if (pending) return;
     const message = bold.active ? 'Bold removed.' : 'Bold applied.';
     setPending(true);
     try {
-      const result = await ui.commands.executeAsync('bold');
+      const result = await bold.executeAsync();
       const applied = result === true || (typeof result === 'object' && result.success);
       setStatus((current) => ({ id: current.id + 1, message: applied ? message : 'Bold was not changed.' }));
     } finally {
