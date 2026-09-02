@@ -667,6 +667,9 @@ export function resolveFace(logicalFamily: string, face: FaceKey, hasFace: HasFa
  */
 export type ResolvePhysicalFamily = (cssFontFamily: string, face: FaceKey) => string;
 
+/** Resolve a loaded physical face's deterministic baseline-pitch ratio for the given run text. */
+export type ResolveNaturalLineMultiplier = (cssFontFamily: string, face: FaceKey, text: string) => number | undefined;
+
 /**
  * The per-document font identity that every measure and paint path needs, carried as ONE value so
  * the resolver and its signature cannot travel separately and drift:
@@ -684,6 +687,7 @@ export type ResolvePhysicalFamily = (cssFontFamily: string, face: FaceKey) => st
  */
 export interface FontMeasureContext {
   resolvePhysical: ResolvePhysicalFamily;
+  resolveNaturalLineMultiplier?: ResolveNaturalLineMultiplier;
   fontSignature: string;
 }
 

@@ -40,7 +40,7 @@ import type {
   TableBlock,
   TextRun,
 } from '@superdoc/contracts';
-import type { FontMeasureContext } from '@superdoc/font-system';
+import { DEFAULT_FONT_MEASURE_CONTEXT, type FontMeasureContext } from '@superdoc/font-system';
 import {
   layoutDocument,
   layoutDocumentCooperatively,
@@ -2118,8 +2118,8 @@ export async function incrementalLayout(
   previousMeasures?: Measure[] | null,
   // Narrow runtime context (deliberately NOT on LayoutOptions): the per-document FontMeasureContext -
   // the SAME object whose `resolvePhysical` is bound into the measureBlock callback - plus the
-  // signature the previous measures were taken with. Only `fontContext.fontSignature` is read here:
-  // for the measure-cache keys (so two documents with different `fonts.map` cannot share a measure)
+  // signature the previous measures were taken with. The context supplies both fast-remeasurement
+  // line metrics and measure-cache identity (so two documents with different `fonts.map` cannot share a measure)
   // and to invalidate previous-measure reuse when this document's mapping changed since the prior
   // render. Passing the whole context rather than a separate signature string keys every cache off
   // the same object that supplies the resolver, so signature and resolver can never drift apart.
@@ -2206,7 +2206,8 @@ export async function incrementalLayout(
   if (headerFooter?.measure) {
     headerFooter = { ...headerFooter, measure: timeMeasureCallback(headerFooter.measure) };
   }
-  const fontSignature = fontRuntime?.fontContext?.fontSignature ?? '';
+  const fontContext = fontRuntime?.fontContext ?? DEFAULT_FONT_MEASURE_CONTEXT;
+  const fontSignature = fontContext.fontSignature;
   const previousFontSignature = fontRuntime?.previousFontSignature ?? '';
   // Provisional-vs-exact page-count field mode for every header/footer layout
   // this call performs (pre-layout height passes and final per-page layout).
@@ -2736,7 +2737,7 @@ export async function incrementalLayout(
           kind,
           headerFooterCacheSignature,
           (block, maxWidth, firstLineIndent, lineRegions) =>
-            remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+            remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions, fontContext),
           hfTokenOptions,
           headerFooterExecution,
         );
@@ -2773,7 +2774,7 @@ export async function incrementalLayout(
         kind,
         headerFooterCacheSignature,
         (block, maxWidth, firstLineIndent, lineRegions) =>
-          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions, fontContext),
         hfTokenOptions,
         headerFooterExecution,
       );
@@ -2836,7 +2837,7 @@ export async function incrementalLayout(
         'header',
         headerFooterCacheSignature,
         (block, maxWidth, firstLineIndent, lineRegions) =>
-          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions, fontContext),
         hfTokenOptions,
         headerFooterExecution,
       );
@@ -2958,7 +2959,7 @@ export async function incrementalLayout(
           'footer',
           headerFooterCacheSignature,
           (block, maxWidth, firstLineIndent, lineRegions) =>
-            remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+            remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions, fontContext),
           hfTokenOptions,
           headerFooterExecution,
         );
@@ -3320,7 +3321,7 @@ export async function incrementalLayout(
       maxWidth: number,
       firstLineIndent?: number,
       lineRegions?: readonly (readonly ParagraphLineRegion[])[],
-    ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+    ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions, fontContext),
   };
   const initialLayoutResult = await layoutWithOptionalReuse({
     previousBlocks,
@@ -3506,7 +3507,7 @@ export async function incrementalLayout(
           maxWidth: number,
           firstLineIndent?: number,
           lineRegions?: readonly (readonly ParagraphLineRegion[])[],
-        ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+        ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions, fontContext),
       };
       layout = layoutExecution
         ? await layoutDocumentCooperatively(currentBlocks, currentMeasures, pageTokenLayoutOptions, layoutExecution)
@@ -3531,7 +3532,7 @@ export async function incrementalLayout(
   // untouched document merely to discover that there are none.
   if (layoutReuseSummary.mode === 'full') {
     currentBlocks = hydrateTableTextboxMeasures(currentBlocks, (block, maxWidth) =>
-      remeasureParagraph(block, maxWidth),
+      remeasureParagraph(block, maxWidth, 0, undefined, fontContext),
     );
   }
 
@@ -4383,7 +4384,7 @@ export async function incrementalLayout(
             maxWidth: number,
             firstLineIndent?: number,
             lineRegions?: readonly (readonly ParagraphLineRegion[])[],
-          ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+          ) => remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions, fontContext),
         };
         const nextFootnoteLayoutInput = isFootnotesLayoutInput(footnoteLayoutOptions.footnotes)
           ? footnoteLayoutOptions.footnotes
@@ -5753,7 +5754,7 @@ export async function incrementalLayout(
         'header',
         headerFooterCacheSignature,
         (block, maxWidth, firstLineIndent, lineRegions) =>
-          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions, fontContext),
         finalHfTokenOptions,
         headerFooterExecution,
       );
@@ -5770,7 +5771,7 @@ export async function incrementalLayout(
         'footer',
         headerFooterCacheSignature,
         (block, maxWidth, firstLineIndent, lineRegions) =>
-          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions),
+          remeasureParagraph(block as ParagraphBlock, maxWidth, firstLineIndent, lineRegions, fontContext),
         finalHfTokenOptions,
         headerFooterExecution,
       );

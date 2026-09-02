@@ -327,6 +327,9 @@ export function createDomMeasurementRuntime(options: DomMeasurementRuntimeOption
       const passFontContext: FontMeasureContext = Object.freeze({
         fontSignature: fontContext.fontSignature,
         resolvePhysical: fontContext.resolvePhysical,
+        ...(fontContext.resolveNaturalLineMultiplier
+          ? { resolveNaturalLineMultiplier: fontContext.resolveNaturalLineMultiplier }
+          : {}),
       });
       bindSurfaceMeasurementPass(state, passFontContext, execution);
       const baseline = state.textWidths.snapshotStats();
@@ -1123,6 +1126,7 @@ function calculateEmptyParagraphMetrics(
     const metrics = measuredFontMetrics(ctx, {
       ...fontInfo,
       wordLineMetricFamily: undefined,
+      naturalLineMultiplier: undefined,
     });
     ascent = roundValue(metrics.ascent);
     descent = roundValue(metrics.descent);
@@ -1165,9 +1169,15 @@ function lineHeightFontSize(run: TextRun): number {
  * which may have no loaded face and would yield fallback metrics.
  */
 function getFontInfoFromRun(run: TextRun, fontContext: FontMeasureContext, resolvedPhysicalFamily?: string): FontInfo {
+  const face = faceOf(run);
   return {
-    fontFamily: normalizeFontFamily(resolvedPhysicalFamily ?? fontContext.resolvePhysical(run.fontFamily, faceOf(run))),
+    fontFamily: normalizeFontFamily(resolvedPhysicalFamily ?? fontContext.resolvePhysical(run.fontFamily, face)),
     wordLineMetricFamily: run.fontFamily,
+    naturalLineMultiplier: fontContext.resolveNaturalLineMultiplier?.(
+      run.fontFamily,
+      face,
+      typeof run.text === 'string' ? run.text : '',
+    ),
     fontSize: normalizeFontSize(lineHeightFontSize(run)),
     bold: run.bold,
     italic: run.italic,
