@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-28T22:06:13.918Z",
+  "generatedAt": "2026-09-02T23:43:43.642Z",
   "ticket": "SD-3212 PR A0",
   "package": "superdoc",
   "rootExport": {
@@ -214,6 +214,7 @@
         "SuperDocVisualHandle",
         "SuperDocVisualOptions",
         "SuperDocVisualTarget",
+        "SuperDocWorkerFailureDetail",
         "SuperDocZoomConfig",
         "SuperDocZoomMode",
         "SuperDocZoomPayload",
@@ -483,6 +484,7 @@
         "SuperDocVisualHandle",
         "SuperDocVisualOptions",
         "SuperDocVisualTarget",
+        "SuperDocWorkerFailureDetail",
         "SuperDocZoomConfig",
         "SuperDocZoomMode",
         "SuperDocZoomPayload",
@@ -583,11 +585,11 @@
     }
   },
   "counts": {
-    "types.import": 263,
-    "types.require": 263,
+    "types.import": 264,
+    "types.require": 264,
     "import": 10,
     "require": 10,
-    "union": 263
+    "union": 264
   },
   "divergences": {
     "typesImportVsRequire": {
@@ -795,6 +797,7 @@
         "SuperDocVisualHandle",
         "SuperDocVisualOptions",
         "SuperDocVisualTarget",
+        "SuperDocWorkerFailureDetail",
         "SuperDocZoomConfig",
         "SuperDocZoomMode",
         "SuperDocZoomPayload",

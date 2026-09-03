@@ -1,17 +1,17 @@
 # superdoc root export inventory (SD-3212 PR A0)
 
-Generated: 2026-08-28T22:06:13.918Z
+Generated: 2026-09-02T23:43:43.642Z
 Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 
 ## Counts
 
 | Source | Path | Count |
 |---|---|---|
-| types.import | `./dist/superdoc/src/public/index.d.ts` | 263 |
-| types.require | `./dist/superdoc/src/public/index.d.cts` | 263 |
+| types.import | `./dist/superdoc/src/public/index.d.ts` | 264 |
+| types.require | `./dist/superdoc/src/public/index.d.cts` | 264 |
 | import | `./dist/superdoc.es.js` | 10 |
 | require | `./dist/superdoc.cjs` | 10 |
-| **union** |  | **263** |
+| **union** |  | **264** |
 
 ## Divergences
 
@@ -19,7 +19,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - types.require only (not in types.import): 0
 - ESM only (not in CJS): 0
 - CJS only (not in ESM): 0
-- typed but no runtime export (phantom risk): 253
+- typed but no runtime export (phantom risk): 254
 - runtime export but not typed (silent shadow on root): 0
 
 ### Type-only names (no runtime)
@@ -219,6 +219,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 - `SuperDocVisualHandle`
 - `SuperDocVisualOptions`
 - `SuperDocVisualTarget`
+- `SuperDocWorkerFailureDetail`
 - `SuperDocZoomConfig`
 - `SuperDocZoomMode`
 - `SuperDocZoomPayload`
@@ -289,8 +290,8 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `BlocksListResult` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `BookmarkAddress` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `BookmarkInfo` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `BorrowedSuperDocUI` | ✓ | ✓ |   |   | 2 |   | 3 | 0 | 0 |
-| `BuiltInCommandId` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `BorrowedSuperDocUI` | ✓ | ✓ |   |   | 2 |   | 1 | 0 | 0 |
+| `BuiltInCommandId` | ✓ | ✓ |   |   | 2 |   | 1 | 0 | 0 |
 | `CanPerformPermissionParams` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CollaborationConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `CommentAddress` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -300,7 +301,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `CommentsLayout` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsResponsiveConfig` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `CommentsType` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Config` | ✓ | ✓ |   |   | 28 |   | 7 | 3 | 0 |
+| `Config` | ✓ | ✓ |   |   | 29 |   | 5 | 3 | 0 |
 | `ContentControlActiveChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContentControlClickPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContentControlRef` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -315,16 +316,16 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `ContextMenuSelectContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `ContextMenuSelectPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `ContextMenuSelectReadiness` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 301 | 55 | 0 |
+| `DOCX` | ✓ | ✓ | ✓ | ✓ | 1 |   | 295 | 55 | 0 |
 | `DiffApplyOperationReceipt` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `DiffApplyResult` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `DiffApplyReviewItem` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `DirectSurfaceRequest` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DocRange` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
-| `Document` | ✓ | ✓ |   |   | 3 |   | 101 | 9 | 0 |
+| `Document` | ✓ | ✓ |   |   | 3 |   | 97 | 9 | 0 |
 | `DocumentApi` | ✓ | ✓ |   |   | 3 |   | 2 | 0 | 0 |
 | `DocumentDataSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `DocumentMode` | ✓ | ✓ |   |   | 3 |   | 1 | 2 | 0 |
+| `DocumentMode` | ✓ | ✓ |   |   | 4 |   | 1 | 2 | 0 |
 | `DocumentProtectionState` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `DocumentSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `DocumentUploadSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -347,7 +348,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `FontsChangedPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `FontsChangedSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `FontsResolvedPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `HTML` | ✓ | ✓ | ✓ | ✓ | 1 |   | 51 | 0 | 0 |
+| `HTML` | ✓ | ✓ | ✓ | ✓ | 1 |   | 52 | 0 | 0 |
 | `HyperlinkActivationContext` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkActivationHandler` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `HyperlinkActivationResult` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
@@ -368,7 +369,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `LinkPopoverResolver` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `Modules` | ✓ | ✓ |   |   | 3 |   | 0 | 0 | 0 |
 | `NavigableAddress` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `PDF` | ✓ | ✓ | ✓ | ✓ | 1 |   | 1 | 0 | 0 |
+| `PDF` | ✓ | ✓ | ✓ | ✓ | 1 |   | 2 | 0 | 0 |
 | `PasswordPromptAttemptResult` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `PasswordPromptConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `PasswordPromptContext` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -390,7 +391,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SelectionInfo` | ✓ | ✓ |   |   | 1 |   | 1 | 0 | 0 |
 | `StoryLocator` | ✓ | ✓ |   |   | 1 |   | 4 | 0 | 0 |
 | `StructuredDocumentSource` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 26 |   | 250 | 40 | 0 |
+| `SuperDoc` | ✓ | ✓ | ✓ | ✓ | 27 |   | 237 | 40 | 0 |
 | `SuperDocActiveEditorExtensions` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsCommands` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocActiveEditorExtensionsDiagnostics` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -419,7 +420,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SuperDocDocumentModeChangePayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocEditorPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocExceptionDiagnosticPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
-| `SuperDocExceptionEditorPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
+| `SuperDocExceptionEditorPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocExceptionHyperlinkPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocExceptionPayload` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocExceptionRestorePayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
@@ -482,6 +483,7 @@ Source: packed and installed `tests/consumer-typecheck/node_modules/superdoc`
 | `SuperDocVisualHandle` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocVisualOptions` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocVisualTarget` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
+| `SuperDocWorkerFailureDetail` | ✓ | ✓ |   |   | 2 |   | 0 | 0 | 0 |
 | `SuperDocZoomConfig` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocZoomMode` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |
 | `SuperDocZoomPayload` | ✓ | ✓ |   |   | 1 |   | 0 | 0 | 0 |

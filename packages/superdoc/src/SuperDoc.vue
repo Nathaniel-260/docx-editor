@@ -2110,6 +2110,7 @@ const onV2EditorFailed = (payload) => {
     code: reason,
     ...(documentId ? { documentId } : {}),
     editor: null,
+    ...(workerFailure ? { workerFailure } : {}),
   });
   // SuperDoc Diagnostics MVP: additive, structured diagnostics alongside the legacy payload above.
   // A single boot failure can produce 1 legacy payload + 0..N diagnostic

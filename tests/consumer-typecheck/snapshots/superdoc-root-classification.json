@@ -1,14 +1,14 @@
 {
-  "generatedAt": "2026-08-28T20:14:32.300Z",
+  "generatedAt": "2026-09-02T00:00:00.000Z",
   "summary": {
-    "total": 263,
+    "total": 264,
     "byBucket": {
-      "supported-root": 260,
+      "supported-root": 261,
       "legacy-root": 3
     },
     "byConfidence": {
       "medium": 48,
-      "high": 215
+      "high": 216
     }
   },
   "rows": [
@@ -2196,6 +2196,17 @@
       "rationale": "Target accepted by SuperDocVisualHandle.replace/add (anchor, Document API target, or per-target override). Public extension-authoring type defined in core/extensions/types.ts.",
       "confidence": "high",
       "source": "extensions",
+      "inDts": true,
+      "inDcts": true,
+      "inEsm": false,
+      "inCjs": false
+    },
+    {
+      "name": "SuperDocWorkerFailureDetail",
+      "bucket": "supported-root",
+      "rationale": "Structured browser-worker boot and transport failure detail exposed on SuperDocExceptionEditorPayload so consumers can diagnose the phase and typed reason without parsing error text.",
+      "confidence": "high",
+      "source": "worker-diagnostics",
       "inDts": true,
       "inDcts": true,
       "inEsm": false,

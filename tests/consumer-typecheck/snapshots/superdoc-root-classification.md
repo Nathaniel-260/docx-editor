@@ -1,22 +1,22 @@
 # SD-3212 A1 — root classification
 
 Generated: derived from superdoc-root-classification.json (aligned with current root export inventory)
-Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (263 names)
+Input: tests/consumer-typecheck/snapshots/superdoc-root-classification.json (264 names)
 
 ## Summary
 
 | Bucket | Count |
 |---|---|
-| supported-root | 260 |
+| supported-root | 261 |
 | legacy-root | 3 |
 | move-to-subpath | 0 |
 | internal-candidate | 0 |
 | NEEDS-REVIEW | 0 |
-| **total** | **263** |
+| **total** | **264** |
 
-Confidence: high=215, medium=48, low=0, needs-review=0.
+Confidence: high=216, medium=48, low=0, needs-review=0.
 
-## supported-root (260)
+## supported-root (261)
 
 | Name | Confidence | Source | Rationale |
 |---|---|---|---|
@@ -217,6 +217,7 @@ Confidence: high=215, medium=48, low=0, needs-review=0.
 | `SuperDocVisualHandle` | high | extensions | Handle returned by ctx.visuals.highlight/decorate (replace/add/clear/invalidate/dispose). Public extension-authoring type defined in core/extensions/types.ts. |
 | `SuperDocVisualOptions` | high | extensions | Options for ctx.visuals.highlight/decorate (className/data/scope). Public extension-authoring type defined in core/extensions/types.ts. |
 | `SuperDocVisualTarget` | high | extensions | Target accepted by SuperDocVisualHandle.replace/add (anchor, Document API target, or per-target override). Public extension-authoring type defined in core/extensions/types.ts. |
+| `SuperDocWorkerFailureDetail` | high | worker-diagnostics | Structured browser-worker boot and transport failure detail exposed on SuperDocExceptionEditorPayload so consumers can diagnose the phase and typed reason without parsing error text. |
 | `SuperDocZoomConfig` | high | core | Config.zoom domain object (initial + fitToContainer); named so consumers can build zoom configuration values with a public type. |
 | `SuperDocZoomMode` | high | core | Closed zoom mode union (manual | fit-width) used by Config.zoom.mode, setZoomMode, and the zoomChange payload. |
 | `SuperDocZoomPayload` | high | core | Payload emitted with the zoomChange event and passed to Config.onZoomChange; promoted from an internal interface when the config callback made it consumer-facing. |
@@ -507,6 +508,7 @@ Confidence: high=215, medium=48, low=0, needs-review=0.
 | `SuperDocVisualHandle` | ✓ | ✓ |   |   |
 | `SuperDocVisualOptions` | ✓ | ✓ |   |   |
 | `SuperDocVisualTarget` | ✓ | ✓ |   |   |
+| `SuperDocWorkerFailureDetail` | ✓ | ✓ |   |   |
 | `SuperDocZoomConfig` | ✓ | ✓ |   |   |
 | `SuperDocZoomMode` | ✓ | ✓ |   |   |
 | `SuperDocZoomPayload` | ✓ | ✓ |   |   |

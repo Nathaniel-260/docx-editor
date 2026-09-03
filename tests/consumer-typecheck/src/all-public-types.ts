@@ -244,6 +244,7 @@ import type {
   SuperDocVisualHandle,
   SuperDocVisualOptions,
   SuperDocVisualTarget,
+  SuperDocWorkerFailureDetail,
   SuperDocZoomConfig,
   SuperDocZoomMode,
   SuperDocZoomPayload,
@@ -506,6 +507,7 @@ const _real_SuperDocVisualApi: AssertNotAny<SuperDocVisualApi> = true;
 const _real_SuperDocVisualHandle: AssertNotAny<SuperDocVisualHandle> = true;
 const _real_SuperDocVisualOptions: AssertNotAny<SuperDocVisualOptions> = true;
 const _real_SuperDocVisualTarget: AssertNotAny<SuperDocVisualTarget> = true;
+const _real_SuperDocWorkerFailureDetail: AssertNotAny<SuperDocWorkerFailureDetail> = true;
 const _real_SuperDocZoomConfig: AssertNotAny<SuperDocZoomConfig> = true;
 const _real_SuperDocZoomMode: AssertNotAny<SuperDocZoomMode> = true;
 const _real_SuperDocZoomPayload: AssertNotAny<SuperDocZoomPayload> = true;

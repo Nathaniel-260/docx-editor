@@ -3369,11 +3369,27 @@ export interface SuperDocExceptionRestorePayload {
  * re-emit path forwards `originalException?.editor ?? null`, so
  * consumers may receive `null` (not just `undefined`).
  */
+export interface SuperDocWorkerFailureDetail {
+  phase: string;
+  reason: string;
+  beforeHello: boolean;
+  message: string;
+  elapsedMs?: number;
+  errorName?: string;
+  errorMessage?: string;
+  errorStack?: string;
+  filename?: string;
+  lineno?: number;
+  colno?: number;
+}
+
 export interface SuperDocExceptionEditorPayload {
   error: unknown;
   editor?: Editor | null;
   code?: string;
   documentId?: string | null;
+  /** Structured browser-worker failure detail when editor startup failed in its worker transport. */
+  workerFailure?: SuperDocWorkerFailureDetail;
 }
 
 /**

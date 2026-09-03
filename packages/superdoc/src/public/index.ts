@@ -107,6 +107,7 @@ export type { SuperDocDocumentModeChangePayload } from '../core/types/index.js';
 export type { SuperDocEditorPayload } from '../core/types/index.js';
 export type { SuperDocExceptionDiagnosticPayload } from '../core/types/index.js';
 export type { SuperDocExceptionEditorPayload } from '../core/types/index.js';
+export type { SuperDocWorkerFailureDetail } from '../core/types/index.js';
 export type { SuperDocExceptionHyperlinkPayload } from '../core/types/index.js';
 export type { SuperDocExceptionToolbarPayload } from '../core/types/index.js';
 export type { SuperDocExceptionPayload } from '../core/types/index.js';
