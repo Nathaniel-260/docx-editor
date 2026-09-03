@@ -6,6 +6,7 @@
  * - `public/fixtures/comments-sample.docx`
  * - `public/fixtures/custom-comments-workflow.docx`
  * - `public/fixtures/custom-track-changes-workflow.docx`
+ * - `public/fixtures/custom-content-controls-workflow.docx`
  * - `public/fixtures/search-sample.docx`
  * - `public/fixtures/hyperlinks-sample.docx`
  * - `public/fixtures/context-menu-sample.docx`
@@ -23,7 +24,9 @@
  * configuration. The custom comments fixture puts two threads on separate
  * pages because its page teaches application-owned navigation. The custom
  * tracked-changes fixture puts three review decisions on separate pages for the
- * same reason. The search fixture follows the same rule: three large-type
+ * same reason. The custom content-controls fixture puts a text field and a
+ * checkbox on separate pages so its application panel can demonstrate field
+ * navigation as well as typed mutations. The search fixture follows the same rule: three large-type
  * paragraphs across three short pages, with enough repeated terms to show the
  * real search surface moving between results and one pending deletion for the
  * tracked-deletion search option. The hyperlinks fixture contains one real
@@ -110,6 +113,8 @@ const escapeXml = (text) =>
   text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 
 const paragraph = (text) => `<w:p><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
+
+const plainParagraph = (text) => `<w:p><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p>`;
 
 const heading = (text) =>
   `<w:p><w:r><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr><w:t>${escapeXml(text)}</w:t></w:r></w:p>`;
@@ -200,6 +205,17 @@ const CUSTOM_TRACK_CHANGES_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" stan
 )}<w:r><w:t>.</w:t></w:r></w:p>${paragraph(
   'Review the inserted approval requirement.',
 )}<w:sectPr><w:pgSz w:w="12240" w:h="7920"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+
+const CUSTOM_CONTENT_CONTROLS_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" mc:Ignorable="w14"><w:body>${heading(
+  'Agreement details',
+)}<w:p><w:r><w:t xml:space="preserve">Client name: </w:t></w:r><w:sdt><w:sdtPr><w:alias w:val="Client name"/><w:tag w:val="client-name"/><w:id w:val="3001"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Acme Inc.</w:t></w:r></w:sdtContent></w:sdt></w:p>${plainParagraph(
+  'Update the client name from the field panel.',
+)}${pageBreak}${heading(
+  'Review',
+)}<w:p><w:sdt><w:sdtPr><w:alias w:val="Review approved"/><w:tag w:val="review-approved"/><w:id w:val="3002"/><w14:checkbox><w14:checked w14:val="0"/><w14:checkedState w14:font="MS Gothic" w14:val="2612"/><w14:uncheckedState w14:font="MS Gothic" w14:val="2610"/></w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>☐</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> Approved for review</w:t></w:r></w:p>${plainParagraph(
+  'Use Show in document to move between fields.',
+)}<w:sectPr><w:pgSz w:w="12240" w:h="6480"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
 
 const SEARCH_PARAGRAPHS = [
   'The Client team opens the project brief and checks every Client name before review begins.',
@@ -303,6 +319,16 @@ await writeDocx('custom-track-changes-workflow.docx', [
   ['word/styles.xml', COMPACT_WORKFLOW_STYLES],
   ['docProps/core.xml', CORE_PROPERTIES],
   ['docProps/app.xml', appProperties(11)],
+]);
+
+await writeDocx('custom-content-controls-workflow.docx', [
+  ['[Content_Types].xml', CONTENT_TYPES],
+  ['_rels/.rels', ROOT_RELS],
+  ['word/document.xml', CUSTOM_CONTENT_CONTROLS_DOCUMENT],
+  ['word/_rels/document.xml.rels', DOCUMENT_RELS],
+  ['word/styles.xml', COMPACT_WORKFLOW_STYLES],
+  ['docProps/core.xml', CORE_PROPERTIES],
+  ['docProps/app.xml', appProperties(7)],
 ]);
 
 await writeDocx('search-sample.docx', [

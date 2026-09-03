@@ -331,6 +331,41 @@ test('the custom tracked-changes fixture makes review navigation visible across 
   assert.match(app, /<Manager><\/Manager>/);
 });
 
+test('the custom content-controls fixture makes typed field navigation visible across two compact pages', async () => {
+  const { bytes, zip, contentTypes, document, styles, core, app } = await openFixture(
+    'custom-content-controls-workflow.docx',
+  );
+  const visibleText = [...document.matchAll(/<w:t(?:\s[^>]*)?>(.*?)<\/w:t>/g)]
+    .map((match) => match[1])
+    .join(' ');
+
+  assert.equal(firstArchiveEntry(bytes), '[Content_Types].xml');
+  assert.equal(document.match(/<w:br w:type="page"\/>/g)?.length, 1, 'must contain two explicit pages');
+  assert.equal(document.match(/<w:sdt>/g)?.length, 2, 'must contain exactly two content controls');
+  assert.match(document, /<w:alias w:val="Client name"\/><w:tag w:val="client-name"\/><w:id w:val="3001"\/><w:text\/>/);
+  assert.match(
+    document,
+    /<w:alias w:val="Review approved"\/><w:tag w:val="review-approved"\/><w:id w:val="3002"\/><w14:checkbox>/,
+  );
+  assert.match(document, /<w14:checked w14:val="0"\/>/);
+  assert.match(document, /Acme Inc\./);
+  assert.match(document, /Use Show in document to move between fields\./);
+  assert.match(styles, /<w:sz w:val="24"\/>/);
+  assert.match(app, /<Paragraphs>7<\/Paragraphs>/);
+  assert.ok(visibleText.length < 300, `custom field fixture must stay concise, got ${visibleText.length} characters`);
+  assert.ok(bytes.length < 8_000, `must stay a small package, got ${bytes.length} bytes`);
+  assert.equal(zip.file('word/comments.xml'), null, 'must not ship comments');
+  assert.doesNotMatch(contentTypes, /comments\.xml/);
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+
+  for (const element of REVISION_ELEMENTS) {
+    assert.ok(!new RegExp(`<${element}\\b`).test(document), `must not contain <${element}>`);
+  }
+});
+
 test('the search fixture provides three short pages with deliberate query results', async () => {
   const { bytes, zip, document, styles, core, app } = await openFixture('search-sample.docx');
   const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');

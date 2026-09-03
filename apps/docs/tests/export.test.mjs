@@ -49,7 +49,7 @@ const routes = [
   ['editor/custom-ui/comments/index.html', 'Build a custom comments panel'],
   ['editor/custom-ui/tracked-changes/index.html', 'Build a custom review panel'],
   ['editor/custom-ui/tables/index.html', 'Build contextual table controls'],
-  ['editor/custom-ui/content-controls/index.html', 'Build a content-control panel'],
+  ['editor/custom-ui/content-controls/index.html', 'Build a document field panel'],
   ['editor/custom-ui/context-menus/index.html', 'Application-owned context menus'],
   ['editor/custom-ui/search/index.html', 'Build custom search controls'],
   ['editor/custom-ui/zoom-and-document-state/index.html', 'Control zoom and document state'],
@@ -350,6 +350,11 @@ test('exports the custom comments workflow document', async () => {
 
 test('exports the custom tracked-changes workflow document', async () => {
   const fixture = await stat(new URL('../out/fixtures/custom-track-changes-workflow.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
+test('exports the custom content-controls workflow document', async () => {
+  const fixture = await stat(new URL('../out/fixtures/custom-content-controls-workflow.docx', import.meta.url));
   assert.ok(fixture.size > 0);
 });
 
@@ -680,11 +685,16 @@ test('exports the custom tracked-change review workflow as clean Markdown', asyn
 test('exports the custom content-control workflow as clean Markdown', async () => {
   const markdown = await readFile(new URL('../out/md/editor/custom-ui/content-controls.md', import.meta.url), 'utf8');
 
+  assert.match(markdown, /Live example: edit document fields from an application-owned panel/);
+  assert.match(markdown, /custom-content-controls-workflow\.docx/);
   assert.match(markdown, /ui\.contentControls\.observe\(render\)/);
   assert.match(markdown, /await ui\.contentControls\.focus/);
-  assert.match(markdown, /await doc\.contentControls\.text\.setValue/);
-  assert.match(markdown, /Focus is navigation/);
+  assert.match(markdown, /await documentApi\.contentControls\.text\.setValue/);
+  assert.match(markdown, /await documentApi\.contentControls\.checkbox\.setState/);
+  assert.match(markdown, /useSuperDocContentControls\(\)/);
+  assert.match(markdown, /observer returns the updated value/);
   assert.doesNotMatch(markdown, /<include>/);
+  assert.doesNotMatch(markdown, /<CustomContentControlsDemo\b/);
 });
 
 test('exports the custom table-controls workflow as clean Markdown', async () => {

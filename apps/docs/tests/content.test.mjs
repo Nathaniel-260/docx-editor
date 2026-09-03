@@ -26,6 +26,14 @@ const customCommentsPageUrl = new URL('../content/docs/editor/custom-ui/comments
 const customCommentsDemoUrl = new URL('../components/embeds/custom-comments-demo.tsx', import.meta.url);
 const customTrackChangesPageUrl = new URL('../content/docs/editor/custom-ui/tracked-changes.mdx', import.meta.url);
 const customTrackChangesDemoUrl = new URL('../components/embeds/custom-track-changes-demo.tsx', import.meta.url);
+const customContentControlsPageUrl = new URL(
+  '../content/docs/editor/custom-ui/content-controls.mdx',
+  import.meta.url,
+);
+const customContentControlsDemoUrl = new URL(
+  '../components/embeds/custom-content-controls-demo.tsx',
+  import.meta.url,
+);
 const templatePopulationDemoUrl = new URL(
   '../components/embeds/template-population-demo.tsx',
   import.meta.url,
@@ -72,6 +80,11 @@ const customTrackedReviewExampleUrl = new URL('../snippets/editor/custom-tracked
 const customTrackedReviewHtmlUrl = new URL('../snippets/editor/custom-tracked-review.html', import.meta.url);
 const reactCustomTrackedReviewExampleUrl = new URL(
   '../snippets/editor/react-custom-tracked-review.tsx',
+  import.meta.url,
+);
+const customContentControlsExampleUrl = new URL('../snippets/editor/custom-content-controls.ts', import.meta.url);
+const reactCustomContentControlsExampleUrl = new URL(
+  '../snippets/editor/react-custom-content-controls.tsx',
   import.meta.url,
 );
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
@@ -158,6 +171,7 @@ const registeredComponents = new Set([
   'ContextMenuConfigReference',
   'CustomBoldDemo',
   'CustomCommentsDemo',
+  'CustomContentControlsDemo',
   'CustomTrackChangesDemo',
   'CustomToolbarDemo',
   'CustomUiArchitecture',
@@ -754,6 +768,67 @@ test('the custom tracked-change examples build one application-owned review pane
   assert.match(demo, /trackChangesHandle\?\.setActive\(target\)/u);
   assert.match(demo, /observerCleanupRef\.current/u);
   assert.match(demo, /disabled=\{pendingDecision !== null\}/u);
+});
+
+test('the custom content-control examples build one application-owned field panel', async () => {
+  const [page, demo, vanilla, react] = await Promise.all(
+    [
+      customContentControlsPageUrl,
+      customContentControlsDemoUrl,
+      customContentControlsExampleUrl,
+      reactCustomContentControlsExampleUrl,
+    ].map((url) => readFile(url, 'utf8')),
+  );
+
+  assert.match(page, /<CustomContentControlsDemo \/>/u);
+  assert.match(page, /custom-content-controls-workflow\.docx/u);
+  assert.match(page, /observer returns the updated value/u);
+  assert.match(page, /build custom search controls/u);
+
+  assert.match(demo, /value: 80/u);
+  assert.match(demo, /instance\.ui\.zoom\.set\(INITIAL_ZOOM\.value\)/u);
+  assert.match(demo, /instance\.ui\.contentControls\.observe/u);
+  assert.match(demo, /instance\.ui\.zoom\.observe/u);
+  assert.match(demo, /ui\.zoom\.setMode\('fit-width'\)/u);
+  assert.match(demo, /textControls\.setValue/u);
+  assert.match(demo, /checkboxes\.setState/u);
+  assert.match(demo, /mutationIsObserved/u);
+  assert.match(demo, /observerCleanupRef\.current/u);
+  assert.match(demo, /pendingMutation !== null/u);
+
+  for (const example of [vanilla, react]) {
+    assert.match(example, /document(?:=|:)\s*['"]\/contract\.docx['"]/u);
+    assert.match(example, /contentControls\.focus/u);
+    assert.match(example, /contentControls.*text/u);
+    assert.match(example, /\.setValue/u);
+    assert.match(example, /contentControls.*checkbox/u);
+    assert.match(example, /\.setState/u);
+    assert.match(example, /controlType === 'text'/u);
+    assert.match(example, /controlType === 'checkbox'/u);
+    assert.match(example, /contentLocked/u);
+    assert.doesNotMatch(example, /querySelector.*\[data-|contentControls\.list\(\)/u);
+  }
+
+  assert.match(vanilla, /contentControls\.observe\(render\)/u);
+  // A failed update keeps the submitted draft instead of resetting the input.
+  assert.match(vanilla, /drafts\.set\(control\.id, value\);\s+pendingMutation = \{ controlId/u);
+  assert.match(vanilla, /lastControls = controls;/u);
+  assert.doesNotMatch(vanilla, /contentControls\.getSnapshot\(\)/u);
+  // A successful update clears the draft so later document changes show through.
+  assert.match(vanilla, /drafts\.delete\(completedMutation\.controlId\)/u);
+  assert.match(react, /delete next\[pendingMutation\.controlId\]/u);
+  assert.match(react, /useSuperDocContentControls\(\)/u);
+  assert.match(react, /useSuperDocHost\(\)/u);
+  // The demo reports a refresh failure separately from the mutation receipt.
+  assert.match(demo, /refreshPinnedRuntimeCatalog\(instance, mutation\)/u);
+  assert.match(demo, /The field list will refresh on the next change\./u);
+
+  assert.match(vanilla, /mutationIsObserved/u);
+  assert.match(vanilla, /if \(!receipt\.success\) failMutation/u);
+  assert.doesNotMatch(vanilla, /finally \{\s*pendingMutation = null;/u);
+  assert.match(react, /mutationIsObserved/u);
+  assert.match(react, /if \(!receipt\.success\) \{\s*setPendingMutation\(null\);/u);
+  assert.doesNotMatch(react, /finally \{\s*setPendingMutation\(null\);/u);
 });
 
 test('the content-control examples use the canonical chrome config and typed click payload', async () => {

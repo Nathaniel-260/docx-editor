@@ -38,6 +38,7 @@ export const llmPlaceholderComponents = [
   'ContextMenuConfigReference',
   'CustomBoldDemo',
   'CustomCommentsDemo',
+  'CustomContentControlsDemo',
   'CustomTrackChangesDemo',
   'CustomToolbarDemo',
   'CustomUiArchitecture',
@@ -180,6 +181,14 @@ export function renderLLMMarkdown(markdown: string) {
         '> **Live example: replace the comments panel**',
         '>',
         '> SuperDoc renders the toolbar and a three-page DOCX while the application renders the comments panel. Existing threads on the first and final pages make `setActive()` and `scrollTo()` visible; the middle page provides text for `createFromCapture()`. The panel observes `ui.comments` and reports resolve or reopen receipts. Setting `ui.comments` to `false` removes the built-in comments panel without removing comments from the document.',
+        '',
+      ].join('\n');
+    },
+    CustomContentControlsDemo() {
+      return [
+        '> **Live example: edit document fields from an application-owned panel**',
+        '>',
+        '> SuperDoc renders its toolbar and a two-page DOCX while the application renders a persistent field panel. Show in document moves between a text field on page 1 and a checkbox on page 2. The panel observes `ui.contentControls`, runs `activeEditor.doc.contentControls.text.setValue()` or `checkbox.setState()`, and stays pending until the observed field contains the new value.',
         '',
       ].join('\n');
     },

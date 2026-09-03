@@ -1155,6 +1155,20 @@ export interface TrackChangesHandle extends SnapshotSubscribable<TrackChangesSli
 
 /** Content-controls handle. */
 export interface ContentControlsHandle extends SnapshotSubscribable<ContentControlsSlice> {
+  /**
+   * Observe the document-wide content-control catalog and active field IDs.
+   * The catalog remains requested until the returned disposer runs.
+   */
+  observe(listener: (snapshot: ContentControlsSlice) => void): () => void;
+  /**
+   * Observe the passive content-controls slice without requesting the
+   * document-wide catalog. Meant for consumers that only need the active
+   * field path, such as the core active-change event bridge; a field panel
+   * should use {@link observe}.
+   */
+  observeActivePath(listener: (snapshot: ContentControlsSlice) => void): () => void;
+  /** Event-shaped alias of {@link observe}. */
+  subscribe(listener: (event: { snapshot: ContentControlsSlice }) => void): () => void;
   /** Read the current content-controls snapshot. */
   getSnapshot(): ContentControlsSlice;
   /** Read the current content-controls snapshot. */

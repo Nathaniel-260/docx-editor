@@ -2909,8 +2909,12 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   const incompleteTrackChangesDirectoryReadTokens = new Map<string, string>();
   const postSourceCompletionRefreshTokens = new Map<string, string>();
   let sourceCompletionObservedToken: string | null = null;
-  let commentsDirectoryLeaseCount = 0;
-  let trackChangesDirectoryLeaseCount = 0;
+  type DirectoryFamily = 'comments' | 'trackChanges' | 'contentControls';
+  const directoryLeaseCounts: Record<DirectoryFamily, number> = {
+    comments: 0,
+    trackChanges: 0,
+    contentControls: 0,
+  };
   const demandHeavyDocRead = (key: string): void => {
     const token = contentToken();
     if (demandedHeavyReads.get(key) === token) return;
@@ -2945,19 +2949,16 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     if (invalidated) scheduleAsyncRefresh();
   };
 
-  const acquireDirectoryLease = (family: 'comments' | 'trackChanges'): (() => void) => {
-    if (family === 'comments') commentsDirectoryLeaseCount += 1;
-    else trackChangesDirectoryLeaseCount += 1;
+  const acquireDirectoryLease = (family: DirectoryFamily): (() => void) => {
+    directoryLeaseCounts[family] += 1;
 
     demandHeavyDocRead(family);
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      if (family === 'comments') commentsDirectoryLeaseCount = Math.max(0, commentsDirectoryLeaseCount - 1);
-      else trackChangesDirectoryLeaseCount = Math.max(0, trackChangesDirectoryLeaseCount - 1);
-      const leaseCount = family === 'comments' ? commentsDirectoryLeaseCount : trackChangesDirectoryLeaseCount;
-      if (leaseCount === 0 && demandedHeavyReads.get(family) === contentToken()) {
+      directoryLeaseCounts[family] = Math.max(0, directoryLeaseCounts[family] - 1);
+      if (directoryLeaseCounts[family] === 0 && demandedHeavyReads.get(family) === contentToken()) {
         demandedHeavyReads.delete(family);
       }
       scheduleAsyncRefresh();
@@ -3935,7 +3936,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     // An open document-wide consumer may focus an off-window row. Preserve it
     // while that directory is refreshing, and validate it against the settled
     // directory rather than against the painted page window.
-    const activeValidationItems = commentsDirectoryLeaseCount > 0 ? directoryItems : items;
+    const activeValidationItems = directoryLeaseCounts.comments > 0 ? directoryItems : items;
     if (
       explicitActiveCommentId &&
       activeValidationItems &&
@@ -4042,7 +4043,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
           ? filterPostDecisionTrackChanges(projectTrackChangesItems(directory.value), postDecisionIds)
           : null;
       const activeValidationItems =
-        trackChangesDirectoryLeaseCount > 0 ? directoryItems : active.story ? allStoryItems : items;
+        directoryLeaseCounts.trackChanges > 0 ? directoryItems : active.story ? allStoryItems : items;
       if (
         activeValidationItems &&
         !activeValidationItems.some((row) => entityRowMatchesRequest(row, active.id, active.story))
@@ -7162,7 +7163,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   const directorySnapshotHandle = <TSlice>(
     passiveSub: Subscribable<TSlice>,
     directorySub: Subscribable<TSlice>,
-    family: 'comments' | 'trackChanges',
+    family: DirectoryFamily,
   ): SnapshotSubscribable<TSlice> => {
     const passive = snapshotHandle(passiveSub);
     const directory = snapshotHandle(directorySub);
@@ -10337,12 +10338,29 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     return items.find((item) => item?.id === id) ?? null;
   };
 
-  const contentControlsSnap = snapshotHandle(contentControlsSub);
+  // While a panel observes the catalog, renew demand on every content revision
+  // the way the comments and tracked-change directories do. The passive slice
+  // only records demand for the revision it was attached at, so a mounted
+  // panel would otherwise serve a stale catalog until the idle release.
+  const contentControlsDirectorySub = select((s) => {
+    if (directoryLeaseCounts.contentControls > 0) demandHeavyDocRead('contentControls');
+    return s.contentControls;
+  });
+  const contentControlsSnap = directorySnapshotHandle(
+    contentControlsSub,
+    contentControlsDirectorySub,
+    'contentControls',
+  );
   const contentControlsGet = ((input?: { id: string }): ContentControlsSlice | ContentControlInfo | null => {
     if (input === undefined) return contentControlsSnap.get();
     const id = readContentControlRequestId(input);
     return id ? findContentControl(id) : null;
   }) as ContentControlsHandle['get'];
+  // Internal subscription for the core active-change bridge. It reads the
+  // passive slice and never takes the directory lease, so merely enabling
+  // `onContentControlActiveChange` cannot renew catalog demand on every typing
+  // revision and bypass the heavy-read idle gate.
+  const contentControlsPassiveSnap = snapshotHandle(contentControlsSub);
   const contentControls: ContentControlsHandle = {
     // The read helpers below are explicit consumer demand for the catalog:
     // during source loading they stay best-effort over the (pending/stale)
@@ -10355,6 +10373,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     getSnapshot: contentControlsSnap.getSnapshot,
     subscribe: contentControlsSnap.subscribe,
     observe: contentControlsSnap.observe,
+    observeActivePath: contentControlsPassiveSnap.observe,
     list: () => {
       ensureContentControlsCatalog('api');
       return contentControlsSub.get().items;
@@ -11778,8 +11797,9 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     if (detachSourceLoading) detachSourceLoading();
     detachSourceLoading = null;
     sourceLoadingSubscriptionHost = null;
-    commentsDirectoryLeaseCount = 0;
-    trackChangesDirectoryLeaseCount = 0;
+    for (const family of Object.keys(directoryLeaseCounts) as DirectoryFamily[]) {
+      directoryLeaseCounts[family] = 0;
+    }
     demandedHeavyReads.clear();
     incompleteTrackChangesDirectoryReadTokens.clear();
     postSourceCompletionRefreshTokens.clear();

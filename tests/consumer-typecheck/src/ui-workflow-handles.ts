@@ -137,6 +137,20 @@ void contentControls.getById('cc-1');
 void contentControls.getRect({ id: 'cc-1' });
 void contentControls.scrollIntoView({ id: 'cc-1' });
 void contentControls.focus({ id: 'cc-1' });
+// The passive active-path subscription has the same listener shape and
+// disposer return as observe.
+const _ccObserveActivePath: AssertEqual<
+  Parameters<ContentControlsHandle['observeActivePath']>,
+  Parameters<ContentControlsHandle['observe']>
+> = true;
+const _ccObserveActivePathReturn: AssertEqual<
+  ReturnType<ContentControlsHandle['observeActivePath']>,
+  () => void
+> = true;
+const _ccObserveReturn: AssertEqual<ReturnType<ContentControlsHandle['observe']>, () => void> = true;
+const stopActivePath = contentControls.observeActivePath(() => undefined);
+stopActivePath();
+void [_ccObserveActivePath, _ccObserveActivePathReturn, _ccObserveReturn];
 // Reactive reads come from the snapshot; `doc` owns fresh live reads.
 const _ccItems: AssertEqual<ReturnType<ContentControlsHandle['getSnapshot']>['items'], readonly ContentControlInfo[]> =
   true;

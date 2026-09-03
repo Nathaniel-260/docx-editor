@@ -1542,7 +1542,10 @@ export class SuperDoc extends EventEmitter<SuperDocEventMap> {
         this.#pendingContentControlInputExpiresAt = null;
       });
 
-      contentControlsUnsub = this.#ui.contentControls.observe((snapshot) => {
+      // Passive: the bridge only needs the active path. Taking the directory
+      // lease here would renew catalog demand on every typing revision for any
+      // consumer that merely listens for the event.
+      contentControlsUnsub = this.#ui.contentControls.observeActivePath((snapshot) => {
         const editor = this.activeEditor;
         const activePath = snapshot.activeIds.map((id) =>
           toContentControlRef(snapshot.items.find((item) => item.id === id)),
