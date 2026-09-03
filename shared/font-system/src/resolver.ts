@@ -691,6 +691,19 @@ export interface FontMeasureContext {
   fontSignature: string;
 }
 
+/** Font face inputs whose measured digit advances can affect layout reuse. */
+export interface FontMeasureFace {
+  family: string;
+  sizePx: number;
+  weight: FaceKey['weight'];
+  style: FaceKey['style'];
+}
+
+/** Immutable, invocation-scoped facts established by the active measurement surface. */
+export interface FontMeasureCapabilities {
+  hasTabularDigits(face: FontMeasureFace): boolean;
+}
+
 /**
  * The global-resolver / empty-signature context. The behavior-preserving default for outer entry
  * points and non-document callers (tests, the global measure path). Frozen so a stray

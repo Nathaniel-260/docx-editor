@@ -92,7 +92,13 @@ import {
 import { resolveListTextStartPx, type MinimalMarker } from '@superdoc/common/list-marker-utils';
 import { calculateRotatedBounds, normalizeRotation } from '@superdoc/geometry-utils';
 import { toCssFontFamily } from '@superdoc/font-utils';
-import { DEFAULT_FONT_MEASURE_CONTEXT, type FaceKey, type FontMeasureContext } from '@superdoc/font-system';
+import {
+  DEFAULT_FONT_MEASURE_CONTEXT,
+  type FaceKey,
+  type FontMeasureCapabilities,
+  type FontMeasureContext,
+  type FontMeasureFace,
+} from '@superdoc/font-system';
 export { installNodeCanvasPolyfill } from './setup.js';
 import {
   clearMeasurementCache,
@@ -133,6 +139,7 @@ import {
   type SurfaceMeasurementExecutionControl,
 } from './measurement-runtime-context.js';
 import { DomMeasurementInfrastructureError } from './measurement-infrastructure-error.js';
+import { createTabularDigitProbe, type TabularDigitProbe } from './tabular-digits.js';
 import {
   clearTableCellBlockMeasureCache,
   measureTableCellBlocks,
@@ -259,6 +266,7 @@ function resolveWordGlyphAdvanceScale(fontFamily: string | undefined, text: stri
 export type DomMeasurementExecutionControl = SurfaceMeasurementExecutionControl;
 
 export interface DomMeasurementPass {
+  readonly fontCapabilities: FontMeasureCapabilities;
   measureBlock(block: FlowBlock, constraints: number | MeasureConstraints): Promise<Measure>;
   snapshotStats(): TextWidthCacheStats;
   finish(): TextWidthCacheStats;
@@ -334,8 +342,25 @@ export function createDomMeasurementRuntime(options: DomMeasurementRuntimeOption
       bindSurfaceMeasurementPass(state, passFontContext, execution);
       const baseline = state.textWidths.snapshotStats();
       let finished = false;
+      let digitProbe: TabularDigitProbe | undefined;
+      const fontCapabilities: FontMeasureCapabilities = Object.freeze({
+        hasTabularDigits: (face: FontMeasureFace) => {
+          digitProbe ??= createTabularDigitProbe(ensureSurfaceMeasurementCanvas(state));
+          const { font } = buildFontString(
+            {
+              fontFamily: face.family,
+              fontSize: face.sizePx,
+              bold: face.weight === '700',
+              italic: face.style === 'italic',
+            },
+            passFontContext,
+          );
+          return digitProbe.hasTabularDigits(font);
+        },
+      });
       const snapshot = (): TextWidthCacheStats => statsDelta(state.textWidths.snapshotStats(), baseline);
       return {
+        fontCapabilities,
         measureBlock: async (block, constraints) => {
           if (finished) throw new DomMeasurementInfrastructureError('DomMeasurementPass has finished');
           state.execution?.throwIfAborted?.();

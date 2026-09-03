@@ -34,7 +34,9 @@ export type {
   FontResolutionReason,
   FaceKey,
   HasFace,
+  FontMeasureCapabilities,
   FontMeasureContext,
+  FontMeasureFace,
   ResolvePhysicalFamily,
   ResolveNaturalLineMultiplier,
 } from './resolver';

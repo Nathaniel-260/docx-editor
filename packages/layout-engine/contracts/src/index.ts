@@ -3689,8 +3689,13 @@ export { isResolvedTableItem, isResolvedImageItem, isResolvedDrawingItem } from 
 // and painter-dom). Located in contracts to avoid reverse stage dependencies.
 export {
   expandRunsForInlineNewlines,
+  isBodyNoteReferenceRun,
+  isNoteLabelRun,
+  isNumberedNoteMarkerRun,
   isEmptyInlineSdtPlaceholderRun,
   isEmptySdtPlaceholderRun,
+  NOTE_LABEL_MARKER_ATTR,
+  NOTE_REFERENCE_MARKER_ATTR,
   sliceRunsForLine,
   usesPositionedTextGeometry,
 } from './run-helpers.js';

@@ -726,6 +726,112 @@ describe('coupled footnote local edit conservation', () => {
     expect(next.layoutReuse?.mode).not.toBe('full');
   });
 
+  it('remeasures only changed note geometry before one fresh coupled finalization', async () => {
+    const before = fixture();
+    const dirtyId = 'body:dirty/o15';
+    const removedId = 'body:tail/o16';
+    const removedReference = before.refs.find((reference) => reference.blockId === removedId);
+    if (!removedReference) throw new Error('expected a note reference in the removed paragraph');
+    const source = await incrementalLayout([], null, before.blocks, options(before), measureBlock);
+    const crossingNoteId = before.refs.find(
+      (reference) => reference.id !== removedReference.id && reference.blockId !== removedId,
+    )?.id;
+    if (!crossingNoteId || !source.footnoteReserveSeed) {
+      throw new Error('expected a surviving note and retained seed');
+    }
+
+    const currentNotes = new Map<string, ParagraphBlock[]>();
+    for (const [noteId, blocks] of before.notes) {
+      if (noteId === removedReference.id) continue;
+      currentNotes.set(
+        noteId,
+        blocks.map((block) => ({
+          ...block,
+          runs: block.runs.map((run) => {
+            if (!('text' in run)) return run;
+            return {
+              ...run,
+              text: noteId === crossingNoteId ? run.text.slice(0, -1) : run.text.replaceAll('n', 'm'),
+            };
+          }),
+        })),
+      );
+    }
+    const after: Fixture = {
+      ...before,
+      blocks: before.blocks
+        .filter((block) => block.id !== removedId)
+        .map((block) => (block.id === dirtyId ? paragraph(dirtyId, 'merged') : block)),
+      refs: before.refs.filter((reference) => reference.id !== removedReference.id),
+      notes: currentNotes,
+    };
+    const sourceSeed = source.footnoteReserveSeed;
+    const noteBlocksByBlockId = new Map<string, FlowBlock>();
+    const noteMeasuresByBlockId = new Map<string, Measure>();
+    const noteBodyHeightById = new Map<string, number>();
+    const noteFirstLineHeightById = new Map<string, number>();
+    for (const [noteId, blocks] of currentNotes) {
+      if (noteId === crossingNoteId) continue;
+      const totalHeight = sourceSeed.noteBodyHeightById?.get(noteId);
+      const firstLineHeight = sourceSeed.noteFirstLineHeightById?.get(noteId);
+      if (totalHeight == null || firstLineHeight == null) throw new Error(`missing retained height ${noteId}`);
+      noteBodyHeightById.set(noteId, totalHeight);
+      noteFirstLineHeightById.set(noteId, firstLineHeight);
+      for (const block of blocks) {
+        const retainedMeasure = sourceSeed.noteMeasuresByBlockId?.get(block.id);
+        if (!retainedMeasure) throw new Error(`missing retained measure ${block.id}`);
+        noteBlocksByBlockId.set(block.id, block);
+        noteMeasuresByBlockId.set(block.id, retainedMeasure);
+      }
+    }
+    const measuredNoteBlockIds: string[] = [];
+    const observedMeasure = async (block: FlowBlock): Promise<Measure> => {
+      if (block.id.startsWith('footnote:')) measuredNoteBlockIds.push(block.id);
+      return measureBlock(block);
+    };
+    const emptyRewrites = {
+      previousToCurrent: new Map<string, string>(),
+      currentToPrevious: new Map<string, string>(),
+    };
+    const result = await incrementalLayout(
+      before.blocks,
+      source.layout,
+      after.blocks,
+      options(after),
+      observedMeasure,
+      undefined,
+      source.measures,
+      undefined,
+      {
+        footnoteReserveSeed: {
+          ...sourceSeed,
+          footnoteAssignment: undefined,
+          noteBlocksByBlockId,
+          noteMeasuresByBlockId,
+          noteBodyHeightById,
+          noteFirstLineHeightById,
+        },
+        noteMeasurePlaneRetainedSubset: true,
+      },
+      retainedReuse(source, before, after, dirtyId, { deleted: [removedId], rewrites: emptyRewrites }),
+    );
+
+    await assertFreshEquivalent(result, after);
+    expect(measuredNoteBlockIds).toEqual(currentNotes.get(crossingNoteId)?.map((block) => block.id));
+    expect(result.layoutReuse?.mode).toBe('full');
+    expect(result.layoutReuse?.tailDisposition).toBe('none');
+    expect(result.layoutReuse?.tailAdoption).toBeNull();
+    expect(result.layoutReuse?.reason).not.toContain('footnote-finalizer-full-relayout');
+    expect(result.bridgeTiming.counters.footnoteRelayouts).toBe(0);
+    expect(result.bridgeTiming.counters.footnoteOtherRelayouts).toBe(0);
+    expect(result.bridgeTiming.counters.footnoteCoupledRelayouts).toBeGreaterThan(0);
+    for (const blocks of currentNotes.values()) {
+      for (const block of blocks) {
+        expect(result.footnoteReserveSeed?.noteBlocksByBlockId?.get(block.id)).toBe(block);
+      }
+    }
+  });
+
   it('keeps note-removing delete, Undo, Redo, and the following key on the exact local path', async () => {
     const before = fixture(1, 60);
     const dirtyId = 'body:dirty/o15';

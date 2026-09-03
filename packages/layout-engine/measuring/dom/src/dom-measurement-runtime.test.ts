@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vite-plus/test';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import type { FlowBlock } from '@superdoc/contracts';
 import type { FontMeasureContext } from '@superdoc/font-system';
 import { createDomMeasurementRuntime, measureBlock } from './index.js';
@@ -33,6 +33,40 @@ const legalParagraph = (): FlowBlock => ({
 });
 
 describe('surface-owned DOM measurement runtime', () => {
+  it('freezes and memoizes the active surface digit capability', () => {
+    const context = {
+      font: '',
+      fontKerning: 'auto',
+      measureText: vi.fn(() => ({ width: 8 })),
+    } as unknown as CanvasRenderingContext2D;
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    const runtime = createDomMeasurementRuntime();
+
+    try {
+      const pass = runtime.beginPass({
+        fontSignature: 'digit-capability',
+        resolvePhysical: () => 'Physical Serif',
+      });
+      const face = {
+        family: 'Logical Serif',
+        sizePx: 8,
+        weight: '700' as const,
+        style: 'italic' as const,
+      };
+
+      expect(Object.isFrozen(pass.fontCapabilities)).toBe(true);
+      expect(pass.fontCapabilities.hasTabularDigits(face)).toBe(true);
+      expect(pass.fontCapabilities.hasTabularDigits(face)).toBe(true);
+      expect(context.font).toBe('italic bold 8px Physical Serif');
+      expect(context.fontKerning).toBe('none');
+      expect(context.measureText).toHaveBeenCalledTimes(10);
+      pass.finish();
+    } finally {
+      runtime.dispose();
+      getContext.mockRestore();
+    }
+  });
+
   it('keeps a North-shaped exact working set resident without repeat canvas work', () => {
     let intrinsicCalls = 0;
     const cache = new TextWidthMeasurementCache({
