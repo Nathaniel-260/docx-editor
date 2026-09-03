@@ -3373,14 +3373,18 @@
 }
 
 /* Fumadocs renders light and dark Shiki tokens together. Code stays on the
-   dark surface in both site themes, so the active token palette must follow. */
+   dark surface in both site themes, so the active token palette must follow.
+   The --shiki-* properties sit on the figure, so every span inherits the dark
+   value. Match all of them, not just spans carrying an inline --shiki-dark:
+   unhighlighted languages (```text) emit tokens with no inline color, which
+   left them on the light theme's near-black foreground over the dark surface. */
 figure.shiki {
   background: #0e1012 !important;
-  color: var(--shiki-dark) !important;
+  color: var(--shiki-dark, #e1e4e8) !important;
 }
 
-figure.shiki span[style*='--shiki-dark'] {
-  color: var(--shiki-dark) !important;
+figure.shiki pre span {
+  color: var(--shiki-dark, #e1e4e8) !important;
 }
 
 @media (max-width: 38rem) {
