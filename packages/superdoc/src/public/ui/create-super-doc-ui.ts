@@ -2155,6 +2155,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
         // Closing an unavailable surface is intentionally idempotent.
       }
     },
+    contextAt,
   };
 
   /** Read the live browser Document API facade (or null). */
@@ -10731,6 +10732,21 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     return null;
   }
 
+  function contextAt(input: { x: number; y: number }): ViewportContext {
+    const validInput = !!input && typeof input.x === 'number' && typeof input.y === 'number';
+    // A fresh object: callers reuse and mutate pointer coordinates, and the
+    // returned point must keep describing the hits that were resolved.
+    const point = validInput ? { x: input.x, y: input.y } : { x: 0, y: 0 };
+
+    return {
+      point,
+      entities: validInput ? entityAt(point) : [],
+      selection: state.selection,
+      position: null,
+      insideSelection: false,
+    };
+  }
+
   /**
    * One live `viewport.observe()` subscription. `detach` releases the geometry
    * binding only; the state subscription is owned by the closure in `observe`.
@@ -10908,26 +10924,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     },
     getHost: (): HTMLElement | null => resolveVisibleHost(),
     entityAt,
-    contextAt: (input: { x: number; y: number }): ViewportContext => {
-      // Defensive input handling: a malformed call (e.g. contextAt(null)) must
-      // return a well-formed EMPTY context instead of throwing — and must NOT
-      // run a real hit-test at the {0,0} origin (which could return a genuine
-      // entity painted there). Only valid numeric coordinates hit-test.
-      const validInput = !!input && typeof input.x === 'number' && typeof input.y === 'number';
-      const x = validInput ? input.x : 0;
-      const y = validInput ? input.y : 0;
-      return {
-        // Echo the queried coordinate so consumers can anchor floating UI to it.
-        point: { x, y },
-        entities: validInput ? entityAt({ x, y }) : [],
-        selection: state.selection,
-        // No cheap point → document-position resolver in this release; a
-        // position-aware target is a follow-up. `insideSelection` likewise
-        // stays false until it can be computed without a layout probe.
-        position: null,
-        insideSelection: false,
-      };
-    },
+    contextAt,
     scrollIntoView: async (input: ScrollIntoViewInput): Promise<ScrollIntoViewOutput> => {
       const rawTarget = input?.target;
       if (!rawTarget) return { success: false };

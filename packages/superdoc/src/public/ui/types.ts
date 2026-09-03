@@ -1486,12 +1486,18 @@ export interface SearchController
 // Context menu surface
 // ---------------------------------------------------------------------------
 
-/** Runtime control for the built-in context menu. */
+/** Runtime control and document context for context menus. */
 export interface ContextMenuHandle {
   /** Open the menu at the active selection or caret. */
   open(): WorkflowActionResult;
   /** Close the menu when it is open. */
   close(): void;
+  /**
+   * Resolve the public document context at a viewport point. Coordinates use
+   * `MouseEvent.clientX` and `MouseEvent.clientY`. This remains available when
+   * the built-in context menu is disabled.
+   */
+  contextAt(input: { x: number; y: number }): ViewportContext;
 }
 
 // ---------------------------------------------------------------------------

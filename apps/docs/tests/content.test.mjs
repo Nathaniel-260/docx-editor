@@ -109,6 +109,11 @@ const customSearchTrackedDeletionsUrl = new URL(
 const reactBuiltInHyperlinksExampleUrl = new URL('../snippets/editor/react-built-in-hyperlinks.tsx', import.meta.url);
 const builtInContextMenuExampleUrl = new URL('../snippets/editor/built-in-context-menu.ts', import.meta.url);
 const reactBuiltInContextMenuExampleUrl = new URL('../snippets/editor/react-built-in-context-menu.tsx', import.meta.url);
+const customContextMenuExampleUrl = new URL('../snippets/editor/custom-context-menu.ts', import.meta.url);
+const reactCustomContextMenuExampleUrl = new URL(
+  '../snippets/editor/react-custom-context-menu.tsx',
+  import.meta.url,
+);
 const documentApiReferenceModelUrl = new URL('../generated/document-api-reference.json', import.meta.url);
 const generatedProofingConfigUrl = new URL('../generated/proofing-config-reference.json', import.meta.url);
 const generatedSearchConfigUrl = new URL('../generated/search-config-reference.json', import.meta.url);
@@ -951,6 +956,39 @@ test('the context menu examples use the canonical composition fields', async () 
     assert.match(example, /\bsections:\s*\[/u);
     assert.doesNotMatch(example, /\b(?:customItems|includeDefaultItems)\b/u);
   }
+});
+
+test('the custom context-menu examples replace only the built-in surface', async () => {
+  const examples = await Promise.all(
+    [customContextMenuExampleUrl, reactCustomContextMenuExampleUrl].map((url) => readFile(url, 'utf8')),
+  );
+
+  for (const example of examples) {
+    assert.match(example, /document(?:=|:)\s*['"]\/contract\.docx['"]/u);
+    assert.match(example, /const editorUi = \{ contextMenu: false \} satisfies UIConfig/u);
+    assert.match(example, /contextMenu\.contextAt\(point\)/u);
+    assert.match(example, /trackChanges\.acceptAsync/u);
+    assert.match(example, /trackChanges\.rejectAsync/u);
+    assert.match(example, /event\.shiftKey && event\.key === 'F10'/u);
+    // A decision in flight disables both buttons, and a late decision closes
+    // only the menu that started it.
+    assert.match(example, /decisionPending/u);
+    assert.match(example, /menuId(?:Ref\.current)? === (?:menuId|startedFrom)/u);
+    // Dismissal retires the open menu so a late action cannot steal focus.
+    assert.match(example, /closeMenu[\s\S]{0,200}menuId(?:Ref\.current)? \+= 1/u);
+    assert.doesNotMatch(example, /viewport\.contextAt|commands\.executeAsync/u);
+  }
+
+  const [vanilla, react] = examples;
+  // Copy follows the live selection rather than the snapshot taken at open time.
+  assert.match(vanilla, /ui\.selection\.observe\(/u);
+  assert.match(react, /useSuperDocSelection\(\)/u);
+  // Only events from inside the editor container open the document menu.
+  assert.match(react, /closest\('\.superdoc-editor-container'\)/u);
+  assert.match(vanilla, /editorHost\.addEventListener\('contextmenu'/u);
+
+  const html = await readFile(new URL('../snippets/editor/custom-context-menu.html', import.meta.url), 'utf8');
+  assert.match(html, /<script type="module" src="\/src\/main\.ts"><\/script>/u);
 });
 
 test('the built-in Editor demos keep focused controls and restart-safe configuration changes', async () => {

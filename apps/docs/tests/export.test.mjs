@@ -50,7 +50,7 @@ const routes = [
   ['editor/custom-ui/tracked-changes/index.html', 'Build a custom review panel'],
   ['editor/custom-ui/tables/index.html', 'Build contextual table controls'],
   ['editor/custom-ui/content-controls/index.html', 'Build a document field panel'],
-  ['editor/custom-ui/context-menus/index.html', 'Application-owned context menus'],
+  ['editor/custom-ui/context-menus/index.html', 'Build an application-owned context menu'],
   ['editor/custom-ui/search/index.html', 'Build custom find and replace controls'],
   ['editor/custom-ui/zoom-and-document-state/index.html', 'Control zoom and document state'],
   ['editor/custom-ui/selection-and-viewport/index.html', 'Preserve selections and position UI'],
