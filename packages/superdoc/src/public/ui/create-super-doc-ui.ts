@@ -7320,11 +7320,10 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     }
   }
 
-  function resolveTrackDecisionTarget(
-    command: { kind: 'accept' | 'reject'; scope: 'id' | 'all' },
+  /** A decision target carried by the payload itself, independent of the selection. */
+  function explicitTrackDecisionTarget(
     payload: unknown,
   ): { target: LooseRecord; changeId: string | null; story?: unknown } | null {
-    if (command.scope === 'all') return { target: { kind: 'all' }, changeId: null };
     if (typeof payload === 'string' && payload.length > 0) {
       return { target: { kind: 'id', id: payload }, changeId: payload };
     }
@@ -7339,6 +7338,16 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
         return { target: trackDecisionIdTarget(id, record.story), changeId: id, story: record.story };
       }
     }
+    return null;
+  }
+
+  function resolveTrackDecisionTarget(
+    command: { kind: 'accept' | 'reject'; scope: 'id' | 'all' },
+    payload: unknown,
+  ): { target: LooseRecord; changeId: string | null; story?: unknown } | null {
+    if (command.scope === 'all') return { target: { kind: 'all' }, changeId: null };
+    const explicit = explicitTrackDecisionTarget(payload);
+    if (explicit) return explicit;
     const selectedId = state.selection.activeChangeIds[0];
     const story = nonBodySelectionStoryLocator(state.selection);
     return selectedId ? { target: trackDecisionIdTarget(selectedId, story), changeId: selectedId, story } : null;
@@ -8566,6 +8575,9 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   const commandNeedsFreshSelection = (id: string, payload: unknown): boolean => {
     const trackCommand = trackDecisionCommand(id);
     const descriptor = getCommandDescriptor(id);
+    // An explicit change id is a complete target. Only a selection-derived
+    // decision has to wait for the selection read to settle.
+    if (trackCommand?.scope === 'id' && explicitTrackDecisionTarget(payload)) return false;
     if (trackCommand?.scope !== 'id' && !descriptorNeedsFreshSelection(descriptor)) return false;
     return !commandSelectionIsReady(id, descriptor, payload);
   };
@@ -9562,9 +9574,13 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     namespace: 'comments' | 'trackChanges',
     id: string,
     loaded: readonly unknown[],
-    request?: { story?: unknown },
+    request?: { story?: unknown; matchStory?: unknown },
   ): Promise<unknown | null> => {
     const requestedStory = namespace === 'trackChanges' ? request?.story : undefined;
+    // Row matching may use a stricter locator than the one stamped onto the
+    // target: an explicit body request must select the body row even though
+    // body is never threaded into host calls.
+    const rowStory = namespace === 'trackChanges' ? (request?.matchStory ?? requestedStory) : undefined;
     // Stamp the requested story onto a story-less resolved target so the host
     // scroll surface resolves the target (and its painted carriers) within the
     // requested story instead of defaulting to body. A target that already
@@ -9578,7 +9594,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       return { ...record, story: requestedStory };
     };
     const readTarget = namespace === 'trackChanges' ? readTrackedChangeNavigationTarget : readEntityTarget;
-    const loadedRow = loaded.find((row) => entityRowMatchesRequest(row, id, requestedStory));
+    const loadedRow = loaded.find((row) => entityRowMatchesRequest(row, id, rowStory));
     const loadedRecord = loadedRow && typeof loadedRow === 'object' ? (loadedRow as LooseRecord) : null;
     const moveSide =
       namespace === 'trackChanges' &&
@@ -10022,9 +10038,13 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
         });
     },
     accept: (changeId) => executeTrackDecision('accept', changeId),
+    acceptAsync: (changeId) => settleTrackDecision(() => executeTrackDecision('accept', changeId)),
     reject: (changeId) => executeTrackDecision('reject', changeId),
+    rejectAsync: (changeId) => settleTrackDecision(() => executeTrackDecision('reject', changeId)),
     acceptAll: () => executeTrackDecisionTarget('accept', { kind: 'all' }, null),
+    acceptAllAsync: () => settleTrackDecision(() => executeTrackDecisionTarget('accept', { kind: 'all' }, null)),
     rejectAll: () => executeTrackDecisionTarget('reject', { kind: 'all' }, null),
+    rejectAllAsync: () => settleTrackDecision(() => executeTrackDecisionTarget('reject', { kind: 'all' }, null)),
     next: (): string | null => navigateTrackChange(1),
     previous: (): string | null => navigateTrackChange(-1),
     navigateNext: (): Promise<ScrollIntoViewOutput> => navigateAndScroll(1),
@@ -10115,7 +10135,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       recompute();
       return true;
     },
-    scrollTo: async (changeId): Promise<WorkflowScrollResult> => {
+    scrollTo: async (input): Promise<WorkflowScrollResult> => {
       const doc = getDoc();
       if (!doc) {
         return {
@@ -10124,21 +10144,43 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
           reason: getEditor() ? SUPERDOC_UI_REASONS.documentApiUnavailable : SUPERDOC_UI_REASONS.notReady,
         };
       }
+      const changeId = typeof input === 'string' ? input : input.id;
+      // A supplied locator, body included, is kept for row matching so an
+      // explicit body request cannot land on a same-id footnote or header row
+      // that happens to be listed first. Only host calls drop the body story,
+      // which is their documented default.
+      const matchStory =
+        typeof input === 'string' || !input.story || typeof input.story !== 'object' ? undefined : input.story;
+      const requestedStory = matchStory ? readEntityRequestStory({ address: { story: matchStory } }) : undefined;
+      if (typeof changeId !== 'string' || changeId.length === 0) {
+        return { success: false, ok: false, reason: SUPERDOC_UI_REASONS.targetUnresolved };
+      }
       queuedTrackChangeNavigationInvalidation += 1;
       trackChangeRevealInvalidation += 1;
       const requestedAtInvalidation = trackChangeRevealInvalidation;
-      // Scope the request to the matching row's own (non-body) story so a
+      // Scope the request to the row's own (non-body) story so a
       // header/footer/footnote row scrolls to ITS occurrence, matching the
-      // story threading in navigateNext / navigatePrevious.
-      const loadedItems = trackChangesSub.get().items;
+      // story threading in navigateNext / navigatePrevious. A requested story
+      // wins; otherwise the story comes from the first matching loaded row.
+      // Rows outside the painted window are only in the directory, so a
+      // story-scoped request also consults it.
+      const loadedItems = matchStory
+        ? (readAllStoryTrackChanges() ?? trackChangesSub.get().items)
+        : trackChangesSub.get().items;
       // Custom review panels commonly retain the nested change/source id
       // (`item.change.id`) instead of the canonical row id (`item.id`). Keep
       // the raw id as the painter alias, but use the canonical id for target
       // resolution and explicit focus so recompute does not discard the
       // pending reveal as an unknown change.
-      const publicId = buildTrackedChangeIdContext(loadedItems).toPublicId(changeId) ?? changeId;
-      const matchingRow = loadedItems.find((item) => readEntityId(item) === publicId);
-      const story = readEntityRequestStory(matchingRow);
+      const publicId = matchStory
+        ? (buildStoryScopedTrackedChangeIdContext(loadedItems, matchStory).toPublicId(changeId) ?? changeId)
+        : (buildTrackedChangeIdContext(loadedItems).toPublicId(changeId) ?? changeId);
+      const matchingRow = matchStory
+        ? loadedItems.find((item) => entityRowMatchesRequest(item, publicId, matchStory))
+        : loadedItems.find((item) => readEntityId(item) === publicId);
+      // Thread the requested story when it is non-body; otherwise the matched
+      // row's own story (undefined for an explicit or implicit body request).
+      const story = matchStory ? requestedStory : readEntityRequestStory(matchingRow);
       const importedId = deriveTrackedChangeImportedId(matchingRow);
       const previousActiveChange = explicitActiveChange;
       const requestedActiveChange: ExplicitActiveChange = {
@@ -10148,7 +10190,12 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       };
       pendingTrackChangeRevealFocuses.add(requestedActiveChange);
       try {
-        const target = await resolveEntityTarget('trackChanges', publicId, loadedItems, story ? { story } : undefined);
+        const target = await resolveEntityTarget(
+          'trackChanges',
+          publicId,
+          loadedItems,
+          story || matchStory ? { story, matchStory } : undefined,
+        );
         if (trackChangeRevealInvalidation !== requestedAtInvalidation) {
           return { success: false, ok: false };
         }
@@ -10208,8 +10255,26 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     // hit) additionally pins the painted occurrence when a source id repeats
     // across stories.
     const { id, story } = typeof input === 'string' ? { id: input, story: undefined } : input;
+    // An empty id names nothing. Fail closed rather than let a later resolver
+    // substitute whichever change happens to be selected.
+    if (typeof id !== 'string' || id.length === 0) return false;
     const target: LooseRecord = { kind: 'id', id, ...(story ? { story } : {}) };
     return executeTrackDecisionTarget(kind, target, id, story);
+  };
+
+  /**
+   * Run a domain decision and resolve with its settled result. The domain
+   * helpers call the decision route directly so an application command that
+   * reuses a built-in tracked-change id cannot intercept them; only the command
+   * registry (`commands.execute*`) honours those overrides.
+   */
+  const settleTrackDecision = (run: () => CommandExecutionResult): Promise<CommandExecutionResult> => {
+    pendingCommandSettlement = null;
+    lastCommandSettlement = Promise.resolve(false);
+    if (disposed) return Promise.resolve(false);
+    const immediate = run();
+    if (immediate === false) return Promise.resolve(false);
+    return lastCommandSettlement;
   };
 
   const executeTrackDecisionTarget = (

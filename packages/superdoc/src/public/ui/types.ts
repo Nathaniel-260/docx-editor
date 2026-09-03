@@ -1063,27 +1063,37 @@ export interface TrackChangesHandle extends SnapshotSubscribable<TrackChangesSli
    * already identifies one occurrence, anywhere in the document). A
    * `{ id, story }` record (e.g. a {@link getAt}/{@link setActive} hit) is
    * also accepted for convenience, so a hit can be passed straight through.
-   * Structured failure receipt or `false` if unsupported.
+   * Returns the immediate routed result. Use {@link acceptAsync} when later UI
+   * depends on the settled document operation.
    */
   accept(changeId: string | { id: string; story?: unknown }): CommandExecutionResult;
+  /** Accept a change and resolve after the document operation settles. */
+  acceptAsync(changeId: string | { id: string; story?: unknown }): Promise<CommandExecutionResult>;
   /**
    * Reject a change. The id is sufficient on its own (a tracked-change id
    * already identifies one occurrence, anywhere in the document). A
    * `{ id, story }` record (e.g. a {@link getAt}/{@link setActive} hit) is
    * also accepted for convenience, so a hit can be passed straight through.
-   * Structured failure receipt or `false` if unsupported.
+   * Returns the immediate routed result. Use {@link rejectAsync} when later UI
+   * depends on the settled document operation.
    */
   reject(changeId: string | { id: string; story?: unknown }): CommandExecutionResult;
+  /** Reject a change and resolve after the document operation settles. */
+  rejectAsync(changeId: string | { id: string; story?: unknown }): Promise<CommandExecutionResult>;
   /**
    * Accept every active tracked change. Returns the Document API receipt, or
    * `false` when bulk decisions are unavailable / disabled on the host.
    */
   acceptAll(): CommandExecutionResult;
+  /** Accept every active tracked change and resolve after the operation settles. */
+  acceptAllAsync(): Promise<CommandExecutionResult>;
   /**
    * Reject every active tracked change. Returns the Document API receipt, or
    * `false` when bulk decisions are unavailable / disabled on the host.
    */
   rejectAll(): CommandExecutionResult;
+  /** Reject every active tracked change and resolve after the operation settles. */
+  rejectAllAsync(): Promise<CommandExecutionResult>;
   /**
    * Move focus to the next tracked change in document order (relative to the
    * active change). Returns the id that became active, or `null` when there are
@@ -1136,9 +1146,11 @@ export interface TrackChangesHandle extends SnapshotSubscribable<TrackChangesSli
   /**
    * Scroll the tracked-change anchor into view through the host navigation
    * surface. Resolves with both v1/main `{ success }` and v2 `{ ok, reason? }`
-   * fields.
+   * fields. A bare id resolves its story from the loaded rows; a
+   * `{ id, story }` record pins the occurrence when the same id repeats across
+   * the body and a footnote, header, or footer.
    */
-  scrollTo(changeId: string): Promise<WorkflowScrollResult>;
+  scrollTo(input: string | { id: string; story?: unknown }): Promise<WorkflowScrollResult>;
 }
 
 /** Content-controls handle. */

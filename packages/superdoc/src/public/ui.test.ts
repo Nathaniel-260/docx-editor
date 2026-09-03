@@ -5037,6 +5037,8 @@ describe('public ui — track changes workflow parity (row 748)', () => {
     expect(decide).toHaveBeenCalledWith({ decision: 'accept', target: { kind: 'all' } });
     expect(ui.trackChanges.rejectAll()).toMatchObject({ success: true });
     expect(decide).toHaveBeenCalledWith({ decision: 'reject', target: { kind: 'all' } });
+    await expect(ui.trackChanges.acceptAllAsync()).resolves.toMatchObject({ success: true });
+    await expect(ui.trackChanges.rejectAllAsync()).resolves.toMatchObject({ success: true });
     await expect(ui.commands.executeAsync(BUILT_IN_COMMAND_IDS.acceptAllChanges)).resolves.toMatchObject({
       success: true,
     });
@@ -5044,6 +5046,82 @@ describe('public ui — track changes workflow parity (row 748)', () => {
       success: true,
     });
     expect(decide).toHaveBeenLastCalledWith({ decision: 'reject', target: { kind: 'all' } });
+  });
+
+  it('acceptAsync / rejectAsync wait for the tracked-change decision', async () => {
+    const story = { kind: 'story', storyType: 'footnote', noteId: 'fn-1' };
+    const decide = vi.fn(async () => ({ success: true }));
+    const { superdoc } = makeWorkflowSuperdoc({ trackChanges: { list: () => ({ items }), decide } });
+    const ui = createSuperDocUI({ superdoc });
+
+    await expect(ui.trackChanges.acceptAsync('tc-1')).resolves.toMatchObject({ success: true });
+    expect(decide).toHaveBeenCalledWith({ decision: 'accept', target: { kind: 'id', id: 'tc-1' } });
+
+    await expect(ui.trackChanges.rejectAsync({ id: 'tc-2', story })).resolves.toMatchObject({ success: true });
+    expect(decide).toHaveBeenCalledWith({ decision: 'reject', target: { kind: 'id', id: 'tc-2', story } });
+  });
+
+  it('acceptAsync / rejectAsync with an explicit id do not wait for a pending selection read', async () => {
+    const decide = vi.fn(async () => ({ success: true }));
+    const { superdoc } = makeWorkflowSuperdoc({
+      selectionInfo: new Promise(() => {}),
+      trackChanges: { list: () => ({ items }), decide },
+    });
+    const ui = createSuperDocUI({ superdoc });
+    expect(ui.state.selection.status).not.toBe('ready');
+
+    // The panel supplies the id, so the decision must settle even though the
+    // selection read never does.
+    const timeout = new Promise((resolve) => setTimeout(() => resolve('timed out'), 50));
+    await expect(Promise.race([ui.trackChanges.acceptAsync('tc-1'), timeout])).resolves.toMatchObject({
+      success: true,
+    });
+    expect(decide).toHaveBeenCalledWith({ decision: 'accept', target: { kind: 'id', id: 'tc-1' } });
+
+    await expect(Promise.race([ui.trackChanges.rejectAsync({ id: 'tc-2' }), timeout])).resolves.toMatchObject({
+      success: true,
+    });
+    expect(decide).toHaveBeenLastCalledWith({ decision: 'reject', target: { kind: 'id', id: 'tc-2' } });
+  });
+
+  it('acceptAsync / rejectAsync fail closed on an empty id instead of deciding the selected change', async () => {
+    const decide = vi.fn(async () => ({ success: true }));
+    const { superdoc } = makeWorkflowSuperdoc({
+      selectionInfo: {
+        empty: false,
+        target: WF_TARGET,
+        selectionTarget: WF_SELECTION_TARGET,
+        activeChangeIds: ['tc-1'],
+      },
+      trackChanges: { list: () => ({ items }), decide },
+    });
+    const ui = createSuperDocUI({ superdoc });
+
+    await expect(ui.trackChanges.acceptAsync('')).resolves.toBe(false);
+    await expect(ui.trackChanges.rejectAsync({ id: '' })).resolves.toBe(false);
+    expect(ui.trackChanges.accept('')).toBe(false);
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('async domain decisions bypass an application command registered under a built-in id', async () => {
+    const decide = vi.fn(async () => ({ success: true }));
+    const override = vi.fn(() => ({ success: true }));
+    const { superdoc } = makeWorkflowSuperdoc({
+      trackChanges: { list: () => ({ items }), decide, acceptAll: decide, rejectAll: decide },
+      host: { v2TrackedChanges: { bulkDecisions: true } },
+    });
+    const ui = createSuperDocUI({ superdoc });
+    ui.commands.register({ id: BUILT_IN_COMMAND_IDS.acceptChange, execute: override });
+    ui.commands.register({ id: BUILT_IN_COMMAND_IDS.acceptAllChanges, execute: override });
+
+    await expect(ui.trackChanges.acceptAsync('tc-1')).resolves.toMatchObject({ success: true });
+    expect(decide).toHaveBeenCalledWith({ decision: 'accept', target: { kind: 'id', id: 'tc-1' } });
+    await ui.trackChanges.acceptAllAsync();
+    expect(override).not.toHaveBeenCalled();
+
+    // The command registry still honours the override.
+    await ui.commands.executeAsync(BUILT_IN_COMMAND_IDS.acceptChange, 'tc-1');
+    expect(override).toHaveBeenCalledTimes(1);
   });
 
   it('acceptAll fails closed when generic decide exists without host bulk opt-in', async () => {
@@ -5056,6 +5134,7 @@ describe('public ui — track changes workflow parity (row 748)', () => {
       reason: SUPERDOC_UI_REASONS.bulkDecisionsDisabled,
     });
     expect(ui.trackChanges.acceptAll()).toBe(false);
+    await expect(ui.trackChanges.acceptAllAsync()).resolves.toBe(false);
     expect(decide).not.toHaveBeenCalled();
   });
 
@@ -5528,6 +5607,86 @@ describe('public ui — track changes workflow parity (row 748)', () => {
       { target: tailTarget, block: 'center', behavior: 'auto' },
       expect.any(Function),
     );
+  });
+
+  it('scrollTo honours a requested { id, story } when the id repeats across stories (IT-1250)', async () => {
+    const scrollTargetIntoView = vi.fn(async () => ({ success: true }));
+    const footnoteStory = { kind: 'story', storyType: 'footnote', noteId: '3' } as const;
+    const bodyTarget = { kind: 'text', segments: [{ blockId: 'P9', range: { start: 0, end: 4 } }] } as const;
+    const footnoteTarget = { kind: 'text', segments: [{ blockId: 'FN3', range: { start: 0, end: 4 } }] } as const;
+    const rows = [
+      {
+        id: 'tc-dup',
+        type: 'insert',
+        address: { kind: 'entity', entityType: 'trackedChange', entityId: 'tc-dup' },
+        target: bodyTarget,
+      },
+      {
+        id: 'tc-dup',
+        type: 'insert',
+        address: { kind: 'entity', entityType: 'trackedChange', entityId: 'tc-dup', story: footnoteStory },
+        target: footnoteTarget,
+      },
+    ];
+    const { superdoc } = makeWorkflowSuperdoc({
+      trackChanges: { list: () => ({ items: rows }) },
+      host: { scrollTargetIntoView },
+    });
+    const ui = createSuperDocUI({ superdoc });
+
+    // A bare id resolves the first occurrence, the body row.
+    expect(await ui.trackChanges.scrollTo('tc-dup')).toMatchObject({ ok: true });
+    expect(scrollTargetIntoView).toHaveBeenLastCalledWith(
+      expect.objectContaining({ target: bodyTarget }),
+      expect.any(Function),
+    );
+
+    // The row's story pins the footnote occurrence.
+    expect(await ui.trackChanges.scrollTo({ id: 'tc-dup', story: footnoteStory })).toMatchObject({ ok: true });
+    expect(scrollTargetIntoView).toHaveBeenLastCalledWith(
+      expect.objectContaining({ target: { ...footnoteTarget, story: footnoteStory } }),
+      expect.any(Function),
+    );
+
+    expect(await ui.trackChanges.scrollTo({ id: '', story: footnoteStory })).toMatchObject({ ok: false });
+  });
+
+  it('scrollTo pins an explicit body story even when a same-id non-body row is listed first (IT-1250)', async () => {
+    const scrollTargetIntoView = vi.fn(async () => ({ success: true }));
+    const bodyStory = { kind: 'story', storyType: 'body' } as const;
+    const footnoteStory = { kind: 'story', storyType: 'footnote', noteId: '4' } as const;
+    const bodyTarget = { kind: 'text', segments: [{ blockId: 'P10', range: { start: 0, end: 4 } }] } as const;
+    const footnoteTarget = { kind: 'text', segments: [{ blockId: 'FN4', range: { start: 0, end: 4 } }] } as const;
+    const rows = [
+      {
+        id: 'tc-dup2',
+        type: 'insert',
+        address: { kind: 'entity', entityType: 'trackedChange', entityId: 'tc-dup2', story: footnoteStory },
+        target: footnoteTarget,
+      },
+      {
+        id: 'tc-dup2',
+        type: 'insert',
+        address: { kind: 'entity', entityType: 'trackedChange', entityId: 'tc-dup2' },
+        target: bodyTarget,
+      },
+    ];
+    const { superdoc } = makeWorkflowSuperdoc({
+      trackChanges: { list: () => ({ items: rows }) },
+      host: { scrollTargetIntoView },
+    });
+    const ui = createSuperDocUI({ superdoc });
+
+    // The footnote row is first, so a bare id would reveal it. An explicit
+    // body story must still reveal the body occurrence, with no story threaded
+    // into the host call (body is the host default).
+    expect(await ui.trackChanges.scrollTo({ id: 'tc-dup2', story: bodyStory })).toMatchObject({ ok: true });
+    expect(scrollTargetIntoView).toHaveBeenLastCalledWith(
+      expect.objectContaining({ target: bodyTarget }),
+      expect.any(Function),
+    );
+    const lastTarget = scrollTargetIntoView.mock.calls.at(-1)?.[0]?.target;
+    expect(lastTarget).not.toHaveProperty('story');
   });
 
   it('scrollTo threads the matching row story into the scroll target (IT-1250)', async () => {

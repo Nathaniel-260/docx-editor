@@ -303,6 +303,34 @@ test('the custom comments fixture makes thread navigation visible across three c
   assert.doesNotMatch(document, /<(?:w:ins|w:del)\b/);
 });
 
+test('the custom tracked-changes fixture makes review navigation visible across three compact pages', async () => {
+  const { bytes, zip, contentTypes, document, styles, core, app } = await openFixture(
+    'custom-track-changes-workflow.docx',
+  );
+  const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');
+
+  assert.equal(firstArchiveEntry(bytes), '[Content_Types].xml');
+  assert.equal(document.match(/<w:br w:type="page"\/>/g)?.length, 2, 'must contain three explicit pages');
+  assert.equal(document.match(/<w:ins\b/g)?.length, 2, 'must contain two tracked insertions');
+  assert.equal(document.match(/<w:del\b/g)?.length, 1, 'must contain one tracked deletion');
+  assert.match(document, /w:author="Alex Rivera"/);
+  assert.match(document, /w:author="Morgan Lee"/);
+  assert.match(document, /within 10 business days/);
+  assert.match(document, /automatically renews for one year/);
+  assert.match(document, /prior written approval/);
+  assert.match(styles, /<w:sz w:val="24"\/>/);
+  assert.ok(visibleText.length < 500, `custom review fixture must stay concise, got ${visibleText.length} characters`);
+  assert.ok(bytes.length < 8_000, `must stay a small package, got ${bytes.length} bytes`);
+  assert.equal(zip.file('word/comments.xml'), null, 'must not ship comments');
+  assert.doesNotMatch(contentTypes, /comments\.xml/);
+  assert.doesNotMatch(document, /<w:comment(?:RangeStart|RangeEnd|Reference)\b/);
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(core, /<dcterms:created xsi:type="dcterms:W3CDTF">2025-01-15T00:00:00Z<\/dcterms:created>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+});
+
 test('the search fixture provides three short pages with deliberate query results', async () => {
   const { bytes, zip, document, styles, core, app } = await openFixture('search-sample.docx');
   const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');

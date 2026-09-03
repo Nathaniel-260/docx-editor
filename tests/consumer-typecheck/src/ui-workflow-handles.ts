@@ -75,8 +75,20 @@ void comments.scrollTo('c-1').then((r) => {
 // ─── Track changes (row 748) ────────────────────────────────────────
 const trackChanges: TrackChangesHandle = ui.trackChanges;
 const _trackChangesList: AssertEqual<ReturnType<TrackChangesHandle['list']>, readonly TrackChangesItem[]> = true;
+const _accept: AssertEqual<ReturnType<TrackChangesHandle['accept']>, CommandExecutionResult> = true;
+const _acceptAsync: AssertEqual<ReturnType<TrackChangesHandle['acceptAsync']>, Promise<CommandExecutionResult>> = true;
+const _reject: AssertEqual<ReturnType<TrackChangesHandle['reject']>, CommandExecutionResult> = true;
+const _rejectAsync: AssertEqual<ReturnType<TrackChangesHandle['rejectAsync']>, Promise<CommandExecutionResult>> = true;
 const _acceptAll: AssertEqual<ReturnType<TrackChangesHandle['acceptAll']>, CommandExecutionResult> = true;
+const _acceptAllAsync: AssertEqual<
+  ReturnType<TrackChangesHandle['acceptAllAsync']>,
+  Promise<CommandExecutionResult>
+> = true;
 const _rejectAll: AssertEqual<ReturnType<TrackChangesHandle['rejectAll']>, CommandExecutionResult> = true;
+const _rejectAllAsync: AssertEqual<
+  ReturnType<TrackChangesHandle['rejectAllAsync']>,
+  Promise<CommandExecutionResult>
+> = true;
 const _next: AssertEqual<ReturnType<TrackChangesHandle['next']>, string | null> = true;
 const _previous: AssertEqual<ReturnType<TrackChangesHandle['previous']>, string | null> = true;
 const _navigateNext: AssertEqual<ReturnType<TrackChangesHandle['navigateNext']>, Promise<ScrollIntoViewOutput>> = true;
@@ -87,14 +99,25 @@ const _navigatePrevious: AssertEqual<
 const _tcSetActive: AssertEqual<ReturnType<TrackChangesHandle['setActive']>, boolean> = true;
 const _tcScrollTo: AssertEqual<ReturnType<TrackChangesHandle['scrollTo']>, Promise<WorkflowScrollResult>> = true;
 void trackChanges.list();
+void trackChanges.accept('tc-1');
+void trackChanges.acceptAsync('tc-1');
+void trackChanges.reject('tc-1');
+void trackChanges.rejectAsync('tc-1');
+void trackChanges.acceptAsync({ id: 'tc-footnote', story: { kind: 'story', storyType: 'footnote', noteId: 'fn-1' } });
 void trackChanges.acceptAll();
+void trackChanges.acceptAllAsync();
 void trackChanges.rejectAll();
+void trackChanges.rejectAllAsync();
 const navResult: string | null = trackChanges.next();
 void navResult;
 void trackChanges.navigateNext();
 void trackChanges.navigatePrevious();
 const _tcSetActiveAccepted: boolean = trackChanges.setActive('tc-1');
 const _tcScrollAsV1: Promise<ScrollIntoViewOutput> = trackChanges.scrollTo('tc-1');
+// A row's `{ id, story }` pins the occurrence for both activation and reveal.
+const _tcSetActiveStory: boolean = trackChanges.setActive({ id: 'tc-1', story: { kind: 'story' } });
+void trackChanges.scrollTo({ id: 'tc-1', story: { kind: 'story' } });
+void _tcSetActiveStory;
 void _tcSetActiveAccepted;
 
 // ─── Content controls (row 738) ─────────────────────────────────────

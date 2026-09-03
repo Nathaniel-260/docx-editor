@@ -38,6 +38,7 @@ export const llmPlaceholderComponents = [
   'ContextMenuConfigReference',
   'CustomBoldDemo',
   'CustomCommentsDemo',
+  'CustomTrackChangesDemo',
   'CustomToolbarDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
@@ -179,6 +180,14 @@ export function renderLLMMarkdown(markdown: string) {
         '> **Live example: replace the comments panel**',
         '>',
         '> SuperDoc renders the toolbar and a three-page DOCX while the application renders the comments panel. Existing threads on the first and final pages make `setActive()` and `scrollTo()` visible; the middle page provides text for `createFromCapture()`. The panel observes `ui.comments` and reports resolve or reopen receipts. Setting `ui.comments` to `false` removes the built-in comments panel without removing comments from the document.',
+        '',
+      ].join('\n');
+    },
+    CustomTrackChangesDemo() {
+      return [
+        '> **Live example: review changes from an application-owned panel**',
+        '>',
+        '> SuperDoc renders its toolbar and a three-page DOCX while the application renders the review queue. Previous, Next, and Show in document move between three real tracked changes. Accepting or rejecting one removes its row and decreases the open-change count. The panel observes `ui.trackChanges`; setting `ui.comments` to `false` removes the built-in comments and review sidebar without removing tracked changes from the document.',
         '',
       ].join('\n');
     },

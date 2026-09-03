@@ -47,7 +47,7 @@ const routes = [
   ['editor/custom-ui/custom-commands/index.html', 'Register custom commands'],
   ['editor/custom-ui/formatting-controls/index.html', 'Build a custom toolbar'],
   ['editor/custom-ui/comments/index.html', 'Build a custom comments panel'],
-  ['editor/custom-ui/tracked-changes/index.html', 'Build tracked-change review controls'],
+  ['editor/custom-ui/tracked-changes/index.html', 'Build a custom review panel'],
   ['editor/custom-ui/tables/index.html', 'Build contextual table controls'],
   ['editor/custom-ui/content-controls/index.html', 'Build a content-control panel'],
   ['editor/custom-ui/context-menus/index.html', 'Application-owned context menus'],
@@ -345,6 +345,11 @@ test('exports the focused search sample document', async () => {
 
 test('exports the custom comments workflow document', async () => {
   const fixture = await stat(new URL('../out/fixtures/custom-comments-workflow.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
+test('exports the custom tracked-changes workflow document', async () => {
+  const fixture = await stat(new URL('../out/fixtures/custom-track-changes-workflow.docx', import.meta.url));
   assert.ok(fixture.size > 0);
 });
 
@@ -658,12 +663,18 @@ test('exports the Editor tracked-change review workflow with the existing review
 test('exports the custom tracked-change review workflow as clean Markdown', async () => {
   const markdown = await readFile(new URL('../out/md/editor/custom-ui/tracked-changes.md', import.meta.url), 'utf8');
 
+  assert.match(markdown, /Live example: review changes from an application-owned panel/);
+  assert.match(markdown, /custom-track-changes-workflow\.docx/);
   assert.match(markdown, /ui\.trackChanges\.observe\(render\)/);
-  assert.match(markdown, /ui\.trackChanges\.setActive\(id\)/);
-  assert.match(markdown, /await ui\.trackChanges\.scrollTo\(id\)/);
-  assert.match(markdown, /await ui\.commands\.executeAsync\(decision, \{ id \}\)/);
-  assert.match(markdown, /client-side controls can prevent a normal interaction/);
+  assert.match(markdown, /ui\.trackChanges\.setActive\(target\)/);
+  assert.match(markdown, /await ui\.trackChanges\.scrollTo\(target\)/);
+  assert.match(markdown, /await ui\.trackChanges\.navigatePrevious\(\)/);
+  assert.match(markdown, /await ui\.trackChanges\.navigateNext\(\)/);
+  assert.match(markdown, /await ui\.trackChanges\.acceptAsync\(target\)/);
+  assert.match(markdown, /useSuperDocTrackChanges\(\)/);
+  assert.match(markdown, /setting `ui\.comments` to `false` removes the built-in comments and review sidebar/);
   assert.doesNotMatch(markdown, /<include>/);
+  assert.doesNotMatch(markdown, /<CustomTrackChangesDemo\b/);
 });
 
 test('exports the custom content-control workflow as clean Markdown', async () => {

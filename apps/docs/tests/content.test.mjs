@@ -24,6 +24,8 @@ const customUiSetupPageUrl = new URL('../content/docs/editor/custom-ui/controlle
 const customToolbarPageUrl = new URL('../content/docs/editor/custom-ui/formatting-controls.mdx', import.meta.url);
 const customCommentsPageUrl = new URL('../content/docs/editor/custom-ui/comments.mdx', import.meta.url);
 const customCommentsDemoUrl = new URL('../components/embeds/custom-comments-demo.tsx', import.meta.url);
+const customTrackChangesPageUrl = new URL('../content/docs/editor/custom-ui/tracked-changes.mdx', import.meta.url);
+const customTrackChangesDemoUrl = new URL('../components/embeds/custom-track-changes-demo.tsx', import.meta.url);
 const templatePopulationDemoUrl = new URL(
   '../components/embeds/template-population-demo.tsx',
   import.meta.url,
@@ -66,6 +68,12 @@ const reactCustomToolbarExampleUrl = new URL(
 const customCommentsExampleUrl = new URL('../snippets/editor/custom-comments.ts', import.meta.url);
 const customCommentsHtmlUrl = new URL('../snippets/editor/custom-comments.html', import.meta.url);
 const reactCustomCommentsExampleUrl = new URL('../snippets/editor/react-custom-comments.tsx', import.meta.url);
+const customTrackedReviewExampleUrl = new URL('../snippets/editor/custom-tracked-review.ts', import.meta.url);
+const customTrackedReviewHtmlUrl = new URL('../snippets/editor/custom-tracked-review.html', import.meta.url);
+const reactCustomTrackedReviewExampleUrl = new URL(
+  '../snippets/editor/react-custom-tracked-review.tsx',
+  import.meta.url,
+);
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
 const builtInContentControlsPageUrl = new URL(
   '../content/docs/editor/built-in-ui/content-controls.mdx',
@@ -150,6 +158,7 @@ const registeredComponents = new Set([
   'ContextMenuConfigReference',
   'CustomBoldDemo',
   'CustomCommentsDemo',
+  'CustomTrackChangesDemo',
   'CustomToolbarDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
@@ -662,6 +671,89 @@ test('the custom comments examples replace one surface with a focused workflow',
   assert.match(vanilla, /pendingCapture = capture;/u);
   assert.match(react, /if \(!ui \|\| !capture \|\| pending\) return;/u);
   assert.match(react, /disabled=\{pending \|\| text\.trim\(\)\.length === 0\}/u);
+});
+
+test('the custom tracked-change examples build one application-owned review panel', async () => {
+  const [page, demo, html, vanilla, react] = await Promise.all(
+    [
+      customTrackChangesPageUrl,
+      customTrackChangesDemoUrl,
+      customTrackedReviewHtmlUrl,
+      customTrackedReviewExampleUrl,
+      reactCustomTrackedReviewExampleUrl,
+    ].map((url) => readFile(url, 'utf8')),
+  );
+
+  assert.match(page, /<CustomTrackChangesDemo \/>/u);
+  assert.match(page, /custom-track-changes-workflow\.docx/u);
+  assert.match(page, /A successful decision should remove one row and decrease the count/u);
+  assert.match(page, /build a content-control panel/u);
+  assert.match(html, /id="toolbar"/u);
+  assert.match(html, /id="previous-change"/u);
+  assert.match(html, /id="next-change"/u);
+
+  for (const example of [vanilla, react]) {
+    assert.match(example, /document(?:=|:)\s*['"]\/contract\.docx['"]/u);
+    assert.match(example, /comments: false/u);
+    // Show in document pins the clicked occurrence for both focus and reveal.
+    assert.match(example, /trackChanges\.setActive\(target\)/u);
+    assert.match(example, /trackChanges\.scrollTo\(target\)/u);
+    assert.match(example, /trackChanges\.navigatePrevious/u);
+    assert.match(example, /trackChanges\.navigateNext/u);
+    // Decisions await settlement so a late failure clears the pending state.
+    assert.match(example, /await ui\.trackChanges\.acceptAsync\(target\)/u);
+    assert.match(example, /await ui\.trackChanges\.rejectAsync\(target\)/u);
+    assert.doesNotMatch(example, /trackChanges\.accept\(|trackChanges\.reject\(/u);
+    // A row decides its exact occurrence: id plus story for non-body changes.
+    assert.match(example, /const story = change\.address\?\.story;/u);
+    assert.match(example, /Alex Rivera/u);
+    assert.doesNotMatch(example, /commands\.executeAsync|acceptAllAsync|rejectAllAsync/u);
+  }
+
+  assert.match(vanilla, /trackChanges\.observe\(render\)/u);
+  assert.match(vanilla, /toolbar: \{ container: toolbar, responsiveTo: 'container' \}/u);
+  // Pending rerenders reuse the observed directory, not the page-bounded passive snapshot.
+  assert.match(vanilla, /lastChanges = changes;/u);
+  assert.doesNotMatch(vanilla, /trackChanges\.getSnapshot\(\)/u);
+  assert.match(react, /useSuperDocTrackChanges\(\)/u);
+  assert.match(react, /key=\{rowKey\(change\)\}/u);
+  // Active and pending state are tracked per occurrence, not per id, so a
+  // same-id body and footnote row never light up together.
+  for (const example of [vanilla, react]) {
+    assert.match(example, /function isActiveRow\(/u);
+    assert.match(example, /activeRow\.key === rowKey\(change\)/u);
+    assert.doesNotMatch(example, /change\.id === (?:changes|trackChanges)\.activeId|activeId === change\.id/u);
+  }
+  assert.match(vanilla, /pendingDecision = \{ key: rowKey\(change\), decision \}/u);
+  assert.match(react, /setPendingKey\(rowKey\(change\)\)/u);
+  assert.match(react, /onContentError=\{\(\) => onLoadError\(/u);
+  assert.match(demo, /key=\{rowKey\(change\)\}/u);
+  assert.match(demo, /isActiveRow\(change, trackChanges\.activeId, activeRow\)/u);
+  assert.match(demo, /pendingDecision\?\.key === rowKey\(change\)/u);
+  assert.doesNotMatch(demo, /change\.id === trackChanges\.activeId/u);
+  assert.match(demo, /DEMO_DOCUMENT = '\/fixtures\/custom-track-changes-workflow\.docx'/u);
+  assert.match(demo, /comments: false/u);
+  assert.match(demo, /toolbar: \{ container: toolbarContainer/u);
+  assert.match(demo, /EditorDemoViewControls/u);
+  assert.match(demo, /contentClassName='sd-custom-track-changes-demo-workspace'/u);
+  assert.match(demo, /expandedMaxHeight='80rem'/u);
+  assert.match(demo, /value: 80/u);
+  assert.match(demo, /instance\.ui\.zoom\.set\(INITIAL_ZOOM\.value\)/u);
+  assert.match(demo, /instance\.ui\.trackChanges\.observe/u);
+  assert.match(demo, /instance\.ui\.zoom\.observe/u);
+  assert.match(demo, /ui\.zoom\.setMode\('fit-width'\)/u);
+  assert.match(demo, /trackChangesHandle\.navigatePrevious/u);
+  assert.match(demo, /trackChangesHandle\.navigateNext/u);
+  // The demo awaits the one Document API operation a decision routes to, so
+  // it never dispatches twice or waits on the pinned runtime's selection read.
+  assert.match(demo, /await doc\.trackChanges\.decide\(\{\s+decision,\s+target: story \? \{ kind: 'id', id: change\.id, story \}/u);
+  assert.doesNotMatch(demo, /commands\.executeAsync|trackChangesHandle\.accept\(|handle\.accept\(/u);
+  // A rejected operation must still clear the pending state and report.
+  assert.match(demo, /try \{\s+const receipt = await doc\.trackChanges\.decide\(/u);
+  assert.match(demo, /\} catch \(cause\) \{[\s\S]{0,400}setPendingDecision\(null\)/u);
+  assert.match(demo, /trackChangesHandle\?\.setActive\(target\)/u);
+  assert.match(demo, /observerCleanupRef\.current/u);
+  assert.match(demo, /disabled=\{pendingDecision !== null\}/u);
 });
 
 test('the content-control examples use the canonical chrome config and typed click payload', async () => {
