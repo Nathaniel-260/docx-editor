@@ -3856,6 +3856,145 @@ export const useCommentsStore = defineStore('comments', () => {
     );
   };
 
+  // SD-4689: One logical body tracked change must produce one sidebar card.
+  // Duplicate rows that share a body identity (commentId / importedId /
+  // canonical / anchor / position aliases) are collapsed to the earliest
+  // survivor. Move-from/move-to sides keep distinct commentIds under one
+  // canonical id; those only join on commentId so the pair is not merged.
+  const getBodyTrackedChangeIdentityIds = (comment) => {
+    const commentId = normalizeCommentId(comment.commentId);
+    const canonicalId = normalizeCommentId(comment.trackedChangeCanonicalId);
+    const hasSyntheticSideIdentity = canonicalId && canonicalId !== commentId;
+    return [
+      commentId,
+      ...(!hasSyntheticSideIdentity
+        ? [
+            comment.importedId,
+            canonicalId,
+            comment.trackedChangeAnchorKey,
+            ...normalizeTrackedChangePositionAliases(comment.trackedChangePositionAliases),
+          ]
+        : []),
+    ]
+      .map((id) => normalizeCommentId(id))
+      .filter(Boolean);
+  };
+
+  const groupBodyTrackedChangeCommentsByIdentity = (comments) => {
+    const parents = comments.map((_, index) => index);
+    const findRoot = (index) => {
+      let root = index;
+      while (parents[root] !== root) root = parents[root];
+      while (parents[index] !== index) {
+        const next = parents[index];
+        parents[index] = root;
+        index = next;
+      }
+      return root;
+    };
+    const join = (left, right) => {
+      const leftRoot = findRoot(left);
+      const rightRoot = findRoot(right);
+      if (leftRoot === rightRoot) return;
+      parents[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
+    };
+    const identityOwner = new Map();
+    comments.forEach((comment, index) => {
+      getBodyTrackedChangeIdentityIds(comment).forEach((identityId) => {
+        const owner = identityOwner.get(identityId);
+        if (owner === undefined) identityOwner.set(identityId, index);
+        else join(index, owner);
+      });
+    });
+    const groups = new Map();
+    comments.forEach((comment, index) => {
+      const root = findRoot(index);
+      const group = groups.get(root) ?? [];
+      group.push(comment);
+      groups.set(root, group);
+    });
+    return groups;
+  };
+
+  const mergeDuplicateBodyTrackedChangeComments = (groups) => {
+    const duplicates = new Map();
+    groups.forEach(([survivor, ...duplicateRows]) => {
+      if (!survivor || duplicateRows.length === 0) return;
+      const resolvedDuplicate = duplicateRows.find((comment) => comment.resolvedTime != null);
+      if (survivor.resolvedTime == null && resolvedDuplicate) {
+        survivor.resolvedTime = resolvedDuplicate.resolvedTime;
+        survivor.resolvedById = resolvedDuplicate.resolvedById;
+        survivor.resolvedByEmail = resolvedDuplicate.resolvedByEmail;
+        survivor.resolvedByName = resolvedDuplicate.resolvedByName;
+        survivor.trackedChangeDecision = resolvedDuplicate.trackedChangeDecision;
+      }
+      survivor.trackedChangePositionAliases = normalizeTrackedChangePositionAliases([
+        ...normalizeTrackedChangePositionAliases(survivor.trackedChangePositionAliases),
+        ...duplicateRows.flatMap((comment) => [
+          comment.commentId,
+          comment.importedId,
+          comment.trackedChangeCanonicalId,
+          ...normalizeTrackedChangePositionAliases(comment.trackedChangePositionAliases),
+        ]),
+      ]);
+      duplicateRows.forEach((comment) => duplicates.set(comment, survivor));
+    });
+    return duplicates;
+  };
+
+  const createDroppedCommentIdMap = (duplicates) => {
+    const droppedCommentIds = new Map();
+    duplicates.forEach((survivor, duplicate) => {
+      const fromId = normalizeCommentId(duplicate.commentId);
+      const toId = normalizeCommentId(survivor.commentId);
+      if (fromId && toId) droppedCommentIds.set(fromId, toId);
+    });
+    return droppedCommentIds;
+  };
+
+  const remapTrackedChangeReferences = (droppedCommentIds, activeDocumentId) => {
+    const remapSelection = (selection) => {
+      const selectedId = normalizeCommentId(selection.value);
+      if (selectedId && droppedCommentIds.has(selectedId)) selection.value = droppedCommentIds.get(selectedId);
+    };
+    remapSelection(activeComment);
+    remapSelection(activeFloatingCommentInstanceId);
+    commentsList.value.forEach((row) => {
+      if (!belongsToTrackedChangeSyncDocument(row, activeDocumentId)) return;
+      const rowIdentityUpdates = {};
+      for (const field of [
+        'trackedChangeThreadParentId',
+        'trackedChangeParentId',
+        'threadingParentCommentId',
+        'parentCommentId',
+      ]) {
+        const replacementId = droppedCommentIds.get(normalizeCommentId(row?.[field]));
+        if (!replacementId) continue;
+        row[field] = replacementId;
+        rowIdentityUpdates[field] = replacementId;
+      }
+      if (Object.keys(rowIdentityUpdates).length && typeof row.updateIdentityValues === 'function') {
+        row.updateIdentityValues(rowIdentityUpdates);
+      }
+    });
+  };
+
+  const compactDuplicateBodyTrackedChangeComments = (activeDocumentId) => {
+    const candidates = commentsList.value.filter(
+      (comment) => isBodyTrackedChangeComment(comment) && belongsToTrackedChangeSyncDocument(comment, activeDocumentId),
+    );
+    const groups = groupBodyTrackedChangeCommentsByIdentity(candidates);
+    const duplicates = mergeDuplicateBodyTrackedChangeComments(groups);
+
+    if (!duplicates.size) return 0;
+    commentsList.value = commentsList.value.filter((comment) => !duplicates.has(comment));
+    // Remap by dropped commentId only. Position aliases include Word w:id
+    // tokens ('1'/'2') that collide with real comment ids; getComment prefers
+    // primary ids, so alias-based remap would steal that selection.
+    remapTrackedChangeReferences(createDroppedCommentIdMap(duplicates), activeDocumentId);
+    return duplicates.size;
+  };
+
   /**
    * Remove tracked-change comments that no longer have a corresponding mark in the editor.
    * Also removes any replies linked to those removed tracked-change threads.
@@ -3921,7 +4060,12 @@ export const useCommentsStore = defineStore('comments', () => {
           return false;
         });
 
+        compactDuplicateBodyTrackedChangeComments(activeDocumentId);
+
         restoredComments.forEach((comment) => {
+          // Compact may have dropped this restored duplicate; skip so we do not
+          // rebroadcast an UPDATE that would recreate the phantom sidebar card.
+          if (!commentsList.value.includes(comment)) return;
           const payload = getCommentEventPayload(comment);
           const event = {
             type: COMMENT_EVENTS.UPDATE,
@@ -4695,7 +4839,10 @@ export const useCommentsStore = defineStore('comments', () => {
           endInteractionSpan(identitySpan, trackedChangeIdentityIndex.work());
         }
 
-        if (!effectiveDocumentId || !pruneStale) return { liveIds, liveAnchorKeys, appliedCount };
+        if (!effectiveDocumentId || !pruneStale) {
+          if (effectiveDocumentId) compactDuplicateBodyTrackedChangeComments(String(effectiveDocumentId));
+          return { liveIds, liveAnchorKeys, appliedCount };
+        }
         // TCS Phase 0 §5: prune stale tracked-change rows after every successful
         // refresh so accept/reject removals don't leave orphan sidebar rows. We
         // feed both live raw id sets and live anchor-key sets. The helper is
