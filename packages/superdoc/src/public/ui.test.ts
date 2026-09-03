@@ -13185,7 +13185,11 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
       includeDeletedText: false,
       regex: false,
     });
-    expect(slice).toMatchObject({ available: true, total: 2, activeIndex: 0, canReplace: true });
+    // A worker-backed query publishes no matches until its own result settles.
+    expect(slice).toMatchObject({ available: true, query: 'hello', total: 0, canReplace: false });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ available: true, total: 2, activeIndex: 0, canReplace: true });
 
     expect(ui.search.next()).toEqual({ ok: true });
     expect(ui.search.getSnapshot().activeIndex).toBe(1);
@@ -13243,6 +13247,454 @@ describe('public ui — shared search surface (row 747 / search ownership)', () 
 
     expect(emitted.some((slice) => slice.total === 5)).toBe(false);
     expect(ui.search.getSnapshot()).toMatchObject({ query: 'abc', total: 1 });
+  });
+
+  it('does not carry the previous query matches into a new worker-backed query', async () => {
+    // With the worker fallback, `find()` returns before the query settles.
+    // The interim snapshot must not keep the old session's total/canReplace,
+    // or a panel could navigate or replace the old query's matches.
+    let resolveSecond: (value: unknown) => void = () => {};
+    const state = { query: '', total: 0, activeIndex: -1 };
+    const editSearch = {
+      query: vi.fn((input: { query: string }) => {
+        if (input.query === 'A') {
+          state.query = 'A';
+          state.total = 3;
+          state.activeIndex = 0;
+          return Promise.resolve({ status: 'ok', ...state });
+        }
+        return new Promise((resolve) => {
+          resolveSecond = resolve;
+        });
+      }),
+      next: vi.fn(async () => ({ status: 'ok', ...state })),
+      getState: vi.fn(() => ({ ...state })),
+    };
+    const editCommands = {
+      search: editSearch,
+      getSnapshot: vi.fn(() => ({
+        commands: { 'find.replace': { shippedStatus: 'supported', enabled: true, reason: null } },
+      })),
+    };
+    const ui = createSuperDocUI({ superdoc: makeSearchSuperdoc({ editCommands }) });
+
+    ui.search.find('A');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'A', total: 3, canReplace: true });
+
+    const interim = ui.search.find('B');
+    expect(interim).toMatchObject({ query: 'B', total: 0, activeIndex: -1, canReplace: false });
+    expect(ui.search.next()).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable });
+    // Snapshot reads and fresh observers re-sync from the shell; they must not
+    // resurface A's session while B is still settling.
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'B', total: 0, canReplace: false });
+    const observed: Array<{ query: string; total: number }> = [];
+    const stop = ui.search.observe((snapshot) => observed.push({ query: snapshot.query, total: snapshot.total }));
+    stop();
+    expect(observed).toEqual([{ query: 'B', total: 0 }]);
+
+    state.query = 'B';
+    state.total = 1;
+    state.activeIndex = 0;
+    resolveSecond({ status: 'ok', ...state });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'B', total: 1, canReplace: true });
+  });
+
+  it('does not carry the previous options into a same-query worker-backed search', async () => {
+    // Toggling Match case or Include pending deletions re-runs `find()` with
+    // the same query. The shell's state then shares the query but describes
+    // the old option set, so query equality is not proof it belongs to this
+    // call; the interim snapshot must still report no matches.
+    let resolveSecond: (value: unknown) => void = () => {};
+    // The production shell's getState() exposes only query, total,
+    // activeIndex, and canReplace, and does not change until the worker
+    // answers, so a same-query request looks identical to the old session.
+    const state = { query: 'Client', total: 8, activeIndex: 0 };
+    let calls = 0;
+    const editSearch = {
+      query: vi.fn(() => {
+        calls += 1;
+        if (calls === 1) return Promise.resolve({ status: 'ok', ...state });
+        return new Promise((resolve) => {
+          resolveSecond = resolve;
+        });
+      }),
+      next: vi.fn(async () => ({ status: 'ok', ...state })),
+      getState: vi.fn(() => ({ ...state })),
+    };
+    const editCommands = {
+      search: editSearch,
+      getSnapshot: vi.fn(() => ({
+        commands: { 'find.replace': { shippedStatus: 'supported', enabled: true, reason: null } },
+      })),
+    };
+    const ui = createSuperDocUI({ superdoc: makeSearchSuperdoc({ editCommands }) });
+
+    ui.search.find('Client');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'Client', total: 8, canReplace: true });
+
+    const interim = ui.search.find('Client', { caseSensitive: true });
+    expect(interim).toMatchObject({ query: 'Client', caseSensitive: true, total: 0, canReplace: false });
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'Client', total: 0, canReplace: false });
+    expect(ui.search.next()).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable });
+
+    state.total = 7;
+    resolveSecond({ status: 'ok', ...state });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'Client', total: 7, canReplace: true });
+  });
+
+  it('keeps a repeated query pending until its own worker result settles (A -> B -> A)', async () => {
+    // The shell still reports A's settled session while B and then A again are
+    // in flight. Remembering only the previous request would let the stale A
+    // snapshot pass as current; every promise-backed request must wait for
+    // its own result.
+    const pending: Array<(value: unknown) => void> = [];
+    const state = { query: '', total: 0, activeIndex: -1 };
+    let calls = 0;
+    const editSearch = {
+      query: vi.fn((input: { query: string }) => {
+        if (input.query === '') {
+          // Cancellation of an outstanding fallback; settles immediately.
+          return Promise.resolve({ status: 'ok', query: '', total: 0, activeIndex: -1 });
+        }
+        calls += 1;
+        if (calls === 1) {
+          state.query = input.query;
+          state.total = 4;
+          state.activeIndex = 0;
+          return Promise.resolve({ status: 'ok', ...state });
+        }
+        return new Promise((resolve) => pending.push(resolve));
+      }),
+      next: vi.fn(async () => ({ status: 'ok', ...state })),
+      getState: vi.fn(() => ({ ...state })),
+    };
+    const editCommands = {
+      search: editSearch,
+      getSnapshot: vi.fn(() => ({
+        commands: {
+          'find.replace': { shippedStatus: 'supported', enabled: true, reason: null },
+          'find.replaceAll': { shippedStatus: 'supported', enabled: true, reason: null },
+        },
+      })),
+    };
+    const ui = createSuperDocUI({ superdoc: makeSearchSuperdoc({ editCommands }) });
+
+    ui.search.find('A');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'A', total: 4, canReplace: true });
+
+    ui.search.find('B');
+    const again = ui.search.find('A', { caseSensitive: true });
+    expect(again).toMatchObject({ query: 'A', caseSensitive: true, total: 0, canReplace: false, canReplaceAll: false });
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'A', total: 0, canReplace: false });
+    expect(ui.search.next()).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable });
+
+    // B's late answer is stale and ignored; A's own answer lands.
+    pending[0]?.({ status: 'ok', query: 'B', total: 9, activeIndex: 0 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'A', total: 0 });
+    state.total = 2;
+    pending[1]?.({ status: 'ok', ...state });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'A', total: 2, canReplace: true, canReplaceAll: true });
+  });
+
+  it('does not advertise canReplaceAll for an empty host-backed session', async () => {
+    // The host derives `canReplace` from document mutability alone, so a
+    // session with no matches still reports it. Replace all is an action and
+    // needs matches.
+    const setSession = vi.fn(() => ({ query: 'zzz', matches: [], activeMatchIndex: -1, total: 0, canReplace: true }));
+    const getState = vi.fn(() => ({ query: 'zzz', matches: [], activeMatchIndex: -1, total: 0, canReplace: true }));
+    const ui = createSuperDocUI({
+      superdoc: makeSearchSuperdoc({
+        search: { setSession, next: vi.fn(), previous: vi.fn(), clear: vi.fn(), getState },
+      }),
+    });
+    expect(ui.search.find('zzz')).toMatchObject({ total: 0, canReplace: true, canReplaceAll: false });
+    expect(ui.search.getSnapshot()).toMatchObject({ total: 0, canReplace: true, canReplaceAll: false });
+  });
+
+  it('keeps a rejected worker-backed query authoritative over the shell session it did not replace', async () => {
+    // The shell rethrows on failure without replacing its stored session, so
+    // getState() still describes A. B's failed snapshot must win anyway.
+    const state = { query: '', total: 0, activeIndex: -1, canReplace: true };
+    const pending: Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void }> = [];
+    const editSearch = {
+      query: vi.fn((input: { query: string }) => {
+        if (input.query === '') return { status: 'ok', query: '', total: 0, activeIndex: -1 };
+        return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+      }),
+      next: vi.fn(async () => ({ status: 'ok', ...state })),
+      getState: vi.fn(() => ({ ...state })),
+    };
+    const editCommands = {
+      search: editSearch,
+      getState: () => ({ 'find.replace': { enabled: true }, 'find.replaceAll': { enabled: true } }),
+      subscribe: () => () => {},
+    };
+    const ui = createSuperDocUI({ superdoc: makeSearchSuperdoc({ editCommands }) });
+    ui.search.find('A');
+    Object.assign(state, { query: 'A', total: 3, activeIndex: 0 });
+    pending[0]?.resolve({ status: 'ok', ...state });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'A', total: 3, canReplace: true });
+
+    ui.search.find('B');
+    pending[1]?.reject(new Error('worker unavailable'));
+    await Promise.resolve();
+    await Promise.resolve();
+    const failed = { query: 'B', total: 0, canReplace: false, canReplaceAll: false, available: false };
+    expect(ui.search.getSnapshot()).toMatchObject(failed);
+    const observed = vi.fn();
+    ui.search.observe(observed);
+    expect(observed).toHaveBeenCalledTimes(1);
+    expect(observed.mock.calls[0]?.[0]).toMatchObject(failed);
+    // Navigation fails closed on the published no-match snapshot and never
+    // reaches the shell's stale A session.
+    expect(ui.search.next()).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable });
+    expect(editSearch.next).not.toHaveBeenCalled();
+  });
+
+  it('clears an invalid-pattern reason together with the query', () => {
+    const empty = { query: '', matches: [], activeMatchIndex: -1, total: 0, canReplace: true };
+    let hostState: Record<string, unknown> = empty;
+    const ui = createSuperDocUI({
+      superdoc: makeSearchSuperdoc({
+        search: {
+          setSession: vi.fn((query: string) => {
+            hostState = {
+              ...empty,
+              query,
+              queryError: { code: 'invalid-pattern', message: 'Unterminated character class' },
+            };
+            return hostState;
+          }),
+          next: vi.fn(),
+          previous: vi.fn(),
+          clear: vi.fn(() => {
+            hostState = empty;
+          }),
+          getState: vi.fn(() => hostState),
+        },
+      }),
+    });
+    expect(ui.search.find('[', { regex: true })).toMatchObject({
+      reason: SUPERDOC_UI_REASONS.searchInvalidPattern,
+      available: true,
+    });
+    const observed = vi.fn();
+    ui.search.observe(observed);
+    observed.mockClear();
+    ui.search.clear();
+    expect(observed).toHaveBeenCalledTimes(1);
+    expect(observed.mock.calls[0]?.[0]).toMatchObject({ query: '', total: 0, available: true, reason: undefined });
+    expect(ui.search.getSnapshot().reason).toBeUndefined();
+  });
+
+  it('publishes a new worker-backed query without the previous session matches', async () => {
+    // Observers run inline. The first emit for B must not carry A's totals or
+    // replace capabilities, or a re-entrant observer could act on A's session.
+    const state = { query: '', total: 0, activeIndex: -1, canReplace: true };
+    const pending: Array<(value: unknown) => void> = [];
+    const editSearch = {
+      query: vi.fn((input: { query: string }) => {
+        if (input.query === '') return { status: 'ok', query: '', total: 0, activeIndex: -1 };
+        return new Promise((resolve) => pending.push(resolve));
+      }),
+      next: vi.fn(async () => ({ status: 'ok', ...state })),
+      getState: vi.fn(() => ({ ...state })),
+    };
+    const editCommands = {
+      search: editSearch,
+      getState: () => ({ 'find.replace': { enabled: true }, 'find.replaceAll': { enabled: true } }),
+      subscribe: () => () => {},
+    };
+    const ui = createSuperDocUI({ superdoc: makeSearchSuperdoc({ editCommands }) });
+    ui.search.find('A');
+    Object.assign(state, { query: 'A', total: 3, activeIndex: 0 });
+    pending[0]?.({ status: 'ok', ...state });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'A', total: 3, canReplace: true, canReplaceAll: true });
+
+    const seen: Array<{ query: string; total: number; canReplace: boolean; canReplaceAll: boolean }> = [];
+    const reentrant: unknown[] = [];
+    ui.search.observe((snapshot) => {
+      seen.push({
+        query: snapshot.query,
+        total: snapshot.total,
+        canReplace: snapshot.canReplace,
+        canReplaceAll: snapshot.canReplaceAll,
+      });
+      if (snapshot.query === 'B') reentrant.push(ui.search.next());
+    });
+    seen.length = 0;
+    editSearch.next.mockClear();
+
+    ui.search.find('B');
+    expect(seen.every((entry) => entry.query === 'B')).toBe(true);
+    expect(seen[0]).toEqual({ query: 'B', total: 0, canReplace: false, canReplaceAll: false });
+    expect(reentrant[0]).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable });
+    expect(editSearch.next).not.toHaveBeenCalled();
+  });
+
+  it('republishes replace capabilities to search subscribers on document-mode-change', () => {
+    // The host derives `canReplace` from the live document mode. Search has its
+    // own listener set, so a mode flip must republish it explicitly or React /
+    // Vue consumers keep offering Replace in viewing mode.
+    let mode: 'editing' | 'viewing' = 'editing';
+    const hostState = () => ({
+      query: 'hello',
+      matches: [{ length: 5 }, { length: 5 }],
+      activeMatchIndex: 0,
+      total: 2,
+      canReplace: mode === 'editing',
+    });
+    const handlers = new Map<string, () => void>();
+    const superdoc = makeSearchSuperdoc({
+      search: {
+        setSession: vi.fn(hostState),
+        next: vi.fn(),
+        previous: vi.fn(),
+        clear: vi.fn(),
+        getState: vi.fn(hostState),
+      },
+    });
+    superdoc.on = vi.fn((event: string, handler: () => void) => handlers.set(event, handler));
+    const ui = createSuperDocUI({ superdoc });
+    expect(ui.search.find('hello')).toMatchObject({ total: 2, canReplace: true, canReplaceAll: true });
+    const listener = vi.fn();
+    ui.search.subscribe(listener);
+    listener.mockClear();
+
+    mode = 'viewing';
+    superdoc.config.documentMode = 'viewing';
+    handlers.get('document-mode-change')?.();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0]?.[0]).toMatchObject({
+      snapshot: { total: 2, canReplace: false, canReplaceAll: false },
+    });
+    expect(ui.search.getSnapshot()).toMatchObject({ total: 2, canReplace: false, canReplaceAll: false });
+
+    // An unrelated mode event with no capability change stays quiet.
+    handlers.get('document-mode-change')?.();
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    mode = 'editing';
+    superdoc.config.documentMode = 'editing';
+    handlers.get('document-mode-change')?.();
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(ui.search.getSnapshot()).toMatchObject({ total: 2, canReplace: true, canReplaceAll: true });
+  });
+
+  it('cancels an outstanding shell fallback when a newer query is answered by the host', async () => {
+    // Query A finds nothing inline, so the shell starts its Document API
+    // fallback. Query B is answered by the inline host synchronously and never
+    // reaches the shell, so nothing advances the shell's fallback generation
+    // unless find() does it. A's late result must not project onto the host.
+    let resolveFallback: (value: unknown) => void = () => {};
+    const hostState = {
+      query: '',
+      matches: [] as Array<{ length: number }>,
+      activeMatchIndex: -1,
+      total: 0,
+      canReplace: true,
+    };
+    const setSession = vi.fn((query: string) => {
+      hostState.query = query;
+      hostState.matches = query === 'B' ? [{ length: 1 }, { length: 1 }] : [];
+      hostState.total = hostState.matches.length;
+      hostState.activeMatchIndex = hostState.total > 0 ? 0 : -1;
+      return { ...hostState };
+    });
+    const getState = vi.fn(() => ({ ...hostState }));
+    const editSearch = {
+      query: vi.fn((input: { query: string }) => {
+        if (input.query === '') return { status: 'ok', query: '', total: 0, activeIndex: -1 };
+        return new Promise((resolve) => {
+          resolveFallback = resolve;
+        });
+      }),
+      getState: vi.fn(() => ({ query: 'A', total: 0, activeIndex: -1 })),
+    };
+    const editCommands = {
+      search: editSearch,
+      getSnapshot: vi.fn(() => ({
+        commands: {
+          'find.replace': { shippedStatus: 'supported', enabled: true, reason: null },
+          'find.replaceAll': { shippedStatus: 'supported', enabled: true, reason: null },
+        },
+      })),
+    };
+    const ui = createSuperDocUI({
+      superdoc: makeSearchSuperdoc({
+        search: { setSession, next: vi.fn(), previous: vi.fn(), clear: vi.fn(), getState },
+        editCommands,
+      }),
+    });
+
+    ui.search.find('A');
+    expect(editSearch.query).toHaveBeenCalledWith({
+      query: 'A',
+      caseSensitive: false,
+      includeDeletedText: false,
+      regex: false,
+    });
+
+    ui.search.find('B');
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'B', total: 2 });
+    // The outstanding A fallback was told to stand down before B ran.
+    expect(editSearch.query).toHaveBeenLastCalledWith({ query: '' });
+
+    resolveFallback({ status: 'ok', query: 'A', total: 5, activeIndex: 0 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ query: 'B', total: 2 });
+  });
+
+  it('reports canReplaceAll false and refuses replaceAll when the shell truncates the match set', async () => {
+    // The browser shell enumerates at most 1,000 matches. Beyond that it keeps
+    // `find.replace` enabled and disables `find.replaceAll` with
+    // `search-truncated`. Both must reach the snapshot separately, or a panel
+    // enables Replace all for an action that deterministically fails.
+    const state = { query: 'the', total: 1200, activeIndex: 0 };
+    const editSearch = {
+      query: vi.fn(async () => ({ status: 'ok', ...state })),
+      getState: vi.fn(() => ({ ...state })),
+      replace: vi.fn(async () => ({ status: 'committed', replaced: 1 })),
+      replaceAll: vi.fn(async () => ({ status: 'committed', replaced: 1200 })),
+    };
+    const editCommands = {
+      search: editSearch,
+      getSnapshot: vi.fn(() => ({
+        commands: {
+          'find.replace': { shippedStatus: 'supported', enabled: true, reason: null },
+          'find.replaceAll': { shippedStatus: 'supported', enabled: false, reason: 'search-truncated' },
+        },
+      })),
+    };
+    const ui = createSuperDocUI({ superdoc: makeSearchSuperdoc({ editCommands }) });
+
+    ui.search.find('the');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.search.getSnapshot()).toMatchObject({ total: 1200, canReplace: true, canReplaceAll: false });
+
+    await expect(Promise.resolve(ui.search.replace('a'))).resolves.toEqual({ ok: true });
+    expect(ui.search.replaceAll('a')).toEqual({ ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable });
+    expect(editSearch.replaceAll).not.toHaveBeenCalled();
   });
 
   it('resolves an async fallback replace with the settled outcome, not an immediate ok', async () => {

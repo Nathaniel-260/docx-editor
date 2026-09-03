@@ -13,8 +13,9 @@ import type {
   CommandId,
   ToolbarHandle,
   SuperDocUIReason,
+  SearchSnapshot,
 } from 'superdoc/ui';
-import { useSuperDocCommand, useSuperDocToolbar } from 'superdoc/ui/react';
+import { useSuperDocCommand, useSuperDocSearch, useSuperDocToolbar } from 'superdoc/ui/react';
 import type { UseSuperDocCommandResult } from 'superdoc/ui/react';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -90,6 +91,15 @@ function _reactProbe(): void {
   void immediate;
   void settled;
   void useSuperDocToolbar().commands;
+  const search: SearchSnapshot = useSuperDocSearch();
+  void search.canReplace;
+  // Required on the snapshot every consumer surface returns; optional only on
+  // the deprecated SearchSlice so old implementations keep compiling.
+  const _canReplaceAll: AssertEqual<SearchSnapshot['canReplaceAll'], boolean> = true;
+  void _canReplaceAll;
+  // The hook takes no arguments; an added required parameter must fail here.
+  const _searchParams: AssertEqual<Parameters<typeof useSuperDocSearch>, []> = true;
+  void _searchParams;
 }
 void _reactProbe;
 

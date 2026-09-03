@@ -12,6 +12,7 @@ import { ContentControlPatterns } from '@/components/embeds/content-control-patt
 import { CustomBoldDemo, CustomToolbarDemo } from '@/components/embeds/custom-bold-demo';
 import { CustomCommentsDemo } from '@/components/embeds/custom-comments-demo';
 import { CustomContentControlsDemo } from '@/components/embeds/custom-content-controls-demo';
+import { CustomSearchDemo } from '@/components/embeds/custom-search-demo';
 import { CustomTrackChangesDemo } from '@/components/embeds/custom-track-changes-demo';
 import { CustomUiArchitecture } from '@/components/embeds/custom-ui-architecture';
 import { DocumentPreview } from '@/components/embeds/document-preview';
@@ -74,6 +75,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     CustomBoldDemo,
     CustomCommentsDemo,
     CustomContentControlsDemo,
+    CustomSearchDemo,
     CustomTrackChangesDemo,
     CustomToolbarDemo,
     CustomUiArchitecture,

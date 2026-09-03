@@ -51,7 +51,7 @@ const routes = [
   ['editor/custom-ui/tables/index.html', 'Build contextual table controls'],
   ['editor/custom-ui/content-controls/index.html', 'Build a document field panel'],
   ['editor/custom-ui/context-menus/index.html', 'Application-owned context menus'],
-  ['editor/custom-ui/search/index.html', 'Build custom search controls'],
+  ['editor/custom-ui/search/index.html', 'Build custom find and replace controls'],
   ['editor/custom-ui/zoom-and-document-state/index.html', 'Control zoom and document state'],
   ['editor/custom-ui/selection-and-viewport/index.html', 'Preserve selections and position UI'],
   ['editor/custom-ui/review-highlights/index.html', 'Build durable review highlights'],
@@ -697,6 +697,20 @@ test('exports the custom content-control workflow as clean Markdown', async () =
   assert.doesNotMatch(markdown, /<CustomContentControlsDemo\b/);
 });
 
+test('exports the custom Search workflow as clean Markdown', async () => {
+  const markdown = await readFile(new URL('../out/md/editor/custom-ui/search.md', import.meta.url), 'utf8');
+
+  assert.match(markdown, /Live example: drive Search from application-owned controls/);
+  assert.match(markdown, /ui: editorUi/);
+  assert.match(markdown, /search\.observe\(render\)/);
+  assert.match(markdown, /useSuperDocSearch\(\)/);
+  assert.match(markdown, /superdoc\.ui\.search\.find\('Legacy'/);
+  assert.match(markdown, /`ui: \{ search: false \}` hides SuperDoc's Search surface/);
+  assert.match(markdown, /no replacement is pending/);
+  assert.doesNotMatch(markdown, /<include>/);
+  assert.doesNotMatch(markdown, /<CustomSearchDemo\b/);
+});
+
 test('exports the custom table-controls workflow as clean Markdown', async () => {
   const markdown = await readFile(new URL('../out/md/editor/custom-ui/tables.md', import.meta.url), 'utf8');
 
@@ -836,10 +850,10 @@ test('exports built-in and custom search without duplicating Document API querie
   assert.match(builtIn, /\| `strings\.invalidPattern` \|/);
   assert.doesNotMatch(builtIn, /\b(?:replaceEnabled|includeDeletedText)\b/);
   assert.doesNotMatch(builtIn, /<SearchConfigReference\b/);
-  assert.match(customUI, /ui\.search\.find\(query\.value/);
-  assert.match(customUI, /editor\.ui\.search\.find\('Legacy'/);
-  assert.match(customUI, /ui\.search\.observe\(render\)/);
-  assert.match(customUI, /await ui\.search\.replaceAll\(replacement\.value\)/);
+  assert.match(customUI, /search\.find\(query\.value/);
+  assert.match(customUI, /superdoc\.ui\.search\.find\('Legacy'/);
+  assert.match(customUI, /search\.observe\(render\)/);
+  assert.match(customUI, /runReplacement\(\(\) => search\.replaceAll\(replacement\.value\)\)/);
   assert.match(customUI, /\[Document API queries\]\(\/document-api\/query-content\)/);
   assert.doesNotMatch(builtIn, /<include>/);
   assert.doesNotMatch(customUI, /<include>/);

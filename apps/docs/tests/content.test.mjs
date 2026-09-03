@@ -98,6 +98,10 @@ const reactBuiltInContentControlsExampleUrl = new URL(
   import.meta.url,
 );
 const reactBuiltInSearchExampleUrl = new URL('../snippets/editor/react-built-in-find-replace.tsx', import.meta.url);
+const customSearchExampleUrl = new URL('../snippets/editor/custom-search.ts', import.meta.url);
+const reactCustomSearchExampleUrl = new URL('../snippets/editor/react-custom-search.tsx', import.meta.url);
+const customSearchPageUrl = new URL('../content/docs/editor/custom-ui/search.mdx', import.meta.url);
+const customSearchDemoUrl = new URL('../components/embeds/custom-search-demo.tsx', import.meta.url);
 const customSearchTrackedDeletionsUrl = new URL(
   '../snippets/editor/custom-search-tracked-deletions.ts',
   import.meta.url,
@@ -172,6 +176,7 @@ const registeredComponents = new Set([
   'CustomBoldDemo',
   'CustomCommentsDemo',
   'CustomContentControlsDemo',
+  'CustomSearchDemo',
   'CustomTrackChangesDemo',
   'CustomToolbarDemo',
   'CustomUiArchitecture',
@@ -863,10 +868,67 @@ test('the React search example enables the built-in search surface with stable c
   assert.doesNotMatch(example, /\bui=\{\{/u);
 });
 
+test('the custom Search examples replace only the built-in surface', async () => {
+  const [page, demo, vanilla, react] = await Promise.all(
+    [customSearchPageUrl, customSearchDemoUrl, customSearchExampleUrl, reactCustomSearchExampleUrl].map((url) =>
+      readFile(url, 'utf8'),
+    ),
+  );
+
+  assert.match(page, /<CustomSearchDemo \/>/u);
+  assert.match(page, /replaces only the Search surface/u);
+  assert.match(page, /Gate \*\*Replace\s+all\*\* on `canReplaceAll`/u);
+  assert.match(page, /disabled unless there is a match/u);
+  assert.match(page, /application-owned context menu/u);
+
+  assert.match(demo, /DEMO_DOCUMENT = '\/fixtures\/search-sample\.docx'/u);
+  assert.match(demo, /search: false/u);
+  assert.match(demo, /toolbar: \{ container: toolbarContainer/u);
+  assert.match(demo, /EditorDemoViewControls/u);
+  assert.match(demo, /contentClassName='sd-custom-search-demo-workspace'/u);
+  assert.match(demo, /value: 80/u);
+  assert.match(demo, /instance\.ui\.zoom\.set\(INITIAL_ZOOM\.value\)/u);
+  assert.match(demo, /clientWidth.*NARROW_DEMO_WIDTH/u);
+  assert.match(demo, /instance\.ui\.search\.observe/u);
+  assert.match(demo, /instance\.ui\.zoom\.observe/u);
+  assert.match(demo, /ui\.zoom\.setMode\('fit-width'\)/u);
+  assert.match(demo, /ui\.search\.close\(\)/u);
+  assert.match(demo, /replacementPending/u);
+
+  for (const example of [vanilla, react]) {
+    assert.match(example, /document(?:=|:)\s*['"]\/search-sample\.docx['"]/u);
+    assert.match(example, /const editorUi = \{ search: false \} satisfies UIConfig/u);
+    assert.match(example, /\bsearch\.find\(/u);
+    assert.match(example, /\bsearch\.previous\(\)/u);
+    assert.match(example, /\bsearch\.next\(\)/u);
+    assert.match(example, /\bsearch\.replace\(/u);
+    assert.match(example, /\bsearch\.replaceAll\(/u);
+    assert.match(example, /canReplace/u);
+    // Replace needs a match: canReplace alone is document mutability.
+    assert.match(example, /!hasMatches \|\| !(?:snapshot|search)\.canReplace \|\| replacementPending/u);
+    // Replace all has its own capability: a truncated session refuses it.
+    assert.match(example, /canReplaceAll/u);
+    assert.match(example, /replacementPending/u);
+    assert.match(example, /runReplacement/u);
+    assert.doesNotMatch(example, /\/contract\.docx|includeDeletedText/u);
+  }
+
+  assert.match(vanilla, /search\.observe\(render\)/u);
+  assert.match(react, /useSuperDocSearch\(\)/u);
+
+  // Both examples expose the tracked-deletion option the verification step needs.
+  for (const example of [vanilla, react]) {
+    assert.match(example, /includeTrackedDeletions: include/u);
+  }
+  assert.match(page, /Include pending deletions\*\* and search for `Legacy`/u);
+  // Text typed before the Editor is ready still searches once it is.
+  assert.match(vanilla, /includeDeletions\.addEventListener\('change', runSearch\);\s+\/\/[^\n]*\n\s+runSearch\(\);/u);
+});
+
 test('the custom Search example can include tracked deletions per query', async () => {
   const example = await readFile(customSearchTrackedDeletionsUrl, 'utf8');
 
-  assert.match(example, /editor\.ui\.search\.find\('Legacy',/u);
+  assert.match(example, /superdoc\.ui\.search\.find\('Legacy',/u);
   assert.match(example, /includeTrackedDeletions: true/u);
   assert.doesNotMatch(example, /\bincludeDeletedText\b/u);
 });

@@ -1378,11 +1378,21 @@ export interface SearchSlice {
   /** Whether the query is a regular expression (V2 runtime only). */
   regex: boolean;
   /**
-   * Whether replace / replaceAll can mutate right now. False in viewing /
-   * read-only mode, when replace is host-unavailable, or when the match set is
-   * truncated and cannot be fully enumerated.
+   * Whether `replace()` can mutate the active match right now. False in
+   * viewing / read-only mode or when replace is host-unavailable.
    */
   canReplace: boolean;
+  /**
+   * Whether `replaceAll()` can mutate right now. Everything that disables
+   * `canReplace` disables this too. It also requires at least one match, and
+   * it is false for a truncated match set: when more matches exist than the
+   * session enumerates, replacing all of them cannot be applied, while
+   * replacing the active match still can.
+   *
+   * Optional here so existing implementations of the deprecated
+   * {@link SearchHandle} keep compiling; {@link SearchSnapshot} requires it.
+   */
+  canReplaceAll?: boolean;
   /** Stable reason when the surface (or an action) is unavailable. */
   reason?: SuperDocUIReason;
 }
@@ -1391,9 +1401,11 @@ export interface SearchSlice {
 export interface SearchSnapshot extends SearchSlice {
   /** Whether the session includes pending tracked deletions in match discovery. */
   includeTrackedDeletions: boolean;
+  /** Whether `replaceAll()` can mutate right now. See {@link SearchSlice.canReplaceAll}. */
+  canReplaceAll: boolean;
 }
 
-/** Options for `editor.ui.search.find()`. */
+/** Options for `superdoc.ui.search.find()`. */
 export interface SearchQueryOptions {
   /** Match uppercase and lowercase letters exactly (default: false). */
   caseSensitive?: boolean;

@@ -2118,7 +2118,7 @@ export interface SearchStrings {
 
 /**
  * Resolved text for the older custom Search renderer.
- * @deprecated replaceWith=`SearchStrings` for built-in copy or `editor.ui.search` for custom UI removeIn=v3.0
+ * @deprecated replaceWith=`SearchStrings` for built-in copy or `superdoc.ui.search` for custom UI removeIn=v3.0
  */
 export interface ResolvedFindReplaceTexts {
   findPlaceholder: string;
@@ -2197,7 +2197,7 @@ export interface SearchMatch {
 
 /**
  * Reactive handle injected into the older custom Search renderer.
- * @deprecated replaceWith=`editor.ui.search` removeIn=v3.0
+ * @deprecated replaceWith=`superdoc.ui.search` removeIn=v3.0
  */
 export interface FindReplaceHandle {
   /** Current search query. */
@@ -2224,6 +2224,14 @@ export interface FindReplaceHandle {
    * (V2 read-only/viewing mode disables replace; V1 stays enabled).
    */
   canReplace: ComputedRef<boolean>;
+  /**
+   * Whether Replace all should be enabled right now: `canReplace` plus the
+   * active session enumerating every match. A truncated V2 session keeps the
+   * active match replaceable while refusing to replace all of them. Optional
+   * so handles built against the previous shape still type-check; surfaces
+   * fall back to `canReplace` when it is absent.
+   */
+  canReplaceAll?: ComputedRef<boolean>;
   /** Whether a replace mutation is currently in flight (re-entrancy guard). */
   replacePending: Ref<boolean>;
   /**
@@ -2267,7 +2275,7 @@ export interface FindReplaceHandle {
 
 /**
  * Read-only context passed to the older custom Search resolver.
- * @deprecated replaceWith=`editor.ui.search` removeIn=v3.0
+ * @deprecated replaceWith=`superdoc.ui.search` removeIn=v3.0
  */
 export interface FindReplaceContext {
   /** Resolved text strings. */
@@ -2278,7 +2286,7 @@ export interface FindReplaceContext {
 
 /**
  * Context passed to the older framework-independent Search renderer.
- * @deprecated replaceWith=`editor.ui.search` removeIn=v3.0
+ * @deprecated replaceWith=`superdoc.ui.search` removeIn=v3.0
  */
 export interface FindReplaceRenderContext {
   /** Empty DOM container to render into. */
@@ -2297,7 +2305,7 @@ export interface FindReplaceRenderContext {
 
 /**
  * Result returned by the older custom Search resolver.
- * @deprecated replaceWith=`editor.ui.search` removeIn=v3.0
+ * @deprecated replaceWith=`superdoc.ui.search` removeIn=v3.0
  */
 export type FindReplaceResolution =
   | { type: 'default' }
@@ -2336,7 +2344,7 @@ export interface SearchFloatingConfig {
 export interface SearchConfig extends SearchLegacyConfig {
   /**
    * Show replace controls (default: true). This changes the built-in UI only;
-   * it does not authorize or disable `editor.ui.search.replace()`.
+   * it does not authorize or disable `superdoc.ui.search.replace()`.
    */
   replaceControls?: boolean;
   /** Include text from pending tracked deletions in each search (default: false). */
@@ -2397,13 +2405,13 @@ interface SearchLegacyConfig {
   replaceEnabled?: boolean;
   /** @deprecated replaceWith=`ui.search.includeTrackedDeletions` removeIn=v3.0 */
   includeDeletedText?: boolean;
-  /** @deprecated replaceWith=`editor.ui.search` removeIn=v3.0 */
+  /** @deprecated replaceWith=`superdoc.ui.search` removeIn=v3.0 */
   component?: unknown;
-  /** @deprecated replaceWith=`editor.ui.search` removeIn=v3.0 */
+  /** @deprecated replaceWith=`superdoc.ui.search` removeIn=v3.0 */
   props?: Record<string, unknown>;
-  /** @deprecated replaceWith=`editor.ui.search` removeIn=v3.0 */
+  /** @deprecated replaceWith=`superdoc.ui.search` removeIn=v3.0 */
   render?: (ctx: FindReplaceRenderContext) => { destroy?: () => void } | void;
-  /** @deprecated replaceWith=`editor.ui.search` removeIn=v3.0 */
+  /** @deprecated replaceWith=`superdoc.ui.search` removeIn=v3.0 */
   resolver?: (ctx: FindReplaceContext) => FindReplaceResolution | null | undefined;
 }
 
@@ -4091,7 +4099,7 @@ export interface UIConfig {
   loading?: boolean;
   /**
    * Built-in Search surface. Disabled by default. Enabling it lets
-   * SuperDoc intercept Cmd+F / Ctrl+F; `editor.ui.search` stays available to
+   * SuperDoc intercept Cmd+F / Ctrl+F; `superdoc.ui.search` stays available to
    * custom UI either way.
    */
   search?: boolean | SearchConfig;
@@ -4270,7 +4278,7 @@ export interface Config {
    *
    * Pass `false` when the application owns the interface. SuperDoc then
    * renders no controls, chrome, dialogs, or popovers, while the document,
-   * the Document API, and `editor.ui` keep working — so a custom UI drives
+   * the Document API, and `superdoc.ui` keep working — so a custom UI drives
    * the same commands the built-in one would have.
    *
    * Pass an object to choose per surface. An omitted key keeps that

@@ -41,6 +41,7 @@ import type {
   DocumentSlice,
   FontFamilyOption,
   FontSizeOption,
+  SearchSnapshot,
   SelectionSlice,
   Subscribable,
   SuperDocLike,
@@ -307,6 +308,23 @@ const EMPTY_SELECTION: SelectionSlice = {
 /** Subscribe to the selection slice. */
 export function useSuperDocSelection(): Readonly<ShallowRef<SelectionSlice>> {
   return useSuperDocSlice((ui) => ui.selection, EMPTY_SELECTION);
+}
+
+/** Subscribe to the current Search session. */
+export function useSuperDocSearch(): Readonly<ShallowRef<SearchSnapshot>> {
+  return useSuperDocSlice((ui) => ui.search, {
+    query: '',
+    total: 0,
+    activeIndex: -1,
+    open: false,
+    available: false,
+    caseSensitive: false,
+    includeTrackedDeletions: false,
+    includeDeletedText: false,
+    regex: false,
+    canReplace: false,
+    canReplaceAll: false,
+  });
 }
 
 /** Subscribe to the comments slice. */

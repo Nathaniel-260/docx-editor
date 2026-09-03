@@ -7007,6 +7007,12 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
    * reports the previous document's match count.
    */
   const documentResetHooks: Array<() => void> = [];
+  /**
+   * Slices that publish through their own listener set rather than the
+   * aggregate `listeners`. `recompute()` never reaches them, so a mode change
+   * that alters what the host reports must republish them explicitly.
+   */
+  const documentModeChangeHooks: Array<() => void> = [];
 
   const runHooks = (hooks: Array<() => void>): void => {
     for (const reset of hooks) {
@@ -7019,6 +7025,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   };
   const runActiveEditorResetHooks = (): void => runHooks(activeEditorResetHooks);
   const runDocumentResetHooks = (): void => runHooks(documentResetHooks);
+  const runDocumentModeChangeHooks = (): void => runHooks(documentModeChangeHooks);
 
   const detachers: Array<() => void> = [];
   const attach = (source: LooseRecord | null, events: readonly string[]): void => {
@@ -7067,7 +7074,12 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
                 invalidateDocumentContent();
                 recompute();
               }
-            : () => recompute();
+            : event === 'document-mode-change'
+              ? () => {
+                  recompute();
+                  runDocumentModeChangeHooks();
+                }
+              : () => recompute();
       try {
         source.on(event, handler);
         detachers.push(() => {
@@ -11073,6 +11085,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
     includeDeletedText: false,
     regex: false,
     canReplace: false,
+    canReplaceAll: false,
     reason: SUPERDOC_UI_REASONS.searchUnavailable,
   };
   let searchState: SearchSnapshot = { ...SEARCH_UNAVAILABLE_SLICE };
@@ -11117,6 +11130,12 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   // after a newer find() call (or after close()) is stale and must not be
   // applied over the newer session's state.
   let searchRequestGeneration = 0;
+  // The worker-backed fallback answers `find()` asynchronously. While a request
+  // is outstanding the shell's `getState()` still describes the previous
+  // session, which may share the query and differ only in options. Nothing
+  // from the shell is trusted until the request that matches this generation
+  // settles; snapshots report no matches in the interim.
+  let pendingFallbackGeneration: number | null = null;
 
   /**
    * How to tear down the session that is currently open, captured when it was
@@ -11163,6 +11182,8 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
    */
   const resetSearchForActiveEditorChange = (): void => {
     searchRequestGeneration += 1;
+    pendingFallbackGeneration = null;
+    shellFallbackOutstanding = false;
     releaseSearchSession();
     const available = searchIsAvailable();
     searchState = {
@@ -11174,6 +11195,23 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   };
 
   documentResetHooks.push(resetSearchForActiveEditorChange);
+  // `canReplace` / `canReplaceAll` come from the host's live document mode.
+  // Search publishes through `searchListeners`, not the aggregate listener set,
+  // so a mode flip would otherwise leave subscribers on the previous capability
+  // until the next search call.
+  documentModeChangeHooks.push(() => {
+    if (pendingFallbackGeneration === searchRequestGeneration) return;
+    const before = searchState;
+    const after = syncSearchStateFromHost();
+    if (
+      after.canReplace !== before.canReplace ||
+      after.canReplaceAll !== before.canReplaceAll ||
+      after.available !== before.available ||
+      after.reason !== before.reason
+    ) {
+      emitSearch();
+    }
+  });
   const readSearchQueryError = (record: LooseRecord | null): boolean => {
     if (!record) return false;
     const queryError = record.queryError;
@@ -11192,11 +11230,14 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
   const normalizeHostSearchResult = (
     result: unknown,
     fallbackCanReplace = false,
+    fallbackCanReplaceAll = fallbackCanReplace,
   ): {
     query?: string;
     total: number;
     activeIndex: number;
     canReplace: boolean;
+    canReplaceAll: boolean;
+    caseSensitive?: boolean;
     includeDeletedText?: boolean;
     regex?: boolean;
     invalidPattern?: boolean;
@@ -11211,25 +11252,49 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
         : typeof record.activeIndex === 'number'
           ? record.activeIndex
           : -1;
+    const canReplace = record.canReplace === true || fallbackCanReplace;
     return {
       ...(typeof record.query === 'string' ? { query: record.query } : {}),
       total,
       activeIndex,
-      canReplace: record.canReplace === true || fallbackCanReplace,
+      canReplace,
+      // Replace all is an action, not a mode: the host reports `canReplace`
+      // from document mutability alone, so an empty session must not advertise
+      // it. A truncated session cannot enumerate every match, so replacing all
+      // of them is refused even though the active match still can be.
+      canReplaceAll:
+        canReplace && total > 0 && record.truncated !== true && (record.canReplace === true || fallbackCanReplaceAll),
+      ...(typeof record.caseSensitive === 'boolean' ? { caseSensitive: record.caseSensitive } : {}),
       ...(typeof record.includeDeletedText === 'boolean' ? { includeDeletedText: record.includeDeletedText } : {}),
       ...(record.regex === true ? { regex: true } : {}),
       ...(readSearchQueryError(record) ? { invalidPattern: true } : {}),
     };
   };
-  const readEditCommandCanReplace = (): boolean => {
-    const replaceEntry = readEditCommandStateEntry('find.replace');
-    const replaceAllEntry = readEditCommandStateEntry('find.replaceAll');
-    return replaceEntry?.enabled === true || replaceAllEntry?.enabled === true;
+  // The shell reports replace and replace-all separately: a session with more
+  // matches than it enumerates keeps `find.replace` enabled and disables
+  // `find.replaceAll` with `search-truncated`.
+  // Tracks whether find() handed the shell a query it may still be resolving
+  // through the Document API fallback. Querying the empty string is how the
+  // shell advances its fallback generation and releases that paint.
+  let shellFallbackOutstanding = false;
+  const cancelOutstandingShellFallback = (): void => {
+    if (!shellFallbackOutstanding) return;
+    shellFallbackOutstanding = false;
+    const editSearch = getEditCommandSearch();
+    if (editSearch && typeof editSearch.query === 'function') {
+      safeCall<unknown>(() => editSearch.query({ query: '' }), null);
+    }
   };
-  const applyHostSearchResult = (result: unknown, fallbackCanReplace = false): void => {
-    const snapshot = normalizeHostSearchResult(result, fallbackCanReplace);
+  const readEditCommandCanReplace = (): boolean => readEditCommandStateEntry('find.replace')?.enabled === true;
+  const readEditCommandCanReplaceAll = (): boolean => readEditCommandStateEntry('find.replaceAll')?.enabled === true;
+  const applyHostSearchResult = (
+    result: unknown,
+    fallbackCanReplace = false,
+    fallbackCanReplaceAll = fallbackCanReplace,
+  ): void => {
+    const snapshot = normalizeHostSearchResult(result, fallbackCanReplace, fallbackCanReplaceAll);
     if (!snapshot) {
-      setSearchState({ total: 0, activeIndex: -1, canReplace: false, reason: undefined });
+      setSearchState({ total: 0, activeIndex: -1, canReplace: false, canReplaceAll: false, reason: undefined });
       return;
     }
     setSearchState({
@@ -11237,6 +11302,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       total: snapshot.total,
       activeIndex: snapshot.activeIndex,
       canReplace: snapshot.canReplace,
+      canReplaceAll: snapshot.canReplaceAll,
       ...(snapshot.includeDeletedText !== undefined ? { includeDeletedText: snapshot.includeDeletedText } : {}),
       ...(snapshot.regex !== undefined ? { regex: snapshot.regex } : {}),
       // The surface stays available on an invalid pattern; the reason names the
@@ -11260,7 +11326,13 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
         const editSnapshot = normalizeHostSearchResult(
           safeCall<unknown>(() => editSearch.getState(), null),
           readEditCommandCanReplace(),
+          readEditCommandCanReplaceAll(),
         );
+        // While a worker-backed request is outstanding the shell's state
+        // describes the previous session. Copying it back here would resurface
+        // the old matches through getSnapshot() and new observers, so the
+        // published no-match snapshot stands until that request settles.
+        if (pendingFallbackGeneration === searchRequestGeneration) return searchState;
         if (editSnapshot) {
           searchState = {
             ...searchState,
@@ -11268,6 +11340,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
             total: editSnapshot.total,
             activeIndex: editSnapshot.activeIndex,
             canReplace: editSnapshot.canReplace,
+            canReplaceAll: editSnapshot.canReplaceAll,
             available: true,
             reason: editSnapshot.invalidPattern ? SUPERDOC_UI_REASONS.searchInvalidPattern : undefined,
             open: searchState.open || Boolean(editSnapshot.query),
@@ -11292,6 +11365,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       total: snapshot.total,
       activeIndex: snapshot.activeIndex,
       canReplace: snapshot.canReplace,
+      canReplaceAll: snapshot.canReplaceAll,
       ...(snapshot.includeDeletedText !== undefined ? { includeDeletedText: snapshot.includeDeletedText } : {}),
       ...(snapshot.includeDeletedText !== undefined ? { includeTrackedDeletions: snapshot.includeDeletedText } : {}),
       ...(snapshot.regex !== undefined ? { regex: snapshot.regex } : {}),
@@ -11373,14 +11447,30 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       const includeDeletedText = (options?.includeTrackedDeletions ?? options?.includeDeletedText) === true;
       const regex = options?.regex === true;
       const generation = ++searchRequestGeneration;
+      // A previous find() may have handed the shell a Document API fallback
+      // that is still running. Its generation only advances when the shell's
+      // query() is called again, and a query the host answers synchronously
+      // never calls it; the stale fallback would then resolve and project its
+      // own session onto the host. Advance it now, before this request runs.
+      cancelOutstandingShellFallback();
       if (!host || typeof host.setSession !== 'function') {
         const editSearch = getEditCommandSearch();
         if (editSearch && typeof editSearch.query === 'function' && typeof editSearch.getState === 'function') {
+          // Observers run inline, so the first publication of this query must
+          // already describe it: carrying the previous session's totals and
+          // replace capabilities here would let a re-entrant observer act on
+          // the old shell session. The request counts as pending from this
+          // emit until its own result lands, synchronously or not.
+          pendingFallbackGeneration = generation;
           setSearchState({
             query,
             caseSensitive,
             includeDeletedText,
             regex,
+            total: 0,
+            activeIndex: -1,
+            canReplace: false,
+            canReplaceAll: false,
             available: true,
             open: true,
             reason: undefined,
@@ -11396,22 +11486,39 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
             null,
           );
           if (isPromiseLike(result)) {
+            shellFallbackOutstanding = true;
+            // The shell answers asynchronously, and until it does its state
+            // describes whichever session it last settled. The production shell
+            // exposes only query, total, activeIndex, and canReplace, so no
+            // reading of that state can prove it belongs to this request: an
+            // A -> B -> A sequence, or the same query with new options, both
+            // look current. Nothing is published until this request's own
+            // result settles; the session reports no matches meanwhile.
             void Promise.resolve(result).then(
               (resolved) => {
                 if (generation !== searchRequestGeneration) return;
-                applyHostSearchResult(resolved, readEditCommandCanReplace());
+                shellFallbackOutstanding = false;
+                pendingFallbackGeneration = null;
+                applyHostSearchResult(resolved, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
               },
               () => {
                 if (generation !== searchRequestGeneration) return;
+                shellFallbackOutstanding = false;
+                // The shell rethrows without replacing its stored session, so
+                // its state still describes the previous query. Leave the
+                // pending guard in place: this request's failed no-match
+                // snapshot stays authoritative until the next request.
                 setSearchState({ available: false, reason: SUPERDOC_UI_REASONS.searchUnavailable });
               },
             );
-          } else {
-            applyHostSearchResult(result, readEditCommandCanReplace());
+            return searchState;
           }
+          pendingFallbackGeneration = null;
+          applyHostSearchResult(result, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
           applyHostSearchResult(
             safeCall<unknown>(() => editSearch.getState(), null),
             readEditCommandCanReplace(),
+            readEditCommandCanReplaceAll(),
           );
           return searchState;
         }
@@ -11472,22 +11579,26 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
             null,
           );
           if (isPromiseLike(commandResult)) {
+            shellFallbackOutstanding = true;
             void Promise.resolve(commandResult).then(
               (resolved) => {
                 if (generation !== searchRequestGeneration) return;
-                applyHostSearchResult(resolved, readEditCommandCanReplace());
+                shellFallbackOutstanding = false;
+                applyHostSearchResult(resolved, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
               },
               () => {
                 if (generation !== searchRequestGeneration) return;
+                shellFallbackOutstanding = false;
                 setSearchState({ available: false, reason: SUPERDOC_UI_REASONS.searchUnavailable });
               },
             );
           } else {
-            applyHostSearchResult(commandResult, readEditCommandCanReplace());
+            applyHostSearchResult(commandResult, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
           }
           applyHostSearchResult(
             safeCall<unknown>(() => editSearch.getState(), null),
             readEditCommandCanReplace(),
+            readEditCommandCanReplaceAll(),
           );
         }
       }
@@ -11514,18 +11625,19 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
           void Promise.resolve(result)
             .then((resolved) => {
               if (generation !== searchRequestGeneration) return;
-              applyHostSearchResult(resolved, readEditCommandCanReplace());
+              applyHostSearchResult(resolved, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
             })
             .catch(() => {
               if (generation !== searchRequestGeneration) return;
               setSearchState({ available: false, reason: SUPERDOC_UI_REASONS.searchUnavailable });
             });
         } else {
-          applyHostSearchResult(result, readEditCommandCanReplace());
+          applyHostSearchResult(result, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
         }
         applyHostSearchResult(
           safeCall<unknown>(() => editSearch.getState(), null),
           readEditCommandCanReplace(),
+          readEditCommandCanReplaceAll(),
         );
         return { ok: true };
       }
@@ -11553,18 +11665,19 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
           void Promise.resolve(result)
             .then((resolved) => {
               if (generation !== searchRequestGeneration) return;
-              applyHostSearchResult(resolved, readEditCommandCanReplace());
+              applyHostSearchResult(resolved, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
             })
             .catch(() => {
               if (generation !== searchRequestGeneration) return;
               setSearchState({ available: false, reason: SUPERDOC_UI_REASONS.searchUnavailable });
             });
         } else {
-          applyHostSearchResult(result, readEditCommandCanReplace());
+          applyHostSearchResult(result, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
         }
         applyHostSearchResult(
           safeCall<unknown>(() => editSearch.getState(), null),
           readEditCommandCanReplace(),
+          readEditCommandCanReplaceAll(),
         );
         return { ok: true };
       }
@@ -11578,6 +11691,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
       // session open where `close()` releases it, but both invalidate the
       // results a late `next()`/`previous()` would write back.
       searchRequestGeneration += 1;
+      cancelOutstandingShellFallback();
       const host = getHostSearch();
       if (host && typeof host.clear === 'function') safeCall<unknown>(() => host.clear(), null);
       if (!host || typeof host.clear !== 'function') {
@@ -11586,7 +11700,14 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
           safeCall<unknown>(() => editSearch.query({ query: '' }), null);
         }
       }
-      setSearchState({ query: '', total: 0, activeIndex: -1, canReplace: false });
+      setSearchState({
+        query: '',
+        total: 0,
+        activeIndex: -1,
+        canReplace: false,
+        canReplaceAll: false,
+        reason: undefined,
+      });
     },
     // Replace routes through the single host search session, which owns the
     // match list and read-only gating. Fail closed with a stable reason when
@@ -11632,7 +11753,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
           return Promise.resolve(result).then(
             (resolved) => {
               if (isCurrent()) {
-                applyHostSearchResult(resolved, readEditCommandCanReplace());
+                applyHostSearchResult(resolved, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
                 syncSearchStateFromHost();
                 emitSearch();
               }
@@ -11668,7 +11789,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
         if (!editSearch || typeof editSearch.replaceAll !== 'function' || typeof editSearch.getState !== 'function') {
           return { ok: false, reason: SUPERDOC_UI_REASONS.searchUnavailable };
         }
-        if (!readEditCommandCanReplace()) return { ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable };
+        if (!readEditCommandCanReplaceAll()) return { ok: false, reason: SUPERDOC_UI_REASONS.operationUnavailable };
         const result = safeCall<unknown>(
           () => editSearch.replaceAll({ replacement: typeof replacement === 'string' ? replacement : '' }),
           null,
@@ -11702,7 +11823,7 @@ export function createSuperDocUI(options: SuperDocUIOptions): SuperDocUI {
           return Promise.resolve(result).then(
             (resolved) => {
               if (isCurrent()) {
-                applyHostSearchResult(resolved, readEditCommandCanReplace());
+                applyHostSearchResult(resolved, readEditCommandCanReplace(), readEditCommandCanReplaceAll());
                 syncSearchStateFromHost();
                 emitSearch();
               }

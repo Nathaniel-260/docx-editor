@@ -39,6 +39,7 @@ export const llmPlaceholderComponents = [
   'CustomBoldDemo',
   'CustomCommentsDemo',
   'CustomContentControlsDemo',
+  'CustomSearchDemo',
   'CustomTrackChangesDemo',
   'CustomToolbarDemo',
   'CustomUiArchitecture',
@@ -189,6 +190,14 @@ export function renderLLMMarkdown(markdown: string) {
         '> **Live example: edit document fields from an application-owned panel**',
         '>',
         '> SuperDoc renders its toolbar and a two-page DOCX while the application renders a persistent field panel. Show in document moves between a text field on page 1 and a checkbox on page 2. The panel observes `ui.contentControls`, runs `activeEditor.doc.contentControls.text.setValue()` or `checkbox.setState()`, and stays pending until the observed field contains the new value.',
+        '',
+      ].join('\n');
+    },
+    CustomSearchDemo() {
+      return [
+        '> **Live example: drive Search from application-owned controls**',
+        '>',
+        '> SuperDoc renders its toolbar and a three-page DOCX while the application renders Find, Match case, Previous, Next, and Replace controls. The example starts with eight case-insensitive `Client` matches. `ui.search` paints and navigates the matches, while the panel observes the same session for its active index, total, and `canReplace` state. The document starts at 80% on wide layouts and fits to width on narrow layouts.',
         '',
       ].join('\n');
     },
