@@ -89,6 +89,7 @@ import {
   type PersistentPageSurfaceState,
   type PersistentPageWorkKind,
 } from './persistent-page-surface.js';
+import { validateDerivedRunTextPlane, type DerivedRunTextPlane } from './derived-run-text-plane.js';
 import { createChartElement as renderChartToElement } from './chart-renderer.js';
 import {
   CLASS_NAMES,
@@ -317,6 +318,7 @@ export type FragmentRenderContext = {
    * `totalPages` / `sectionPageCount`. Absent/`true` = exact (default).
    */
   pageCountFieldsExact?: boolean;
+  derivedRunTextPlane?: DerivedRunTextPlane | null;
 };
 
 const provisionalPageCountText = (cachedText: string | undefined): string =>
@@ -472,6 +474,7 @@ type PersistentPagePainterStateSnapshot = {
   currentMapping: PositionMapping | null;
   persistentDecorationsDirty: boolean;
   persistentDocumentBackground: DocumentBackground | null;
+  persistentDerivedRunTextPlane: DerivedRunTextPlane | null;
   persistentSurface: PersistentPageSurfaceState | null;
   paintWork: PaintWorkSummary;
   paintSnapshotBuilder: PaintSnapshotBuilder | null;
@@ -1106,6 +1109,7 @@ export class DomPainter {
    * `dispose()` so a stale window value can never leak across modes/mounts.
    */
   private persistentDocumentBackground: DocumentBackground | null = null;
+  private persistentDerivedRunTextPlane: DerivedRunTextPlane | null = null;
   // Painter plan P3a/§4.6: dark work counters for the persistent-page path,
   // accumulated across paints until consumed.
   private paintWork: PaintWorkSummary = createEmptyPaintWorkSummary();
@@ -1322,6 +1326,7 @@ export class DomPainter {
       currentMapping: this.currentMapping,
       persistentDecorationsDirty: this.persistentDecorationsDirty,
       persistentDocumentBackground: this.persistentDocumentBackground,
+      persistentDerivedRunTextPlane: this.persistentDerivedRunTextPlane,
       persistentSurface: clonePersistentPageSurfaceState(this.persistentSurface, clonePageDomStateMetadata),
       paintWork: clonePaintWorkSummary(this.paintWork),
       paintSnapshotBuilder: clonePaintSnapshotBuilder(this.paintSnapshotBuilder),
@@ -1353,6 +1358,7 @@ export class DomPainter {
     this.currentMapping = snapshot.currentMapping;
     this.persistentDecorationsDirty = snapshot.persistentDecorationsDirty;
     this.persistentDocumentBackground = snapshot.persistentDocumentBackground;
+    this.persistentDerivedRunTextPlane = snapshot.persistentDerivedRunTextPlane;
     this.persistentSurface = snapshot.persistentSurface;
     this.paintWork = snapshot.paintWork;
     this.paintSnapshotBuilder = snapshot.paintSnapshotBuilder;
@@ -1571,6 +1577,7 @@ export class DomPainter {
     // Mode switch: dense ownership means page styles derive from
     // currentLayout, never from a stale persistent-page input.
     this.persistentDocumentBackground = null;
+    this.persistentDerivedRunTextPlane = null;
     mount.classList.add(CLASS_NAMES.container);
     this.applyFormattingMarksClass(mount);
 
@@ -1624,6 +1631,7 @@ export class DomPainter {
     if (!doc) {
       throw new Error('DomPainter.paintPersistentPages requires a DOM-like document');
     }
+    validateDerivedRunTextPlane(input.derivedRunTextPlane, input.scaffold.generation);
     this.doc = doc;
     this.mount = mount;
     this.currentLayout = null;
@@ -1633,6 +1641,7 @@ export class DomPainter {
     // The persistent surface owns no ResolvedLayout; the document background
     // scalar rides the input exactly like the persistent-page path.
     this.persistentDocumentBackground = input.documentBackground ?? null;
+    this.persistentDerivedRunTextPlane = input.derivedRunTextPlane ?? null;
     this.totalPages = input.scaffold.pageCount;
     this.layoutEpoch = input.scaffold.generation;
     // Window-scoped fallback (mounted parity): only the desired content
@@ -2201,6 +2210,7 @@ export class DomPainter {
     this.pageStates = [];
     this.currentLayout = null;
     this.persistentDocumentBackground = null;
+    this.persistentDerivedRunTextPlane = null;
     this.layoutVersion = 0;
     this.processedLayoutVersion = -1;
     this.paintSnapshotBuilder = null;
@@ -2216,6 +2226,7 @@ export class DomPainter {
     this.pageStates = [];
     this.currentLayout = null;
     this.persistentDocumentBackground = null;
+    this.persistentDerivedRunTextPlane = null;
     this.changedBlocks.clear();
     this.sectionPageCounts.clear();
     this.sdtLabelsRendered.clear();
@@ -2427,6 +2438,7 @@ export class DomPainter {
       totalPages: this.totalPages,
       currentMapping: this.currentMapping,
       changedBlocks: this.changedBlocks,
+      derivedRunTextPlane: this.persistentDerivedRunTextPlane,
       recordChangedRoot: (root) => this.activePersistentPageTransaction?.changedRoots.add(root),
       sdtLabelsRendered: this.sdtLabelsRendered,
       getEffectivePageStyles: () => this.getEffectivePageStyles(),
