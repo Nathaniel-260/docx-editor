@@ -22,6 +22,8 @@ const customBoldDemoUrl = new URL('../components/embeds/custom-bold-demo.tsx', i
 const customUiMetaUrl = new URL('../content/docs/editor/custom-ui/meta.json', import.meta.url);
 const customUiSetupPageUrl = new URL('../content/docs/editor/custom-ui/controller-setup.mdx', import.meta.url);
 const customToolbarPageUrl = new URL('../content/docs/editor/custom-ui/formatting-controls.mdx', import.meta.url);
+const customCommentsPageUrl = new URL('../content/docs/editor/custom-ui/comments.mdx', import.meta.url);
+const customCommentsDemoUrl = new URL('../components/embeds/custom-comments-demo.tsx', import.meta.url);
 const templatePopulationDemoUrl = new URL(
   '../components/embeds/template-population-demo.tsx',
   import.meta.url,
@@ -61,6 +63,9 @@ const reactCustomToolbarExampleUrl = new URL(
   '../snippets/editor/react-custom-formatting-toolbar.tsx',
   import.meta.url,
 );
+const customCommentsExampleUrl = new URL('../snippets/editor/custom-comments.ts', import.meta.url);
+const customCommentsHtmlUrl = new URL('../snippets/editor/custom-comments.html', import.meta.url);
+const reactCustomCommentsExampleUrl = new URL('../snippets/editor/react-custom-comments.tsx', import.meta.url);
 const reactBuiltInCommentsExampleUrl = new URL('../snippets/editor/react-built-in-comments.tsx', import.meta.url);
 const builtInContentControlsPageUrl = new URL(
   '../content/docs/editor/built-in-ui/content-controls.mdx',
@@ -144,6 +149,7 @@ const registeredComponents = new Set([
   'ConfigReference',
   'ContextMenuConfigReference',
   'CustomBoldDemo',
+  'CustomCommentsDemo',
   'CustomToolbarDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
@@ -589,6 +595,73 @@ test('the React comments example keeps restart-sensitive config identities stabl
   assert.match(example, /user=\{editorConfig\.user\}/u);
   assert.match(example, /ui=\{editorConfig\.ui\}/u);
   assert.doesNotMatch(example, /\b(?:user|ui)=\{\{/u);
+});
+
+test('the custom comments examples replace one surface with a focused workflow', async () => {
+  const [page, demo, html, vanilla, react] = await Promise.all(
+    [
+      customCommentsPageUrl,
+      customCommentsDemoUrl,
+      customCommentsHtmlUrl,
+      customCommentsExampleUrl,
+      reactCustomCommentsExampleUrl,
+    ].map((url) => readFile(url, 'utf8')),
+  );
+
+  assert.match(page, /<CustomCommentsDemo \/>/u);
+  assert.match(page, /built-in comments UI/u);
+  assert.match(page, /Document API comments/u);
+  assert.doesNotMatch(page, /<CommentsConfigReference\b/u);
+  assert.match(html, /id="toolbar"/u);
+
+  for (const example of [vanilla, react]) {
+    assert.match(example, /document(?:=|:)\s*['"]\/sample\.docx['"]/u);
+    assert.match(example, /comments: false/u);
+    assert.match(example, /selection\.capture\(\)/u);
+    assert.match(example, /comments\.createFromCapture/u);
+    assert.match(example, /comments\.setActive/u);
+    assert.match(example, /comments\.scrollTo/u);
+    assert.match(example, /comments\.resolve/u);
+    assert.match(example, /comments\.reopen/u);
+    assert.match(example, /Alex Rivera/u);
+    assert.match(example, /parentCommentId/u);
+    assert.doesNotMatch(example, /contract\.docx|comments\.(?:reply|edit|delete)\(/u);
+  }
+
+  assert.match(vanilla, /addEventListener\('mousedown', captureSelection\)/u);
+  assert.match(vanilla, /toolbar: \{ container: toolbar, responsiveTo: 'container' \}/u);
+  assert.match(vanilla, /startComment\.focus\(\)/u);
+  assert.match(react, /onMouseDown=\{captureSelection\}/u);
+  assert.match(react, /startCommentRef\.current\?\.focus\(\)/u);
+  assert.match(react, /ref=\{startCommentRef\}/u);
+
+  assert.match(page, /document moves between the first and final pages/u);
+  assert.match(demo, /DEMO_DOCUMENT = '\/fixtures\/custom-comments-workflow\.docx'/u);
+  assert.match(demo, /comments: false/u);
+  assert.match(demo, /toolbar: \{ container: toolbarContainer/u);
+  assert.match(demo, /EditorDemoViewControls/u);
+  assert.match(demo, /contentClassName='sd-custom-comments-demo-workspace'/u);
+  assert.match(demo, /expandedMaxHeight='80rem'/u);
+  assert.match(demo, /value: 80/u);
+  assert.match(demo, /instance\.ui\.zoom\.set\(INITIAL_ZOOM\.value\)/u);
+  assert.match(demo, /instance\.ui\.comments\.observe/u);
+  assert.match(demo, /instance\.ui\.zoom\.observe/u);
+  assert.match(demo, /ui\.zoom\.setMode\('fit-width'\)/u);
+  assert.match(demo, /comments\.createFromCapture/u);
+  assert.match(demo, /commentsHandle\?\.setActive/u);
+  assert.match(demo, /commentsHandle\.scrollTo/u);
+  assert.match(demo, /commentsHandle\.resolve/u);
+  assert.match(demo, /commentsHandle\.reopen/u);
+  assert.match(demo, /observerCleanupRef\.current/u);
+  assert.match(demo, /capture\.quotedText/u);
+  assert.match(demo, /key=\{thread\.address\.entityId\}/u);
+
+  // Creation settles asynchronously. The composer must lock until the receipt
+  // arrives so one draft cannot be submitted twice.
+  assert.match(vanilla, /if \(!capture \|\| pendingCapture\) return;/u);
+  assert.match(vanilla, /pendingCapture = capture;/u);
+  assert.match(react, /if \(!ui \|\| !capture \|\| pending\) return;/u);
+  assert.match(react, /disabled=\{pending \|\| text\.trim\(\)\.length === 0\}/u);
 });
 
 test('the content-control examples use the canonical chrome config and typed click payload', async () => {

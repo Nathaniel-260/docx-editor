@@ -2972,6 +2972,260 @@
   opacity: 1;
 }
 
+.sd-custom-comments-demo-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 19rem);
+  min-width: 0;
+}
+
+.sd-custom-comments-demo-built-in-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sd-custom-comments-demo-built-in-header .sd-editor-demo-view-controls {
+  margin-left: auto;
+}
+
+.sd-custom-comments-demo-document {
+  min-width: 0;
+}
+
+.sd-custom-comments-demo-canvas {
+  height: min(34rem, 68vh);
+  min-height: 28rem;
+}
+
+.sd-custom-comments-demo-canvas.sd-custom-bold-demo-canvas:not(:empty) {
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.sd-custom-comments-demo-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding: 1rem;
+  border-left: 1px solid var(--sd-border-soft);
+  background: var(--sd-surface);
+}
+
+.sd-custom-comments-demo-panel header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 0.75rem;
+  align-items: end;
+}
+
+.sd-custom-comments-demo-panel header .sd-custom-bold-demo-owner {
+  grid-column: 1 / -1;
+  color: var(--sd-text-tertiary);
+}
+
+.sd-custom-comments-demo-panel h3,
+.sd-custom-comments-demo-panel header p,
+.sd-custom-comments-demo-panel li p {
+  margin: 0;
+}
+
+.sd-custom-comments-demo-panel h3 {
+  color: var(--sd-text-primary);
+  font-size: 1rem;
+}
+
+.sd-custom-comments-demo-panel header p {
+  color: var(--sd-custom-ui-text-secondary);
+  font-size: 0.75rem;
+}
+
+.sd-custom-comments-demo-panel button {
+  min-height: 2rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--sd-border);
+  border-radius: var(--sd-radius-sm);
+  background: var(--sd-surface);
+  color: var(--sd-text-primary);
+  cursor: pointer;
+  font: 600 0.75rem/1.2 var(--font-sans);
+}
+
+.sd-custom-comments-demo-panel button:hover:not(:disabled) {
+  border-color: var(--sd-blue-300);
+  background: var(--sd-blue-50);
+}
+
+.dark .sd-custom-comments-demo-panel button:hover:not(:disabled) {
+  background: var(--color-fd-accent);
+}
+
+.sd-custom-comments-demo-panel button:focus-visible,
+.sd-custom-comments-demo-panel textarea:focus-visible {
+  outline: 3px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.sd-custom-comments-demo-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.sd-custom-comments-demo-start {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.sd-custom-comments-demo-panel .sd-custom-comments-demo-start:not(:disabled),
+.sd-custom-comments-demo-composer button[type='submit']:not(:disabled) {
+  border-color: var(--sd-blue);
+  background: var(--sd-blue);
+  color: #ffffff;
+}
+
+.sd-custom-comments-demo-panel .sd-custom-comments-demo-start:hover:not(:disabled),
+.sd-custom-comments-demo-composer button[type='submit']:hover:not(:disabled) {
+  border-color: var(--sd-blue-600);
+  background: var(--sd-blue-600);
+}
+
+.sd-custom-comments-demo-composer {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--sd-blue-300);
+  border-radius: var(--sd-radius-md);
+  background: var(--sd-blue-50);
+}
+
+.dark .sd-custom-comments-demo-composer {
+  border-color: var(--sd-blue-600);
+  background: var(--color-fd-accent);
+}
+
+.sd-custom-comments-demo-composer label {
+  color: var(--sd-text-primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.sd-custom-comments-demo-quote {
+  margin: 0;
+  padding-left: 0.5rem;
+  border-left: 3px solid var(--sd-blue-300);
+  color: var(--sd-custom-ui-text-secondary);
+  font-size: 0.75rem;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.sd-custom-comments-demo-composer textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 0.5rem;
+  border: 1px solid var(--sd-border);
+  border-radius: var(--sd-radius-sm);
+  background: var(--sd-surface);
+  color: var(--sd-text-primary);
+  font: 0.8125rem/1.4 var(--font-sans);
+}
+
+.sd-custom-comments-demo-composer > div,
+.sd-custom-comments-demo-list li > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sd-custom-comments-demo-list {
+  display: grid;
+  max-height: 18rem;
+  gap: 0.625rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.sd-custom-comments-demo-list li {
+  display: grid;
+  gap: 0.625rem;
+  padding: 0.75rem;
+  border: 1px solid var(--sd-border-soft);
+  border-radius: var(--sd-radius-md);
+  background: var(--sd-surface-muted);
+}
+
+.sd-custom-comments-demo-list li[aria-current='true'] {
+  border-color: var(--sd-blue-300);
+  box-shadow: inset 3px 0 0 var(--sd-blue);
+}
+
+.sd-custom-comments-demo-list li > div:first-child {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--sd-custom-ui-text-secondary);
+  font-size: 0.6875rem;
+}
+
+.sd-custom-comments-demo-list li strong {
+  overflow: hidden;
+  color: var(--sd-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sd-custom-comments-demo-list li > div:first-child span {
+  font-family: var(--font-mono);
+}
+
+.sd-custom-comments-demo-list li p {
+  color: var(--sd-text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.sd-custom-comments-demo-status {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--sd-border-soft);
+  color: var(--sd-custom-ui-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.sd-custom-comments-demo:fullscreen .sd-custom-comments-demo-workspace {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+}
+
+.sd-custom-comments-demo:fullscreen .sd-custom-comments-demo-canvas {
+  height: auto;
+}
+
+@media (max-width: 52rem) {
+  .sd-custom-comments-demo-workspace {
+    grid-template-columns: 1fr;
+    padding-bottom: 4rem;
+  }
+
+  .sd-custom-comments-demo-panel {
+    border-top: 1px solid var(--sd-border-soft);
+    border-left: 0;
+  }
+
+  .sd-custom-comments-demo-list {
+    max-height: none;
+  }
+}
+
 /* Anatomy of a command control. Highlights the step the reader is currently
    exercising in the demo above it, so the API relationship is visible without
    another paragraph explaining it. */

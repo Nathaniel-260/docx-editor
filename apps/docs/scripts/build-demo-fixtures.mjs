@@ -4,6 +4,7 @@
  * - `public/fixtures/formatting-sample.docx`
  * - `public/fixtures/document-modes.docx`
  * - `public/fixtures/comments-sample.docx`
+ * - `public/fixtures/custom-comments-workflow.docx`
  * - `public/fixtures/search-sample.docx`
  * - `public/fixtures/hyperlinks-sample.docx`
  * - `public/fixtures/context-menu-sample.docx`
@@ -17,16 +18,18 @@
  * content remains.
  *
  * The formatting and document-mode fixtures are deliberately plain. The
- * comments fixture has one short thread because that thread is the behavior the
- * page asks the reader to inspect. The search fixture follows the same rule:
- * three large-type paragraphs across three short pages, with enough repeated
- * terms to show the real search surface moving between results and one pending
- * deletion for the tracked-deletion search option. The hyperlinks fixture
- * contains one real external hyperlink. The context-menu fixture keeps one
- * selectable instruction sentence in view. The content-controls fixture has
- * one text control and one checkbox so readers can inspect the built-in chrome
- * and the metadata reported when they click a control. The clause-library
- * fixture has one block-level control whose paragraph can be replaced.
+ * built-in comments fixture has one short thread because its page teaches
+ * configuration. The custom comments fixture puts two threads on separate
+ * pages because its page teaches application-owned navigation. The search
+ * fixture follows the same rule: three large-type paragraphs across three short
+ * pages, with enough repeated terms to show the real search surface moving
+ * between results and one pending deletion for the tracked-deletion search
+ * option. The hyperlinks fixture contains one real external hyperlink. The
+ * context-menu fixture keeps one selectable instruction sentence in view. The
+ * content-controls fixture has one text control and one checkbox so readers can
+ * inspect the built-in chrome and the metadata reported when they click a
+ * control. The clause-library fixture has one block-level control whose
+ * paragraph can be replaced.
  *
  * Written as a minimal OOXML package rather than through a library so the bytes
  * are stable: no timestamps, no generated ids, no zip metadata that changes
@@ -98,10 +101,19 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const SEARCH_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="288" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style></w:styles>`;
 
+const CUSTOM_COMMENTS_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style></w:styles>`;
+
 const escapeXml = (text) =>
   text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 
 const paragraph = (text) => `<w:p><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
+
+const heading = (text) =>
+  `<w:p><w:r><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr><w:t>${escapeXml(text)}</w:t></w:r></w:p>`;
+
+const commentParagraph = (id, before, target, after) =>
+  `<w:p><w:r><w:t xml:space="preserve">${escapeXml(before)}</w:t></w:r><w:commentRangeStart w:id="${id}"/><w:r><w:t>${escapeXml(target)}</w:t></w:r><w:commentRangeEnd w:id="${id}"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="${id}"/></w:r><w:r><w:t>${escapeXml(after)}</w:t></w:r></w:p>`;
 
 const trackedDeletion = (text) =>
   `<w:del w:id="0" w:author="SuperDoc Test User" w:date="2025-01-15T00:00:00Z"><w:r><w:delText xml:space="preserve">${escapeXml(text)}</w:delText></w:r></w:del>`;
@@ -129,6 +141,25 @@ const COMMENTS_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"
 
 const COMMENTS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:comment w:id="0" w:author="SuperDoc Test User" w:initials="ST" w:date="2025-01-15T00:00:00Z"><w:p><w:r><w:t>Does this match the signed schedule?</w:t></w:r></w:p></w:comment></w:comments>`;
+
+const CUSTOM_COMMENTS_DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${heading(
+  'Project kickoff',
+)}${commentParagraph(0, 'Kickoff date: ', 'January 12, 2027', '.')}${paragraph(
+  'Use the comment list to return to this date.',
+)}${pageBreak}${heading('Scope review')}${paragraph(
+  'Select the approval criteria and add a comment.',
+)}${paragraph('This middle page is ready for a new thread.')}${pageBreak}${heading('Final delivery')}${commentParagraph(
+  1,
+  'Delivery date: ',
+  'September 30, 2027',
+  '.',
+)}${paragraph(
+  'Use the other thread to move between the first and final pages.',
+)}<w:sectPr><w:pgSz w:w="12240" w:h="7920"/><w:pgMar w:top="720" w:right="1080" w:bottom="720" w:left="1080" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+
+const CUSTOM_COMMENTS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:comment w:id="0" w:author="SuperDoc Test User" w:initials="ST" w:date="2025-01-15T00:00:00Z"><w:p><w:r><w:t>Confirm the kickoff date.</w:t></w:r></w:p></w:comment><w:comment w:id="1" w:author="SuperDoc Test User" w:initials="ST" w:date="2025-01-15T00:00:00Z"><w:p><w:r><w:t>Does this match the signed schedule?</w:t></w:r></w:p></w:comment></w:comments>`;
 
 const SEARCH_PARAGRAPHS = [
   'The Client team opens the project brief and checks every Client name before review begins.',
@@ -211,6 +242,17 @@ await writeDocx('comments-sample.docx', [
   ['word/comments.xml', COMMENTS_XML],
   ['docProps/core.xml', CORE_PROPERTIES],
   ['docProps/app.xml', appProperties(3)],
+]);
+
+await writeDocx('custom-comments-workflow.docx', [
+  ['[Content_Types].xml', COMMENT_CONTENT_TYPES],
+  ['_rels/.rels', ROOT_RELS],
+  ['word/document.xml', CUSTOM_COMMENTS_DOCUMENT],
+  ['word/_rels/document.xml.rels', COMMENT_DOCUMENT_RELS],
+  ['word/styles.xml', CUSTOM_COMMENTS_STYLES],
+  ['word/comments.xml', CUSTOM_COMMENTS_XML],
+  ['docProps/core.xml', CORE_PROPERTIES],
+  ['docProps/app.xml', appProperties(11)],
 ]);
 
 await writeDocx('search-sample.docx', [

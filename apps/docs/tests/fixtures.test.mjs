@@ -270,6 +270,39 @@ test('the comments fixture keeps one focused review thread', async () => {
   }
 });
 
+test('the custom comments fixture makes thread navigation visible across three compact pages', async () => {
+  const { bytes, contentTypes, document, documentRels, styles, comments, core, app } =
+    await openFixture('custom-comments-workflow.docx');
+  const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');
+
+  assert.equal(document.match(/<w:br w:type="page"\/>/g)?.length, 2, 'must contain three explicit pages');
+  assert.equal(document.match(/<w:commentRangeStart\b/g)?.length, 2, 'must contain two comment anchors');
+  assert.equal(document.match(/<w:commentRangeEnd\b/g)?.length, 2, 'must close both comment anchors');
+  assert.equal(document.match(/<w:commentReference\b/g)?.length, 2, 'must show both comment references');
+  assert.equal(comments.match(/<w:comment\b/g)?.length, 2, 'must contain two comment threads');
+  assert.match(document, /January 12, 2027/);
+  assert.match(document, /September 30, 2027/);
+  assert.match(document, /Select the approval criteria and add a comment\./);
+  assert.match(comments, /Confirm the kickoff date\./);
+  assert.match(comments, /Does this match the signed schedule\?/);
+  assert.match(styles, /<w:sz w:val="24"\/>/);
+  assert.ok(visibleText.length < 500, `custom comments fixture must stay concise, got ${visibleText.length} characters`);
+  assert.ok(bytes.length < 8_000, `must stay a small package, got ${bytes.length} bytes`);
+  assert.match(
+    contentTypes,
+    /PartName="\/word\/comments\.xml" ContentType="application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.comments\+xml"/,
+  );
+  assert.match(
+    documentRels,
+    /Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/comments" Target="comments\.xml"/,
+  );
+  assert.match(core, /<dc:creator><\/dc:creator>/);
+  assert.match(core, /<cp:lastModifiedBy><\/cp:lastModifiedBy>/);
+  assert.match(app, /<Company><\/Company>/);
+  assert.match(app, /<Manager><\/Manager>/);
+  assert.doesNotMatch(document, /<(?:w:ins|w:del)\b/);
+});
+
 test('the search fixture provides three short pages with deliberate query results', async () => {
   const { bytes, zip, document, styles, core, app } = await openFixture('search-sample.docx');
   const visibleText = [...document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/g)].map((match) => match[1]).join(' ');

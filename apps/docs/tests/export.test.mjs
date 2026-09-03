@@ -46,7 +46,7 @@ const routes = [
   ['editor/custom-ui/commands-and-state/index.html', 'Keep custom controls in sync'],
   ['editor/custom-ui/custom-commands/index.html', 'Register custom commands'],
   ['editor/custom-ui/formatting-controls/index.html', 'Build a custom toolbar'],
-  ['editor/custom-ui/comments/index.html', 'Build a custom comments UI'],
+  ['editor/custom-ui/comments/index.html', 'Build a custom comments panel'],
   ['editor/custom-ui/tracked-changes/index.html', 'Build tracked-change review controls'],
   ['editor/custom-ui/tables/index.html', 'Build contextual table controls'],
   ['editor/custom-ui/content-controls/index.html', 'Build a content-control panel'],
@@ -340,6 +340,11 @@ test('exports the focused ruler sample document', async () => {
 
 test('exports the focused search sample document', async () => {
   const fixture = await stat(new URL('../out/fixtures/search-sample.docx', import.meta.url));
+  assert.ok(fixture.size > 0);
+});
+
+test('exports the custom comments workflow document', async () => {
+  const fixture = await stat(new URL('../out/fixtures/custom-comments-workflow.docx', import.meta.url));
   assert.ok(fixture.size > 0);
 });
 
@@ -752,14 +757,19 @@ test('exports the comments workflow through each canonical surface', async () =>
   assert.doesNotMatch(builtIn, /\b(?:displayMode|readOnly|allowResolve)\b/);
   assert.match(trackedChanges, /allowDecisions: false/);
   assert.match(customUI, /ui\.comments\.createFromCapture/);
+  assert.match(customUI, /Live example: replace the comments panel/);
   assert.match(customUI, /ui\.comments\.createFromSelection/);
+  assert.match(customUI, /ui\.comments\.setActive/);
   assert.match(customUI, /ui\.comments\.scrollTo/);
+  assert.match(customUI, /comments: false/);
+  assert.match(customUI, /parentCommentId/);
   assert.match(documentApi, /target: clause\.target/);
   assert.match(documentApi, /parentCommentId: createReceipt\.id/);
   assert.match(documentApi, /expectedRevision: afterReply\.evaluatedRevision/);
   assert.doesNotMatch(builtIn, /<include>/);
   assert.doesNotMatch(builtIn, /<CommentsConfigReference\b/);
   assert.doesNotMatch(customUI, /<include>/);
+  assert.doesNotMatch(customUI, /<CustomCommentsDemo\b/);
   assert.doesNotMatch(documentApi, /<include>/);
 });
 

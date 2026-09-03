@@ -10,6 +10,7 @@ import { ContentControlAuthoringDemo } from '@/components/embeds/content-control
 import { ContentControlLocksDemo } from '@/components/embeds/content-control-locks-demo';
 import { ContentControlPatterns } from '@/components/embeds/content-control-patterns';
 import { CustomBoldDemo, CustomToolbarDemo } from '@/components/embeds/custom-bold-demo';
+import { CustomCommentsDemo } from '@/components/embeds/custom-comments-demo';
 import { CustomUiArchitecture } from '@/components/embeds/custom-ui-architecture';
 import { DocumentPreview } from '@/components/embeds/document-preview';
 import { EditorDemo } from '@/components/embeds/editor-demo';
@@ -69,6 +70,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     CommandStateDemo,
     ContentControlPatterns,
     CustomBoldDemo,
+    CustomCommentsDemo,
     CustomToolbarDemo,
     CustomUiArchitecture,
     DocumentPreview,

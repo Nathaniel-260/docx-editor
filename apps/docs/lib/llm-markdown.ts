@@ -37,6 +37,7 @@ export const llmPlaceholderComponents = [
   'ConfigReference',
   'ContextMenuConfigReference',
   'CustomBoldDemo',
+  'CustomCommentsDemo',
   'CustomToolbarDemo',
   'CustomUiArchitecture',
   'DocumentPreview',
@@ -170,6 +171,14 @@ export function renderLLMMarkdown(markdown: string) {
         '> **Live example: one custom control on a real document**',
         '>',
         '> A Bold button rendered by the application, running against a real Editor. It reads `enabled` and `active` from the `bold` command handle, sets `disabled` and `aria-pressed` from those values rather than inspecting the selection, and reports the outcome from what `executeAsync()` resolves with. `CommandExecutionResult` is `boolean | receipt`, so both shapes are handled.',
+        '',
+      ].join('\n');
+    },
+    CustomCommentsDemo() {
+      return [
+        '> **Live example: replace the comments panel**',
+        '>',
+        '> SuperDoc renders the toolbar and a three-page DOCX while the application renders the comments panel. Existing threads on the first and final pages make `setActive()` and `scrollTo()` visible; the middle page provides text for `createFromCapture()`. The panel observes `ui.comments` and reports resolve or reopen receipts. Setting `ui.comments` to `false` removes the built-in comments panel without removing comments from the document.',
         '',
       ].join('\n');
     },
