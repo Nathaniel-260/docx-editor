@@ -202,7 +202,7 @@ overrides:
   protobufjs@8: 8.6.4
   superdoc: workspace:*
   '@superdoc/react': workspace:*
-  '@superdoc/sdk': 2.9.0-next.4
+  '@superdoc/sdk': 2.9.0-next.5
   '@superdoc/common': workspace:*
   '@superdoc/contracts': workspace:*
   '@superdoc/dom-contract': workspace:*
@@ -363,8 +363,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/react
       '@superdoc/sdk':
-        specifier: 2.9.0-next.4
-        version: 2.9.0-next.4
+        specifier: 2.9.0-next.5
+        version: 2.9.0-next.5
       '@tailwindcss/postcss':
         specifier: ^4.3.3
         version: 4.3.3
