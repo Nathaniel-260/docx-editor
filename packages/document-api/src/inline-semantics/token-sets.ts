@@ -67,6 +67,37 @@ export const ST_UNDERLINE_VALUE_SET: ReadonlySet<string> = new Set(ST_UNDERLINE_
 /**
  * Accepted values for ST_ThemeColor (exhaustive, case-sensitive, per ECMA-376 §17.18.97).
  */
+// ---------------------------------------------------------------------------
+// ST_HighlightColor (w:highlight)
+// ---------------------------------------------------------------------------
+
+/**
+ * Accepted `w:val` values for `w:highlight`. A closed enumeration, unlike a
+ * colour value: anything outside it produces a document Word offers to repair.
+ * {@link SDHighlightColor} is derived from this list so the two cannot drift.
+ */
+export const ST_HIGHLIGHT_VALUES = [
+  'black',
+  'blue',
+  'cyan',
+  'green',
+  'magenta',
+  'red',
+  'yellow',
+  'white',
+  'darkBlue',
+  'darkCyan',
+  'darkGreen',
+  'darkMagenta',
+  'darkRed',
+  'darkYellow',
+  'darkGray',
+  'lightGray',
+  'none',
+] as const;
+
+export const ST_HIGHLIGHT_VALUE_SET: ReadonlySet<string> = new Set(ST_HIGHLIGHT_VALUES);
+
 export const ST_THEME_COLOR_VALUES = [
   'dark1',
   'light1',

@@ -125,10 +125,15 @@ import type {
   StylesApplyInput,
   StylesApplyOptions,
   StylesApplyReceipt,
+  StylesCreateAdapter,
+  StylesCreateApi,
+  StylesCreateInput,
+  StylesCreateOptions,
+  StylesCreateReceipt,
   StylesGetCatalogInput,
   StylesGetCatalogResult,
 } from './styles/index.js';
-import { executeStylesApply, executeStylesGetCatalog } from './styles/index.js';
+import { executeStylesApply, executeStylesCreate, executeStylesGetCatalog } from './styles/index.js';
 import type {
   TemplatesAdapter,
   TemplatesApi,
@@ -1164,6 +1169,33 @@ export {
   validateStylesGetCatalogInput,
 } from './styles/index.js';
 export type {
+  StylesScope,
+  StyleRunPatch,
+  StyleConflictPolicy,
+  StyleChannelState,
+  StylesCreateAdapter,
+  StylesCreateApi,
+  StylesCreateInput,
+  StylesCreateParagraphInput,
+  StylesCreateCharacterInput,
+  StylesCreateOptions,
+  NormalizedStylesCreateOptions,
+  StylesCreateResolution,
+  StylesCreateReceipt,
+  StylesCreateReceiptSuccess,
+  StylesCreateReceiptFailure,
+} from './styles/index.js';
+export {
+  STYLE_EXCLUDED_KEYS,
+  EXCLUDED_KEYS_BY_SCOPE,
+  SCOPE_LABEL,
+  STYLE_XML_PATH,
+  executeStylesCreate,
+  validateStylesCreateInput,
+  validateStylesCreateOptions,
+  validatePatchObject,
+} from './styles/index.js';
+export type {
   TemplatesAdapter,
   TemplatesApi,
   TemplatesApplyInput,
@@ -1900,7 +1932,7 @@ export interface DocumentApi {
   /**
    * Stylesheet operations (docDefaults, style definitions, paragraph style references).
    */
-  styles: StylesApi & { paragraph: ParagraphStylesApi };
+  styles: StylesApi & StylesCreateApi & { paragraph: ParagraphStylesApi };
   /**
    * Template/substrate operations (apply detected DOCX substrate from a source package).
    */
@@ -2078,7 +2110,7 @@ export interface DocumentApiAdapters {
   comments: CommentsAdapter;
   write: WriteAdapter;
   selectionMutation: SelectionMutationAdapter;
-  styles: StylesAdapter;
+  styles: StylesAdapter & Partial<StylesCreateAdapter>;
   templates: TemplatesAdapter;
   trackChanges: TrackChangesAdapter;
   create: CreateAdapter;
@@ -2438,6 +2470,9 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
     styles: {
       apply(input: StylesApplyInput, options?: StylesApplyOptions): StylesApplyReceipt {
         return executeStylesApply(adapters.styles, input, options);
+      },
+      create(input: StylesCreateInput, options?: StylesCreateOptions): StylesCreateReceipt {
+        return executeStylesCreate(adapters.styles, input, options);
       },
       getCatalog(input?: StylesGetCatalogInput): StylesGetCatalogResult {
         return executeStylesGetCatalog(adapters.styles, input);
