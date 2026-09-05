@@ -7,6 +7,16 @@ import {
   type NormalizedStylesCreateOptions,
 } from './create.js';
 import { DocumentApiValidationError } from '../errors.js';
+import { STYLE_XML_PATH } from './create.js';
+import { XML_PATH_BY_CHANNEL } from './registry.js';
+import { buildInternalContractSchemas } from '../contract/schemas.js';
+
+type JsonSchemaNode = Record<string, unknown> & {
+  oneOf?: unknown;
+  properties?: unknown;
+  enum?: unknown;
+  const?: unknown;
+};
 
 function okReceipt(dryRun: boolean): StylesCreateReceipt {
   return {
@@ -442,5 +452,34 @@ describe('executeStylesCreate validation: options', () => {
     const adapter = makeAdapter();
     expectValidationError(() => executeStylesCreate(adapter, MINIMAL, { force: true } as never), 'INVALID_INPUT');
     expect(adapter.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `schemas.ts` writes its XML paths as literals rather than referencing the
+ * exported constants — `styles.apply` does the same two entries above this one.
+ * That is deliberate for a published wire format: a schema that follows a
+ * constant changes the contract whenever the constant moves, silently. What it
+ * must not do is drift from the type, and `StylesCreateResolution.xmlPath` is
+ * pinned to `STYLE_XML_PATH`, so this asserts the two still agree.
+ */
+describe('published xmlPath matches the exported constant', () => {
+  const schemas = buildInternalContractSchemas().operations;
+
+  function resolutionProperties(operationId: 'styles.create' | 'styles.apply'): Record<string, JsonSchemaNode> {
+    const output = schemas[operationId].output as JsonSchemaNode;
+    const success = (output.oneOf as JsonSchemaNode[])[0];
+    const resolution = (success.properties as Record<string, JsonSchemaNode>).resolution;
+    return resolution.properties as Record<string, JsonSchemaNode>;
+  }
+
+  it('pins styles.create to STYLE_XML_PATH', () => {
+    expect(resolutionProperties('styles.create').xmlPath.const).toBe(STYLE_XML_PATH);
+  });
+
+  it('pins styles.apply to XML_PATH_BY_CHANNEL, which the same file spells out', () => {
+    const published = resolutionProperties('styles.apply').xmlPath.enum as string[];
+
+    expect([...published].sort()).toEqual([XML_PATH_BY_CHANNEL.run, XML_PATH_BY_CHANNEL.paragraph].sort());
   });
 });

@@ -2281,6 +2281,24 @@ const ADAPTER_GATED_PREFIXES = [
   'authorities',
   'export',
 ] as const;
+
+/**
+ * Operations gated on one optional *method* of a namespace adapter that is
+ * itself present, so {@link ADAPTER_GATED_PREFIXES} cannot reach them.
+ *
+ * Without this the snapshot advertises an operation whose only possible answer
+ * is `CAPABILITY_UNAVAILABLE`, and a caller selecting capabilities from it
+ * picks an operation that cannot run. Only operations this package adds are
+ * listed: changing what an already-shipped operation advertises is a separate
+ * change, not a side effect of this one.
+ */
+const HOOK_GATED_OPERATIONS: ReadonlyArray<{
+  readonly operationId: OperationId;
+  readonly hasHook: (adapters: DocumentApiAdapters) => boolean;
+  // Optional chaining despite the required type: the namespace loop above
+  // tolerates a missing adapter, and a JavaScript host can pass one.
+}> = [{ operationId: 'styles.create', hasHook: (a) => typeof a.styles?.create === 'function' }];
+
 export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
   const rawCapFn = () => executeCapabilities(adapters.capabilities);
   const capFn = (): DocumentApiCapabilities => {
@@ -2297,6 +2315,18 @@ export function createDocumentApi(adapters: DocumentApiAdapters): DocumentApi {
         cap.dryRun = false;
         cap.reasons = [...(cap.reasons ?? []), 'NAMESPACE_UNAVAILABLE'];
       }
+    }
+    // Then the same gate one level down, for a hook rather than a namespace.
+    for (const { operationId, hasHook } of HOOK_GATED_OPERATIONS) {
+      if (hasHook(adapters)) continue;
+      // An engine older than the operation reports no entry for it at all,
+      // which already says unavailable; there is nothing to correct.
+      const cap = caps.operations[operationId];
+      if (!cap) continue;
+      cap.available = false;
+      cap.tracked = false;
+      cap.dryRun = false;
+      cap.reasons = [...(cap.reasons ?? []), 'OPERATION_UNAVAILABLE'];
     }
     return caps;
   };
